@@ -8,11 +8,12 @@ ROOT = Path(__file__).resolve().parents[1]
 HOTSPOT_FILE_LIMITS = {
     "farm.py": 4800,
     "main.py": 700,
-    "process_net.py": 2650,
+    "process_net.py": 1800,
     "core.py": 1300,
 }
 
 API_ROUTE_FILE_LIMIT = 650
+SERVICE_DOMAIN_FILE_LIMIT = 650
 
 FORBIDDEN_DUMPING_GROUND_NAMES = {
     "utility.py",
@@ -98,6 +99,23 @@ class ArchitectureDisciplineTests(unittest.TestCase):
                     len(lines),
                     API_ROUTE_FILE_LIMIT,
                     f"{path.name} is over budget. Split route groups by feature instead of appending.",
+                )
+
+    def test_service_domain_modules_stay_under_architecture_budget(self):
+        service_files = {
+            "services/resource_monitor.py",
+            "services/ram_service.py",
+            "services/cookie_service.py",
+            "services/vip_tracker.py",
+            "services/network_monitor.py",
+        }
+        for rel in service_files:
+            with self.subTest(file=rel):
+                lines = (ROOT / rel).read_text(encoding="utf-8-sig", errors="replace").splitlines()
+                self.assertLessEqual(
+                    len(lines),
+                    SERVICE_DOMAIN_FILE_LIMIT,
+                    f"{rel} is over budget. Split the service domain instead of appending.",
                 )
 
     def test_no_new_helper_dumping_ground_modules(self):

@@ -27,12 +27,9 @@ from core import (
 )
 from domain.session_identity import build_launch_intent
 from domain.runtime_signals import RuntimeSignal, is_recovery_signal, normalize_runtime_signal
-from process_net import (
-    NetworkMonitor,
-    NET_ONLINE,
-    RAMManager,
-    VipTracker,
-)
+from services.network_monitor import NetworkMonitor, NET_ONLINE
+from services.ram_service import RAMManager
+from services.vip_tracker import VipTracker
 from services.process_service import ProcessManager
 from services.presence_service import PRESENCE_SERVICE
 from services.resource_monitor import get_rt_monitor

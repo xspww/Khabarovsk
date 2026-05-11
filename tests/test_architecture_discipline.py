@@ -14,6 +14,7 @@ HOTSPOT_FILE_LIMITS = {
 
 API_ROUTE_FILE_LIMIT = 650
 SERVICE_DOMAIN_FILE_LIMIT = 650
+MAINTENANCE_DOMAIN_FILE_LIMIT = 650
 
 FORBIDDEN_DUMPING_GROUND_NAMES = {
     "utility.py",
@@ -120,6 +121,23 @@ class ArchitectureDisciplineTests(unittest.TestCase):
                     len(lines),
                     SERVICE_DOMAIN_FILE_LIMIT,
                     f"{rel} is over budget. Split the service domain instead of appending.",
+                )
+
+    def test_maintenance_domain_modules_stay_under_architecture_budget(self):
+        maintenance_files = {
+            "runtime/system_maintenance.py": 220,
+            "runtime/maintenance_presence.py": MAINTENANCE_DOMAIN_FILE_LIMIT,
+            "runtime/maintenance_liveness.py": MAINTENANCE_DOMAIN_FILE_LIMIT,
+            "runtime/maintenance_performance.py": MAINTENANCE_DOMAIN_FILE_LIMIT,
+            "runtime/maintenance_queue.py": MAINTENANCE_DOMAIN_FILE_LIMIT,
+        }
+        for rel, max_lines in maintenance_files.items():
+            with self.subTest(file=rel):
+                lines = (ROOT / rel).read_text(encoding="utf-8-sig", errors="replace").splitlines()
+                self.assertLessEqual(
+                    len(lines),
+                    max_lines,
+                    f"{rel} is over budget. Split maintenance domains instead of appending.",
                 )
 
     def test_no_new_helper_dumping_ground_modules(self):

@@ -23,7 +23,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-from app_paths import APP_NAME, resource_path
+from app_paths import APP_NAME, IS_COMPILED, path_targets_current_exe, resource_path
 
 APP_USER_AGENT = "ArgusLauncher/RT"
 APP_ICON_FILE = "ROBUGUARD Corners  .png"
@@ -1691,13 +1691,27 @@ def _is_same_roboguard_process(pid: int) -> bool:
         proc = psutil.Process(int(pid))
         try:
             proc_name = os.path.basename(str(proc.name() or "")).lower()
-            proc_exe = os.path.basename(str(proc.exe() or "")).lower()
+            proc_exe_path = str(proc.exe() or "")
+            proc_exe = os.path.basename(proc_exe_path).lower()
         except Exception:
             proc_name = ""
+            proc_exe_path = ""
             proc_exe = ""
+        try:
+            cmdline = proc.cmdline()
+            cwd = proc.cwd()
+        except Exception:
+            cmdline = []
+            cwd = ""
+        if IS_COMPILED:
+            if path_targets_current_exe(proc_exe_path, cwd):
+                return True
+            if any(path_targets_current_exe(part, cwd) for part in cmdline):
+                return True
+            return False
         if "python" not in proc_name and "python" not in proc_exe:
             return False
-        return _cmdline_targets_this_app(proc.cmdline(), proc.cwd())
+        return _cmdline_targets_this_app(cmdline, cwd)
     except Exception:
         return False
 

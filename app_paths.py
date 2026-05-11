@@ -9,9 +9,30 @@ from typing import Iterable
 APP_NAME = "Argus Launcher"
 APP_FOLDER_NAME = "Argus Launcher"
 APP_ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-IS_FROZEN = bool(getattr(sys, "frozen", False))
-BUNDLE_DIR = os.path.dirname(sys.executable) if IS_FROZEN else APP_ROOT_DIR
-RESOURCE_ROOT = getattr(sys, "_MEIPASS", BUNDLE_DIR if IS_FROZEN else APP_ROOT_DIR)
+
+
+def _is_compiled_runtime() -> bool:
+    main_module = sys.modules.get("__main__")
+    return bool(
+        getattr(sys, "frozen", False)
+        or "__compiled__" in globals()
+        or bool(main_module and hasattr(main_module, "__compiled__"))
+    )
+
+
+def _compiled_executable_path() -> str:
+    if getattr(sys, "frozen", False):
+        return os.path.abspath(sys.executable)
+    if _is_compiled_runtime() and sys.argv:
+        return os.path.abspath(sys.argv[0])
+    return os.path.abspath(sys.executable)
+
+
+IS_FROZEN = _is_compiled_runtime()
+IS_COMPILED = IS_FROZEN
+EXECUTABLE_PATH = _compiled_executable_path()
+BUNDLE_DIR = os.path.dirname(EXECUTABLE_PATH) if IS_COMPILED else APP_ROOT_DIR
+RESOURCE_ROOT = getattr(sys, "_MEIPASS", APP_ROOT_DIR)
 
 
 def _default_user_root() -> str:
@@ -26,8 +47,8 @@ def _default_user_root() -> str:
 
 USER_DATA_ROOT = _default_user_root()
 APP_DATA_DIR = os.path.join(USER_DATA_ROOT, "data")
-LEGACY_APP_DATA_DIR = APP_ROOT_DIR
-LEGACY_DATA_DIR = os.path.join(APP_ROOT_DIR, "data")
+LEGACY_APP_DATA_DIR = BUNDLE_DIR if IS_COMPILED else APP_ROOT_DIR
+LEGACY_DATA_DIR = os.path.join(LEGACY_APP_DATA_DIR, "data")
 
 
 def ensure_user_dirs() -> None:
@@ -41,6 +62,21 @@ def resource_path(*parts: str) -> str:
 
 def bundle_path(*parts: str) -> str:
     return os.path.join(BUNDLE_DIR, *parts)
+
+
+def path_targets_current_exe(path: str, cwd: str = "") -> bool:
+    if not IS_COMPILED or not path:
+        return False
+    try:
+        expected = os.path.normcase(os.path.abspath(EXECUTABLE_PATH))
+        candidate = str(path or "").strip().strip('"')
+        if not candidate:
+            return False
+        if not os.path.isabs(candidate) and cwd:
+            candidate = os.path.join(cwd, candidate)
+        return os.path.normcase(os.path.abspath(candidate)) == expected
+    except Exception:
+        return False
 
 
 def migrate_legacy_data_files(filenames: Iterable[str]) -> None:

@@ -45,7 +45,7 @@ CRITICAL_RUNTIME_FIELDS = {
 
 
 def _python_files():
-    ignored_parts = {".git", "__pycache__", "data", "roboguard_rt1_instances"}
+    ignored_parts = {".git", "__pycache__", "build", "data", "dist", "roboguard_rt1_instances"}
     for path in ROOT.rglob("*.py"):
         rel = path.relative_to(ROOT).as_posix()
         if any(part in ignored_parts for part in path.relative_to(ROOT).parts):

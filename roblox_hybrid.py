@@ -15,6 +15,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
+from app_paths import EXECUTABLE_PATH, IS_COMPILED
 from account_hybrid import ACCOUNT_STORE, decrypt_cookie
 
 
@@ -974,8 +975,8 @@ def ensure_multi_roblox_guard(timeout: float = 6.0) -> Tuple[bool, str]:
             _MULTI_ROBLOX_LAST_FAILURE = f"guard helper exited rc={rc}"
             _MULTI_ROBLOX_HELPER = None
 
-        if getattr(sys, "frozen", False):
-            guard_path = sys.executable or "Argus Launcher.exe"
+        if IS_COMPILED:
+            guard_path = EXECUTABLE_PATH or sys.executable or "ArgusLauncher.exe"
             cmd = [guard_path, "--multi-roblox-guard", "both", "--parent-pid", str(os.getpid())]
         else:
             guard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "multi_roblox_guard.py")

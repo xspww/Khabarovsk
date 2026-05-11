@@ -7,10 +7,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 HOTSPOT_FILE_LIMITS = {
     "farm.py": 4800,
-    "main.py": 1700,
+    "main.py": 700,
     "process_net.py": 2650,
     "core.py": 1300,
 }
+
+API_ROUTE_FILE_LIMIT = 650
 
 FORBIDDEN_DUMPING_GROUND_NAMES = {
     "utility.py",
@@ -83,6 +85,19 @@ class ArchitectureDisciplineTests(unittest.TestCase):
                     len(lines),
                     max_lines,
                     f"{rel} is over budget. Move new logic into a domain module instead of appending.",
+                )
+
+    def test_api_route_modules_stay_under_architecture_budget(self):
+        route_dir = ROOT / "api_routes"
+        for path in route_dir.glob("*.py"):
+            if path.name in {"__init__.py", "context.py"}:
+                continue
+            with self.subTest(file=path.relative_to(ROOT).as_posix()):
+                lines = path.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+                self.assertLessEqual(
+                    len(lines),
+                    API_ROUTE_FILE_LIMIT,
+                    f"{path.name} is over budget. Split route groups by feature instead of appending.",
                 )
 
     def test_no_new_helper_dumping_ground_modules(self):

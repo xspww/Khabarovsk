@@ -6,8 +6,8 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 HOTSPOT_FILE_LIMITS = {
-    "farm.py": 5600,
-    "main.py": 2300,
+    "farm.py": 4800,
+    "main.py": 1700,
     "process_net.py": 2650,
     "core.py": 1700,
 }

@@ -6,7 +6,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 HOTSPOT_FILE_LIMITS = {
-    "farm.py": 4800,
+    "farm.py": 3900,
     "main.py": 700,
     "process_net.py": 900,
     "core.py": 1300,
@@ -138,6 +138,20 @@ class ArchitectureDisciplineTests(unittest.TestCase):
                     len(lines),
                     max_lines,
                     f"{rel} is over budget. Split maintenance domains instead of appending.",
+                )
+
+    def test_farm_runtime_domain_modules_stay_under_architecture_budget(self):
+        runtime_files = {
+            "runtime/launch_controller.py": 800,
+            "runtime/roblox_watchdog.py": 220,
+        }
+        for rel, max_lines in runtime_files.items():
+            with self.subTest(file=rel):
+                lines = (ROOT / rel).read_text(encoding="utf-8-sig", errors="replace").splitlines()
+                self.assertLessEqual(
+                    len(lines),
+                    max_lines,
+                    f"{rel} is over budget. Split farm runtime domains instead of appending.",
                 )
 
     def test_no_new_helper_dumping_ground_modules(self):

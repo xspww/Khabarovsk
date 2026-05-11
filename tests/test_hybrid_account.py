@@ -604,6 +604,56 @@ class HybridAccountTests(unittest.TestCase):
             self.assertFalse(os.path.exists(roblox_root))
             self.assertTrue(os.path.exists(argus_file))
 
+    def test_roblox_install_detects_related_process_blockers(self):
+        manager = RobloxInstallManager(guard_running=lambda: False, roblox_running=lambda: False)
+
+        class FakeProc:
+            info = {
+                "pid": 4321,
+                "name": "Roblox Account Manager.exe",
+                "exe": r"C:\Users\Administrator\Documents\acc\Roblox Account Manager.exe",
+                "cmdline": [r"C:\Users\Administrator\Documents\acc\Roblox Account Manager.exe"],
+            }
+
+        with patch("psutil.process_iter", return_value=[FakeProc()]):
+            status = manager.status()
+            result = manager.start_uninstall()
+
+        self.assertTrue(status["running_blocked"])
+        self.assertIn("Roblox Account Manager.exe", status["block_msg"])
+        self.assertFalse(result["ok"])
+        self.assertIn("Roblox Account Manager.exe", result["msg"])
+
+    def test_roblox_install_ignores_stale_protocol_launcher_cmd(self):
+        manager = RobloxInstallManager(guard_running=lambda: False, roblox_running=lambda: False)
+
+        class FakeProc:
+            info = {
+                "pid": 9876,
+                "name": "cmd.exe",
+                "exe": r"C:\Windows\System32\cmd.exe",
+                "cmdline": ["cmd.exe", "/c", "start", "roblox-player:1+launchmode:play+gameinfo:[redacted]"],
+            }
+
+        with patch("psutil.process_iter", return_value=[FakeProc()]):
+            blockers = manager.find_install_blockers()
+
+        self.assertEqual(blockers, [])
+
+    def test_roblox_install_remove_tree_repairs_permissions_before_retry(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            roblox_root = Path(tmp) / "Roblox"
+            roblox_root.mkdir()
+            (roblox_root / "locked.txt").write_text("roblox", encoding="utf-8")
+            with patch.dict(os.environ, {"LOCALAPPDATA": tmp, "ProgramFiles": "", "ProgramFiles(x86)": ""}, clear=False):
+                manager = RobloxInstallManager(guard_running=lambda: False, roblox_running=lambda: False)
+                with patch("services.roblox_install_manager.shutil.rmtree", side_effect=[PermissionError("denied"), None]) as rmtree, \
+                     patch.object(manager, "_repair_tree_permissions") as repair:
+                    manager._remove_roblox_tree(roblox_root)
+
+        self.assertEqual(rmtree.call_count, 2)
+        repair.assert_called_once_with(roblox_root)
+
     def test_roblox_install_remove_helper_rejects_unsafe_path(self):
         with tempfile.TemporaryDirectory() as tmp:
             unsafe_root = os.path.join(tmp, "NotRoblox")
@@ -755,11 +805,19 @@ class HybridAccountTests(unittest.TestCase):
         self.assertNotIn('id="h-running"', side_status)
         self.assertIn('id="close-all-roblox-btn"', html)
         self.assertIn("Close All Roblox", html)
+        self.assertIn('id="reload-cookies-btn"', html)
+        self.assertIn("Reload Cookies", html)
+        self.assertIn("/accounts/reload", html)
+        self.assertIn("function reloadCookies()", html)
+        self.assertIn(".status.queued{background:#101827;border-color:#254f84;color:#60a5fa}", html)
         self.assertIn("/roblox/close-all", html)
         self.assertIn("function confirmCloseAllRoblox()", html)
         self.assertIn("cardIcon('close')", html)
-        self.assertIn("Stop Argus and close Roblox", html)
-        self.assertIn("Stops Argus, then closes every Roblox window.", html)
+        self.assertIn("Close Roblox only", html)
+        self.assertIn("Closes every Roblox window. Argus stays running.", html)
+        self.assertNotIn("Stop Argus and close Roblox</strong>", html)
+        self.assertNotIn("Stops Argus, then closes every Roblox window.", html)
+        self.assertNotIn("STATUS.running=false", html)
         self.assertNotIn("confirm('Close all Roblox", html)
         for removed in ('id="h-finished"', 'id="h-cpu"', 'id="h-ram"', ">Finished<", ">CPU<", ">RAM<"):
             self.assertNotIn(removed, html)
@@ -792,6 +850,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("function robloxInstallConfirm(action)", html)
         self.assertIn("cardIcon('install')", html)
         self.assertIn("Stop Argus and close Roblox first.", html)
+        self.assertIn("TROUBLESHOOT.block_msg", html)
         self.assertNotIn("Downgrade", html)
         self.assertNotIn("roblox-version", html)
         self.assertNotIn("previous Windows version", html)
@@ -833,8 +892,9 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn(".savebar .save-action.settings-dirty", html)
         self.assertEqual(html.count('class="btn ghost reset-action"'), 6)
         self.assertEqual(html.count('class="btn good save-action"'), 6)
-        self.assertEqual(html.count('class="btn-icon" aria-hidden="true"'), 14)
+        self.assertEqual(html.count('class="btn-icon" aria-hidden="true"'), 15)
         self.assertIn('id="close-all-roblox-btn"><svg class="btn-icon"', html)
+        self.assertIn('id="reload-cookies-btn"><svg class="btn-icon"', html)
         self.assertIn('id="add-btn"><svg class="btn-icon"', html)
         self.assertNotIn("save.disabled=!isDirty", html)
         self.assertNotIn("reset.disabled=!isDirty", html)
@@ -1001,9 +1061,14 @@ class HybridAccountTests(unittest.TestCase):
         try:
             client = TestClient(main.app)
             html = client.get("/").text
-            self.assertIn("Use Popup Disconnected", html)
+            self.assertIn("Popup Detector", html)
+            self.assertNotIn("Use Popup Disconnected", html)
             self.assertIn('id="popup-disconnected-enabled"', html)
+            self.assertIn('id="popup-scan-interval"', html)
+            self.assertIn('id="popup-scan-max-parallel"', html)
             self.assertIn("popup_disconnected_enabled:$('popup-disconnected-enabled').checked", html)
+            self.assertIn("popup_scan_interval_seconds:Number($('popup-scan-interval').value)||30", html)
+            self.assertIn("popup_scan_max_parallel:Number($('popup-scan-max-parallel').value)||2", html)
             self.assertIn("presence_api_enabled:$('presence-enabled').checked", html)
             self.assertIn("presence_poll_interval_seconds:30", html)
             self.assertIn("presence_cache_ttl_seconds:30", html)
@@ -1016,6 +1081,8 @@ class HybridAccountTests(unittest.TestCase):
                 "/api/config",
                 json={
                     "popup_disconnected_enabled": False,
+                    "popup_scan_interval_seconds": 45,
+                    "popup_scan_max_parallel": 3,
                     "presence_api_enabled": True,
                     "presence_assist_rejoin_enabled": True,
                 },
@@ -1023,6 +1090,8 @@ class HybridAccountTests(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             config = client.get("/api/config").json()
             self.assertFalse(config["popup_disconnected_enabled"])
+            self.assertEqual(config["popup_scan_interval_seconds"], 45)
+            self.assertEqual(config["popup_scan_max_parallel"], 3)
             self.assertTrue(config["presence_api_enabled"])
             self.assertTrue(config["presence_assist_rejoin_enabled"])
         finally:
@@ -1036,7 +1105,12 @@ class HybridAccountTests(unittest.TestCase):
         worker_source = inspect.getsource(AccountWorker.run)
         maintenance_source = inspect.getsource(SystemMaintenance._scan_liveness_watchdog)
         self.assertIn('self.cfg.get("popup_disconnected_enabled", True)', worker_source)
+        self.assertIn("popup_scan_interval_seconds", worker_source)
+        self.assertIn("effective_hold_sec", worker_source)
+        self.assertIn("checking_disconnect", worker_source)
         self.assertIn("popup_enabled", maintenance_source)
+        self.assertIn("popup_scan_max_parallel", maintenance_source)
+        self.assertIn("_popup_periodic_scan_batch", maintenance_source)
         self.assertIn("inspect_ui = popup_enabled", maintenance_source)
         self.assertIn("state == \"reconnecting\" and popup_enabled", maintenance_source)
 
@@ -1099,6 +1173,101 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(client.post("/api/account/UserA/refresh-cookie", json={}).status_code, 404)
         self.assertEqual(client.post("/api/accounts/refresh-stale", json={}).status_code, 404)
 
+    def test_accounts_cookie_import_route_reloads_without_game_default_name_error(self):
+        from fastapi.testclient import TestClient
+        import api_routes.accounts_routes as accounts_routes
+        import main
+
+        client = TestClient(main.app)
+        with patch.object(
+            accounts_routes.ACCOUNT_STORE,
+            "import_cookie_lines",
+            return_value={"ok": True, "imported": 1, "errors": []},
+        ) as import_cookie_lines, patch.object(
+            accounts_routes.ACCOUNT_STORE,
+            "to_roboguard_accounts",
+            return_value=[],
+        ), patch.object(main.farm, "running", False), patch.object(
+            main.farm,
+            "set_accounts",
+        ) as set_accounts, patch.object(
+            main.cfg_mgr,
+            "save_accounts",
+        ) as save_accounts:
+            response = client.post(
+                "/api/accounts/import",
+                json={"kind": "cookies", "lines": ["UnitUser:fake-cookie"]},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["imported"], 1)
+        import_cookie_lines.assert_called_once()
+        set_accounts.assert_called_once_with([])
+        save_accounts.assert_called_once_with([])
+
+    def test_accounts_userpass_import_route_reloads_without_game_default_name_error(self):
+        from fastapi.testclient import TestClient
+        import api_routes.accounts_routes as accounts_routes
+        import main
+
+        client = TestClient(main.app)
+        with patch.object(
+            accounts_routes.ACCOUNT_STORE,
+            "import_userpass_lines",
+            return_value={"ok": True, "pending": 1},
+        ) as import_userpass_lines, patch.object(
+            accounts_routes.ACCOUNT_STORE,
+            "to_roboguard_accounts",
+            return_value=[],
+        ), patch.object(main.farm, "running", False), patch.object(
+            main.farm,
+            "set_accounts",
+        ) as set_accounts, patch.object(
+            main.cfg_mgr,
+            "save_accounts",
+        ) as save_accounts:
+            response = client.post(
+                "/api/accounts/import",
+                json={"kind": "userpass", "lines": ["UnitUser:password"]},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["pending"], 1)
+        import_userpass_lines.assert_called_once_with(["UnitUser:password"], open_browser=True)
+        set_accounts.assert_called_once_with([])
+        save_accounts.assert_called_once_with([])
+
+    def test_accounts_reload_route_reloads_store_into_farm(self):
+        from fastapi.testclient import TestClient
+        import api_routes.accounts_routes as accounts_routes
+        import main
+
+        client = TestClient(main.app)
+        payload = [{"username": "ReloadUser", "cookie": "_|WARNING:reload"}]
+        with patch.object(
+            accounts_routes.ACCOUNT_STORE,
+            "to_roboguard_accounts",
+            return_value=payload,
+        ), patch.object(main.farm, "running", False), patch.object(
+            main.farm,
+            "set_accounts",
+        ) as set_accounts, patch.object(
+            main.cfg_mgr,
+            "save_accounts",
+        ) as save_accounts:
+            response = client.post("/api/accounts/reload", json={})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(set_accounts.call_args.args[0][0].username, "ReloadUser")
+        save_accounts.assert_called_once()
+
     def test_app_shutdown_rejects_wrong_token(self):
         from fastapi.testclient import TestClient
         import main
@@ -1106,7 +1275,7 @@ class HybridAccountTests(unittest.TestCase):
         client = TestClient(main.app)
         self.assertEqual(client.post("/api/app/shutdown", json={"token": "wrong"}).status_code, 403)
 
-    def test_close_all_roblox_endpoint_stops_guard_before_kill(self):
+    def test_close_all_roblox_endpoint_only_closes_roblox_clients(self):
         from fastapi.testclient import TestClient
         import main
 
@@ -1124,7 +1293,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertTrue(data["ok"])
         self.assertTrue(data["farm_was_running"])
         self.assertEqual(data["closed"], 6)
-        stop_guard.assert_called_once()
+        stop_guard.assert_not_called()
         kill_all.assert_called_once_with(wait_seconds=4.0)
         finish_command.assert_called_once()
 
@@ -1202,6 +1371,259 @@ class HybridAccountTests(unittest.TestCase):
 
         self.assertTrue(assess.call_args.kwargs["inspect_ui"])
         self.assertEqual(presence_calls[-1]["allow_rejoin"], False)
+
+    def test_alive_process_periodically_scans_popup_dialog(self):
+        maint = object.__new__(SystemMaintenance)
+        maint._cfg = {
+            "watchdog_enabled": True,
+            "popup_disconnected_enabled": True,
+            "popup_scan_interval_seconds": 1,
+            "watchdog_hold_time": 60,
+            "watchdog_activity_timeout": 180,
+            "watchdog_loading_grace": 90,
+            "watchdog_cpu_low": 0.9,
+        }
+        maint._accounts = []
+        maint._workers = {}
+        maint._last_popup_scan_at = {}
+        maint._handle_presence_disconnect_assist = lambda *args, **kwargs: False
+
+        class Net:
+            def is_online(self):
+                return True
+
+        class Recovery:
+            _net = Net()
+
+        maint._recovery = Recovery()
+        acc = Account(username="periodic_popup_user")
+        acc.state = AccountState.IN_GAME
+        acc.pid = 1234
+        acc.in_game_since = time.time() - 120
+        acc.last_activity_at = time.time()
+        acc.liveness_state = "alive"
+        maint._accounts = [acc]
+
+        liveness = {
+            "state": "alive",
+            "score": 8.0,
+            "validation": {"cpu": 3.0, "ram_mb": 300.0, "windows": 1},
+            "reason_key": "",
+            "dialog": {},
+        }
+        with patch.object(ProcessManager, "assess_liveness", return_value=liveness) as assess:
+            SystemMaintenance._scan_liveness_watchdog(maint)
+
+        self.assertTrue(assess.call_args.kwargs["inspect_ui"])
+        self.assertIn(acc._config_username, maint._last_popup_scan_at)
+
+    def test_popup_scan_max_parallel_limits_periodic_window_scans(self):
+        maint = object.__new__(SystemMaintenance)
+        maint._cfg = {
+            "watchdog_enabled": True,
+            "popup_disconnected_enabled": True,
+            "popup_scan_interval_seconds": 5,
+            "popup_scan_max_parallel": 1,
+            "watchdog_hold_time": 60,
+            "watchdog_activity_timeout": 180,
+            "watchdog_loading_grace": 90,
+            "watchdog_cpu_low": 0.9,
+        }
+        maint._accounts = []
+        maint._workers = {}
+        maint._last_popup_scan_at = {}
+        maint._handle_presence_disconnect_assist = lambda *args, **kwargs: False
+
+        class Net:
+            def is_online(self):
+                return True
+
+        class Recovery:
+            _net = Net()
+
+        maint._recovery = Recovery()
+        accounts = []
+        for index in range(3):
+            acc = Account(username=f"popup_budget_user_{index}")
+            acc.state = AccountState.IN_GAME
+            acc.pid = 2000 + index
+            acc.in_game_since = time.time() - 120
+            acc.last_activity_at = time.time()
+            acc.liveness_state = "alive"
+            accounts.append(acc)
+        maint._accounts = accounts
+
+        inspect_flags = []
+
+        def _liveness(*args, **kwargs):
+            inspect_flags.append(bool(kwargs.get("inspect_ui")))
+            return {
+                "state": "alive",
+                "score": 8.0,
+                "validation": {"cpu": 3.0, "ram_mb": 300.0, "windows": 1},
+                "reason_key": "",
+                "dialog": {},
+            }
+
+        with patch.object(ProcessManager, "assess_liveness", side_effect=_liveness):
+            SystemMaintenance._scan_liveness_watchdog(maint)
+
+        self.assertEqual(inspect_flags, [True, False, False])
+        self.assertEqual(len(maint._last_popup_scan_at), 1)
+
+    def test_popup_scan_queue_advances_by_account_order_after_interval(self):
+        maint = object.__new__(SystemMaintenance)
+        maint._cfg = {
+            "watchdog_enabled": True,
+            "popup_disconnected_enabled": True,
+            "popup_scan_interval_seconds": 30,
+            "popup_scan_max_parallel": 2,
+            "watchdog_hold_time": 60,
+            "watchdog_activity_timeout": 180,
+            "watchdog_loading_grace": 90,
+            "watchdog_cpu_low": 0.9,
+        }
+        maint._accounts = []
+        maint._workers = {}
+        maint._last_popup_scan_at = {}
+        maint._last_popup_batch_at = 0.0
+        maint._popup_scan_cursor = 0
+        maint._handle_presence_disconnect_assist = lambda *args, **kwargs: False
+
+        class Net:
+            def is_online(self):
+                return True
+
+        class Recovery:
+            _net = Net()
+
+        maint._recovery = Recovery()
+        accounts = []
+        for index in range(4):
+            acc = Account(username=f"popup_queue_user_{index}")
+            acc.state = AccountState.IN_GAME
+            acc.pid = 3000 + index
+            acc.in_game_since = time.time() - 120
+            acc.last_activity_at = time.time()
+            acc.liveness_state = "alive"
+            accounts.append(acc)
+        maint._accounts = accounts
+
+        def _liveness(*args, **kwargs):
+            return {
+                "state": "alive",
+                "score": 8.0,
+                "validation": {"cpu": 3.0, "ram_mb": 300.0, "windows": 1},
+                "reason_key": "",
+                "dialog": {},
+            }
+
+        inspect_flags = []
+
+        def _record_liveness(*args, **kwargs):
+            inspect_flags.append(bool(kwargs.get("inspect_ui")))
+            return _liveness(*args, **kwargs)
+
+        with patch.object(ProcessManager, "assess_liveness", side_effect=_record_liveness):
+            SystemMaintenance._scan_liveness_watchdog(maint)
+
+        self.assertEqual(inspect_flags, [True, True, False, False])
+        self.assertEqual(maint._popup_scan_cursor, 2)
+        self.assertEqual(set(maint._last_popup_scan_at), {"popup_queue_user_0", "popup_queue_user_1"})
+
+        inspect_flags.clear()
+        with patch.object(ProcessManager, "assess_liveness", side_effect=_record_liveness):
+            SystemMaintenance._scan_liveness_watchdog(maint)
+
+        self.assertEqual(inspect_flags, [False, False, False, False])
+        self.assertEqual(maint._popup_scan_cursor, 2)
+
+        maint._last_popup_batch_at = time.time() - 31
+        inspect_flags.clear()
+        with patch.object(ProcessManager, "assess_liveness", side_effect=_record_liveness):
+            SystemMaintenance._scan_liveness_watchdog(maint)
+
+        self.assertEqual(inspect_flags, [False, False, True, True])
+        self.assertEqual(maint._popup_scan_cursor, 0)
+        self.assertEqual(
+            set(maint._last_popup_scan_at),
+            {"popup_queue_user_0", "popup_queue_user_1", "popup_queue_user_2", "popup_queue_user_3"},
+        )
+
+    def test_popup_dialog_rejoin_signal_overrides_alive_process(self):
+        maint = object.__new__(SystemMaintenance)
+        maint._cfg = {
+            "watchdog_enabled": True,
+            "popup_disconnected_enabled": True,
+            "popup_scan_interval_seconds": 1,
+            "connection_error_hold_time": 1,
+            "watchdog_hold_time": 60,
+            "watchdog_activity_timeout": 180,
+            "watchdog_loading_grace": 90,
+            "watchdog_cpu_low": 0.9,
+        }
+        maint._accounts = []
+        maint._workers = {}
+        maint._last_popup_scan_at = {}
+
+        class Net:
+            def is_online(self):
+                return True
+
+        class Recovery:
+            _net = Net()
+
+            def __init__(self):
+                self.calls = []
+
+            def handle_runtime_signal(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+
+        class State:
+            def set_binding_status(self, *args, **kwargs):
+                pass
+
+        recovery = Recovery()
+        maint._recovery = recovery
+        maint._state_mgr = State()
+        acc = Account(username="popup_rejoin_user")
+        acc.state = AccountState.IN_GAME
+        acc.pid = 1234
+        acc.in_game_since = time.time() - 120
+        acc.last_activity_at = time.time()
+        acc.liveness_state = "alive"
+        acc.liveness_suspect_since = time.time() - 2
+        acc.runtime_generation = 7
+        acc.session_id = "sess"
+        acc.launch_nonce = "nonce"
+        acc.rejoin_transaction_id = "tx"
+        maint._accounts = [acc]
+
+        liveness = {
+            "state": "reconnecting",
+            "score": 8.0,
+            "validation": {"cpu": 3.0, "ram_mb": 300.0, "windows": 1},
+            "reason_key": "session_conflict",
+            "dialog": {
+                "matched": True,
+                "recovery_allowed": True,
+                "action": "conditional_rejoin",
+                "reason_key": "session_conflict",
+                "detail": "Error Code 273",
+                "error_code": "273",
+                "popup_confidence": 1.5,
+                "disconnect_category": "SESSION_CONFLICT",
+            },
+        }
+        with patch.object(ProcessManager, "assess_liveness", return_value=liveness):
+            SystemMaintenance._scan_liveness_watchdog(maint)
+
+        self.assertEqual(len(recovery.calls), 1)
+        args, kwargs = recovery.calls[0]
+        self.assertEqual(args[1], "disconnect_detected")
+        self.assertEqual(args[2], "session_conflict")
+        self.assertEqual(kwargs["expected_runtime_generation"], 7)
+        self.assertEqual(kwargs["payload"]["popup_code"], "273")
 
     def test_window_resize_uses_interval_and_config(self):
         maint = object.__new__(SystemMaintenance)

@@ -189,6 +189,42 @@ class MaintenanceLivenessMixin:
                 expected_transaction_id=transaction_id,
             )
 
+    def _popup_periodic_scan_batch(self, now: float, candidate_keys: list, interval: float, max_parallel: int) -> set:
+        if not candidate_keys:
+            self._popup_scan_cursor = 0
+            return set()
+
+        try:
+            cursor = int(getattr(self, "_popup_scan_cursor", 0) or 0)
+        except Exception:
+            cursor = 0
+        cursor %= len(candidate_keys)
+
+        try:
+            last_batch_at = float(getattr(self, "_last_popup_batch_at", 0.0) or 0.0)
+        except Exception:
+            last_batch_at = 0.0
+        if last_batch_at and (now - last_batch_at) < interval:
+            return set()
+
+        try:
+            count = max(1, int(max_parallel or 1))
+        except Exception:
+            count = 1
+        count = min(count, len(candidate_keys))
+
+        selected = [candidate_keys[(cursor + offset) % len(candidate_keys)] for offset in range(count)]
+        self._popup_scan_cursor = (cursor + count) % len(candidate_keys)
+        self._last_popup_batch_at = now
+
+        popup_scan_at = getattr(self, "_last_popup_scan_at", None)
+        if popup_scan_at is None:
+            popup_scan_at = {}
+            self._last_popup_scan_at = popup_scan_at
+        for key in selected:
+            popup_scan_at[key] = now
+        return set(selected)
+
     def _scan_liveness_watchdog(self):
         if not self._cfg.get("watchdog_enabled", True):
             return
@@ -198,8 +234,36 @@ class MaintenanceLivenessMixin:
         loading_grace = max(30.0, float(self._cfg.get("watchdog_loading_grace", 90) or 90))
         cpu_low = float(self._cfg.get("watchdog_cpu_low", 0.9) or 0.9)
         startup_grace = max(0.0, float(self._cfg.get("popup_startup_grace_seconds", 8) or 8))
+        popup_scan_interval = max(5.0, float(self._cfg.get("popup_scan_interval_seconds", 30.0) or 30.0))
+        try:
+            popup_scan_max_parallel = max(1, int(float(self._cfg.get("popup_scan_max_parallel", 2) or 2)))
+        except Exception:
+            popup_scan_max_parallel = 2
         popup_enabled = bool(self._cfg.get("popup_disconnected_enabled", True))
         net_online = self._recovery._net.is_online()
+        popup_scan_at = getattr(self, "_last_popup_scan_at", None)
+        if popup_scan_at is None:
+            popup_scan_at = {}
+            self._last_popup_scan_at = popup_scan_at
+        popup_batch_keys = set()
+        if popup_enabled:
+            popup_candidates = []
+            for candidate in self._accounts:
+                with candidate._lock:
+                    if candidate.state != AccountState.IN_GAME:
+                        continue
+                    if not candidate.pid or candidate.recovery_inflight:
+                        continue
+                    candidate_in_game_for = now - (candidate.in_game_since or now)
+                    candidate_presence_mismatch = bool(candidate.presence_mismatch_since)
+                if candidate_in_game_for >= startup_grace or candidate_presence_mismatch:
+                    popup_candidates.append(candidate._config_username)
+            popup_batch_keys = self._popup_periodic_scan_batch(
+                now,
+                popup_candidates,
+                popup_scan_interval,
+                popup_scan_max_parallel,
+            )
 
         for acc in self._accounts:
             with acc._lock:
@@ -223,7 +287,13 @@ class MaintenanceLivenessMixin:
             if in_game_for < startup_grace and not presence_mismatch_active and not recovery_inflight:
                 continue
 
-            inspect_ui = popup_enabled and (presence_mismatch_active or old_state in {"suspect_frozen", "frozen", "reconnecting", "teleporting"})
+            popup_key = acc._config_username
+            popup_periodic_allowed = bool(popup_enabled and popup_key in popup_batch_keys)
+            inspect_ui = popup_enabled and (
+                presence_mismatch_active
+                or popup_periodic_allowed
+                or old_state in {"suspect_frozen", "frozen", "reconnecting", "teleporting"}
+            )
             liveness = ProcessManager.assess_liveness(
                 pid,
                 previous_cpu=previous_cpu,
@@ -317,6 +387,14 @@ class MaintenanceLivenessMixin:
                             acc.last_watchdog_classification = "disconnect_dialog_rejoin"
                             acc.liveness_state = "reconnecting"
                         else:
+                            runtime_state = getattr(self, "_runtime_state", None) or getattr(self._recovery, "_runtime_state", None)
+                            if runtime_state:
+                                runtime_state.set_recovery(
+                                    acc,
+                                    status="checking_disconnect",
+                                    reason=reason_key or str(dialog.get("reason_key") or "connection_error"),
+                                    inflight=False,
+                                )
                             self._state_mgr.set_binding_status(acc, "verified", reason=f"liveness:{state}")
                             continue
                     else:

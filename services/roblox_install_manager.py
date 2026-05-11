@@ -22,6 +22,14 @@ WEAO_CURRENT_VERSION_URL = "https://weao.xyz/api/versions/current"
 SETUP_BASE_URL = "https://setup.rbxcdn.com"
 ROBLOX_EXE = "RobloxPlayerBeta.exe"
 WEAO_USER_AGENT = "WEAO-3PService"
+ROBLOX_INSTALL_BLOCKER_NAMES = {
+    "robloxplayerbeta.exe",
+    "robloxplayerlauncher.exe",
+    "robloxplayerinstaller.exe",
+    "robloxcrashhandler.exe",
+    "robloxstudiobeta.exe",
+    "roblox account manager.exe",
+}
 
 PACKAGE_EXTRACT_DIRS = {
     "RobloxApp.zip": "",
@@ -90,12 +98,16 @@ class RobloxInstallManager:
         with self._lock:
             job = dict(self._job)
         installed = self.detect_installed()
+        blockers = self.find_install_blockers()
+        block_msg = self._format_blockers(blockers)
         return {
             "ok": True,
             "installed": installed,
             "installed_version": installed.get("version") or "",
             "installed_path": installed.get("path") or "",
-            "running_blocked": bool(self.guard_running() or self.roblox_running()),
+            "running_blocked": bool(self.guard_running() or self.roblox_running() or blockers),
+            "blockers": blockers,
+            "block_msg": block_msg,
             "job": job,
         }
 
@@ -108,6 +120,9 @@ class RobloxInstallManager:
     def _start_job(self, action: str, target: Callable[..., None], *args: Any) -> Dict[str, Any]:
         if self.guard_running() or self.roblox_running():
             return {"ok": False, "accepted": False, "msg": "Stop Argus and close Roblox first."}
+        blockers = self.find_install_blockers()
+        if blockers:
+            return {"ok": False, "accepted": False, "msg": self._format_blockers(blockers), "blockers": blockers}
         with self._lock:
             if self._job.get("active"):
                 return {"ok": False, "accepted": False, "msg": "Roblox install job already running.", "job": dict(self._job)}
@@ -198,6 +213,60 @@ class RobloxInstallManager:
         best["installed"] = True
         return best
 
+    def find_install_blockers(self) -> List[Dict[str, Any]]:
+        blockers: List[Dict[str, Any]] = []
+        try:
+            import psutil
+        except Exception:
+            return blockers
+
+        current_pid = os.getpid()
+        root_markers = [str(root).lower() for root in self.roblox_roots()]
+        seen = set()
+        for proc in psutil.process_iter(["pid", "name", "exe", "cmdline"]):
+            try:
+                pid = int(proc.info.get("pid") or 0)
+                if not pid or pid == current_pid:
+                    continue
+                name = str(proc.info.get("name") or "").strip()
+                name_l = name.lower()
+                exe = str(proc.info.get("exe") or "").strip()
+                cmdline_parts = proc.info.get("cmdline") or []
+                cmdline = " ".join(str(part) for part in cmdline_parts)
+                haystack = f"{exe} {cmdline}".lower()
+            except Exception:
+                continue
+
+            reason = ""
+            if name_l in ROBLOX_INSTALL_BLOCKER_NAMES:
+                reason = "roblox_process"
+            elif any(marker and marker in haystack for marker in root_markers):
+                reason = "uses_roblox_path"
+            if not reason:
+                continue
+            if pid in seen:
+                continue
+            seen.add(pid)
+            blockers.append({
+                "pid": pid,
+                "name": name or f"PID {pid}",
+                "path": exe,
+                "reason": reason,
+            })
+        blockers.sort(key=lambda item: (str(item.get("name") or "").lower(), int(item.get("pid") or 0)))
+        return blockers
+
+    def _format_blockers(self, blockers: List[Dict[str, Any]]) -> str:
+        if not blockers:
+            return ""
+        shown = ", ".join(
+            f"{item.get('name') or 'Process'} (PID {item.get('pid')})"
+            for item in blockers[:4]
+        )
+        if len(blockers) > 4:
+            shown += f", +{len(blockers) - 4} more"
+        return f"Close Roblox-related apps first: {shown}."
+
     def full_wipe(self) -> Dict[str, Any]:
         removed: List[str] = []
         failed: List[Dict[str, str]] = []
@@ -246,8 +315,10 @@ class RobloxInstallManager:
             return
 
         last_error: Optional[BaseException] = None
-        for attempt in range(3):
+        for attempt in range(4):
             self._clear_tree_attributes(root)
+            if attempt == 1:
+                self._repair_tree_permissions(root)
             try:
                 shutil.rmtree(root, onerror=self._rmtree_onerror)
                 return
@@ -261,7 +332,12 @@ class RobloxInstallManager:
                 time.sleep(0.15 * (attempt + 1))
 
         if root.exists():
-            raise RuntimeError("Close Roblox or run Argus as Administrator.")
+            blockers = self.find_install_blockers()
+            if blockers:
+                raise RuntimeError(self._format_blockers(blockers))
+            detail = self._first_remaining_path(root)
+            suffix = f": {last_error}" if last_error else ""
+            raise RuntimeError(f"Cannot remove {detail}. Close apps using Roblox files or run Argus as Administrator{suffix}")
         if last_error:
             raise RuntimeError(str(last_error))
 
@@ -303,6 +379,37 @@ class RobloxInstallManager:
                 ctypes.windll.kernel32.SetFileAttributesW(str(path), clean_attrs)
         except Exception:
             pass
+
+    def _repair_tree_permissions(self, root: Path) -> None:
+        if os.name != "nt" or not self._safe_roblox_root(root) or not root.exists():
+            return
+        commands = [
+            ["attrib", "-R", "-S", "-H", str(root)],
+            ["attrib", "-R", "-S", "-H", str(root / "*"), "/S", "/D"],
+            ["takeown", "/F", str(root), "/R", "/D", "Y"],
+            ["icacls", str(root), "/grant", "*S-1-5-32-544:(OI)(CI)F", "/T", "/C", "/Q"],
+        ]
+        username = os.environ.get("USERNAME", "").strip()
+        domain = os.environ.get("USERDOMAIN", "").strip()
+        if username:
+            account = f"{domain}\\{username}" if domain else username
+            commands.append(["icacls", str(root), "/grant", f"{account}:(OI)(CI)F", "/T", "/C", "/Q"])
+        for command in commands:
+            try:
+                subprocess.run(command, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=45, check=False)
+            except Exception:
+                continue
+
+    def _first_remaining_path(self, root: Path) -> str:
+        try:
+            for current, dirs, files in os.walk(root):
+                for name in files:
+                    return str(Path(current) / name)
+                for name in dirs:
+                    return str(Path(current) / name)
+        except Exception:
+            pass
+        return str(root)
 
     def remove_protocol_registry(self) -> Dict[str, Any]:
         removed: List[str] = []

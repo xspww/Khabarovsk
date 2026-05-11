@@ -169,8 +169,6 @@ def register(app, ctx: ApiContext) -> None:
         error = ""
         try:
             farm_was_running = bool(farm.running)
-            if farm_was_running:
-                farm.stop()
             closed = ProcessManager.kill_all_roblox_clients(wait_seconds=4.0)
             ok = True
             flog_kv("API", "close_all_roblox", account="*", closed=closed, farm_was_running=farm_was_running)

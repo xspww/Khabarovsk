@@ -39,6 +39,7 @@ class SystemMaintenance(
         self._accounts = accounts
         self._workers = workers
         self._recovery = recovery
+        self._runtime_state = getattr(recovery, "_runtime_state", None)
         self._state_mgr = state_mgr
         self._cfg = cfg
         self._stop = stop
@@ -47,6 +48,9 @@ class SystemMaintenance(
         self._last_priority_apply_at = 0.0
         self._last_cpu_limiter_apply_at = 0.0
         self._last_window_resize_at = 0.0
+        self._last_popup_scan_at: Dict[str, float] = {}
+        self._last_popup_batch_at = 0.0
+        self._popup_scan_cursor = 0
 
     def run(self):
         flog("[MAINT] started")

@@ -41,7 +41,9 @@ def register(app, ctx: ApiContext) -> None:
             "not_responding_timeout",
             "network_check_interval", "network_debounce",
             "queue_timeout", "cooldown_after_crash", "relaunch_loop_limit",
-            "connection_error_rejoin", "popup_disconnected_enabled", "connection_error_hold_time",
+            "connection_error_rejoin", "popup_disconnected_enabled",
+            "popup_scan_interval_seconds", "popup_scan_max_parallel",
+            "connection_error_hold_time",
             "watchdog_enabled", "watchdog_cpu_low",
             "watchdog_ram_low", "watchdog_hold_time",
             "watchdog_activity_timeout", "watchdog_loading_grace",
@@ -143,6 +145,10 @@ def register(app, ctx: ApiContext) -> None:
             updates["presence_api_enabled"] = bool(updates["presence_api_enabled"])
         if "popup_disconnected_enabled" in updates:
             updates["popup_disconnected_enabled"] = bool(updates["popup_disconnected_enabled"])
+        if "popup_scan_interval_seconds" in updates:
+            updates["popup_scan_interval_seconds"] = _int_setting(updates["popup_scan_interval_seconds"], 30, 5, 3600)
+        if "popup_scan_max_parallel" in updates:
+            updates["popup_scan_max_parallel"] = _int_setting(updates["popup_scan_max_parallel"], 2, 1, 32)
         if "presence_assist_rejoin_enabled" in updates:
             updates["presence_assist_rejoin_enabled"] = bool(updates["presence_assist_rejoin_enabled"])
         if "presence_poll_interval_seconds" in updates:

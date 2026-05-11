@@ -135,6 +135,30 @@ class RuntimeHardeningTests(unittest.TestCase):
             stop.set()
             recovery.stop()
 
+    def test_launch_success_clears_stale_disconnect_watchdog_status(self):
+        recovery, _queue, stop = self._make_recovery()
+        acc = Account(username="launch_success_status_user")
+        acc.state = AccountState.VERIFY
+        acc.desired_state = AccountState.IN_GAME
+        acc.session_checked = True
+        acc.session_valid = True
+        acc.pid = 1234
+        acc.process_binding_status = "verified"
+        acc.last_watchdog_classification = "disconnect_dialog_rejoin"
+        acc.liveness_state = "reconnecting"
+        acc.liveness_suspect_since = time.time()
+        try:
+            recovery.report_launch_success(acc)
+            self.assertEqual(acc.state, AccountState.IN_GAME)
+            self.assertEqual(acc.recovery_status, "in_game")
+            self.assertEqual(acc.last_recovery_reason, "launch_success")
+            self.assertEqual(acc.last_watchdog_classification, "alive")
+            self.assertEqual(acc.liveness_state, "alive")
+            self.assertEqual(acc.liveness_suspect_since, 0.0)
+        finally:
+            stop.set()
+            recovery.stop()
+
     def test_recovery_with_context_pid_schedules_after_kill(self):
         recovery, queue, stop = self._make_recovery()
         acc = Account(username="context_pid_recovery_user")

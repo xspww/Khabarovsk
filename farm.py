@@ -902,6 +902,7 @@ class RecoveryCoordinator:
             account=acc,
             reason=canonical,
             reason_msg=reason_msg,
+            **(context.to_dict() if context else {}),
         )
 
         if bool(policy.get("fatal")):
@@ -1025,6 +1026,10 @@ class RecoveryCoordinator:
             acc.last_network_lost_at = None
             acc.last_crash_reason = ""
             acc.last_rejoin_trigger = ""
+            acc.last_watchdog_classification = "alive"
+            acc.liveness_state = "alive"
+            acc.liveness_suspect_since = 0.0
+            acc.last_activity_reason = "launch_success"
             self._runtime_state.set_cooldown(acc, 0.0, reason="launch_success")
             self._runtime_state.set_recovery(acc, status="in_game", reason="launch_success", inflight=False)
             acc.recovery_scheduled_at = 0.0
@@ -1918,6 +1923,7 @@ class AccountWorker(threading.Thread):
                             error_code = str(disconnect_info.get("error_code") or "")
                             action = str(disconnect_info.get("action") or "rejoin")
                             confidence = float(disconnect_info.get("popup_confidence", disconnect_info.get("confidence", 0.0)) or 0.0)
+                            effective_hold_sec = 1.0 if error_code in {"267", "268", "273", "277"} else hold_sec
                             evidence_note = f"source={disconnect_info.get('evidence_source', '')} confidence={confidence:.2f} samples={disconnect_info.get('positive_samples', 0)}/{disconnect_info.get('sample_count', 0)}"
                             detail_suffix = f" code={error_code}" if error_code else ""
                             if not disconnect_info.get("recovery_allowed"):
@@ -1954,12 +1960,15 @@ class AccountWorker(threading.Thread):
                                 continue
                             if self._connection_error_since is None:
                                 self._connection_error_since = time.time()
-                                flog(f"[WORKER] {acc.display_name} disconnect dialog detected - will recover in {hold_sec:.0f}s ({reason_key}{detail_suffix} {evidence_note}: {detail})")
-                                self._wake.wait(timeout=min(1.0, hold_sec))
+                                runtime_state = getattr(self.recovery, "_runtime_state", None)
+                                if runtime_state:
+                                    runtime_state.set_recovery(acc, status="checking_disconnect", reason=reason_key, inflight=False)
+                                flog(f"[WORKER] {acc.display_name} disconnect dialog detected - will recover in {effective_hold_sec:.0f}s ({reason_key}{detail_suffix} {evidence_note}: {detail})")
+                                self._wake.wait(timeout=min(1.0, effective_hold_sec))
                                 self._wake.clear()
                                 continue
-                            elif time.time() - self._connection_error_since >= hold_sec:
-                                flog(f"[WORKER] {acc.display_name} disconnect dialog held {hold_sec:.0f}s -> force recover ({reason_key}{detail_suffix} {evidence_note})")
+                            elif time.time() - self._connection_error_since >= effective_hold_sec:
+                                flog(f"[WORKER] {acc.display_name} disconnect dialog held {effective_hold_sec:.0f}s -> force recover ({reason_key}{detail_suffix} {evidence_note})")
                                 with acc._lock:
                                     runtime_generation = acc.runtime_generation
                                     session_id = acc.session_id
@@ -1998,7 +2007,7 @@ class AccountWorker(threading.Thread):
                                     )
                                 continue
                             else:
-                                self._wake.wait(timeout=min(1.0, max(0.2, hold_sec / 2.0)))
+                                self._wake.wait(timeout=min(1.0, max(0.2, effective_hold_sec / 2.0)))
                                 self._wake.clear()
                                 continue
                         else:
@@ -2030,7 +2039,13 @@ class AccountWorker(threading.Thread):
                         else:
                             self._not_responding_since = None
 
-                self._wake.wait(timeout=crash_to)
+                wait_timeout = float(crash_to)
+                if acc.pid and acc.in_game_since and self.cfg.get("connection_error_rejoin", True) and self.cfg.get("popup_disconnected_enabled", True):
+                    wait_timeout = min(
+                        wait_timeout,
+                        max(1.0, float(self.cfg.get("popup_scan_interval_seconds", 2.0) or 2.0)),
+                    )
+                self._wake.wait(timeout=wait_timeout)
                 self._wake.clear()
                 continue
 
@@ -3671,12 +3686,19 @@ class FarmController:
             "server": account.server_type.value,
         })
 
-    def _on_crash(self, account: Account, reason: str = "", reason_msg: str = "", **_):
+    def _on_crash(self, account: Account, reason: str = "", reason_msg: str = "", **fields):
         with self._event_lock:
             self._total_crash += 1
         self._bump_status_revision()
         display_reason = reason_msg or reason
-        self._push_event("crash", f"Lost: {account.display_name} - {display_reason}", account=account, severity="critical", reason=reason)
+        self._push_event(
+            "crash",
+            f"Lost: {account.display_name} - {display_reason}",
+            account=account,
+            severity="critical",
+            reason=reason,
+            **fields,
+        )
         account.retry_history.append({
             "ts": time.time(),
             "type": "crash",
@@ -3727,7 +3749,7 @@ class FarmController:
                     payload={"trigger": f"net:{new.lower()}"},
                 )
 
-    def _push_event(self, kind: str, msg: str, account: Optional[Account] = None, severity: str = "info", reason: str = ""):
+    def _push_event(self, kind: str, msg: str, account: Optional[Account] = None, severity: str = "info", reason: str = "", **fields: Any):
         if account:
             with account._lock:
                 runtime_snapshot = account.runtime_snapshot()
@@ -3769,6 +3791,10 @@ class FarmController:
             "recovery_status": runtime_snapshot.get("recovery_status", ""),
             "command_inflight": runtime_snapshot.get("command_inflight"),
         }
+        for key, value in fields.items():
+            if key in {"account", "msg", "kind", "event_type", "severity", "reason"}:
+                continue
+            item[key] = value
         self._timeline.record(item, account_snapshot=runtime_snapshot if account else None, account_id=account_key)
         self._bump_status_revision()
         flog(f"[EVENT] [{kind}] {msg}")

@@ -17,7 +17,7 @@ from roblox_hybrid import HybridLauncher, resolve_vip_access_code, validate_cook
 from services.process_service import ProcessManager
 
 from .context import ApiContext
-from .settings_state import _normalize_window_size_settings
+from .settings_state import _apply_game_defaults, _normalize_window_size_settings
 
 APP_USER_AGENT = "ArgusLauncher/RT"
 _AVATAR_CACHE: Dict[str, Tuple[float, str]] = {}
@@ -76,7 +76,7 @@ def register(app, ctx: ApiContext) -> None:
 
     def _replace_farm_accounts_from_store() -> int:
         new_accounts = _load_accounts_from_account_data()
-        _apply_game_defaults(new_accounts, persist=False)
+        _apply_game_defaults(ctx, new_accounts, persist=False)
         was_running = farm.running
         if was_running:
             farm.stop()
@@ -239,6 +239,15 @@ def register(app, ctx: ApiContext) -> None:
     @app.get("/api/accounts")
     def api_get_accounts():
         return _account_data_api_records()
+
+
+    @app.post("/api/accounts/reload")
+    def api_reload_accounts():
+        try:
+            count = _replace_farm_accounts_from_store()
+        except Exception as e:
+            raise HTTPException(400, f"Reload failed: {e}")
+        return {"ok": True, "count": count, "msg": f"Reloaded cookies ({count})"}
 
 
     @app.get("/api/accounts/avatars")

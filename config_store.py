@@ -63,6 +63,8 @@ DEFAULTS: Dict[str, Any] = {
     "recovery_confidence_threshold": 45.0,
     "connection_error_rejoin":  True,
     "popup_disconnected_enabled": True,
+    "popup_scan_interval_seconds": 30,
+    "popup_scan_max_parallel": 2,
     "connection_error_hold_time": 3,
     "popup_startup_grace_seconds": 8,
     "popup_confidence_threshold": 1.0,

@@ -9,7 +9,7 @@ HOTSPOT_FILE_LIMITS = {
     "farm.py": 4800,
     "main.py": 1700,
     "process_net.py": 2650,
-    "core.py": 1700,
+    "core.py": 1300,
 }
 
 FORBIDDEN_DUMPING_GROUND_NAMES = {

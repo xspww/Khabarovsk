@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 HOTSPOT_FILE_LIMITS = {
     "farm.py": 4800,
     "main.py": 700,
-    "process_net.py": 1800,
+    "process_net.py": 900,
     "core.py": 1300,
 }
 
@@ -108,6 +108,10 @@ class ArchitectureDisciplineTests(unittest.TestCase):
             "services/cookie_service.py",
             "services/vip_tracker.py",
             "services/network_monitor.py",
+            "services/roblox_processes.py",
+            "services/roblox_liveness.py",
+            "services/roblox_windows.py",
+            "services/roblox_launch_service.py",
         }
         for rel in service_files:
             with self.subTest(file=rel):

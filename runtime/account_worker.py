@@ -786,6 +786,10 @@ class AccountWorker(threading.Thread):
                                 continue
                         else:
                             self._connection_error_since = None
+                            if acc.recovery_status == "checking_disconnect" and not acc.recovery_inflight:
+                                runtime_state = getattr(self.recovery, "_runtime_state", None)
+                                if runtime_state:
+                                    runtime_state.set_recovery(acc, status="in_game", reason="disconnect_check_clear", inflight=False)
 
                     if runtime > 30:
                         if ProcessManager.is_not_responding(acc.pid):

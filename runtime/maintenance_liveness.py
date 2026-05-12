@@ -365,6 +365,10 @@ class MaintenanceLivenessMixin:
                         allow_rejoin=False,
                     ):
                         continue
+                    if acc.recovery_status == "checking_disconnect" and not acc.recovery_inflight:
+                        runtime_state = getattr(self, "_runtime_state", None) or getattr(self._recovery, "_runtime_state", None)
+                        if runtime_state:
+                            runtime_state.set_recovery(acc, status="in_game", reason="liveness_alive_clear_disconnect_check", inflight=False)
                     acc.last_activity_at = now
                     acc.last_activity_reason = f"liveness:{state}"
                     acc.liveness_suspect_since = 0.0

@@ -143,11 +143,12 @@ class HybridAccountTests(unittest.TestCase):
             account = store.to_roboguard_accounts()[0]
             self.assertEqual(account["browser_tracker_id"], "112233")
 
-    def test_status_step_prioritizes_checking_disconnect_over_in_game(self):
+    def test_status_step_keeps_active_checking_disconnect_over_in_game(self):
         controller = FarmController.__new__(FarmController)
         controller._net_mon = None
         account = Account("UserA")
         account.recovery_status = "checking_disconnect"
+        account.liveness_state = "reconnecting"
         account.last_recovery_at = 123.0
         account.last_state_change_at = 100.0
 
@@ -156,6 +157,21 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(step, "Checking Disconnect")
         self.assertEqual(index, 4)
         self.assertEqual(started_at, 123.0)
+
+    def test_status_step_treats_stale_disconnect_check_as_in_game_when_alive(self):
+        controller = FarmController.__new__(FarmController)
+        controller._net_mon = None
+        account = Account("UserA")
+        account.recovery_status = "checking_disconnect"
+        account.last_recovery_reason = "connection_error"
+        account.liveness_state = "alive"
+        account.in_game_since = 456.0
+
+        step, index, started_at = controller._recovery_step_for_account(account, AccountState.IN_GAME)
+
+        self.assertEqual(step, "Recovery Complete")
+        self.assertEqual(index, 8)
+        self.assertEqual(started_at, 456.0)
 
     def test_status_step_marks_in_game_complete_even_with_old_launch_reason(self):
         controller = FarmController.__new__(FarmController)

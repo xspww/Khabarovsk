@@ -438,6 +438,8 @@ class FarmController:
         state_name = display_state.name
         if state_name == "COOLDOWN":
             return "Stabilizing", 7, float(acc.recovery_scheduled_at or acc.cooldown_until or acc.last_state_change_at or 0.0)
+        if state_name == "IN_GAME" and not acc.recovery_inflight and str(acc.liveness_state or "").lower() in {"alive", "idle"}:
+            return "Recovery Complete", 8, float(acc.in_game_since or acc.last_state_change_at or 0.0)
         if recovery_status == "checking_disconnect" or "checking_disconnect" in reason_text:
             return "Checking Disconnect", 4, float(acc.last_recovery_at or acc.last_state_change_at or 0.0)
         if state_name == "IN_GAME" and recovery_status in {"", "in_game"}:

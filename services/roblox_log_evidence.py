@@ -14,6 +14,8 @@ _DISCONNECT_KEYWORDS = (
     "lost connection",
     "please rejoin",
     "same account launched",
+    "game joined from another device",
+    "joined from another device",
     "moderation message",
 )
 
@@ -24,6 +26,8 @@ def classify_log_line(line: Any) -> Dict[str, Any]:
     code_match = _ERROR_CODE_RE.search(text)
     code = str(code_match.group(1) or "") if code_match else ""
     keyword = next((item for item in _DISCONNECT_KEYWORDS if item in lower), "")
+    if not code and ("game joined from another device" in lower or "joined from another device" in lower):
+        code = "273"
     confidence = 0.0
     if code:
         confidence += 0.8

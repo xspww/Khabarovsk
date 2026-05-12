@@ -157,6 +157,14 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertFalse(evidence["matched"])
         self.assertEqual(evidence["confidence"], 0.0)
 
+    def test_roblox_log_line_maps_joined_from_other_device_to_273(self):
+        evidence = classify_log_line(
+            "Client has been disconnected with reason: Disconnected from game, possibly due to game joined from another device"
+        )
+        self.assertTrue(evidence["matched"])
+        self.assertEqual(evidence["error_code"], "273")
+        self.assertEqual(evidence["keyword"], "disconnected")
+
     def test_recovery_evaluate_rejects_stale_runtime_generation(self):
         recovery, queue, stop = self._make_recovery()
         acc = Account(username="stale_eval_user")

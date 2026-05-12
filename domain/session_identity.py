@@ -8,6 +8,8 @@ import urllib.parse
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from services.browser_tracker import tracker_label
+
 
 def _new_id(prefix: str) -> str:
     return f"{prefix}_{int(time.time() * 1000)}_{uuid.uuid4().hex[:12]}"
@@ -178,6 +180,7 @@ def _unique(values: List[str], limit: int = 10) -> List[str]:
 def build_launch_intent(account: Any, reason: str = "") -> Dict[str, Any]:
     vip_links = list(getattr(account, "vip_links", []) or [])
     active_vip = str(getattr(account, "active_vip", "") or "")
+    browser_tracker_id = str(getattr(account, "browser_tracker_id", "") or "")
     place_id = str(getattr(account, "place_id", "") or "")
     server_type = getattr(getattr(account, "server_type", None), "value", str(getattr(account, "server_type", "") or ""))
     launch_strategy = str(getattr(account, "launch_strategy", "") or "")
@@ -210,6 +213,7 @@ def build_launch_intent(account: Any, reason: str = "") -> Dict[str, Any]:
         "private_server_intent": private_server_intent,
         "active_vip_hash": str(parsed_active.get("url_hash", "") or ""),
         "active_private_link_code_hash": active_private_hash,
+        "browser_tracker_id": tracker_label(browser_tracker_id),
     }
     return {
         "reason": str(reason or ""),
@@ -227,5 +231,6 @@ def build_launch_intent(account: Any, reason: str = "") -> Dict[str, Any]:
         "active_job_id_hash": str(parsed_active.get("job_id_hash", "") or ""),
         "configured_vip_place_ids": configured_place_ids,
         "configured_private_link_code_hashes": configured_private_hashes,
+        "browser_tracker_id": tracker_label(browser_tracker_id),
         "launch_intent_summary": launch_intent_summary,
     }

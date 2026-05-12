@@ -55,6 +55,7 @@ class MaintenanceLivenessMixin:
                     pid,
                     owner_key=acc._config_username,
                     expected_identity=identity,
+                    expected_browser_tracker_id=acc.browser_tracker_id,
                 ))
                 if pid_live:
                     self._recovery.handle_runtime_signal(
@@ -310,9 +311,20 @@ class MaintenanceLivenessMixin:
             validation = liveness.get("validation") or {}
             reason_key = str(liveness.get("reason_key") or "watchdog_timeout")
             dialog = liveness.get("dialog") or {}
+            log_evidence = liveness.get("log_evidence") or {}
             cpu = float(validation.get("cpu") or 0.0)
             ram = float(validation.get("ram_mb") or 0.0)
             windows = int(validation.get("windows") or 0)
+            if log_evidence.get("matched"):
+                flog_kv(
+                    "WATCHDOG",
+                    "roblox_log_evidence",
+                    account=acc.display_name,
+                    pid=pid,
+                    error_code=log_evidence.get("error_code", ""),
+                    confidence=log_evidence.get("confidence", 0.0),
+                    source=log_evidence.get("source", "roblox_log"),
+                )
 
             if state == "missing":
                 if worker:
@@ -379,6 +391,8 @@ class MaintenanceLivenessMixin:
                                 "popup_confidence": float(dialog.get("popup_confidence", dialog.get("confidence", 0.0)) or 0.0),
                                 "disconnect_category": str(dialog.get("disconnect_category") or ""),
                                 "visual_disconnect": bool(dialog.get("visual_disconnect", False)),
+                                "evidence_source": str(dialog.get("evidence_source") or ""),
+                                "visual_evidence_source": str(dialog.get("visual_evidence_source") or ""),
                                 "reconnecting_for": reconnecting_for,
                             }
                             acc.liveness_suspect_since = 0.0
@@ -426,6 +440,8 @@ class MaintenanceLivenessMixin:
                     reason=reason_key,
                     error_code=error_code,
                     confidence=f"{float(dialog_rejoin.get('popup_confidence') or 0.0):.2f}",
+                    source=dialog_rejoin.get("evidence_source", ""),
+                    visual_source=dialog_rejoin.get("visual_evidence_source", ""),
                     detail=detail,
                     reconnecting_for=f"{float(dialog_rejoin.get('reconnecting_for') or 0.0):.1f}",
                     runtime_generation=dialog_rejoin.get("runtime_generation"),
@@ -444,6 +460,8 @@ class MaintenanceLivenessMixin:
                         "popup_confidence": dialog_rejoin.get("popup_confidence", 0.0),
                         "disconnect_category": dialog_rejoin.get("disconnect_category", ""),
                         "visual_disconnect": bool(dialog_rejoin.get("visual_disconnect", False)),
+                        "evidence_source": dialog_rejoin.get("evidence_source", ""),
+                        "visual_evidence_source": dialog_rejoin.get("visual_evidence_source", ""),
                     },
                     expected_runtime_generation=int(dialog_rejoin.get("runtime_generation") or 0),
                     expected_session_id=str(dialog_rejoin.get("session_id") or ""),

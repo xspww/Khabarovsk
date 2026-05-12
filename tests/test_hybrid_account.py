@@ -1625,6 +1625,100 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(kwargs["expected_runtime_generation"], 7)
         self.assertEqual(kwargs["payload"]["popup_code"], "273")
 
+    def test_visual_popup_is_enriched_with_recent_log_error_code(self):
+        from services.roblox_liveness import assess_liveness
+
+        class FakeProcessManager:
+            @classmethod
+            def validate_game_process(cls, pid, min_ram_mb=0.0):
+                return {"ok": True, "cpu": 0.0, "ram_mb": 180.0, "windows": 1}
+
+            @classmethod
+            def is_not_responding(cls, pid):
+                return False
+
+            @classmethod
+            def inspect_disconnect_dialog(cls, *args, **kwargs):
+                return {
+                    "matched": True,
+                    "recovery_allowed": True,
+                    "action": "rejoin",
+                    "reason_key": "connection_error",
+                    "detail": "visual_disconnect source=center_modal strength=strong",
+                    "error_code": "",
+                    "popup_confidence": 1.1,
+                    "disconnect_category": "VISUAL_DISCONNECT",
+                    "visual_disconnect": True,
+                    "evidence_source": "visual_strong",
+                }
+
+            @classmethod
+            def classify_disconnect_dialog_texts(cls, texts):
+                return ProcessManager.classify_disconnect_dialog_texts(texts)
+
+        with patch(
+            "services.roblox_liveness.collect_recent_log_evidence",
+            return_value={
+                "matched": True,
+                "source": "roblox_log",
+                "error_code": "273",
+                "keyword": "same account launched",
+                "confidence": 1.2,
+                "line": "Same account launched experience from different device. (Error Code: 273)",
+            },
+        ) as collect:
+            result = assess_liveness(FakeProcessManager, 1234, inspect_ui=True)
+
+        collect.assert_called_once()
+        dialog = result["dialog"]
+        self.assertEqual(result["state"], "reconnecting")
+        self.assertEqual(result["reason_key"], "session_conflict")
+        self.assertEqual(dialog["error_code"], "273")
+        self.assertEqual(dialog["action"], "conditional_rejoin")
+        self.assertEqual(dialog["disconnect_category"], "SESSION_CONFLICT")
+        self.assertEqual(dialog["evidence_source"], "error_code")
+        self.assertEqual(dialog["visual_evidence_source"], "visual_strong")
+        self.assertTrue(dialog["visual_disconnect"])
+
+    def test_log_evidence_alone_does_not_create_popup_recovery(self):
+        from services.roblox_liveness import assess_liveness
+
+        class FakeProcessManager:
+            @classmethod
+            def validate_game_process(cls, pid, min_ram_mb=0.0):
+                return {"ok": True, "cpu": 0.0, "ram_mb": 80.0, "windows": 0}
+
+            @classmethod
+            def is_not_responding(cls, pid):
+                return False
+
+            @classmethod
+            def inspect_disconnect_dialog(cls, *args, **kwargs):
+                return {
+                    "matched": False,
+                    "recovery_allowed": False,
+                    "action": "",
+                    "reason_key": "",
+                    "detail": "",
+                    "error_code": "",
+                }
+
+        with patch(
+            "services.roblox_liveness.collect_recent_log_evidence",
+            return_value={
+                "matched": True,
+                "source": "roblox_log",
+                "error_code": "273",
+                "confidence": 1.2,
+                "line": "Same account launched experience from different device. (Error Code: 273)",
+            },
+        ):
+            result = assess_liveness(FakeProcessManager, 1234, inspect_ui=True)
+
+        self.assertNotEqual(result["state"], "reconnecting")
+        self.assertFalse(result["dialog"].get("recovery_allowed", False))
+        self.assertTrue(result["log_evidence"]["matched"])
+
     def test_window_resize_uses_interval_and_config(self):
         maint = object.__new__(SystemMaintenance)
         maint._cfg = {
@@ -2386,6 +2480,12 @@ class HybridAccountTests(unittest.TestCase):
         intent = build_launch_intent(acc, reason="unit")
         self.assertTrue(intent["private_server_intent"])
         self.assertEqual(intent["active_private_link_code_hash"], hashlib.sha256(access_code.encode("utf-8")).hexdigest()[:16])
+
+    def test_launch_intent_includes_browser_tracker_label(self):
+        acc = Account(username="UserA", place_id="123456", browser_tracker_id="TRACKER-ABCDEFGH")
+        intent = build_launch_intent(acc, reason="unit")
+        self.assertEqual(intent["browser_tracker_id"], "...ABCDEFGH")
+        self.assertEqual(intent["launch_intent_summary"]["browser_tracker_id"], "...ABCDEFGH")
 
     def test_cookie_identity_mismatch_blocks_launch_guard(self):
         with patch("roblox_hybrid.validate_cookie_details", return_value=(True, "RealUser", "ok", {"user_id": "42"})):

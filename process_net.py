@@ -68,6 +68,7 @@ class ProcessManager:
     classify_disconnect_dialog_texts = classmethod(_windows.classify_disconnect_dialog_texts)
 
     _same_windows_user = staticmethod(_processes._same_windows_user)
+    extract_browser_tracker_id_from_cmdline = staticmethod(_processes.extract_browser_tracker_id)
     get_process_identity = classmethod(_processes.get_process_identity)
     claim_pid_owner = classmethod(_processes.claim_pid_owner)
     release_pid_owner = classmethod(_processes.release_pid_owner)

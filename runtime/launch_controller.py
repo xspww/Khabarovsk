@@ -262,6 +262,7 @@ class LaunchController:
             launched_after=launched_after,
             owner_key=acc._config_username,
             expected_identity=acc.bound_process_identity,
+            expected_browser_tracker_id=acc.browser_tracker_id,
         )
         if not pid and (acc.bound_process_identity or ProcessManager.get_pid_owner(acc.pid) == acc._config_username):
             pid, name = ProcessManager.find_bound_game_process(
@@ -269,6 +270,7 @@ class LaunchController:
                 launched_after=None,
                 owner_key=acc._config_username,
                 expected_identity=acc.bound_process_identity,
+                expected_browser_tracker_id=acc.browser_tracker_id,
             )
         if not pid and launched_after is not None:
             flog_kv(
@@ -362,6 +364,7 @@ class LaunchController:
                 acc.pid,
                 owner_key=acc._config_username,
                 expected_identity=acc.bound_process_identity,
+                expected_browser_tracker_id=acc.browser_tracker_id,
             ) else None
             existing_name = acc.bound_process_name
             if existing_pid and allow_existing_reuse:
@@ -561,6 +564,7 @@ class LaunchController:
             timeout=verify_window,
             launched_after=launch_ts,
             created_after_slack=warmup_delay + 2.0,
+            expected_browser_tracker_id=acc.browser_tracker_id,
         )
 
         if stop.is_set():

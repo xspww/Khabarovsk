@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core import Account, flog, flog_kv
 from runtime.runtime_state_manager import RuntimeStateManager
+from services.browser_tracker import extract_browser_tracker_id, tracker_matches
 from services.resource_monitor import get_rt_monitor
 
 ROBLOX_GAME_NAMES = {"robloxplayerbeta.exe"}
@@ -99,6 +100,7 @@ def _inspect_roblox_process(cls, proc) -> Dict[str, Any]:
         rss_mb = float(proc.memory_info().rss / (1024 * 1024))
     except Exception:
         rss_mb = 0.0
+    browser_tracker_id = extract_browser_tracker_id(cmdline)
     window_snapshot = cls._window_snapshot_for_pid(proc.pid)
     windows = int(window_snapshot.get("count") or 0)
     cpu = float(_rt_monitor.get_cpu(proc.pid))
@@ -121,6 +123,7 @@ def _inspect_roblox_process(cls, proc) -> Dict[str, Any]:
         "exe": exe,
         "exe_name": exe_name,
         "cmdline": cmdline,
+        "browser_tracker_id": browser_tracker_id,
         "username": username,
         "rss_mb": rss_mb,
         "windows": windows,
@@ -142,6 +145,7 @@ def validate_game_process(
     expected_identity: str = "",
     launched_after: Optional[float] = None,
     min_ram_mb: float = 20.0,
+    expected_browser_tracker_id: str = "",
 ) -> Dict[str, Any]:
     result: Dict[str, Any] = {
         "ok": False,
@@ -156,6 +160,7 @@ def validate_game_process(
         "cpu": 0.0,
         "ram_mb": 0.0,
         "owner": "",
+        "browser_tracker_id": "",
     }
     if not pid:
         result["reason"] = "missing_pid"
@@ -173,6 +178,7 @@ def validate_game_process(
             "cpu": round(float(info["cpu"]), 2),
             "ram_mb": round(float(info["rss_mb"]), 1),
             "owner": info["owner"],
+            "browser_tracker_id": info["browser_tracker_id"],
         })
         if str(info["status"]).lower() == "zombie":
             result["reason"] = "zombie"
@@ -199,6 +205,10 @@ def validate_game_process(
         if expected_identity and info["identity"] and info["identity"] != expected_identity:
             result["reason"] = "identity_mismatch"
             return result
+        observed_tracker = str(info.get("browser_tracker_id") or "")
+        if expected_browser_tracker_id and observed_tracker and observed_tracker != str(expected_browser_tracker_id):
+            result["reason"] = "browser_tracker_mismatch"
+            return result
         if float(info["rss_mb"] or 0.0) < min_ram_mb and int(info["windows"] or 0) <= 0:
             result["reason"] = "low_ram"
             return result
@@ -212,6 +222,8 @@ def validate_game_process(
             confidence += 8.0
         if expected_identity and info["identity"] == expected_identity:
             confidence += 35.0
+        if tracker_matches(expected_browser_tracker_id, observed_tracker):
+            confidence += 40.0
         confidence += min(15.0, float(info["windows"]) * 7.0)
         confidence += min(12.0, float(info["rss_mb"]) / 120.0)
         confidence += min(10.0, float(info["cpu"]) * 2.0)
@@ -266,6 +278,7 @@ def find_bound_game_process(
     launched_after: Optional[float] = None,
     owner_key: str = "",
     expected_identity: str = "",
+    expected_browser_tracker_id: str = "",
 ) -> Tuple[Optional[int], str]:
     try:
         import psutil
@@ -282,6 +295,7 @@ def find_bound_game_process(
                         expected_identity=expected_identity,
                         launched_after=launched_after,
                         min_ram_mb=20.0,
+                        expected_browser_tracker_id=expected_browser_tracker_id,
                     )
                     if not validation.get("ok"):
                         flog_kv(
@@ -306,6 +320,9 @@ def find_bound_game_process(
                 owner = str(info["owner"] or "")
                 if owner and owner_key and owner != owner_key:
                     continue
+                observed_tracker = str(info.get("browser_tracker_id") or "")
+                if expected_browser_tracker_id and observed_tracker and observed_tracker != str(expected_browser_tracker_id):
+                    continue
                 identity = str(info["identity"] or "")
                 score = (window_count * 100000.0) + rss_mb + created
                 if owner_key and owner == owner_key:
@@ -314,6 +331,8 @@ def find_bound_game_process(
                     score += 250000.0
                 if expected_identity and identity == expected_identity:
                     score += 400000.0
+                if tracker_matches(expected_browser_tracker_id, observed_tracker):
+                    score += 650000.0
                 candidates.append((score, created, pid, str(info["name"] or "")))
             except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 continue
@@ -407,6 +426,7 @@ def list_live_game_processes(
                     "cpu": float(info["cpu"] or 0.0),
                     "identity": str(info["identity"] or ""),
                     "owner": str(info["owner"] or ""),
+                    "browser_tracker_id": str(info["browser_tracker_id"] or ""),
                     "exe": str(info["exe"] or ""),
                     "cmdline": str(info["cmdline"] or ""),
                     "username": str(info["username"] or ""),
@@ -529,6 +549,7 @@ def detect_new_pid(
     timeout: float = 20.0,
     launched_after: Optional[float] = None,
     created_after_slack: float = 0.0,
+    expected_browser_tracker_id: str = "",
 ) -> Optional[int]:
     try:
         deadline = time.time() + timeout
@@ -550,7 +571,12 @@ def detect_new_pid(
                 live_new_pids.add(pid)
                 first_seen.setdefault(pid, now)
                 if (now - first_seen[pid]) >= settle_seconds:
-                    validation = cls.validate_game_process(pid, launched_after=None, min_ram_mb=20.0)
+                    validation = cls.validate_game_process(
+                        pid,
+                        launched_after=None,
+                        min_ram_mb=20.0,
+                        expected_browser_tracker_id=expected_browser_tracker_id,
+                    )
                     if not validation.get("ok"):
                         flog_kv(
                             "PROC",
@@ -588,12 +614,14 @@ def is_bound_game_alive(
     pid: Optional[int],
     owner_key: str = "",
     expected_identity: str = "",
+    expected_browser_tracker_id: str = "",
 ) -> bool:
     validation = cls.validate_game_process(
         pid,
         owner_key=owner_key,
         expected_identity=expected_identity,
         min_ram_mb=0.0,
+        expected_browser_tracker_id=expected_browser_tracker_id,
     )
     return bool(validation.get("ok"))
 

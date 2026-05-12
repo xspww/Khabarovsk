@@ -224,12 +224,38 @@ def kill_local_duplicate_for_session_conflict(
     killed = 0
     with account._lock:
         bound_pid = int(account.pid or 0)
+        expected_owner = str(account._config_username or "")
+        expected_tracker = str(getattr(account, "browser_tracker_id", "") or "")
     for entry in list_processes():
         pid = int(entry.get("pid") or 0)
         owner = str(entry.get("owner") or "")
-        if not pid or pid == bound_pid or owner != account._config_username:
+        tracker = str(entry.get("browser_tracker_id") or "")
+        if not pid or pid == bound_pid:
+            continue
+        owner_match = bool(expected_owner and owner and owner == expected_owner)
+        tracker_match = bool(expected_tracker and tracker and tracker == expected_tracker)
+        if expected_tracker and tracker and not tracker_match:
+            continue
+        if not owner_match and not tracker_match:
             continue
         if kill_pid(pid):
             killed += 1
-            log_event("session_conflict_duplicate_killed", pid=pid, bound_pid=bound_pid, **ctx.to_dict())
+            fields = ctx.to_dict()
+            fields.update(
+                duplicate_pid=pid,
+                bound_pid=bound_pid,
+                owner_match=owner_match,
+                browser_tracker_match=tracker_match,
+            )
+            log_event(
+                "session_conflict_duplicate_killed",
+                **fields,
+            )
+    if not killed:
+        log_event(
+            "session_conflict_no_local_duplicate",
+            bound_pid=bound_pid,
+            browser_tracker_present=bool(expected_tracker),
+            **ctx.to_dict(),
+        )
     return killed

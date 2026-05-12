@@ -12,6 +12,7 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from core import flog_kv
+from services.browser_tracker import tracker_matches
 from process_net import ProcessManager as _LegacyProcessManager
 from services.process_ownership import validate_process_ownership
 from services.resource_monitor import get_rt_monitor
@@ -23,6 +24,10 @@ def _account_key(acc: Any) -> str:
 
 def _account_name(acc: Any) -> str:
     return str(getattr(acc, "display_name", "") or getattr(acc, "username", "") or _account_key(acc))
+
+
+def _account_browser_tracker_id(acc: Any) -> str:
+    return str(getattr(acc, "browser_tracker_id", "") or "")
 
 
 def _runtime_generation_matches(account: Any, expected_generation: Optional[int], reason: str) -> bool:
@@ -75,10 +80,19 @@ def _set_process_diagnostics(
         _write()
 
 
-def _has_binding_evidence(validation: Dict[str, Any], owner_key: str, expected_identity: str, launched_after: Optional[float]) -> bool:
+def _has_binding_evidence(
+    validation: Dict[str, Any],
+    owner_key: str,
+    expected_identity: str,
+    launched_after: Optional[float],
+    expected_browser_tracker_id: str = "",
+) -> bool:
     owner = str(validation.get("owner") or "")
     identity = str(validation.get("identity") or "")
     created = float(validation.get("created") or 0.0)
+    observed_tracker = str(validation.get("browser_tracker_id") or "")
+    if tracker_matches(expected_browser_tracker_id, observed_tracker):
+        return True
     if expected_identity and identity and identity == str(expected_identity):
         return True
     if owner_key and owner and owner == owner_key:
@@ -125,6 +139,7 @@ class ProcessService:
         log_failure: bool = True,
     ) -> Dict[str, Any]:
         owner_key = _account_key(account)
+        expected_browser_tracker_id = _account_browser_tracker_id(account)
         if expected_identity is None:
             try:
                 current_pid = int(getattr(account, "pid", 0) or 0)
@@ -142,13 +157,20 @@ class ProcessService:
             expected_identity=str(expected_identity or ""),
             launched_after=launched_after,
             min_ram_mb=min_ram_mb,
+            expected_browser_tracker_id=expected_browser_tracker_id,
         )
         windows = int(validation.get("windows") or 0)
         if validation.get("ok") and require_window and windows <= 0:
             validation = dict(validation)
             validation["ok"] = False
             validation["reason"] = "window_required"
-        if validation.get("ok") and not _has_binding_evidence(validation, owner_key, str(expected_identity or ""), launched_after):
+        if validation.get("ok") and not _has_binding_evidence(
+            validation,
+            owner_key,
+            str(expected_identity or ""),
+            launched_after,
+            expected_browser_tracker_id,
+        ):
             validation = dict(validation)
             validation["ok"] = False
             validation["reason"] = "unclaimed_process"
@@ -194,12 +216,14 @@ class ProcessService:
                 reject="" if validation.get("ok") else validation.get("reason", ""),
                 identity=validation.get("identity", ""),
                 expected_identity=str(expected_identity or ""),
+                expected_browser_tracker_id=expected_browser_tracker_id,
                 owner=validation.get("owner", ""),
                 owner_key=owner_key,
                 confidence=validation.get("confidence", 0.0),
                 binding_decision=validation.get("binding_decision", ""),
                 process_reject_reason=validation.get("process_reject_reason", ""),
                 process_owner_claim=validation.get("process_owner_claim", ""),
+                browser_tracker_id=validation.get("browser_tracker_id", ""),
                 confidence_level=validation.get("confidence_level", ""),
                 windows=windows,
                 hwnd=validation.get("hwnd", 0),
@@ -246,6 +270,7 @@ class ProcessService:
             pid=pid or "",
             reason=reason,
             expected_identity=expected_identity or "",
+            expected_browser_tracker_id=_account_browser_tracker_id(account),
             runtime_generation=getattr(account, "runtime_generation", 0),
             recovery_generation=getattr(account, "recovery_generation", 0),
             command_generation=getattr(account, "command_generation", 0),
@@ -374,6 +399,7 @@ class ProcessService:
                         other_pid,
                         owner_key=_account_key(other),
                         expected_identity=str(getattr(other, "bound_process_identity", "") or ""),
+                        expected_browser_tracker_id=_account_browser_tracker_id(other),
                     ))
                 except Exception:
                     other_bound_alive = False

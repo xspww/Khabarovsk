@@ -6,8 +6,61 @@ from typing import Any, Dict, Optional
 from core import Account
 from runtime.runtime_state_manager import RuntimeStateManager
 from core import flog_kv
+from services.roblox_log_evidence import collect_recent_log_evidence
 
 _RUNTIME_STATE = RuntimeStateManager(logger=flog_kv)
+_POPUP_LOG_EVIDENCE_WINDOW_SECONDS = 60.0
+
+
+def _text_hint_from_log_evidence(evidence: Dict[str, Any]) -> list[str]:
+    code = str(evidence.get("error_code") or "").strip()
+    keyword = str(evidence.get("keyword") or "").strip()
+    line = str(evidence.get("line") or "").strip()
+    texts = ["Disconnected"]
+    if keyword:
+        texts.append(keyword)
+    if line:
+        texts.append(line)
+    if code:
+        texts.append(f"(Error Code: {code})")
+    return texts
+
+
+def _merge_log_evidence_into_dialog(cls, dialog: Dict[str, Any], evidence: Dict[str, Any]) -> Dict[str, Any]:
+    if not dialog or not dialog.get("matched") or not dialog.get("recovery_allowed"):
+        return dialog
+    if dialog.get("error_code") or not evidence.get("matched") or not evidence.get("error_code"):
+        return dialog
+
+    classified = cls.classify_disconnect_dialog_texts(_text_hint_from_log_evidence(evidence))
+    if not classified.get("matched") or not classified.get("recovery_allowed"):
+        return dialog
+
+    merged = dict(dialog)
+    old_detail = str(dialog.get("detail") or "").strip()
+    log_detail = str(classified.get("detail") or evidence.get("line") or "").strip()
+    detail = old_detail
+    if log_detail and log_detail not in detail:
+        detail = f"{old_detail}; roblox_log={log_detail}" if old_detail else f"roblox_log={log_detail}"
+
+    merged.update({
+        "action": str(classified.get("action") or dialog.get("action") or ""),
+        "reason_key": str(classified.get("reason_key") or dialog.get("reason_key") or ""),
+        "disconnect_category": str(classified.get("disconnect_category") or dialog.get("disconnect_category") or ""),
+        "detail": detail,
+        "error_code": str(classified.get("error_code") or evidence.get("error_code") or ""),
+        "recovery_allowed": True,
+        "evidence_source": "error_code",
+        "log_evidence": dict(evidence),
+        "visual_disconnect": bool(dialog.get("visual_disconnect", False)),
+        "visual_evidence_source": str(dialog.get("evidence_source") or ""),
+    })
+    merged["popup_confidence"] = max(
+        float(dialog.get("popup_confidence", dialog.get("confidence", 0.0)) or 0.0),
+        float(classified.get("popup_confidence", classified.get("confidence", 0.0)) or 0.0),
+    )
+    merged["confidence"] = merged["popup_confidence"]
+    return merged
 
 def multi_signal_validate(
     cls,
@@ -15,6 +68,7 @@ def multi_signal_validate(
     launched_after: Optional[float] = None,
     owner_key: str = "",
     expected_identity: str = "",
+    expected_browser_tracker_id: str = "",
 ) -> Dict[str, Any]:
     result: Dict[str, Any] = {
         "pid": None,
@@ -31,6 +85,7 @@ def multi_signal_validate(
             "cpu": 0.0,
             "ram_mb": 0.0,
             "owner_match": False,
+            "browser_tracker_match": False,
             "candidates": [],
         },
     }
@@ -44,11 +99,28 @@ def multi_signal_validate(
         cpu = float(entry.get("cpu") or 0.0)
         ram_mb = float(entry.get("rss_mb") or 0.0)
         identity = str(entry.get("identity") or "")
+        browser_tracker_id = str(entry.get("browser_tracker_id") or "")
         pid_match = bool(preferred_pid and pid == preferred_pid)
         identity_match = bool(expected_identity and identity == expected_identity)
+        tracker_match = bool(expected_browser_tracker_id and browser_tracker_id == expected_browser_tracker_id)
         created_after_launch = bool(
             launched_after and float(entry.get("created") or 0.0) >= (float(launched_after) - 3.0)
         )
+        if expected_browser_tracker_id and browser_tracker_id and not tracker_match:
+            result["signals"]["candidates"].append({
+                "pid": pid,
+                "owner": owner,
+                "browser_tracker_match": False,
+                "pid_match": pid_match,
+                "created_after_launch": created_after_launch,
+                "windows": windows,
+                "hwnd": int(entry.get("hwnd") or 0),
+                "cpu": round(cpu, 2),
+                "ram_mb": round(ram_mb, 1),
+                "score": 0.0,
+                "rejected": "browser_tracker_mismatch",
+            })
+            continue
         if pid_match and expected_identity and not identity_match:
             result["signals"]["candidates"].append({
                 "pid": pid,
@@ -72,6 +144,8 @@ def multi_signal_validate(
             score += 35.0
         if owner_match:
             score += 20.0
+        if tracker_match:
+            score += 40.0
         if created_after_launch:
             score += 12.0
         score += min(15.0, float(windows) * 7.0)
@@ -85,6 +159,7 @@ def multi_signal_validate(
             "pid": pid,
             "owner": owner,
             "identity_match": identity_match,
+            "browser_tracker_match": tracker_match,
             "pid_match": pid_match,
             "created_after_launch": created_after_launch,
             "windows": windows,
@@ -111,6 +186,7 @@ def multi_signal_validate(
                 "cpu": round(cpu, 2),
                 "ram_mb": round(ram_mb, 1),
                 "owner_match": owner_match,
+                "browser_tracker_match": tracker_match,
             })
     return result
 
@@ -125,6 +201,7 @@ def staged_orphan_reconcile(
         launched_after=launched_after,
         owner_key=acc._config_username,
         expected_identity=acc.bound_process_identity,
+        expected_browser_tracker_id=acc.browser_tracker_id,
     )
     pid = int(validation.get("pid") or 0)
     confidence = float(validation.get("confidence") or 0.0)
@@ -150,7 +227,8 @@ def staged_orphan_reconcile(
 
     trusted_owner = bool(signals.get("owner_match"))
     trusted_identity = bool(signals.get("identity_match"))
-    trusted_restore = trusted_owner or trusted_identity
+    trusted_tracker = bool(signals.get("browser_tracker_match"))
+    trusted_restore = trusted_owner or trusted_identity or trusted_tracker
     if level == "HIGH_CONFIDENCE" and trusted_restore:
         with acc._lock:
             _RUNTIME_STATE.set_binding_status(acc, "verified", reason="orphan_reconcile_trusted_restore")
@@ -237,6 +315,7 @@ def assess_liveness(
         score -= 1.0
 
     dialog: Dict[str, Any] = {}
+    log_evidence: Dict[str, Any] = {}
     state = "alive"
     reason_key = ""
     if inspect_ui or (windows > 0 and score <= 4.0):
@@ -247,6 +326,9 @@ def assess_liveness(
             process_idle=score <= 4.0,
             sample_count=6 if inspect_ui else 2,
         )
+        if inspect_ui and dialog.get("matched") and dialog.get("recovery_allowed") and not dialog.get("error_code"):
+            log_evidence = collect_recent_log_evidence(since_seconds=_POPUP_LOG_EVIDENCE_WINDOW_SECONDS)
+            dialog = _merge_log_evidence_into_dialog(cls, dialog, log_evidence)
         if dialog.get("matched") and dialog.get("recovery_allowed"):
             reason_key = str(dialog.get("reason_key") or "connection_error")
             if reason_key == "teleport_timeout":
@@ -255,6 +337,8 @@ def assess_liveness(
                 state = "reconnecting"
             else:
                 state = "reconnecting"
+        elif inspect_ui and score <= 4.0:
+            log_evidence = collect_recent_log_evidence(since_seconds=180.0)
 
     if not state or state == "alive":
         if in_game_for < max(30.0, float(loading_grace or 90.0)) and not responsive and score <= 4.0:
@@ -275,4 +359,5 @@ def assess_liveness(
         "cpu_delta": round(cpu_delta, 2),
         "ram_delta": round(ram_delta, 1),
         "dialog": dialog,
+        "log_evidence": log_evidence,
     }

@@ -8,7 +8,8 @@ import time
 import urllib.parse
 from typing import Tuple
 
-from core import Account, ServerType, account_launch_block_reason, flog
+from core import Account, ServerType, account_launch_block_reason, flog, flog_kv
+from services.browser_tracker import tracker_label
 
 def parse_vip_link(vip_url: str) -> Tuple[str, str]:
     if not vip_url:
@@ -126,6 +127,13 @@ def launch(cls, acc: Account) -> Tuple[bool, str, str]:
             result = HybridLauncher.launch_record(record, target=target, multi_roblox=bool(cls.MULTI_ROBLOX_ENABLED))
             if result.get("ok"):
                 acc.browser_tracker_id = str(result.get("browser_tracker_id") or getattr(acc, "browser_tracker_id", "") or "")
+                flog_kv(
+                    "LAUNCH",
+                    "browser_tracker_assigned",
+                    account=acc.display_name,
+                    browser_tracker_id=tracker_label(acc.browser_tracker_id),
+                    mode=str(result.get("mode") or ""),
+                )
                 mode = str(result.get("mode") or "")
                 attempted_vip_hybrid = str(result.get("attempted_vip") or acc.active_vip or "")
                 if mode == "vip":

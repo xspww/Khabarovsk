@@ -39,6 +39,7 @@ class RobloxWatchdog(threading.Thread):
                 pid,
                 owner_key=acc._config_username,
                 expected_identity=acc.bound_process_identity,
+                expected_browser_tracker_id=acc.browser_tracker_id,
             ):
                 abnormal_since = None
                 self.worker.handle_missing_bound_process("watchdog_pid_missing")

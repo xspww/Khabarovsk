@@ -16,12 +16,15 @@ else:
 from core import Account, AccountState, EventBus, SmartQueue, StateManager
 import farm as farm_module
 from farm import RecoveryCoordinator, SystemMaintenance
-from runtime.recovery_context import NETWORK_DISCONNECT, RecoveryAttemptContext, normalize_disconnect_category
+from runtime.recovery_context import NETWORK_DISCONNECT, SESSION_CONFLICT, RecoveryAttemptContext, normalize_disconnect_category
+from runtime.recovery_policy import kill_local_duplicate_for_session_conflict
 from runtime.runtime_invariants import check_runtime_invariants
 from runtime.runtime_health import build_runtime_health
 from runtime.runtime_store import RuntimeStore
 from runtime.runtime_timeline import RuntimeTimeline
 from services.network_fault_injector import CommandResult, NetworkFaultInjector, RULE_PREFIX
+from services.roblox_log_evidence import classify_log_line, collect_recent_log_evidence
+from process_net import ProcessManager
 
 
 class RuntimeHardeningTests(unittest.TestCase):
@@ -70,6 +73,89 @@ class RuntimeHardeningTests(unittest.TestCase):
 
     def test_error_278_normalizes_to_rejoinable_network_disconnect(self):
         self.assertEqual(normalize_disconnect_category(popup_code="278"), NETWORK_DISCONNECT)
+
+    def test_browser_tracker_id_is_parsed_from_launch_command(self):
+        self.assertEqual(
+            ProcessManager.extract_browser_tracker_id_from_cmdline("roblox-player:1+browsertrackerid:BT_123"),
+            "BT_123",
+        )
+        self.assertEqual(
+            ProcessManager.extract_browser_tracker_id_from_cmdline("https://x/?browserTrackerId=ABC-789"),
+            "ABC-789",
+        )
+
+    def test_session_conflict_kills_only_matching_tracker_duplicate(self):
+        acc = Account(username="tracker_target")
+        acc.pid = 100
+        acc.browser_tracker_id = "TRACKER_A"
+        ctx = RecoveryAttemptContext(
+            account_id=acc._config_username,
+            runtime_generation=acc.runtime_generation,
+            pid=acc.pid,
+            category=SESSION_CONFLICT,
+            popup_code="273",
+        )
+        killed = []
+        events = []
+        entries = [
+            {"pid": 101, "owner": "", "browser_tracker_id": "TRACKER_A"},
+            {"pid": 102, "owner": acc._config_username, "browser_tracker_id": "TRACKER_B"},
+            {"pid": 103, "owner": "other", "browser_tracker_id": "TRACKER_C"},
+        ]
+
+        result = kill_local_duplicate_for_session_conflict(
+            acc,
+            ctx,
+            lambda: list(entries),
+            lambda pid: killed.append(pid) or True,
+            lambda event, **fields: events.append((event, fields)),
+        )
+
+        self.assertEqual(result, 1)
+        self.assertEqual(killed, [101])
+        self.assertEqual(events[0][0], "session_conflict_duplicate_killed")
+        self.assertTrue(events[0][1]["browser_tracker_match"])
+
+    def test_session_conflict_logs_when_no_matching_local_duplicate(self):
+        acc = Account(username="tracker_target_none")
+        acc.pid = 200
+        acc.browser_tracker_id = "TRACKER_A"
+        ctx = RecoveryAttemptContext(
+            account_id=acc._config_username,
+            runtime_generation=acc.runtime_generation,
+            pid=acc.pid,
+            category=SESSION_CONFLICT,
+            popup_code="273",
+        )
+        events = []
+
+        result = kill_local_duplicate_for_session_conflict(
+            acc,
+            ctx,
+            lambda: [{"pid": 201, "owner": "other", "browser_tracker_id": "TRACKER_B"}],
+            lambda pid: True,
+            lambda event, **fields: events.append((event, fields)),
+        )
+
+        self.assertEqual(result, 0)
+        self.assertEqual(events[0][0], "session_conflict_no_local_duplicate")
+
+    def test_roblox_log_evidence_reads_recent_disconnect_without_triggering_rejoin(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "Player.log")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("info\nDisconnected from game. Error Code: 279\n")
+
+            evidence = collect_recent_log_evidence(log_dir=tmp, since_seconds=60)
+
+        self.assertTrue(evidence["matched"])
+        self.assertEqual(evidence["error_code"], "279")
+        self.assertEqual(evidence["source"], "roblox_log")
+
+    def test_roblox_log_line_classifier_ignores_plain_runtime_noise(self):
+        evidence = classify_log_line("Joining experience with place id 123")
+        self.assertFalse(evidence["matched"])
+        self.assertEqual(evidence["confidence"], 0.0)
 
     def test_recovery_evaluate_rejects_stale_runtime_generation(self):
         recovery, queue, stop = self._make_recovery()

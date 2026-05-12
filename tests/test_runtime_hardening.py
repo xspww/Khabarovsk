@@ -214,6 +214,51 @@ class RuntimeHardeningTests(unittest.TestCase):
             stop.set()
             recovery.stop()
 
+    def test_visual_disconnect_signal_is_enriched_from_late_roblox_log_evidence(self):
+        recovery, _queue, stop = self._make_recovery()
+        acc = Account(username="visual_log_enrich_user")
+        acc.state = AccountState.IN_GAME
+        acc.desired_state = AccountState.IN_GAME
+        captured = {}
+        original_collect = farm_module.collect_recent_log_evidence
+        farm_module.collect_recent_log_evidence = lambda **kwargs: {  # type: ignore[assignment]
+            "matched": True,
+            "source": "roblox_log",
+            "error_code": "273",
+            "keyword": "disconnected",
+            "confidence": 1.2,
+            "line": "Lost connection with reason : Disconnected from game, possibly due to game joined from another device",
+        }
+        recovery.report_crash = lambda target, reason_key, reason_msg, cooldown=None, context=None: captured.update({  # type: ignore[method-assign]
+            "target": target,
+            "reason_key": reason_key,
+            "reason_msg": reason_msg,
+            "context": context,
+        })
+        try:
+            routed = recovery.handle_runtime_signal(
+                acc,
+                "disconnect_detected",
+                "connection_error",
+                payload={
+                    "trigger": "watchdog_popup",
+                    "detail": "PID=123 UI=visual_disconnect source=center_modal",
+                    "visual_disconnect": True,
+                    "evidence_source": "center_modal",
+                    "disconnect_category": "VISUAL_DISCONNECT",
+                },
+                expected_runtime_generation=acc.runtime_generation,
+            )
+            self.assertTrue(routed)
+            self.assertEqual(captured["reason_key"], "session_conflict")
+            self.assertIn("roblox_log=", captured["reason_msg"])
+            self.assertEqual(captured["context"].popup_code, "273")
+            self.assertEqual(captured["context"].category, SESSION_CONFLICT)
+        finally:
+            farm_module.collect_recent_log_evidence = original_collect  # type: ignore[assignment]
+            stop.set()
+            recovery.stop()
+
     def test_connection_error_is_not_treated_as_rapid_crash_loop(self):
         recovery, _queue, stop = self._make_recovery()
         acc = Account(username="disconnect_277_user")

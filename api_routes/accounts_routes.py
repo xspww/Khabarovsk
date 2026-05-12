@@ -337,8 +337,6 @@ def register(app, ctx: ApiContext) -> None:
         try:
             if kind in {"cookie", "cookies", "roblosecurity"}:
                 result = ACCOUNT_STORE.import_cookie_lines(line_list, validator=_import_cookie_validator)
-            elif kind in {"userpass", "user:pass", "login"}:
-                result = ACCOUNT_STORE.import_userpass_lines(line_list, open_browser=True)
             elif kind in {"accountdata", "ram", "file"}:
                 path = str(body.get("path") or "").strip()
                 if not path or not os.path.exists(path):

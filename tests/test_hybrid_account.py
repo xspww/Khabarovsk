@@ -807,8 +807,26 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("Close All Roblox", html)
         self.assertIn('id="reload-cookies-btn"', html)
         self.assertIn("Reload Cookies", html)
+        self.assertIn('class="account-stats"', html)
+        self.assertIn('id="accounts-stat-online"', html)
+        self.assertIn('id="accounts-stat-queued"', html)
+        self.assertIn('id="accounts-stat-ingame"', html)
+        self.assertIn('id="accounts-stat-attention"', html)
+        self.assertIn(".app{background:#07090d}", html)
+        self.assertIn(".sidebar{background:rgba(13,17,23,.94)", html)
+        self.assertIn(".nav button.active{background:linear-gradient(90deg,rgba(34,197,94,.18)", html)
+        self.assertIn("box-shadow:inset 2px 0 0 #22c55e", html)
+        self.assertIn(".account-stat-card", html)
+        self.assertIn("max-height:calc(100vh - 350px)", html)
+        self.assertIn("function renderTop(){const c=counts()", html)
+        self.assertIn("accounts-stat-attention", html)
         self.assertIn("/accounts/reload", html)
         self.assertIn("function reloadCookies()", html)
+        self.assertIn('id="toast" class="toast"', html)
+        self.assertIn("toast-icon", html)
+        self.assertIn("toast-close", html)
+        self.assertIn("Close notification", html)
+        self.assertIn(".toast:before", html)
         self.assertIn(".status.queued{background:#101827;border-color:#254f84;color:#60a5fa}", html)
         self.assertIn("/roblox/close-all", html)
         self.assertIn("function confirmCloseAllRoblox()", html)
@@ -990,15 +1008,20 @@ class HybridAccountTests(unittest.TestCase):
             self.assertNotIn(label, graphics_section)
         self.assertNotIn("AccountData Import", html)
         self.assertIn("choice-icon", html)
-        self.assertIn("function openManualMode()", html)
-        self.assertIn('id="manual-single"', html)
-        self.assertIn('id="manual-multi"', html)
-        self.assertIn("function openManualSingle()", html)
-        self.assertIn("function openManualMulti()", html)
-        self.assertIn("Login in browser.", html)
-        self.assertIn("Paste cookies.", html)
-        self.assertIn("One login.", html)
-        self.assertIn("One account per line.", html)
+        self.assertIn("function openAdd(){openCookie()}", html)
+        self.assertNotIn("function openManualMode()", html)
+        self.assertNotIn('id="manual-single"', html)
+        self.assertNotIn('id="manual-multi"', html)
+        self.assertNotIn("function openManualSingle()", html)
+        self.assertNotIn("function openManualMulti()", html)
+        self.assertNotIn("Manual Login", html)
+        self.assertNotIn("Login in browser.", html)
+        self.assertIn("Import Cookies", html)
+        self.assertIn("One cookie per line.", html)
+        self.assertNotIn("One login.", html)
+        self.assertNotIn("One account per line.", html)
+        self.assertNotIn("manual-login", html)
+        self.assertNotIn("kind:'userpass'", html)
         self.assertIn("Save changes first.", html)
         for old_copy in (
             "Sign in via a popup browser. 2FA, captcha, and passkey stay with you.",
@@ -1207,39 +1230,27 @@ class HybridAccountTests(unittest.TestCase):
         set_accounts.assert_called_once_with([])
         save_accounts.assert_called_once_with([])
 
-    def test_accounts_userpass_import_route_reloads_without_game_default_name_error(self):
+    def test_accounts_userpass_import_route_is_removed(self):
         from fastapi.testclient import TestClient
-        import api_routes.accounts_routes as accounts_routes
         import main
 
         client = TestClient(main.app)
-        with patch.object(
-            accounts_routes.ACCOUNT_STORE,
-            "import_userpass_lines",
-            return_value={"ok": True, "pending": 1},
-        ) as import_userpass_lines, patch.object(
-            accounts_routes.ACCOUNT_STORE,
-            "to_roboguard_accounts",
-            return_value=[],
-        ), patch.object(main.farm, "running", False), patch.object(
-            main.farm,
-            "set_accounts",
-        ) as set_accounts, patch.object(
-            main.cfg_mgr,
-            "save_accounts",
-        ) as save_accounts:
-            response = client.post(
-                "/api/accounts/import",
-                json={"kind": "userpass", "lines": ["UnitUser:password"]},
-            )
+        response = client.post("/api/accounts/import", json={"kind": "userpass", "lines": ["UnitUser:password"]})
 
-        self.assertEqual(response.status_code, 200)
-        payload = response.json()
-        self.assertTrue(payload["ok"])
-        self.assertEqual(payload["pending"], 1)
-        import_userpass_lines.assert_called_once_with(["UnitUser:password"], open_browser=True)
-        set_accounts.assert_called_once_with([])
-        save_accounts.assert_called_once_with([])
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("Unsupported import kind", response.text)
+
+    def test_manual_login_complete_endpoint_removed(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        response = client.post(
+            "/api/accounts/manual-login/complete",
+            json={"request_id": "req1", "token": "bad", "cookie": "_|WARNING:secret-cookie"},
+        )
+
+        self.assertEqual(response.status_code, 404)
 
     def test_accounts_reload_route_reloads_store_into_farm(self):
         from fastapi.testclient import TestClient
@@ -1679,6 +1690,48 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(dialog["evidence_source"], "error_code")
         self.assertEqual(dialog["visual_evidence_source"], "visual_strong")
         self.assertTrue(dialog["visual_disconnect"])
+
+    def test_visual_only_popup_scan_does_not_rejoin_healthy_process_without_log_evidence(self):
+        from services.roblox_liveness import assess_liveness
+
+        class FakeProcessManager:
+            @classmethod
+            def validate_game_process(cls, pid, min_ram_mb=0.0):
+                return {"ok": True, "cpu": 5.0, "ram_mb": 220.0, "windows": 1}
+
+            @classmethod
+            def is_not_responding(cls, pid):
+                return False
+
+            @classmethod
+            def inspect_disconnect_dialog(cls, *args, **kwargs):
+                return {
+                    "matched": True,
+                    "recovery_allowed": True,
+                    "action": "rejoin",
+                    "reason_key": "connection_error",
+                    "detail": "visual_disconnect source=center_modal strength=strong",
+                    "error_code": "",
+                    "popup_confidence": 1.1,
+                    "disconnect_category": "VISUAL_DISCONNECT",
+                    "visual_disconnect": True,
+                    "evidence_source": "visual_strong",
+                }
+
+            @classmethod
+            def classify_disconnect_dialog_texts(cls, texts):
+                return ProcessManager.classify_disconnect_dialog_texts(texts)
+
+        with patch(
+            "services.roblox_liveness.collect_recent_log_evidence",
+            return_value={"matched": False, "source": "roblox_log", "reason": "none"},
+        ):
+            result = assess_liveness(FakeProcessManager, 1234, inspect_ui=True, presence_mismatch=False)
+
+        self.assertEqual(result["state"], "alive")
+        self.assertFalse(result["dialog"]["matched"])
+        self.assertFalse(result["dialog"]["recovery_allowed"])
+        self.assertEqual(result["dialog"]["ignored_reason"], "visual_only_healthy_process")
 
     def test_log_evidence_alone_does_not_create_popup_recovery(self):
         from services.roblox_liveness import assess_liveness

@@ -33,6 +33,7 @@ from services.vip_tracker import VipTracker
 from services.process_service import ProcessManager
 from services.presence_service import PRESENCE_SERVICE
 from services.resource_monitor import get_rt_monitor
+from services.roblox_log_evidence import collect_recent_log_evidence
 from runtime.account_runtime_controller import AccountRuntimeController
 from runtime.runtime_health import account_health_flags, build_runtime_health
 from runtime.recovery_context import (
@@ -64,6 +65,43 @@ from runtime.system_maintenance import (
 )
 from runtime.launch_controller import LaunchController, _redact_launch_detail
 from runtime.roblox_watchdog import RobloxWatchdog
+
+
+def _enrich_visual_disconnect_payload_with_log(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Attach late Roblox log evidence when visual popup recovery wins the race."""
+    if not payload:
+        return payload
+    if payload.get("popup_code") or payload.get("error_code"):
+        return payload
+    if not payload.get("visual_disconnect"):
+        return payload
+    evidence_source = str(payload.get("evidence_source") or "")
+    if evidence_source not in {"visual_strong", "center_modal", "visual"}:
+        return payload
+
+    evidence = collect_recent_log_evidence(since_seconds=180.0, max_files=8, max_lines=1200)
+    code = str(evidence.get("error_code") or "").strip()
+    if not evidence.get("matched") or not code:
+        return payload
+
+    enriched = dict(payload)
+    detail = str(enriched.get("detail") or enriched.get("reason_msg") or "").strip()
+    log_line = str(evidence.get("line") or "").strip()
+    if log_line and log_line not in detail:
+        detail = f"{detail}; roblox_log={log_line}" if detail else f"roblox_log={log_line}"
+    enriched.update({
+        "popup_code": code,
+        "error_code": code,
+        "detail": detail,
+        "reason_msg": detail or str(enriched.get("reason_msg") or ""),
+        "evidence_source": "roblox_log",
+        "visual_evidence_source": evidence_source,
+        "log_evidence": dict(evidence),
+    })
+    if code == "273":
+        enriched["reason_key"] = "session_conflict"
+        enriched["disconnect_category"] = SESSION_CONFLICT
+    return enriched
 
 
 def compute_backoff(attempt: int, base: int = 5, cap: int = 120) -> float:
@@ -259,6 +297,7 @@ class RecoveryCoordinator:
     ) -> bool:
         """Single boundary for worker/watchdog/maintenance recovery signals."""
         payload = dict(payload or {})
+        payload = _enrich_visual_disconnect_payload_with_log(payload)
         raw_signal = str(signal or "").strip().lower()
         signal_name = RuntimeSignal.REJOIN_REQUESTED.value if raw_signal == RuntimeSignal.REJOIN_REQUESTED.value else normalize_runtime_signal(signal)
         reason_key = str(payload.get("reason_key") or reason or signal_name or "runtime_signal")

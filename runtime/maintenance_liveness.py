@@ -305,6 +305,7 @@ class MaintenanceLivenessMixin:
                 loading_grace=loading_grace,
                 cpu_threshold=cpu_low,
                 inspect_ui=inspect_ui,
+                presence_mismatch=presence_mismatch_active,
             )
             state = str(liveness.get("state") or "unknown")
             score = float(liveness.get("score") or 0.0)

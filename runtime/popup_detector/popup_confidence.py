@@ -25,9 +25,24 @@ def popup_confidence_score(
     if text_features.get("has_server_full") or text_features.get("has_teleport"):
         breakdown["roblox_error_text"] = 0.5
 
-    visual_score = float(visual_features.get("score") or 0.0)
-    if bool(visual_features.get("matched")) and visual_score > 0:
-        breakdown["visual"] = min(1.0, visual_score)
+    if bool(visual_features.get("matched")):
+        overlay_score = float(visual_features.get("overlay_score") or 0.0)
+        modal_score = float(visual_features.get("modal_score") or 0.0)
+        button_score = float(visual_features.get("button_score") or 0.0)
+        template_score = float(visual_features.get("template_score") or 0.0)
+        structural_score = float(visual_features.get("structural_score") or 0.0)
+        if overlay_score > 0:
+            breakdown["visual_overlay"] = min(0.25, overlay_score)
+        if modal_score > 0:
+            breakdown["visual_modal"] = min(0.45, modal_score)
+        if button_score > 0:
+            breakdown["visual_button"] = min(0.40, button_score)
+        if template_score > 0:
+            breakdown["visual_template"] = min(0.70, template_score)
+        if not any(key.startswith("visual_") for key in breakdown):
+            visual_score = float(visual_features.get("score") or 0.0)
+            if visual_score > 0:
+                breakdown["visual_structural"] = min(0.45, max(visual_score, structural_score))
 
     if process_idle:
         breakdown["process_idle"] = 0.3

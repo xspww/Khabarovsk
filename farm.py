@@ -434,11 +434,14 @@ class FarmController:
                 acc.liveness_state,
             )
         ).lower()
+        recovery_status = str(acc.recovery_status or "").strip().lower()
         state_name = display_state.name
-        if state_name == "IN_GAME":
-            return "Recovery Complete", 8, float(acc.in_game_since or acc.last_state_change_at or 0.0)
         if state_name == "COOLDOWN":
             return "Stabilizing", 7, float(acc.recovery_scheduled_at or acc.cooldown_until or acc.last_state_change_at or 0.0)
+        if recovery_status == "checking_disconnect" or "checking_disconnect" in reason_text:
+            return "Checking Disconnect", 4, float(acc.last_recovery_at or acc.last_state_change_at or 0.0)
+        if state_name == "IN_GAME" and recovery_status in {"", "in_game"}:
+            return "Recovery Complete", 8, float(acc.in_game_since or acc.last_state_change_at or 0.0)
         if state_name == "VERIFY" or "verify" in reason_text:
             return "Verifying Session", 6, float(acc.last_state_change_at or acc.last_launch_at or 0.0)
         if "session_conflict" in reason_text or "273" in reason_text:
@@ -1041,6 +1044,14 @@ class FarmController:
                     pass
             account_command = self.command_inflight(f"account:{acc._config_username}")
             recovery_step, recovery_step_index, recovery_step_started_at = self._recovery_step_for_account(acc, display_state)
+            state_label = meta["label"]
+            state_color = meta["color"]
+            if recovery_step == "Checking Disconnect":
+                state_label = "Checking Disconnect"
+                state_color = "#a1a1aa"
+            elif recovery_step in {"Rejoining Server", "Session Reconnect", "Network Rejoin", "Killing Process"}:
+                state_label = "Rejoining"
+                state_color = "#a1a1aa"
             cooldown_until = float(acc.cooldown_until or 0.0)
             cooldown_left = max(0, int(cooldown_until - time.time()))
             blocked_reason = account_launch_block_reason(acc)
@@ -1066,8 +1077,8 @@ class FarmController:
                 "state": display_state.name,
                 "public_state": snapshot_public,
                 "desired_state": runtime_snapshot.get("desired_public_state", acc.desired_state.name),
-                "state_label": meta["label"],
-                "state_color": meta["color"],
+                "state_label": state_label,
+                "state_color": state_color,
                 "description": acc.description,
                 "manual_status": acc.manual_status,
                 "finished_at": float(acc.finished_at or 0.0),

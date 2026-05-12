@@ -30,6 +30,13 @@ class PopupClassification:
     evidence_source: str = ""
     visual_strength: str = ""
     sampled_at: float = field(default_factory=time.time)
+    visual_stage: str = ""
+    button_pattern: str = ""
+    overlay_score: float = 0.0
+    modal_score: float = 0.0
+    button_score: float = 0.0
+    template_score: float = 0.0
+    text_code_confirmed: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -47,6 +54,13 @@ class PopupClassification:
             "evidence_source": self.evidence_source,
             "visual_strength": self.visual_strength,
             "sampled_at": self.sampled_at,
+            "visual_stage": self.visual_stage,
+            "button_pattern": self.button_pattern,
+            "overlay_score": self.overlay_score,
+            "modal_score": self.modal_score,
+            "button_score": self.button_score,
+            "template_score": self.template_score,
+            "text_code_confirmed": self.text_code_confirmed,
         }
 
 
@@ -74,6 +88,15 @@ def classify_popup_observation(
     visual_strong = visual_matched and visual_strength == "strong"
     evidence_source = "error_code" if code else ("text" if text_matched else ("visual_strong" if visual_strong else ("visual_weak" if visual_matched else "")))
     matched = bool(text_matched or visual_matched or score >= threshold)
+    visual_meta = {
+        "visual_stage": str(visual_features.get("visual_stage") or ""),
+        "button_pattern": str(visual_features.get("button_pattern") or ""),
+        "overlay_score": float(visual_features.get("overlay_score") or 0.0),
+        "modal_score": float(visual_features.get("modal_score") or 0.0),
+        "button_score": float(visual_features.get("button_score") or 0.0),
+        "template_score": float(visual_features.get("template_score") or 0.0),
+        "text_code_confirmed": bool(code),
+    }
 
     if not matched:
         return PopupClassification(
@@ -83,33 +106,36 @@ def classify_popup_observation(
             recovery_allowed=False,
             evidence_source=evidence_source,
             visual_strength=visual_strength,
+            **visual_meta,
         )
 
     detail = str(text_features.get("detail") or "")
     if code == "277":
-        return PopupClassification(True, "rejoin", "network_drop", NETWORK_DISCONNECT, detail, code, score, dict(confidence["breakdown"]), False, True, "error_code", visual_strength)
+        return PopupClassification(True, "rejoin", "network_drop", NETWORK_DISCONNECT, detail, code, score, dict(confidence["breakdown"]), False, True, "error_code", visual_strength, **visual_meta)
     if code == "278":
-        return PopupClassification(True, "rejoin", "idle_disconnect", NETWORK_DISCONNECT, detail, code, score, dict(confidence["breakdown"]), False, True, "error_code", visual_strength)
+        return PopupClassification(True, "rejoin", "idle_disconnect", NETWORK_DISCONNECT, detail, code, score, dict(confidence["breakdown"]), False, True, "error_code", visual_strength, **visual_meta)
     if code == "273":
-        return PopupClassification(True, "conditional_rejoin", "session_conflict", SESSION_CONFLICT, detail, code, score, dict(confidence["breakdown"]), False, True, "error_code", visual_strength)
+        return PopupClassification(True, "conditional_rejoin", "session_conflict", SESSION_CONFLICT, detail, code, score, dict(confidence["breakdown"]), False, True, "error_code", visual_strength, **visual_meta)
     if code == "267":
-        return PopupClassification(True, "rejoin", "security_kick", NETWORK_DISCONNECT, detail, code, score, dict(confidence["breakdown"]), False, True, "error_code", visual_strength)
+        return PopupClassification(True, "rejoin", "security_kick", NETWORK_DISCONNECT, detail, code, score, dict(confidence["breakdown"]), False, True, "error_code", visual_strength, **visual_meta)
     if code == "268":
-        return PopupClassification(True, "rejoin", "unexpected_client_behavior", NETWORK_DISCONNECT, detail, code, score, dict(confidence["breakdown"]), False, True, "error_code", visual_strength)
+        return PopupClassification(True, "rejoin", "unexpected_client_behavior", NETWORK_DISCONNECT, detail, code, score, dict(confidence["breakdown"]), False, True, "error_code", visual_strength, **visual_meta)
     if code:
-        return PopupClassification(True, "rejoin", "connection_error", NETWORK_DISCONNECT, detail, code, score, dict(confidence["breakdown"]), False, True, "error_code", visual_strength)
+        return PopupClassification(True, "rejoin", "connection_error", NETWORK_DISCONNECT, detail, code, score, dict(confidence["breakdown"]), False, True, "error_code", visual_strength, **visual_meta)
     if text_features.get("has_server_full"):
-        return PopupClassification(True, "rejoin", "server_full", SERVER_FULL, detail, code, score, dict(confidence["breakdown"]), False, True, "text", visual_strength)
+        return PopupClassification(True, "rejoin", "server_full", SERVER_FULL, detail, code, score, dict(confidence["breakdown"]), False, True, "text", visual_strength, **visual_meta)
     if text_features.get("has_teleport"):
-        return PopupClassification(True, "rejoin", "teleport_timeout", TELEPORT_FAILURE, detail, code, score, dict(confidence["breakdown"]), False, True, "text", visual_strength)
+        return PopupClassification(True, "rejoin", "teleport_timeout", TELEPORT_FAILURE, detail, code, score, dict(confidence["breakdown"]), False, True, "text", visual_strength, **visual_meta)
     if text_matched:
-        return PopupClassification(True, "rejoin", "connection_error", NETWORK_DISCONNECT, detail or "Disconnected", code, score, dict(confidence["breakdown"]), False, True, "text", visual_strength)
+        return PopupClassification(True, "rejoin", "connection_error", NETWORK_DISCONNECT, detail or "Disconnected", code, score, dict(confidence["breakdown"]), False, True, "text", visual_strength, **visual_meta)
     if visual_matched:
         visual_detail = "visual_disconnect"
         if visual_features:
             visual_detail += (
                 f" source={visual_features.get('source', '')}"
                 f" strength={visual_strength}"
+                f" stage={visual_features.get('visual_stage', '')}"
+                f" button={visual_features.get('button_pattern', '')}"
                 f" title_rms={visual_features.get('title_rms', '')}"
                 f" reconnect_rms={visual_features.get('reconnect_rms', '')}"
             )
@@ -126,8 +152,9 @@ def classify_popup_observation(
             visual_strong,
             "visual_strong" if visual_strong else "visual_weak",
             visual_strength,
+            **visual_meta,
         )
-    return PopupClassification(True, "rejoin", "connection_error", NETWORK_DISCONNECT, detail or "Disconnected", code, score, dict(confidence["breakdown"]), False, True, evidence_source, visual_strength)
+    return PopupClassification(True, "rejoin", "connection_error", NETWORK_DISCONNECT, detail or "Disconnected", code, score, dict(confidence["breakdown"]), False, True, evidence_source, visual_strength, **visual_meta)
 
 
 def classify_texts(texts: Iterable[Any]) -> Dict[str, Any]:

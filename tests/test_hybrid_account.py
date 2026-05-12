@@ -21,7 +21,7 @@ else:
 from account_hybrid import AccountDataStore, decrypt_cookie, encrypt_cookie, parse_cookie_line
 from core import Account, AccountState, ServerType, account_launch_block_reason
 from domain.session_identity import build_launch_intent
-from farm import Dispatcher, SystemMaintenance
+from farm import Dispatcher, FarmController, SystemMaintenance
 from performance_settings import (
     apply_graphics_settings_file,
     apply_performance_settings_file,
@@ -125,6 +125,34 @@ class HybridAccountTests(unittest.TestCase):
             store.write_records([{"username": "UserA", "browser_tracker_id": "112233"}])
             account = store.to_roboguard_accounts()[0]
             self.assertEqual(account["browser_tracker_id"], "112233")
+
+    def test_status_step_prioritizes_checking_disconnect_over_in_game(self):
+        controller = FarmController.__new__(FarmController)
+        controller._net_mon = None
+        account = Account("UserA")
+        account.recovery_status = "checking_disconnect"
+        account.last_recovery_at = 123.0
+        account.last_state_change_at = 100.0
+
+        step, index, started_at = controller._recovery_step_for_account(account, AccountState.IN_GAME)
+
+        self.assertEqual(step, "Checking Disconnect")
+        self.assertEqual(index, 4)
+        self.assertEqual(started_at, 123.0)
+
+    def test_status_step_marks_in_game_complete_even_with_old_launch_reason(self):
+        controller = FarmController.__new__(FarmController)
+        controller._net_mon = None
+        account = Account("UserA")
+        account.recovery_status = "in_game"
+        account.last_state_reason = "launch_sent"
+        account.in_game_since = 456.0
+
+        step, index, started_at = controller._recovery_step_for_account(account, AccountState.IN_GAME)
+
+        self.assertEqual(step, "Recovery Complete")
+        self.assertEqual(index, 8)
+        self.assertEqual(started_at, 456.0)
 
     def test_fps_limiter_updates_cap_and_sets_readonly(self):
         xml = '<roblox><Item><Properties><int name="FramerateCap">240</int></Properties></Item></roblox>'
@@ -921,6 +949,8 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn('id="close-all-roblox-btn"><svg class="btn-icon"', html)
         self.assertIn('id="reload-cookies-btn"><svg class="btn-icon"', html)
         self.assertIn('id="add-btn"><svg class="btn-icon"', html)
+        self.assertIn("apiLabel==='Checking Disconnect'||apiLabel==='Rejoining'", html)
+        self.assertIn("rec.includes('checking_disconnect')||step.includes('checking disconnect')", html)
         self.assertNotIn("save.disabled=!isDirty", html)
         self.assertNotIn("reset.disabled=!isDirty", html)
         self.assertIn("function resetGameSettings()", html)
@@ -1698,7 +1728,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(dialog["visual_evidence_source"], "visual_strong")
         self.assertTrue(dialog["visual_disconnect"])
 
-    def test_visual_only_popup_scan_does_not_rejoin_healthy_process_without_log_evidence(self):
+    def test_visual_confirmed_popup_overrides_alive_process_without_log_evidence(self):
         from services.roblox_liveness import assess_liveness
 
         class FakeProcessManager:
@@ -1735,10 +1765,11 @@ class HybridAccountTests(unittest.TestCase):
         ):
             result = assess_liveness(FakeProcessManager, 1234, inspect_ui=True, presence_mismatch=False)
 
-        self.assertEqual(result["state"], "alive")
-        self.assertFalse(result["dialog"]["matched"])
-        self.assertFalse(result["dialog"]["recovery_allowed"])
-        self.assertEqual(result["dialog"]["ignored_reason"], "visual_only_healthy_process")
+        self.assertEqual(result["state"], "reconnecting")
+        self.assertEqual(result["reason_key"], "connection_error")
+        self.assertTrue(result["dialog"]["matched"])
+        self.assertTrue(result["dialog"]["recovery_allowed"])
+        self.assertEqual(result["dialog"]["evidence_source"], "visual_strong")
 
     def test_log_evidence_alone_does_not_create_popup_recovery(self):
         from services.roblox_liveness import assess_liveness
@@ -1915,7 +1946,18 @@ class HybridAccountTests(unittest.TestCase):
     def test_visual_strong_disconnect_popup_matches_without_window_text(self):
         from runtime.popup_detector.popup_classifier import classify_popup_observation
 
-        visual = {"matched": True, "score": 1.1, "strength": "strong", "source": "template"}
+        visual = {
+            "matched": True,
+            "score": 1.1,
+            "strength": "strong",
+            "source": "template",
+            "visual_stage": "template",
+            "button_pattern": "double",
+            "overlay_score": 0.3,
+            "modal_score": 0.8,
+            "button_score": 0.6,
+            "template_score": 0.7,
+        }
         result = classify_popup_observation([], visual, process_idle=True, presence_mismatch=True)
 
         self.assertTrue(visual["matched"])
@@ -1923,6 +1965,54 @@ class HybridAccountTests(unittest.TestCase):
         self.assertTrue(result.recovery_allowed)
         self.assertEqual(result.evidence_source, "visual_strong")
         self.assertEqual(result.action, "rejoin")
+        self.assertEqual(result.visual_stage, "template")
+        self.assertEqual(result.button_pattern, "double")
+
+    def test_visual_pipeline_detects_overlay_modal_and_buttons_before_text(self):
+        from PIL import Image, ImageDraw
+        from runtime.popup_detector.popup_classifier import classify_popup_observation
+        from runtime.popup_detector.popup_visual_detector import detect_visual_features
+
+        image = Image.new("L", (800, 600), 130)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((220, 160, 580, 410), fill=58)
+        draw.line((240, 215, 560, 215), fill=190, width=2)
+        draw.rounded_rectangle((245, 340, 395, 382), radius=8, fill=245)
+        draw.rounded_rectangle((405, 340, 555, 382), radius=8, fill=245)
+
+        visual = detect_visual_features(image)
+        result = classify_popup_observation([], visual, process_idle=False, presence_mismatch=False)
+
+        self.assertTrue(visual["matched"])
+        self.assertEqual(visual["strength"], "strong")
+        self.assertEqual(visual["visual_stage"], "modal_button")
+        self.assertEqual(visual["button_pattern"], "double")
+        self.assertGreaterEqual(visual["overlay_score"], 0.28)
+        self.assertGreaterEqual(visual["modal_score"], 1.0)
+        self.assertGreaterEqual(visual["button_score"], 0.6)
+        self.assertTrue(result.recovery_allowed)
+        self.assertEqual(result.evidence_source, "visual_strong")
+
+    def test_modal_shape_without_button_is_visual_weak_and_ignored(self):
+        from PIL import Image, ImageDraw
+        from runtime.popup_detector.popup_classifier import classify_popup_observation
+        from runtime.popup_detector.popup_visual_detector import detect_visual_features
+
+        image = Image.new("L", (800, 600), 130)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((220, 160, 580, 410), fill=58)
+        draw.line((240, 215, 560, 215), fill=190, width=2)
+
+        visual = detect_visual_features(image)
+        result = classify_popup_observation([], visual, process_idle=True, presence_mismatch=True)
+
+        self.assertTrue(visual["matched"])
+        self.assertEqual(visual["strength"], "weak")
+        self.assertEqual(visual["visual_stage"], "structural_weak")
+        self.assertEqual(visual["button_pattern"], "none")
+        self.assertFalse(result.recovery_allowed)
+        self.assertEqual(result.evidence_source, "visual_weak")
+        self.assertEqual(result.action, "")
 
     def test_visual_weak_disconnect_popup_does_not_allow_recovery(self):
         from PIL import Image, ImageDraw
@@ -1963,6 +2053,8 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(result["action"], "rejoin")
         self.assertEqual(result["reason_key"], "connection_error")
         self.assertEqual(result["positive_samples"], 2)
+        self.assertEqual(result["samples_confirmed"], 2)
+        self.assertEqual(result["visual_positive_samples"], 2)
         self.assertEqual(result["disconnect_category"], "VISUAL_DISCONNECT")
         self.assertTrue(result["visual_disconnect"])
 

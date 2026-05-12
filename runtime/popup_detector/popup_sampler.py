@@ -294,7 +294,7 @@ class PopupObserver:
                 )
                 samples.append(classification)
                 if index < sample_total - 1 and interval > 0:
-                    if classification.error_code in {"267", "268", "273", "277", "278"}:
+                    if classification.error_code:
                         break
                     time.sleep(interval)
 
@@ -303,14 +303,25 @@ class PopupObserver:
                 if item.matched and item.recovery_allowed and (item.confidence >= self.threshold or item.visual_disconnect)
             ]
             coded = [item for item in samples if item.error_code]
+            text_confirmed = [
+                item for item in samples
+                if item.recovery_allowed and item.evidence_source == "text"
+            ]
+            visual_positive = [
+                item for item in positive
+                if item.evidence_source == "visual_strong"
+            ]
             best = max(samples, key=lambda item: item.confidence, default=PopupClassification(False))
-            confirmed = bool(coded or len(positive) >= self.stable_samples)
+            confirmed = bool(coded or len(text_confirmed) >= self.stable_samples or len(visual_positive) >= self.stable_samples)
             result = best.to_dict()
             result.update({
                 "matched": bool(confirmed),
                 "recovery_allowed": bool(confirmed and best.recovery_allowed),
                 "sample_count": len(samples),
                 "positive_samples": len(positive),
+                "samples_confirmed": len(coded) or len(text_confirmed) or len(visual_positive),
+                "visual_positive_samples": len(visual_positive),
+                "text_positive_samples": len(text_confirmed),
                 "prepared": prepared,
                 "stable_required": self.stable_samples,
             })

@@ -3,19 +3,65 @@
 </p>
 
 
-# Features
+# ✨ Features
 
-✅ มีออโต้ ล็อกอิน รหัส Roblox ทุกจอที่เปิด เพียงแค่ใส่ Cookie ของ Roblox เข้าไป มันก็จะจัดการให้ ถ้าใช้งานไม่ได้มันก็จะแจ้งเตือนบอกให้ด้วย
+## 🔐 Login System
 
-✅ มีระบบ Auto Rejoin หาก Roblox หลุด เด้ง หรือ Disconnect ระบบจะเข้าเกมกลับให้อัตโนมัติ ลดปัญหาตื่นมาแล้วเกมหลุดทั้งคืน
+* ✅ Auto Login Roblox ทุกจอ
+* ✅ รองรับ Multi-Instance เปิดหลายบัญชีพร้อมกัน
+* ✅ รองรับ ID / Password Login
+* ✅ รองรับ Roblox Cookie Login
+* ✅ ตรวจจับ Cookie หมดอายุอัตโนมัติ
+* ✅ แจ้งเตือนเมื่อ Cookie ใช้งานไม่ได้
 
-✅ สามารถตั้งค่าได้ว่าจะให้ Rejoin ไปเซิฟไหน รองรับการใส่ JobID เอง สำหรับคนที่ต้องการล็อกเซิฟเฉพาะ
+---
 
-✅ มีระบบจัดเรียงหน้าจอ Roblox อัตโนมัติ ช่วยให้หลายจอดูเป็นระเบียบ พร้อมตั้ง Delay ตอนย้ายเซิฟได้ ลดปัญหาเข้าเกมพร้อมกัน
+## 🔄 Auto Rejoin & Recovery
 
-✅ มีระบบช่วยลดการใช้ CPU และปรับการทำงานของ Roblox ให้ลื่นขึ้น ช่วยเปิดหลายจอได้ดีขึ้น และเพิ่ม FPS ได้ในบางกรณี
+* ✅ Auto Rejoin เมื่อเกมหลุด
+* ✅ Auto Recovery เมื่อ Roblox Crash
+* ✅ ตรวจจับ Disconnect / Error อัตโนมัติ
+* ✅ ตรวจจับเกมค้าง (Freeze Detection)
+* ✅ ระบบ Watchdog ตรวจสอบ Runtime ตลอดเวลา
+* ✅ Auto Create Private Server หากไม่มีเซิฟ ระบบจะสร้างให้อัตโนมัติ
 
-✅ มี Web Dashboard สำหรับดูสถานะการทำงานแบบ realtime พร้อมระบบ Log และ Monitor การทำงานทั้งหมด
+---
 
+## 🌐 Server Management
+
+* ✅ รองรับ Custom JobID Rejoin
+* ✅ เลือก Server Rejoin เองได้
+* ✅ ตั้งค่า Delay ตอนย้ายเซิฟได้
+* ✅ ป้องกัน Rejoin เร็วเกินไป
+
+---
+
+## 🖥️ Window & Multi-Monitor
+
+* ✅ Auto Arrange หน้าจอ Roblox
+* ✅ จัดเรียงหลายจออัตโนมัติ
+* ✅ รองรับ Multi-Monitor Setup
+* ✅ จัดการตำแหน่งหน้าต่าง Roblox ได้
+
+---
+
+## ⚡ Performance Optimization
+
+* ✅ ระบบลดการใช้ CPU
+* ✅ ช่วยเพิ่ม FPS ในบางกรณี
+* ✅ ลด Resource Usage สำหรับเปิดหลายจอ
+* ✅ ปรับ Process Priority ได้
+
+---
+
+## 📊 Dashboard & Monitoring
+
+* ✅ Web Dashboard แบบ Realtime
+* ✅ ดูสถานะทุกบัญชีผ่าน Browser
+* ✅ ดู Log การทำงานได้
+
+
+
+## Preview (Version 1.4)
 <img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/5ea2e1a2-a6ce-4239-8a7d-957ef52baf3f" />
 

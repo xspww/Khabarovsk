@@ -1,52 +1,21 @@
+<p align="center">
+  <img src="https://readme-typing-svg.herokuapp.com?font=JetBrains+Mono&size=22&duration=3000&color=FFFFFF&center=true&vCenter=true&width=700&lines=advanced+roblox+auto+rejoin+system;multi-instance+manager+for+roblox;auto+login+auto+rejoin+auto+recovery;built+for+afk+farming+and+stability;stable+lightweight+fully+automated" />
+</p>
+
+
 # Features
 
-## 🚀 ระบบจัดการหลายบัญชี (Multi-Account Runtime)
+✅ มีออโต้ ล็อกอิน รหัส Roblox ทุกจอที่เปิด เพียงแค่ใส่ Cookie ของ Roblox เข้าไป มันก็จะจัดการให้ ถ้าใช้งานไม่ได้มันก็จะแจ้งเตือนบอกให้ด้วย
 
-* เปิด Roblox หลายบัญชีพร้อมกันได้
-* แยก runtime ของแต่ละบัญชีออกจากกัน
-* ตรวจสอบ ownership ของ process แต่ละตัว
-* ลดปัญหา runtime ชนกันหรือ bind ผิด instance
+✅ มีระบบ Auto Rejoin หาก Roblox หลุด เด้ง หรือ Disconnect ระบบจะเข้าเกมกลับให้อัตโนมัติ ลดปัญหาตื่นมาแล้วเกมหลุดทั้งคืน
 
-## 🔄 ระบบ Rejoin & Recovery อัตโนมัติ
+✅ สามารถตั้งค่าได้ว่าจะให้ Rejoin ไปเซิฟไหน รองรับการใส่ JobID เอง สำหรับคนที่ต้องการล็อกเซิฟเฉพาะ
 
-* Rejoin อัตโนมัติเมื่อเกมหลุด
-* ตรวจจับ crash / freeze / disconnect
-* Recovery ตาม state จริงของ runtime
-* ลดปัญหา loop rejoin มั่วหรือ retry ซ้อนกัน
-* มี recovery context สำหรับจัดการสถานะต่อเนื่อง
+✅ มีระบบจัดเรียงหน้าจอ Roblox อัตโนมัติ ช่วยให้หลายจอดูเป็นระเบียบ พร้อมตั้ง Delay ตอนย้ายเซิฟได้ ลดปัญหาเข้าเกมพร้อมกัน
 
-## 🛡️ Runtime Watchdog System
+✅ มีระบบช่วยลดการใช้ CPU และปรับการทำงานของ Roblox ให้ลื่นขึ้น ช่วยเปิดหลายจอได้ดีขึ้น และเพิ่ม FPS ได้ในบางกรณี
 
-* ตรวจสอบ health ของ Roblox runtime ตลอดเวลา
-* ตรวจจับ popup / error window / unexpected state
-* ป้องกัน runtime ค้างโดยไม่มี owner ดูแล
-* มี invariant validation ลด state เพี้ยน
+✅ มี Web Dashboard สำหรับดูสถานะการทำงานแบบ realtime พร้อมระบบ Log และ Monitor การทำงานทั้งหมด
 
-## ⚙️ Process & Resource Control
+<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/5ea2e1a2-a6ce-4239-8a7d-957ef52baf3f" />
 
-* ตรวจจับ Roblox process แบบแยก instance
-* จัดการ CPU limiter
-* ปรับ process priority ได้
-* ควบคุม resource usage สำหรับหลายจอหลายบัญชี
-
-## 🌐 Web Dashboard UI
-
-* Dashboard แบบ realtime
-* ดูสถานะ account ได้ทั้งหมด
-* แสดง runtime state ปัจจุบัน
-* ดู log และ timeline การ recovery
-* ควบคุม launcher ผ่าน browser ได้
-
-## 📊 Structured Logging System
-
-* เก็บ log แบบ structured
-* รองรับ JSONL event logging
-* มี runtime audit events
-* ใช้ debug และ trace ปัญหา runtime ได้ง่ายขึ้น
-
-## 🧠 State-Driven Architecture
-
-* ใช้ state machine แทน retry loop ธรรมดา
-* แยก lifecycle ของ runtime ชัดเจน
-* ลด chaos จาก watchdog ซ้อนกัน
-* ทำให้ระบบ maintain และ stabilize ง่ายขึ้น

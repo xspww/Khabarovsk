@@ -8,6 +8,7 @@ import time
 from typing import Any, Dict, List
 
 from app_paths import APP_DATA_DIR
+from config_sections import ArgusConfigSections, build_config_sections
 from domain.account_state import RuntimeState
 
 
@@ -175,6 +176,10 @@ class ConfigManager:
         snap["ram_launch_via_api"] = False
         snap["ram_auto_launch"] = False
         return snap
+
+    def sections(self) -> ArgusConfigSections:
+        with self._lock:
+            return build_config_sections(dict(self._cfg))
 
     def _read_text_json(self, path: str, fallback):
         if not os.path.exists(path):

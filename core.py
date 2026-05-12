@@ -23,6 +23,7 @@ from domain.public_state_mapper import (
     runtime_state_for_public,
 )
 from domain.runtime_models import AccountRuntime
+from domain.runtime_lifecycle import lifecycle_for_public
 from domain.state_transitions import LIFECYCLE_ALLOWED_TRANSITIONS
 from runtime.runtime_state_manager import RuntimeStateManager
 
@@ -367,6 +368,7 @@ class Account:
     def sync_runtime(self, reason: str = "") -> AccountRuntime:
         self.runtime.account_id = self._config_username or self.username
         self.runtime.lifecycle_state = runtime_state_for_public(self.state)
+        self.runtime.canonical_state = lifecycle_for_public(self.state).value
         self.runtime.public_state = self.state.name
         self.runtime.desired_public_state = self.desired_state.name
         self.runtime.pid = self.pid

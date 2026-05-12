@@ -6,7 +6,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 HOTSPOT_FILE_LIMITS = {
-    "farm.py": 3900,
+    "farm.py": 1600,
     "main.py": 700,
     "process_net.py": 900,
     "core.py": 1300,
@@ -148,6 +148,10 @@ class ArchitectureDisciplineTests(unittest.TestCase):
         runtime_files = {
             "runtime/launch_controller.py": 800,
             "runtime/roblox_watchdog.py": 220,
+            "runtime/recovery_engine.py": 1200,
+            "runtime/account_worker.py": 900,
+            "runtime/dispatcher.py": 450,
+            "runtime/recovery_support.py": 180,
         }
         for rel, max_lines in runtime_files.items():
             with self.subTest(file=rel):

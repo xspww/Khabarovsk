@@ -5,12 +5,14 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
 from .account_state import AccountState, RuntimeState
+from .runtime_lifecycle import lifecycle_for_legacy_runtime
 
 
 @dataclass
 class AccountRuntime:
     account_id: str = ""
     lifecycle_state: RuntimeState = RuntimeState.STOPPED
+    canonical_state: str = "STOPPED"
     public_state: str = AccountState.IDLE.name
     desired_public_state: str = AccountState.IN_GAME.name
     pid: Optional[int] = None
@@ -66,6 +68,7 @@ class AccountRuntime:
         return {
             "account_id": self.account_id,
             "runtime_state": self.lifecycle_state.value,
+            "canonical_runtime_state": self.canonical_state or lifecycle_for_legacy_runtime(self.lifecycle_state).value,
             "public_state": self.public_state,
             "desired_public_state": self.desired_public_state,
             "pid": self.pid,

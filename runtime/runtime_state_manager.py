@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, Optional
 
 from domain.account_state import AccountState, RuntimeState
 from domain.public_state_mapper import runtime_state_for_public
+from domain.runtime_lifecycle import lifecycle_for_public, lifecycle_for_legacy_runtime
 from domain.session_identity import create_rejoin_transaction, create_session_identity
 from domain.state_transitions import is_valid_runtime_transition
 from runtime.runtime_invariants import check_runtime_invariants, invariant_snapshot
@@ -61,8 +62,13 @@ class RuntimeStateManager:
         if isinstance(state, AccountState):
             runtime_state = runtime_state_for_public(state).value
             public_state = state.name
+            canonical_runtime_state = lifecycle_for_public(state).value
         else:
             public_state = str(getattr(state, "name", state or ""))
+            try:
+                canonical_runtime_state = lifecycle_for_legacy_runtime(RuntimeState(str(state))).value
+            except Exception:
+                canonical_runtime_state = ""
         payload = {
             "account": getattr(acc, "display_name", getattr(acc, "username", "")),
             "account_id": self._account_name(acc),
@@ -70,6 +76,7 @@ class RuntimeStateManager:
             "recovery_generation": getattr(acc, "recovery_generation", 0),
             "command_generation": getattr(acc, "command_generation", 0),
             "runtime_state": runtime_state,
+            "canonical_runtime_state": canonical_runtime_state,
             "public_state": public_state,
             "PID": getattr(acc, "pid", None),
             "pid": getattr(acc, "pid", None),

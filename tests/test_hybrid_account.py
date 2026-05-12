@@ -2076,7 +2076,7 @@ class HybridAccountTests(unittest.TestCase):
                 client = TestClient(main.app)
                 response = client.post(
                     "/api/performance/window-size",
-                    json={"enabled": True, "preset": "320x240", "width": 1920, "height": 1080},
+                    json={"enabled": True, "preset": "320x240", "width": 1920, "height": 1080, "arrange_enabled": False},
                 )
             self.assertEqual(response.status_code, 200)
             payload = response.json()

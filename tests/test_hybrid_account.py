@@ -835,25 +835,30 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("Close All Roblox", html)
         self.assertIn('id="reload-cookies-btn"', html)
         self.assertIn("Reload Cookies", html)
-        self.assertIn('class="account-stats"', html)
-        self.assertIn('id="accounts-stat-online"', html)
-        self.assertIn('id="accounts-stat-queued"', html)
-        self.assertIn('id="accounts-stat-ingame"', html)
-        self.assertIn('id="accounts-stat-attention"', html)
+        self.assertNotIn('class="account-stats"', html)
+        self.assertNotIn('id="accounts-stat-online"', html)
+        self.assertNotIn('id="accounts-stat-queued"', html)
+        self.assertNotIn('id="accounts-stat-ingame"', html)
+        self.assertNotIn('id="accounts-stat-attention"', html)
         self.assertIn("--panel2:#1A1A1A", html)
         self.assertIn("--muted:#71717A", html)
         spacex_css = html.split("<style>", 1)[1].split("</style>", 1)[0]
         self.assertIn("background:#0A0A0A", spacex_css)
         self.assertIn("background:#111111", spacex_css)
         self.assertIn(".nav button.active{background:#202020;color:#FFFFFF;box-shadow:inset 2px 0 0 #FFFFFF}", html)
-        self.assertIn(".side-launch .guard-action{height:46px;border-radius:8px;background:transparent", html)
+        self.assertIn(".side-launch .guard-action{height:32px;border-radius:6px;background:transparent", html)
+        self.assertIn('class="guard-icon"', html)
+        self.assertIn('class="guard-icon stop"', html)
         self.assertIn('stroke-width="1.55"', html)
         for old_theme in ("rgba(34,197,94", "rgba(126,188,255", "#22c55e", "#3b82f6", "#60a5fa", "#16a34a"):
             self.assertNotIn(old_theme, spacex_css)
-        self.assertIn(".account-stat-card", html)
+        self.assertNotIn(".account-stat-card", html)
         self.assertIn("max-height:calc(100vh - 360px)", html)
         self.assertIn("function renderTop(){const c=counts()", html)
-        self.assertIn("accounts-stat-attention", html)
+        self.assertIn("function syncToggleLabels()", html)
+        self.assertIn("input.checked?'Enabled':'Disabled'", html)
+        self.assertIn('.toggle-row input[type="checkbox"]', html)
+        self.assertNotIn("accounts-stat-attention", html)
         self.assertIn("/accounts/reload", html)
         self.assertIn("function reloadCookies()", html)
         self.assertIn('id="toast" class="toast"', html)
@@ -1040,6 +1045,8 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("function saveCpuLimiter()", html)
         self.assertIn("/performance/cpu-limiter", html)
         self.assertIn("'cpu-limiter':'cpu-save'", html)
+        self.assertIn("grid-template-columns:minmax(180px,250px) minmax(220px,320px)", html)
+        self.assertIn("#window-size-controls,#window-arrange-controls,#graphics-quality-controls,#priority-controls,#cpu-controls{display:grid;gap:15px}", html)
         for label in ("Settings File", "Current File Cap", "Read-only", "Roblox State"):
             self.assertNotIn(label, fps_section)
             self.assertNotIn(label, graphics_section)
@@ -1077,10 +1084,17 @@ class HybridAccountTests(unittest.TestCase):
         self.assertNotIn('id="game-private-name-template"', html)
         self.assertIn("auto_create_private_server_enabled", html)
         self.assertNotIn('id="window-autominimize-controls" class="control-line" hidden', html)
-        self.assertIn('id="fps-limit-field" class="field" hidden', html)
+        self.assertIn('class="compact-toggle-row"', html)
+        self.assertIn('id="fps-inline-label">Disabled</span>', html)
+        self.assertIn('id="fps-limit-field" class="compact-inline-controls" hidden', html)
         self.assertIn('id="priority-controls" hidden', html)
-        self.assertIn('id="graphics-quality-controls" hidden', html)
-        self.assertIn('id="autoclose-controls" class="control-line" hidden', html)
+        self.assertIn('id="graphics-quality-label">Disabled</span>', html)
+        self.assertIn('id="graphics-quality-controls" class="compact-inline-controls" hidden', html)
+        self.assertIn('id="autoclose-inline-label">Disabled</span>', html)
+        self.assertIn('id="autoclose-controls" class="compact-inline-controls" hidden', html)
+        self.assertIn("setCompactToggle('queue-autoclose-enabled','autoclose-inline-label','autoclose-controls','Every')", html)
+        self.assertIn("setCompactToggle('fps-enabled','fps-inline-label','fps-limit-field','Limit')", html)
+        self.assertIn("setCompactToggle('graphics-auto-enabled','graphics-quality-label','graphics-quality-controls','Level')", html)
         self.assertNotIn('id="presence-controls"', html)
         self.assertNotIn('id="presence-interval"', html)
         self.assertNotIn('id="presence-ttl"', html)
@@ -1298,6 +1312,17 @@ class HybridAccountTests(unittest.TestCase):
         payload = [{"username": "ReloadUser", "cookie": "_|WARNING:reload"}]
         with patch.object(
             accounts_routes.ACCOUNT_STORE,
+            "read_records",
+            return_value=payload,
+        ), patch.object(
+            accounts_routes,
+            "validate_cookie_details",
+            return_value=(True, "ReloadUser", "ok", {"username": "ReloadUser", "user_id": "42"}),
+        ), patch.object(
+            accounts_routes.ACCOUNT_STORE,
+            "write_records",
+        ) as write_records, patch.object(
+            accounts_routes.ACCOUNT_STORE,
             "to_roboguard_accounts",
             return_value=payload,
         ), patch.object(main.farm, "running", False), patch.object(
@@ -1313,8 +1338,66 @@ class HybridAccountTests(unittest.TestCase):
         data = response.json()
         self.assertTrue(data["ok"])
         self.assertEqual(data["count"], 1)
+        self.assertEqual(data["kept"], 1)
+        self.assertEqual(data["removed"], 0)
+        written = write_records.call_args.args[0]
+        self.assertEqual(written[0]["username"], "ReloadUser")
+        self.assertEqual(written[0]["cookie_username"], "ReloadUser")
+        self.assertEqual(written[0]["cookie_user_id"], "42")
         self.assertEqual(set_accounts.call_args.args[0][0].username, "ReloadUser")
         save_accounts.assert_called_once()
+
+    def test_accounts_reload_route_removes_invalid_cookies_before_reloading(self):
+        from fastapi.testclient import TestClient
+        import api_routes.accounts_routes as accounts_routes
+        import main
+
+        client = TestClient(main.app)
+        records = [
+            {"username": "ValidUser", "cookie": "_|WARNING:valid"},
+            {"username": "BadUser", "cookie": "_|WARNING:bad"},
+            {"username": "EmptyUser", "cookie": ""},
+        ]
+
+        def validate(cookie):
+            if cookie == "_|WARNING:valid":
+                return True, "ValidUser", "ok", {"username": "ValidUser", "user_id": "77"}
+            return False, "", "cookie validation failed (401)", {}
+
+        with patch.object(
+            accounts_routes.ACCOUNT_STORE,
+            "read_records",
+            return_value=records,
+        ), patch.object(
+            accounts_routes,
+            "validate_cookie_details",
+            side_effect=validate,
+        ) as validator, patch.object(
+            accounts_routes.ACCOUNT_STORE,
+            "write_records",
+        ) as write_records, patch.object(
+            accounts_routes.ACCOUNT_STORE,
+            "to_roboguard_accounts",
+            return_value=[{"username": "ValidUser", "cookie": "_|WARNING:valid"}],
+        ), patch.object(accounts_routes, "audit_event"), patch.object(main.farm, "running", False), patch.object(
+            main.farm,
+            "set_accounts",
+        ) as set_accounts, patch.object(
+            main.cfg_mgr,
+            "save_accounts",
+        ):
+            response = client.post("/api/accounts/reload", json={})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["kept"], 1)
+        self.assertEqual(data["removed"], 2)
+        self.assertEqual(data["count"], 1)
+        self.assertEqual(validator.call_count, 2)
+        written = write_records.call_args.args[0]
+        self.assertEqual([item["username"] for item in written], ["ValidUser"])
+        self.assertEqual(set_accounts.call_args.args[0][0].username, "ValidUser")
 
     def test_app_shutdown_rejects_wrong_token(self):
         from fastapi.testclient import TestClient

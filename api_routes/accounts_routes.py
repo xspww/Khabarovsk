@@ -88,6 +88,61 @@ def register(app, ctx: ApiContext) -> None:
         return len(new_accounts)
 
 
+    def _validate_cookie_records_from_store() -> Dict[str, Any]:
+        records = ACCOUNT_STORE.read_records(include_cookies=True)
+        kept: List[Dict[str, Any]] = []
+        removed: List[Dict[str, str]] = []
+
+        for record in records:
+            username = str(record.get("username") or "").strip()
+            cookie = str(record.get("cookie") or "").strip()
+            label = username or "Unknown"
+            if not cookie:
+                removed.append({"username": label, "reason": "missing cookie"})
+                continue
+
+            try:
+                ok, cookie_username, detail, meta = validate_cookie_details(cookie)
+            except Exception as exc:
+                raise RuntimeError(f"Cookie validation unavailable for {label}: {exc}") from exc
+
+            if not ok:
+                removed.append({"username": label, "reason": detail or "invalid cookie"})
+                continue
+
+            normalized = ACCOUNT_STORE.normalize_record(record)
+            validated_username = str(meta.get("username") or cookie_username or "").strip()
+            if not username and validated_username:
+                normalized["username"] = validated_username
+                username = validated_username
+            normalized["cookie_username"] = validated_username
+            normalized["cookie_user_id"] = str(meta.get("user_id") or "")
+            normalized["cookie_mismatch"] = bool(
+                validated_username
+                and username
+                and username.lower() != validated_username.lower()
+            )
+            normalized["import_status"] = "cookie_mismatch" if normalized["cookie_mismatch"] else ""
+            kept.append(normalized)
+
+        ACCOUNT_STORE.write_records(kept)
+        for item in removed:
+            audit_event("reload_cookie_removed", item.get("username", ""), False, reason=item.get("reason", ""))
+        flog_kv(
+            "ACCOUNT_DATA",
+            "reload_cookie_validation",
+            kept=len(kept),
+            removed=len(removed),
+            total=len(records),
+        )
+        return {
+            "total": len(records),
+            "kept": len(kept),
+            "removed": len(removed),
+            "removed_accounts": removed,
+        }
+
+
     def _find_account_record(username: str, include_cookie: bool = True) -> Optional[Dict[str, Any]]:
         wanted = str(username or "").strip().lower()
         for record in _account_data_records(include_cookies=include_cookie):
@@ -244,10 +299,16 @@ def register(app, ctx: ApiContext) -> None:
     @app.post("/api/accounts/reload")
     def api_reload_accounts():
         try:
+            validation = _validate_cookie_records_from_store()
             count = _replace_farm_accounts_from_store()
         except Exception as e:
             raise HTTPException(400, f"Reload failed: {e}")
-        return {"ok": True, "count": count, "msg": f"Reloaded cookies ({count})"}
+        removed = int(validation.get("removed") or 0)
+        kept = int(validation.get("kept") or count)
+        msg = f"Checked cookies: {kept} valid"
+        if removed:
+            msg += f", removed {removed} invalid"
+        return {"ok": True, "count": count, "msg": msg, **validation}
 
 
     @app.get("/api/accounts/avatars")

@@ -88,6 +88,8 @@ def classify_popup_observation(
     detail = str(text_features.get("detail") or "")
     if code == "277":
         return PopupClassification(True, "rejoin", "network_drop", NETWORK_DISCONNECT, detail, code, score, dict(confidence["breakdown"]), False, True, "error_code", visual_strength)
+    if code == "278":
+        return PopupClassification(True, "rejoin", "idle_disconnect", NETWORK_DISCONNECT, detail, code, score, dict(confidence["breakdown"]), False, True, "error_code", visual_strength)
     if code == "273":
         return PopupClassification(True, "conditional_rejoin", "session_conflict", SESSION_CONFLICT, detail, code, score, dict(confidence["breakdown"]), False, True, "error_code", visual_strength)
     if code == "267":

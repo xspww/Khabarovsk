@@ -27,6 +27,7 @@ PRIORITY_CRITICAL = 100
 REASON_TO_CATEGORY = {
     "network_drop": NETWORK_DISCONNECT,
     "connection_error": NETWORK_DISCONNECT,
+    "idle_disconnect": NETWORK_DISCONNECT,
     "security_kick": NETWORK_DISCONNECT,
     "session_conflict": SESSION_CONFLICT,
     "account_launched_elsewhere": SESSION_CONFLICT,
@@ -78,6 +79,8 @@ def normalize_disconnect_category(reason: str = "", popup_code: str = "", catego
     code = str(popup_code or "").strip()
     if code == "277":
         return NETWORK_DISCONNECT
+    if code == "278":
+        return NETWORK_DISCONNECT
     if code == "273":
         return SESSION_CONFLICT
     if code == "267":
@@ -98,6 +101,8 @@ def priority_for_signal(signal: str = "", category: str = "", popup_code: str = 
     if raw_signal in {"process_lost", "process_dead", "pid_dead"}:
         return PRIORITY_CRITICAL
     if code == "277":
+        return PRIORITY_HIGH
+    if code == "278":
         return PRIORITY_HIGH
     if code == "273":
         return PRIORITY_HIGH

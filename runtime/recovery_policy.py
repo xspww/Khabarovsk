@@ -17,6 +17,7 @@ REASON_ALIASES = {
     "watchdog_low_resource": "watchdog_timeout",
     "security_kick": "connection_error",
     "unexpected_client_behavior": "connection_error",
+    "idle_disconnect": "connection_error",
     "cookie_invalid": "auth_failure",
     "cookie_missing": "auth_failure",
     "cookie_mismatch": "auth_failure",

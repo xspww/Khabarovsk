@@ -1255,6 +1255,7 @@ class AccountWorker(threading.Thread):
         "account_launched_elsewhere": "Session conflict (Error 273)",
         "session_conflict": "Session conflict (Error 273)",
         "unexpected_client_behavior": "Rejoining - Roblox disconnected (Error 268)",
+        "idle_disconnect": "Rejoining - Roblox idle disconnect (Error 278)",
         "security_kick": "Rejoining - Roblox data session ended (Error 267)",
         "multi_roblox_guard_failed": "Stopped - Multi Roblox guard failed. Roblox closed another account while launching; restart RT after the guard is ready.",
     }

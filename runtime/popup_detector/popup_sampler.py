@@ -294,7 +294,7 @@ class PopupObserver:
                 )
                 samples.append(classification)
                 if index < sample_total - 1 and interval > 0:
-                    if classification.error_code in {"267", "268", "273", "277"}:
+                    if classification.error_code in {"267", "268", "273", "277", "278"}:
                         break
                     time.sleep(interval)
 

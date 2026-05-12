@@ -68,6 +68,9 @@ class RuntimeHardeningTests(unittest.TestCase):
     def test_error_268_normalizes_to_rejoinable_network_disconnect(self):
         self.assertEqual(normalize_disconnect_category(popup_code="268"), NETWORK_DISCONNECT)
 
+    def test_error_278_normalizes_to_rejoinable_network_disconnect(self):
+        self.assertEqual(normalize_disconnect_category(popup_code="278"), NETWORK_DISCONNECT)
+
     def test_recovery_evaluate_rejects_stale_runtime_generation(self):
         recovery, queue, stop = self._make_recovery()
         acc = Account(username="stale_eval_user")

@@ -1679,6 +1679,22 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(result["reason_key"], "network_drop")
         self.assertEqual(result["error_code"], "277")
 
+    def test_disconnect_dialog_278_is_rejoinable_idle_disconnect(self):
+        result = ProcessManager.classify_disconnect_dialog_texts([
+            "Disconnected",
+            "You were disconnected for being idle 20 minutes",
+            "(Error Code: 278)",
+            "Reconnect",
+        ])
+
+        self.assertTrue(result["matched"])
+        self.assertTrue(result["recovery_allowed"])
+        self.assertEqual(result["evidence_source"], "error_code")
+        self.assertEqual(result["action"], "rejoin")
+        self.assertEqual(result["reason_key"], "idle_disconnect")
+        self.assertEqual(result["disconnect_category"], "NETWORK_DISCONNECT")
+        self.assertEqual(result["error_code"], "278")
+
     def test_disconnect_dialog_273_is_conditional_rejoin_session_conflict(self):
         result = ProcessManager.classify_disconnect_dialog_texts([
             "Disconnected",

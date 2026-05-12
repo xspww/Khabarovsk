@@ -165,6 +165,21 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertEqual(evidence["error_code"], "273")
         self.assertEqual(evidence["keyword"], "disconnected")
 
+    def test_roblox_log_evidence_searches_past_disconnect_noise(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "Player.log")
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(
+                    "Client has been disconnected with reason: Disconnected from game, possibly due to game joined from another device\n"
+                )
+                for index in range(500):
+                    fh.write(f"render noise {index}\n")
+
+            evidence = collect_recent_log_evidence(log_dir=tmp, since_seconds=60)
+
+        self.assertTrue(evidence["matched"])
+        self.assertEqual(evidence["error_code"], "273")
+
     def test_recovery_evaluate_rejects_stale_runtime_generation(self):
         recovery, queue, stop = self._make_recovery()
         acc = Account(username="stale_eval_user")

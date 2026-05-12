@@ -51,7 +51,7 @@ def collect_recent_log_evidence(
     log_dir: Optional[Any] = None,
     since_seconds: float = 180.0,
     max_files: int = 4,
-    max_lines: int = 240,
+    max_lines: int = 1000,
 ) -> Dict[str, Any]:
     root = Path(log_dir) if log_dir is not None else default_log_dir()
     if not root.exists():

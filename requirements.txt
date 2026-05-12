@@ -1,0 +1,7 @@
+fastapi>=0.110
+uvicorn[standard]>=0.29
+psutil>=5.9
+pillow>=10.0
+pystray>=0.19
+PySide6>=6.6
+cryptography>=42.0

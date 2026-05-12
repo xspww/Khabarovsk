@@ -8,7 +8,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-from app_paths import APP_NAME
+from app_paths import APP_NAME, resource_path
 
 APP_USER_AGENT = "ArgusLauncher/RT"
 APP_ICON_FILE = "ROBUGUARD Corners  .png"
@@ -19,9 +19,10 @@ if sys.platform != "win32":
 
 try:
     from fastapi import FastAPI
+    from fastapi.staticfiles import StaticFiles
     import uvicorn
 except ImportError:
-    print("pip install fastapi uvicorn")
+    print("pip install -r requirements.txt")
     sys.exit(1)
 
 from account_hybrid import ACCOUNT_STORE
@@ -69,6 +70,7 @@ ROBLOX_INSTALLER = RobloxInstallManager(
 )
 
 app = FastAPI(title=APP_NAME, docs_url=None, redoc_url=None)
+app.mount("/ui", StaticFiles(directory=resource_path("ui")), name="ui")
 api_context = ApiContext(
     cfg_mgr=cfg_mgr,
     farm=farm,

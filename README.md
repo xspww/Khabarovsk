@@ -1,67 +1,63 @@
-<p align="center">
-  <img src="https://readme-typing-svg.herokuapp.com?font=JetBrains+Mono&size=22&duration=3000&color=FFFFFF&center=true&vCenter=true&width=700&lines=advanced+roblox+auto+rejoin+system;multi-instance+manager+for+roblox;auto+login+auto+rejoin+auto+recovery;built+for+afk+farming+and+stability;stable+lightweight+fully+automated" />
-</p>
+# Argus Launcher
 
+Argus Launcher is a Windows-only local desktop control panel for managing Roblox account launch workflows. It runs a FastAPI backend on `127.0.0.1`, opens a desktop webview when PySide6 is available, and falls back to a browser window when needed.
 
-# ✨ Features
+## Features
 
-## 🔐 Login System
+- Encrypted Roblox cookie storage using Windows DPAPI.
+- Account import, reload, validation, and removal of invalid stored cookies.
+- Local launch controls for Roblox accounts, private server links, and duplicate-instance cleanup.
+- Runtime queue, recovery, reconnect, process liveness, and status reporting.
+- FPS limiter, low graphics settings, process priority, CPU limiter, and Roblox window resize/arrange controls.
+- Roblox install troubleshooting actions.
 
-* ✅ Auto Login Roblox ทุกจอ
-* ✅ รองรับ Multi-Instance เปิดหลายบัญชีพร้อมกัน
-* ✅ รองรับ ID / Password Login
-* ✅ รองรับ Roblox Cookie Login
-* ✅ ตรวจจับ Cookie หมดอายุอัตโนมัติ
-* ✅ แจ้งเตือนเมื่อ Cookie ใช้งานไม่ได้
+Roblox Account Manager / RAM cookie source integration is disabled in this version. Account data is stored by Argus Launcher itself.
 
----
+## Requirements
 
-## 🔄 Auto Rejoin & Recovery
+- Windows 10 or newer.
+- Python 3.11+ recommended.
+- Roblox installed for launch-related features.
 
-* ✅ Auto Rejoin เมื่อเกมหลุด
-* ✅ Auto Recovery เมื่อ Roblox Crash
-* ✅ ตรวจจับ Disconnect / Error อัตโนมัติ
-* ✅ ตรวจจับเกมค้าง (Freeze Detection)
-* ✅ ระบบ Watchdog ตรวจสอบ Runtime ตลอดเวลา
-* ✅ Auto Create Private Server หากไม่มีเซิฟ ระบบจะสร้างให้อัตโนมัติ
+Install runtime dependencies:
 
----
+```powershell
+python -m pip install -r requirements.txt
+```
 
-## 🌐 Server Management
+Install test dependencies:
 
-* ✅ รองรับ Custom JobID Rejoin
-* ✅ เลือก Server Rejoin เองได้
-* ✅ ตั้งค่า Delay ตอนย้ายเซิฟได้
-* ✅ ป้องกัน Rejoin เร็วเกินไป
+```powershell
+python -m pip install -r requirements-dev.txt
+```
 
----
+## Run
 
-## 🖥️ Window & Multi-Monitor
+```powershell
+.\Run.cmd
+```
 
-* ✅ Auto Arrange หน้าจอ Roblox
-* ✅ จัดเรียงหลายจออัตโนมัติ
-* ✅ รองรับ Multi-Monitor Setup
-* ✅ จัดการตำแหน่งหน้าต่าง Roblox ได้
+or:
 
----
+```powershell
+python main.py
+```
 
-## ⚡ Performance Optimization
+The backend binds to `127.0.0.1` and uses a per-process local API token for mutating API requests. The dashboard receives that token from the local HTML page and sends it automatically.
 
-* ✅ ระบบลดการใช้ CPU
-* ✅ ช่วยเพิ่ม FPS ในบางกรณี
-* ✅ ลด Resource Usage สำหรับเปิดหลายจอ
-* ✅ ปรับ Process Priority ได้
+## Data Location
 
----
+Runtime data is stored under:
 
-## 📊 Dashboard & Monitoring
+```text
+%LOCALAPPDATA%\Argus Launcher\data
+```
 
-* ✅ Web Dashboard แบบ Realtime
-* ✅ ดูสถานะทุกบัญชีผ่าน Browser
-* ✅ ดู Log การทำงานได้
+Cookies are encrypted with Windows DPAPI before being written to disk. Local runtime data, logs, databases, and caches are intentionally ignored by Git.
 
+## Tests
 
-
-## Preview (Version 1.4)
-<img width="1920" height="1080" alt="image" src="https://github.com/user-attachments/assets/5ea2e1a2-a6ce-4239-8a7d-957ef52baf3f" />
-
+```powershell
+python -m compileall -q .
+python -m unittest discover -s tests -p test_*.py
+```

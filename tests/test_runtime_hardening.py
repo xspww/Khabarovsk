@@ -27,6 +27,14 @@ from services.roblox_log_evidence import classify_log_line, collect_recent_log_e
 from process_net import ProcessManager
 
 
+def auth_post(client, path, **kwargs):
+    import main
+
+    headers = dict(kwargs.pop("headers", {}) or {})
+    headers.setdefault("X-Argus-Token", main.INSTANCE_TOKEN)
+    return client.post(path, headers=headers, **kwargs)
+
+
 class RuntimeHardeningTests(unittest.TestCase):
     class _AlwaysOnlineNet:
         def is_online(self):
@@ -516,7 +524,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         try:
             client = TestClient(main.app)
             self.assertEqual(client.get("/api/test/network-fault/status").status_code, 200)
-            block = client.post(
+            block = auth_post(client,
                 "/api/test/network-fault/block-roblox",
                 json={"account_id": "IwasTheGuyOni7899", "pid": 1234, "duration_seconds": 30},
             )
@@ -524,7 +532,7 @@ class RuntimeHardeningTests(unittest.TestCase):
             payload = block.json()
             self.assertTrue(payload["ok"])
             self.assertNotIn("ROBLOSECURITY", str(payload).upper())
-            restore = client.post("/api/test/network-fault/restore", json={"account_id": "IwasTheGuyOni7899"})
+            restore = auth_post(client, "/api/test/network-fault/restore", json={"account_id": "IwasTheGuyOni7899"})
             self.assertEqual(restore.status_code, 200)
         finally:
             main.NETWORK_FAULT_INJECTOR = original

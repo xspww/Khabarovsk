@@ -55,6 +55,23 @@ from roblox_hybrid import (
 )
 
 
+def auth_headers(extra=None):
+    import main
+
+    headers = {"X-Argus-Token": main.INSTANCE_TOKEN}
+    if extra:
+        headers.update(extra)
+    return headers
+
+
+def auth_post(client, path, **kwargs):
+    import main
+
+    headers = dict(kwargs.pop("headers", {}) or {})
+    headers.setdefault("X-Argus-Token", main.INSTANCE_TOKEN)
+    return client.post(path, headers=headers, **kwargs)
+
+
 class HybridAccountTests(unittest.TestCase):
     def test_dpapi_cookie_roundtrip(self):
         cookie = "_|WARNING:-DO-NOT-SHARE-THIS.--unit-test-cookie"
@@ -250,7 +267,7 @@ class HybridAccountTests(unittest.TestCase):
         ) as apply_priority, patch.object(
             main.cfg_mgr, "update"
         ) as update, patch.object(main.cfg_mgr, "save") as save:
-            response = client.post(
+            response = auth_post(client,
                 "/api/performance/graphics",
                 json={
                     "graphics_low_enabled": True,
@@ -291,7 +308,7 @@ class HybridAccountTests(unittest.TestCase):
         with patch.object(main.CPU_LIMITER, "apply", return_value=result) as apply, \
              patch.object(main.cfg_mgr, "update") as update, \
              patch.object(main.cfg_mgr, "save") as save:
-            response = client.post(
+            response = auth_post(client,
                 "/api/performance/cpu-limiter",
                 json={
                     "enabled": True,
@@ -333,7 +350,7 @@ class HybridAccountTests(unittest.TestCase):
         with patch.object(main.CPU_LIMITER, "apply", return_value=result) as apply, \
              patch.object(main.cfg_mgr, "update") as update, \
              patch.object(main.cfg_mgr, "save"):
-            response = client.post(
+            response = auth_post(client,
                 "/api/performance/cpu-limiter",
                 json={
                     "enabled": True,
@@ -353,7 +370,7 @@ class HybridAccountTests(unittest.TestCase):
         import main
 
         client = TestClient(main.app)
-        response = client.post("/api/performance/cpu-limiter", json={"enabled": True, "default_limit_percent": 4})
+        response = auth_post(client, "/api/performance/cpu-limiter", json={"enabled": True, "default_limit_percent": 4})
         self.assertEqual(response.status_code, 400)
 
     def test_cpu_limiter_status_returns_account_rows(self):
@@ -779,7 +796,7 @@ class HybridAccountTests(unittest.TestCase):
         client = TestClient(main.app)
         with patch.object(main.ROBLOX_INSTALLER, "guard_running", return_value=True), \
              patch.object(main.ROBLOX_INSTALLER, "roblox_running", return_value=False):
-            response = client.post("/api/troubleshoot/roblox-install/uninstall")
+            response = auth_post(client, "/api/troubleshoot/roblox-install/uninstall")
 
         self.assertEqual(response.status_code, 200)
         payload = response.json()
@@ -791,7 +808,7 @@ class HybridAccountTests(unittest.TestCase):
         import main
 
         client = TestClient(main.app)
-        response = client.post("/api/troubleshoot/roblox-install/version", json={"version": ""})
+        response = auth_post(client, "/api/troubleshoot/roblox-install/version", json={"version": ""})
 
         self.assertEqual(response.status_code, 404)
 
@@ -801,9 +818,21 @@ class HybridAccountTests(unittest.TestCase):
         import main
 
         client = TestClient(main.app)
-        html = client.get("/").text
+        page = client.get("/").text
+        css_response = client.get("/ui/dashboard.css")
+        js_response = client.get("/ui/dashboard.js")
+        self.assertEqual(css_response.status_code, 200)
+        self.assertEqual(js_response.status_code, 200)
+        css = css_response.text
+        js = js_response.text
+        html = page + "\n" + css + "\n" + js
         self.assertEqual(main.app.title, "Argus Launcher")
         self.assertIn("<title>Argus Launcher</title>", html)
+        self.assertIn('<meta name="argus-api-token" content="', page)
+        self.assertIn(main.INSTANCE_TOKEN, page)
+        self.assertIn('<link rel="stylesheet" href="/ui/dashboard.css">', page)
+        self.assertIn('<script src="/ui/dashboard.js"></script>', page)
+        self.assertNotIn("<style>", page)
         self.assertNotIn("<span>Argus Launcher</span>", html)
         self.assertNotIn('<header class="topbar">', html)
         self.assertNotIn('id="stream-state"', html)
@@ -842,7 +871,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertNotIn('id="accounts-stat-attention"', html)
         self.assertIn("--panel2:#1A1A1A", html)
         self.assertIn("--muted:#71717A", html)
-        spacex_css = html.split("<style>", 1)[1].split("</style>", 1)[0]
+        spacex_css = css
         self.assertIn("background:#0A0A0A", spacex_css)
         self.assertIn("background:#111111", spacex_css)
         self.assertIn(".nav button.active{background:#202020;color:#FFFFFF;box-shadow:inset 2px 0 0 #FFFFFF}", html)
@@ -1134,7 +1163,7 @@ class HybridAccountTests(unittest.TestCase):
         original = main.cfg_mgr.snapshot()
         try:
             client = TestClient(main.app)
-            html = client.get("/").text
+            html = client.get("/").text + "\n" + client.get("/ui/dashboard.js").text
             self.assertIn("Popup Detector", html)
             self.assertNotIn("Use Popup Disconnected", html)
             self.assertIn('id="popup-disconnected-enabled"', html)
@@ -1151,7 +1180,7 @@ class HybridAccountTests(unittest.TestCase):
             self.assertNotIn("$('presence-ttl')", html)
             self.assertNotIn("$('presence-assist')", html)
 
-            response = client.post(
+            response = auth_post(client,
                 "/api/config",
                 json={
                     "popup_disconnected_enabled": False,
@@ -1198,7 +1227,7 @@ class HybridAccountTests(unittest.TestCase):
                 f.write("line one\nline two\n")
             with patch.object(main, "LOG_FILE", path):
                 client = TestClient(main.app)
-                response = client.post("/api/logs/clear")
+                response = auth_post(client, "/api/logs/clear")
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json()["lines"], [])
                 with open(path, encoding="utf-8") as f:
@@ -1238,14 +1267,54 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(payload["missing"], [])
         self.assertIn("userIds=42%2C99", urlopen.call_args.args[0].full_url)
 
+    def test_game_place_lookup_html_fallback_unescapes_title_and_image(self):
+        from fastapi.testclient import TestClient
+        import api_routes.accounts_routes as accounts_routes
+        import main
+
+        class FakeResponse:
+            def __init__(self, body):
+                self.body = body
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_):
+                return False
+
+            def read(self):
+                return self.body
+
+        page = (
+            '<html><head><title>Unit &amp; Place | Roblox</title>'
+            '<meta property="og:image" content="https://img.test/icon?a=1&amp;b=2">'
+            "</head></html>"
+        ).encode("utf-8")
+        client = TestClient(main.app)
+        with patch.object(
+            accounts_routes.urllib.request,
+            "urlopen",
+            side_effect=[
+                accounts_routes.urllib.error.URLError("universe unavailable"),
+                accounts_routes.urllib.error.URLError("thumbnail unavailable"),
+                FakeResponse(page),
+            ],
+        ):
+            response = client.get("/api/game/place/123456")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertEqual(payload["name"], "Unit & Place")
+        self.assertEqual(payload["image_url"], "https://img.test/icon?a=1&b=2")
+
     def test_cookie_refresh_routes_removed(self):
         from fastapi.testclient import TestClient
         import main
 
         client = TestClient(main.app)
-        self.assertEqual(client.post("/api/accounts/refresh-cookie", json={"usernames": ["UserA"]}).status_code, 404)
-        self.assertEqual(client.post("/api/account/UserA/refresh-cookie", json={}).status_code, 404)
-        self.assertEqual(client.post("/api/accounts/refresh-stale", json={}).status_code, 404)
+        self.assertEqual(auth_post(client, "/api/accounts/refresh-cookie", json={"usernames": ["UserA"]}).status_code, 404)
+        self.assertEqual(auth_post(client, "/api/account/UserA/refresh-cookie", json={}).status_code, 404)
+        self.assertEqual(auth_post(client, "/api/accounts/refresh-stale", json={}).status_code, 404)
 
     def test_accounts_cookie_import_route_reloads_without_game_default_name_error(self):
         from fastapi.testclient import TestClient
@@ -1268,7 +1337,7 @@ class HybridAccountTests(unittest.TestCase):
             main.cfg_mgr,
             "save_accounts",
         ) as save_accounts:
-            response = client.post(
+            response = auth_post(client,
                 "/api/accounts/import",
                 json={"kind": "cookies", "lines": ["UnitUser:fake-cookie"]},
             )
@@ -1286,7 +1355,7 @@ class HybridAccountTests(unittest.TestCase):
         import main
 
         client = TestClient(main.app)
-        response = client.post("/api/accounts/import", json={"kind": "userpass", "lines": ["UnitUser:password"]})
+        response = auth_post(client, "/api/accounts/import", json={"kind": "userpass", "lines": ["UnitUser:password"]})
 
         self.assertEqual(response.status_code, 400)
         self.assertIn("Unsupported import kind", response.text)
@@ -1296,7 +1365,7 @@ class HybridAccountTests(unittest.TestCase):
         import main
 
         client = TestClient(main.app)
-        response = client.post(
+        response = auth_post(client,
             "/api/accounts/manual-login/complete",
             json={"request_id": "req1", "token": "bad", "cookie": "_|WARNING:secret-cookie"},
         )
@@ -1332,7 +1401,7 @@ class HybridAccountTests(unittest.TestCase):
             main.cfg_mgr,
             "save_accounts",
         ) as save_accounts:
-            response = client.post("/api/accounts/reload", json={})
+            response = auth_post(client, "/api/accounts/reload", json={})
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -1386,7 +1455,7 @@ class HybridAccountTests(unittest.TestCase):
             main.cfg_mgr,
             "save_accounts",
         ):
-            response = client.post("/api/accounts/reload", json={})
+            response = auth_post(client, "/api/accounts/reload", json={})
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -1404,7 +1473,47 @@ class HybridAccountTests(unittest.TestCase):
         import main
 
         client = TestClient(main.app)
-        self.assertEqual(client.post("/api/app/shutdown", json={"token": "wrong"}).status_code, 403)
+        self.assertEqual(auth_post(client, "/api/app/shutdown", json={"token": "wrong"}).status_code, 403)
+
+    def test_api_token_required_for_mutating_routes(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        self.assertEqual(client.post("/api/config", json={}).status_code, 403)
+
+    def test_api_token_allows_mutating_routes(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        response = auth_post(client, "/api/config", json={})
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
+
+    def test_app_shutdown_accepts_legacy_header_token(self):
+        from fastapi.testclient import TestClient
+        import api_routes.system_routes as system_routes
+        import main
+
+        class FakeThread:
+            def __init__(self, target, daemon=False, name=""):
+                self.target = target
+                self.daemon = daemon
+                self.name = name
+
+            def start(self):
+                return None
+
+        client = TestClient(main.app)
+        with patch.object(system_routes.threading, "Thread", FakeThread):
+            response = client.post(
+                "/api/app/shutdown",
+                json={},
+                headers={"X-RoboGuard-Token": main.INSTANCE_TOKEN},
+            )
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["ok"])
 
     def test_close_all_roblox_endpoint_only_closes_roblox_clients(self):
         from fastapi.testclient import TestClient
@@ -1417,7 +1526,7 @@ class HybridAccountTests(unittest.TestCase):
              patch.object(main.farm, "running", True), \
              patch.object(main.farm, "stop") as stop_guard, \
              patch.object(main.ProcessManager, "kill_all_roblox_clients", return_value=6) as kill_all:
-            response = client.post("/api/roblox/close-all")
+            response = auth_post(client, "/api/roblox/close-all")
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
@@ -2256,7 +2365,7 @@ class HybridAccountTests(unittest.TestCase):
                 return_value={"ok": True, "count": 1, "resized": 1, "skipped": 0},
             ) as resize:
                 client = TestClient(main.app)
-                response = client.post(
+                response = auth_post(client,
                     "/api/performance/window-size",
                     json={"enabled": True, "preset": "320x240", "width": 1920, "height": 1080, "arrange_enabled": False},
                 )
@@ -2284,7 +2393,7 @@ class HybridAccountTests(unittest.TestCase):
                 return_value={"ok": True, "count": 5, "arranged": 5, "failed": 0},
             ) as arrange:
                 client = TestClient(main.app)
-                response = client.post(
+                response = auth_post(client,
                     "/api/performance/window-size",
                     json={"enabled": True, "preset": "320x240", "arrange_enabled": True, "arrange_columns": 3, "arrange_gap": 2},
                 )

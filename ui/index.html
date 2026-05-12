@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<meta name="argus-api-token" content="__ARGUS_API_TOKEN__">
+<title>Argus Launcher</title>
+<link rel="stylesheet" href="/ui/dashboard.css">
+</head>
+<body>
+<div class="app">
+  <aside class="sidebar">
+    <div class="side-launch"><button id="guard-btn" class="btn good guard-action"><svg class="guard-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></svg><span>START</span></button></div>
+    <nav id="nav" class="nav">
+      <div class="nav-label">General</div>
+      <button data-view="accounts" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span class="nav-text">Accounts</span><span id="nav-accounts-count" class="nav-badge">0</span></button>
+      <button data-view="queue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 4 8l8 4 8-4-8-4z"/><path d="m4 12 8 4 8-4"/><path d="m4 16 8 4 8-4"/></svg>Queue</button>
+      <button data-view="game"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v6"/><circle cx="12" cy="6" r="3"/><path d="M6 21h12a2 2 0 0 0 2-2l-2-7H6l-2 7a2 2 0 0 0 2 2z"/><path d="M9 15h6"/></svg>Game</button>
+      <div class="nav-label performance">Performance</div>
+      <button data-view="performance"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15a8 8 0 0 1 16 0"/><path d="M12 15l3.5-5"/><path d="M6 19h12"/><path d="M8 15h.01"/><path d="M16 15h.01"/><path d="M18 6h3"/></svg>FPS Limiter</button>
+      <button data-view="graphics"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M18.5 3.5a2.1 2.1 0 0 1 3 3L13 15l-4-4 8.5-7.5z"/><path d="M12 16c0 3-2.5 5-6.5 5-1.5 0-2.5-.4-3.5-1 2.8-.6 3.6-2.1 4-4 .4-1.8 1.5-3 3.2-3"/></svg>Graphics</button>
+      <button data-view="window-size"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M9 10H6v3"/><path d="M6 10l5 5"/><path d="M15 14h3v-3"/><path d="M18 14l-5-5"/></svg>Window Size</button>
+      <button data-view="cpu-limiter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M4 10h3"/><path d="M4 14h3"/><path d="M17 10h3"/><path d="M17 14h3"/><path d="M10 4v3"/><path d="M14 4v3"/><path d="M10 17v3"/><path d="M14 17v3"/><path d="M10 12h4"/></svg>CPU Limiter</button>
+      <div class="nav-label system">System</div>
+      <button data-view="troubleshoot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5 5L4 17v3h3l5.7-5.7a4 4 0 0 0 5-5l-3 3-2-2 3-3z"/></svg>Troubleshoot</button>
+    </nav>
+    <section class="side-status">
+      <div class="status-list">
+        <div class="status-row metric-online"><span><i class="mini-dot online"></i>Online</span><strong id="h-online">0</strong></div>
+        <div class="status-row metric-queued"><span><i class="mini-dot queued"></i>Queued</span><strong id="h-queued">0</strong></div>
+      </div>
+      <div class="status-running"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/></svg><span id="h-running-time">Running: 0s</span></div>
+    </section>
+  </aside>
+  <main class="main">
+    <section id="view-accounts" class="view active">
+      <div class="page-head"><div class="title">Accounts</div><div class="actions"><button class="btn danger has-icon" id="close-all-roblox-btn"><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5" fill="currentColor"/><path d="M8.5 8.5l7 7M15.5 8.5l-7 7" fill="none" stroke="#0A0A0A" stroke-width="2.4" stroke-linecap="round"/></svg>Close All Roblox</button><button class="btn ghost has-icon" id="reload-cookies-btn"><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/></svg>Reload Cookies</button><button class="btn good has-icon" id="add-btn"><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 11 0"/><path d="M18 7v6"/><path d="M15 10h6"/></svg>Add Accounts</button></div></div>
+      <section class="shell shell-body-only">
+        <div class="tools"><input id="account-search" class="search" placeholder="Search..."></div>
+        <div class="table-wrap"><table><thead><tr><th class="num">#</th><th>Status</th><th>Username</th><th>Description</th><th class="actions-col">Actions</th></tr></thead><tbody id="accounts-table"></tbody></table></div>
+      </section>
+    </section>
+    <section id="view-game" class="view">
+      <div class="page-head"><div class="title">Game</div><div class="savebar"><button class="btn ghost reset-action" id="game-reset" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>Reset</button><button class="btn good save-action" id="game-save" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>Save Changes</button></div></div>
+      <section class="panel panel-body-only">
+        <div class="settings-card">
+          <div id="game-map-card" class="map-card empty"><div>Enter Place ID.</div></div>
+          <div class="field"><label>Place ID</label><div class="hint">Place to join.</div><div class="form-row"><input id="game-place" class="input" placeholder="123456789"><button class="btn primary" id="game-lookup">Lookup</button></div><div id="game-lookup-result" class="hint"></div></div>
+          <div class="field"><label>Private Server URL</label><div class="hint">Default VIP link.</div><input id="game-private" class="input" placeholder="https://www.roblox.com/games/...?..."></div>
+          <div class="field"><label>Auto Create Private Server</label><div class="hint">Free VIP before launch.</div><div class="toggle-row"><input id="game-auto-private-enabled" type="checkbox"><span>Enabled</span></div></div>
+          <div class="field"><label>Multi Roblox</label><div class="hint">Keep other accounts open.</div><div class="toggle-row"><input id="game-multi-roblox" type="checkbox"><span>Enabled</span></div></div>
+        </div>
+      </section>
+    </section>
+    <section id="view-performance" class="view">
+      <div class="page-head"><div class="title">FPS Limiter</div><div class="savebar"><button class="btn ghost reset-action" id="fps-reset" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>Reset</button><button class="btn good save-action" id="fps-save" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>Save Changes</button></div></div>
+      <section class="panel panel-body-only">
+        <div class="settings-card">
+          <div class="field"><label>Enable FPS Limiter</label><div class="hint">Limit Roblox FPS.</div><div class="compact-toggle-row"><input id="fps-enabled" type="checkbox"><span id="fps-inline-label">Disabled</span><span id="fps-limit-field" class="compact-inline-controls" hidden><input id="fps-limit" class="input compact-number" type="number" min="15" max="1000" placeholder="240"><span>FPS</span></span></div><div class="hint">15-1000 FPS.</div></div>
+          <div id="fps-notice" class="notice"></div>
+        </div>
+      </section>
+    </section>
+    <section id="view-graphics" class="view">
+      <div class="page-head"><div class="title">Graphics</div><div class="savebar"><button class="btn ghost reset-action" id="graphics-reset" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>Reset</button><button class="btn good save-action" id="graphics-save" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>Save Changes</button></div></div>
+      <section class="panel panel-body-only">
+        <div class="settings-card">
+          <div class="field"><label>Low Graphics Quality</label><div class="hint">Use low Roblox graphics.</div><div class="compact-toggle-row"><input id="graphics-auto-enabled" type="checkbox"><span id="graphics-quality-label">Disabled</span><span id="graphics-quality-controls" class="compact-inline-controls" hidden><input id="graphics-quality" class="input compact-number" type="number" min="1" max="10" placeholder="1"></span></div><div class="hint">1 low, 10 high.</div></div>
+          <div class="field"><label>Auto Process Priority</label><div class="hint">Set Roblox process priority.</div><div class="toggle-row"><input id="priority-enabled" type="checkbox"><span>Enabled</span></div><div id="priority-controls" hidden><select id="process-priority" class="input"><option value="low">Low</option><option value="below_normal">Below normal</option><option value="normal">Normal</option><option value="above_normal">Above normal</option><option value="high">High</option></select></div></div>
+          <div id="graphics-notice" class="notice"></div>
+        </div>
+      </section>
+    </section>
+    <section id="view-window-size" class="view">
+      <div class="page-head"><div class="title">Window Size</div><div class="savebar"><button class="btn ghost reset-action" id="window-size-reset" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>Reset</button><button class="btn good save-action" id="window-size-save" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>Save Changes</button></div></div>
+      <section class="panel panel-body-only">
+        <div class="settings-card">
+          <div class="field"><label>Enable Window Size</label><div class="hint">Resize Roblox windows.</div><div class="toggle-row"><input id="window-size-enabled" type="checkbox"><span>Enabled</span></div></div>
+          <div id="window-size-controls" hidden>
+            <div class="field"><label>Window Size</label><div class="hint">Choose window size.</div><select id="window-size-preset" class="input"><option value="320x240">320 x 240</option><option value="480x360">480 x 360</option><option value="640x480">640 x 480</option><option value="800x600">800 x 600</option><option value="1024x768">1024 x 768</option><option value="1280x720">1280 x 720</option><option value="1600x900">1600 x 900</option><option value="1920x1080">1920 x 1080</option><option value="custom">Custom</option></select></div>
+            <div id="window-size-custom" class="control-line" hidden><div><strong>Custom Size</strong><div class="hint">Width 320-1920, height 240-1080.</div></div><div class="form-row"><input id="window-size-width" class="input" type="number" min="320" max="1920" placeholder="640"><input id="window-size-height" class="input" type="number" min="240" max="1080" placeholder="480"></div></div>
+            <div class="field"><label>Auto Arrange</label><div class="hint">Arrange Roblox in rows.</div><div class="toggle-row"><input id="window-arrange-enabled" type="checkbox"><span>Enabled</span></div><div id="window-arrange-controls" hidden><div class="control-line"><div><strong>Windows per row</strong><div class="hint">How many per row.</div></div><input id="window-arrange-columns" class="input" type="number" min="1" max="32" placeholder="6"></div><div class="control-line"><div><strong>Gap</strong><div class="hint">Space between windows.</div></div><input id="window-arrange-gap" class="input" type="number" min="0" max="80" placeholder="2"></div></div></div>
+          </div>
+          <div id="window-size-notice" class="notice"></div>
+        </div>
+      </section>
+    </section>
+    <section id="view-cpu-limiter" class="view">
+      <div class="page-head"><div class="title">CPU Limiter</div><div class="savebar"><button class="btn ghost reset-action" id="cpu-reset" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>Reset</button><button class="btn good save-action" id="cpu-save" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>Save Changes</button></div></div>
+      <section class="panel panel-body-only">
+        <div class="settings-card">
+          <div class="field"><label>Enable CPU Limiter</label><div class="hint">Limit Roblox CPU.</div><div class="toggle-row"><input id="cpu-enabled" type="checkbox"><span>Enabled</span></div></div>
+          <div id="cpu-controls" hidden>
+            <div class="control-line"><div><strong>Mode</strong><div class="hint">Hard cap or soft fallback.</div></div><select id="cpu-mode" class="input"><option value="hard">Hard Cap</option><option value="soft">Soft</option></select></div>
+            <div class="control-line"><div><strong>Default CPU Limit</strong><div class="hint">5-95% per Roblox.</div></div><input id="cpu-default-limit" class="input" type="number" min="5" max="95" value="20"></div>
+            <div class="field"><label>Apply to all accounts</label><div class="hint">Use default limit for every live account.</div><div class="toggle-row"><input id="cpu-apply-all" type="checkbox"><span>Enabled</span></div></div>
+            <div class="table-wrap cpu-table"><table><thead><tr><th>Username</th><th>Roblox PID</th><th>Enabled</th><th>Limit %</th><th>Status</th></tr></thead><tbody id="cpu-account-rows"></tbody></table></div>
+          </div>
+          <div id="cpu-notice" class="notice"></div>
+        </div>
+      </section>
+    </section>
+    <section id="view-queue" class="view">
+      <div class="page-head"><div class="title">Queue</div><div class="savebar"><button class="btn ghost reset-action" id="queue-reset" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>Reset</button><button class="btn good save-action" id="queue-save" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>Save Changes</button></div></div>
+      <section class="panel panel-body-only">
+        <div class="settings-card">
+          <div class="field"><label>Max Concurrent Accounts</label><div class="hint">Max active accounts.</div><input id="queue-max" class="input" type="number" min="1"></div>
+          <div class="field"><label>Duration (seconds)</label><div class="hint">Used only for rotation.</div><input id="queue-duration" class="input" type="number" min="0"></div>
+          <div class="field"><label>Delay (Seconds)</label><div class="hint">Delay between launches.</div><input id="queue-delay" class="input" type="number" min="0"></div>
+          <div class="field"><label>Auto Close</label><div class="hint">Close Roblox on timer.</div><div class="compact-toggle-row"><input id="queue-autoclose-enabled" type="checkbox"><span id="autoclose-inline-label">Disabled</span><span id="autoclose-controls" class="compact-inline-controls" hidden><input id="queue-autoclose-minutes" class="input compact-number" type="number" min="0" placeholder="0"><span>minutes</span></span></div><div class="hint">0 disables timer.</div></div>
+          <div class="field"><label>Popup Detector</label><div class="hint">Detect Roblox disconnect popup.</div><div class="toggle-row"><input id="popup-disconnected-enabled" type="checkbox"><span>Enabled</span></div><div id="popup-disconnected-controls" class="meta-row" hidden><div class="meta-box"><span>Check Every</span><input id="popup-scan-interval" class="input" type="number" min="5" max="3600" placeholder="seconds"></div><div class="meta-box"><span>Windows Per Scan</span><input id="popup-scan-max-parallel" class="input" type="number" min="1" max="32" placeholder="windows"></div></div></div>
+          <div class="field"><label>Use Presence API</label><div class="hint">Help detect disconnects.</div><div class="toggle-row"><input id="presence-enabled" type="checkbox"><span>Enabled</span></div></div>
+        </div>
+      </section>
+    </section>
+    <section id="view-troubleshoot" class="view">
+      <div class="page-head"><div class="title">Troubleshoot</div></div>
+      <div class="install-status">Currently installed: <strong id="roblox-installed-version">Loading...</strong></div>
+      <section class="panel panel-body-only">
+        <div class="settings-card">
+          <div class="field"><label>Roblox Install</label><div class="hint">Wipe or reinstall Roblox.</div></div>
+          <div class="install-actions">
+            <div class="install-row"><div><strong>Uninstall</strong><div class="hint">Remove all Roblox data.</div></div><button class="btn danger" id="roblox-uninstall">Uninstall</button></div>
+            <div class="install-row"><div><strong>Download latest</strong><div class="hint">Install latest LIVE player.</div></div><button class="btn good" id="roblox-latest">Download</button></div>
+          </div>
+          <div class="meta-row"><div class="meta-box"><span>State</span><strong id="roblox-install-state">Ready</strong></div><div class="meta-box"><span>Progress</span><strong id="roblox-install-progress">-</strong></div></div>
+          <div id="roblox-install-notice" class="notice"></div>
+        </div>
+      </section>
+    </section>
+  </main>
+</div>
+<div id="modal-backdrop" class="modal-backdrop" hidden>
+  <div class="modal">
+    <div class="modal-head"><div id="modal-title" class="modal-title">Add Accounts</div><button id="modal-close" class="x">&times;</button></div>
+    <div id="modal-body" class="modal-body"></div>
+    <div id="modal-foot" class="modal-foot"></div>
+  </div>
+</div>
+<div id="toast" class="toast"></div>
+<script src="/ui/dashboard.js"></script>
+</body>
+</html>

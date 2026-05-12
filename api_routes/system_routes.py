@@ -206,8 +206,9 @@ def register(app, ctx: ApiContext) -> None:
 
     @app.get("/", response_class=HTMLResponse)
     def serve_ui():
+        html_ui = str(ctx.html_ui or "").replace("__ARGUS_API_TOKEN__", str(ctx.instance_token or ""))
         return HTMLResponse(
-            ctx.html_ui,
+            html_ui,
             headers={
                 "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
                 "Pragma": "no-cache",

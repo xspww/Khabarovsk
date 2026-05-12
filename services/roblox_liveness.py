@@ -10,6 +10,8 @@ from services.roblox_log_evidence import collect_recent_log_evidence
 
 _RUNTIME_STATE = RuntimeStateManager(logger=flog_kv)
 _POPUP_LOG_EVIDENCE_WINDOW_SECONDS = 60.0
+_POPUP_LOG_EVIDENCE_RETRY_COUNT = 5
+_POPUP_LOG_EVIDENCE_RETRY_INTERVAL = 0.25
 
 
 def _text_hint_from_log_evidence(evidence: Dict[str, Any]) -> list[str]:
@@ -61,6 +63,17 @@ def _merge_log_evidence_into_dialog(cls, dialog: Dict[str, Any], evidence: Dict[
     )
     merged["confidence"] = merged["popup_confidence"]
     return merged
+
+
+def _collect_popup_log_evidence() -> Dict[str, Any]:
+    attempts = max(1, int(_POPUP_LOG_EVIDENCE_RETRY_COUNT or 1))
+    for index in range(attempts):
+        evidence = collect_recent_log_evidence(since_seconds=_POPUP_LOG_EVIDENCE_WINDOW_SECONDS)
+        if evidence.get("matched"):
+            return evidence
+        if index < attempts - 1:
+            time.sleep(max(0.0, float(_POPUP_LOG_EVIDENCE_RETRY_INTERVAL or 0.0)))
+    return evidence
 
 def multi_signal_validate(
     cls,
@@ -327,7 +340,7 @@ def assess_liveness(
             sample_count=6 if inspect_ui else 2,
         )
         if inspect_ui and dialog.get("matched") and dialog.get("recovery_allowed") and not dialog.get("error_code"):
-            log_evidence = collect_recent_log_evidence(since_seconds=_POPUP_LOG_EVIDENCE_WINDOW_SECONDS)
+            log_evidence = _collect_popup_log_evidence()
             dialog = _merge_log_evidence_into_dialog(cls, dialog, log_evidence)
         if dialog.get("matched") and dialog.get("recovery_allowed"):
             reason_key = str(dialog.get("reason_key") or "connection_error")

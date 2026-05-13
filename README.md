@@ -45,6 +45,34 @@ python main.py
 
 The backend binds to `127.0.0.1` and uses a per-process local API token for mutating API requests. The dashboard receives that token from the local HTML page and sends it automatically.
 
+## Lua Auto Rejoin Sensor
+
+Argus includes an optional Roblox executor sensor for faster disconnect/error-code recovery. Run the loader script in the Roblox executor:
+
+```text
+lua/argus_rejoin_loader.lua
+```
+
+Use the loader, not `lua/argus_rejoin_helper.lua`. The loader downloads the current helper from the running Argus backend, so fixes and token changes are picked up automatically.
+
+Expected executor log after running the loader:
+
+```text
+[ArgusRejoinLoader] helper compiled
+[ArgusRejoin] ready version=1.7.0
+[ArgusRejoin] post loaded ok status=200 accepted=true
+```
+
+Some executors do not preserve custom POST headers. In that case the helper falls back to a local GET transport. This is still valid if the log shows:
+
+```text
+[ArgusRejoin] get fallback loaded ok status=200 accepted=true
+```
+
+When Roblox shows an error code such as `267`, `268`, `273`, `277`, or `279`, the helper reports it to Argus. Argus then kills the bound Roblox process and relaunches the account through the normal recovery path.
+
+After a successful rejoin, the new Roblox process does not automatically inherit the previous in-game Lua script unless the executor has auto-exec configured. Run the loader again, or configure the executor to auto-run the loader for each new Roblox process.
+
 ## Data Location
 
 Runtime data is stored under:

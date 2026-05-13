@@ -31,7 +31,6 @@ from services.network_monitor import NetworkMonitor, NET_ONLINE
 from services.ram_service import RAMManager
 from services.vip_tracker import VipTracker
 from services.process_service import ProcessManager, ProcessService
-from services.presence_service import PRESENCE_SERVICE
 from services.resource_monitor import get_rt_monitor
 from services.roblox_log_evidence import collect_recent_log_evidence
 from runtime.account_runtime_controller import AccountRuntimeController
@@ -57,6 +56,7 @@ from runtime.runtime_store import RuntimeStore
 from runtime.runtime_state_manager import RuntimeStateManager
 from runtime.runtime_timeline import RuntimeTimeline
 from runtime.runtime_orchestrator import RuntimeOrchestrator
+from runtime.lua_identity import lua_event_requires_pid_guard, resolve_lua_account
 from runtime.farm_lifecycle import FarmLifecycleService
 from runtime.recovery_view import recovery_step_for_account
 from runtime.telemetry_view import build_runtime_telemetry
@@ -469,6 +469,153 @@ class FarmController:
         flog_kv("COMMAND", "verify_finished", account=acc.display_name, killed=killed, finished_at=f"{now:.3f}")
         self._push_event("system", f"Verified finished: {acc.display_name}", account=acc, severity="success", reason="manual_verify_finished")
         return True, f"Verified finished: {username}" + (" (PID killed)" if killed else "")
+
+    def handle_lua_rejoin_event(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        event_name = str(payload.get("event") or "").strip().lower()
+        if not event_name:
+            return {"ok": False, "status_code": 400, "accepted": False, "msg": "Missing Lua event name"}
+        resolution = resolve_lua_account(self._accounts, payload)
+        identity = resolution.identity
+        identity_name = identity.username or identity.account or identity.configured_account
+        if not identity_name and not identity.user_id:
+            return {"ok": False, "status_code": 400, "accepted": False, "msg": "Missing Lua identity"}
+        if resolution.ambiguous:
+            return {
+                "ok": False,
+                "status_code": 409,
+                "accepted": False,
+                "event": event_name,
+                "account": identity_name,
+                "candidates": list(resolution.candidates),
+                "msg": "Lua identity matched multiple accounts",
+            }
+        if not resolution.account:
+            return {
+                "ok": False,
+                "status_code": 404,
+                "accepted": False,
+                "event": event_name,
+                "account": identity_name,
+                "msg": "Account not found",
+            }
+        acc = resolution.account
+
+        reason = str(payload.get("reason_key") or f"lua_{event_name}").strip() or f"lua_{event_name}"
+        event_payload = {
+            "trigger": event_name,
+            "reason_key": reason,
+            "detail": str(payload.get("detail") or payload.get("message") or reason),
+            "popup_code": str(payload.get("error_code") or ""),
+            "error_code": str(payload.get("error_code") or ""),
+            "place_id": str(payload.get("place_id") or ""),
+            "job_id": str(payload.get("job_id") or ""),
+            "evidence_source": str(payload.get("evidence_source") or "lua_helper"),
+            "visual_disconnect": str(payload.get("visual_disconnect") or "").lower() == "true",
+            "lua_username": identity.username,
+            "lua_user_id": identity.user_id,
+            "lua_account": identity.account,
+            "configured_account": identity.configured_account,
+            "lua_pid": identity.pid or "",
+            "matched_pid": resolution.bound_pid or "",
+            "identity_match": resolution.match_reason,
+        }
+
+        if identity.pid and not resolution.pid_match and lua_event_requires_pid_guard(event_name):
+            self._push_event(
+                "lua",
+                f"Lua helper ignored PID mismatch - {acc.display_name}",
+                account=acc,
+                severity="warning",
+                reason="lua_pid_mismatch",
+                lua_event=event_name,
+                lua_pid=identity.pid,
+                matched_pid=resolution.bound_pid or "",
+                identity_match=resolution.match_reason,
+                accepted=False,
+            )
+            return {
+                "ok": True,
+                "accepted": False,
+                "event": event_name,
+                "account": acc._config_username,
+                "signal": "",
+                "matched_pid": resolution.bound_pid,
+                "lua_pid": identity.pid,
+                "msg": "Lua event ignored because PID does not match Argus binding",
+            }
+
+        signal = ""
+        accepted = True
+        severity = "info"
+        if event_name in {"loaded", "in_game"}:
+            signal = RuntimeSignal.LAUNCH_SUCCESS.value
+            accepted = self._runtime_orchestrator.handle_runtime_signal(
+                acc,
+                signal,
+                reason,
+                payload={**event_payload, "count_rejoin": None},
+            )
+        elif event_name in {"disconnect", "error_code"}:
+            signal = RuntimeSignal.DISCONNECT_DETECTED.value
+            severity = "critical"
+            accepted = self._runtime_orchestrator.handle_runtime_signal(
+                acc,
+                signal,
+                reason,
+                payload=event_payload,
+            )
+            worker = self._workers.get(acc._config_username)
+            if worker:
+                worker.wake()
+        elif event_name == "teleport_error":
+            signal = RuntimeSignal.FAULT.value
+            severity = "warning"
+            accepted = self._runtime_orchestrator.handle_runtime_signal(
+                acc,
+                signal,
+                reason,
+                payload=event_payload,
+            )
+            worker = self._workers.get(acc._config_username)
+            if worker:
+                worker.wake()
+        elif event_name == "rejoin_requested":
+            signal = RuntimeSignal.REJOIN_REQUESTED.value
+            severity = "warning"
+            accepted = self._runtime_orchestrator.handle_runtime_signal(acc, signal, reason, payload=event_payload)
+        elif event_name in {"heartbeat", "teleport_state"}:
+            accepted = True
+        else:
+            return {
+                "ok": False,
+                "status_code": 400,
+                "accepted": False,
+                "event": event_name,
+                "account": identity_name,
+                "msg": "Unsupported Lua event",
+            }
+
+        self._push_event(
+            "lua",
+            f"Lua helper: {event_name} - {acc.display_name}",
+            account=acc,
+            severity=severity,
+            reason=reason,
+            lua_event=event_name,
+            signal=signal,
+            error_code=event_payload.get("error_code", ""),
+            accepted=accepted,
+        )
+        return {
+            "ok": True,
+            "accepted": bool(accepted),
+            "event": event_name,
+            "account": acc._config_username,
+            "matched_pid": resolution.bound_pid,
+            "identity_match": resolution.match_reason,
+            "signal": signal,
+            "msg": "Lua event accepted" if accepted else "Lua event routed but not accepted",
+        }
 
     def get_status(self) -> dict:
         return RuntimeViewModelBuilder(self).build_status()

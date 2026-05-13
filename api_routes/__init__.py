@@ -7,6 +7,7 @@ from .performance_routes import register as register_performance_routes
 from .config_routes import register as register_config_routes
 from .accounts_routes import register as register_accounts_routes
 from .system_routes import register as register_system_routes
+from .lua_routes import register as register_lua_routes
 
 
 def register_api_routes(app, ctx: ApiContext) -> None:
@@ -15,4 +16,5 @@ def register_api_routes(app, ctx: ApiContext) -> None:
     register_performance_routes(app, ctx)
     register_config_routes(app, ctx)
     register_accounts_routes(app, ctx)
+    register_lua_routes(app, ctx)
     register_system_routes(app, ctx)

@@ -26,7 +26,7 @@ class ConfigSectionsTests(unittest.TestCase):
         self.assertFalse(sections.game.multi_roblox_enabled)
         self.assertEqual(sections.queue.delay_seconds, 30)
         self.assertEqual(sections.popup_detector.confidence_threshold, 1.25)
-        self.assertTrue(sections.presence.enabled)
+        self.assertFalse(sections.presence.enabled)
         self.assertEqual(sections.performance.cpu_limiter_default_percent, 10.0)
         self.assertEqual(sections.window.arrange_columns, 3)
 
@@ -44,7 +44,7 @@ class ConfigSectionsTests(unittest.TestCase):
         raw = cfg.snapshot()
 
         self.assertEqual(sections.game.place_id, "77747658251236")
-        self.assertTrue(sections.presence.enabled)
+        self.assertFalse(sections.presence.enabled)
         self.assertEqual(sections.presence.poll_interval_seconds, 30)
         self.assertEqual(sections.window.width, 800)
         self.assertEqual(sections.window.height, 600)

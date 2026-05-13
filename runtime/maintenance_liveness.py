@@ -256,8 +256,7 @@ class MaintenanceLivenessMixin:
                     if not candidate.pid or candidate.recovery_inflight:
                         continue
                     candidate_in_game_for = now - (candidate.in_game_since or now)
-                    candidate_presence_mismatch = bool(candidate.presence_mismatch_since)
-                if candidate_in_game_for >= startup_grace or candidate_presence_mismatch:
+                if candidate_in_game_for >= startup_grace:
                     popup_candidates.append(candidate._config_username)
             popup_batch_keys = self._popup_periodic_scan_batch(
                 now,
@@ -278,21 +277,19 @@ class MaintenanceLivenessMixin:
                 last_activity = acc.last_activity_at or acc.in_game_since or now
                 recovery_inflight = acc.recovery_inflight
                 old_state = acc.liveness_state
-                presence_mismatch_active = bool(acc.presence_mismatch_since)
 
             worker = self._workers.get(acc._config_username)
             if not pid:
                 if worker:
                     worker.handle_missing_bound_process("maintenance_pid_missing")
                 continue
-            if in_game_for < startup_grace and not presence_mismatch_active and not recovery_inflight:
+            if in_game_for < startup_grace and not recovery_inflight:
                 continue
 
             popup_key = acc._config_username
             popup_periodic_allowed = bool(popup_enabled and popup_key in popup_batch_keys)
             inspect_ui = popup_enabled and (
-                presence_mismatch_active
-                or popup_periodic_allowed
+                popup_periodic_allowed
                 or old_state in {"suspect_frozen", "frozen", "reconnecting", "teleporting"}
             )
             liveness = ProcessManager.assess_liveness(
@@ -305,7 +302,7 @@ class MaintenanceLivenessMixin:
                 loading_grace=loading_grace,
                 cpu_threshold=cpu_low,
                 inspect_ui=inspect_ui,
-                presence_mismatch=presence_mismatch_active,
+                presence_mismatch=False,
             )
             state = str(liveness.get("state") or "unknown")
             score = float(liveness.get("score") or 0.0)
@@ -365,7 +362,7 @@ class MaintenanceLivenessMixin:
                         allow_rejoin=False,
                     ):
                         continue
-                    if acc.recovery_status == "checking_disconnect" and not acc.recovery_inflight:
+                    if acc.recovery_status in {"checking_disconnect", "disconnect_detected"} and not acc.recovery_inflight:
                         self._set_recovery_status(acc, status="in_game", reason="liveness_alive_clear_disconnect_check", inflight=False)
                     acc.last_activity_at = now
                     acc.last_activity_reason = f"liveness:{state}"
@@ -373,7 +370,8 @@ class MaintenanceLivenessMixin:
                     continue
                 if state in {"loading", "reconnecting", "teleporting"}:
                     if state == "reconnecting" and popup_enabled and dialog.get("matched") and dialog.get("recovery_allowed") and str(dialog.get("action") or "rejoin") in {"rejoin", "conditional_rejoin"}:
-                        dialog_hold = max(1.0, float(self._cfg.get("connection_error_hold_time", 3) or 3))
+                        error_code = str(dialog.get("error_code") or "")
+                        dialog_hold = 1.0 if error_code in {"267", "268", "273", "277", "279"} else max(1.0, float(self._cfg.get("connection_error_hold_time", 3) or 3))
                         if not acc.liveness_suspect_since:
                             acc.liveness_suspect_since = now
                             reconnecting_for = 0.0
@@ -406,7 +404,7 @@ class MaintenanceLivenessMixin:
                         else:
                             self._set_recovery_status(
                                 acc,
-                                status="checking_disconnect",
+                                status="disconnect_detected",
                                 reason=reason_key or str(dialog.get("reason_key") or "connection_error"),
                                 inflight=False,
                             )

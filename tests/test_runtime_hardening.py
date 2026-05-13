@@ -592,7 +592,7 @@ class RuntimeHardeningTests(unittest.TestCase):
             stop.set()
             recovery.stop()
 
-    def test_presence_mismatch_does_not_rejoin_when_local_process_is_healthy(self):
+    def test_presence_mismatch_is_cleared_without_rejoin_when_local_process_is_healthy(self):
         farm = object.__new__(SystemMaintenance)
         farm._cfg = {
             "presence_api_enabled": True,
@@ -623,8 +623,9 @@ class RuntimeHardeningTests(unittest.TestCase):
         )
 
         self.assertFalse(handled)
-        self.assertEqual(acc.presence_mismatch_reason, "presence_not_ingame:Online")
-        self.assertEqual(acc.last_watchdog_classification, "presence_mismatch_observed")
+        self.assertEqual(acc.presence_mismatch_reason, "")
+        self.assertEqual(acc.presence_mismatch_since, 0.0)
+        self.assertNotEqual(acc.last_watchdog_classification, "presence_mismatch_observed")
         self.assertNotEqual(acc.liveness_state, "presence_disconnected")
 
     def test_running_invariant_requires_pid(self):

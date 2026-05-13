@@ -6,13 +6,32 @@ from typing import Any, Dict, List
 from account_hybrid import redact_secret
 from core import AccountState, account_launch_block_reason, flog_kv
 from services.network_monitor import NET_ONLINE
-from services.presence_service import PRESENCE_SERVICE
 from services.process_service import ProcessManager
 from services.ram_service import RAMManager
 from services.resource_monitor import get_rt_monitor
 from runtime.account_worker import AccountWorker
 from runtime.runtime_health import account_health_flags, build_runtime_health
-from runtime.system_maintenance import _account_presence_user_id
+
+
+IMPORTANT_RUNTIME_EVENTS = {
+    "lua",
+    "network",
+    "error",
+    "disconnect_detected",
+    "process_lost",
+    "network_lost",
+    "network_restored",
+    "rejoin_requested",
+    "runtime_rejoin_requested",
+    "launch_success",
+    "failed",
+    "cooldown",
+}
+
+
+def _important_runtime_event(event: Dict[str, Any]) -> bool:
+    kind = str(event.get("event_type") or event.get("kind") or "").strip().lower()
+    return kind in IMPORTANT_RUNTIME_EVENTS
 
 
 class RuntimeViewModelBuilder:
@@ -39,7 +58,11 @@ class RuntimeViewModelBuilder:
         ram_records: Dict[str, dict] = {}
         global_command = farm.command_inflight("global")
         try:
-            recent_runtime_events = farm._runtime_store.list_recent_events(limit=100)
+            recent_runtime_events = [
+                event
+                for event in farm._runtime_store.list_recent_events(limit=100)
+                if _important_runtime_event(event)
+            ]
         except Exception as e:
             flog_kv("RUNTIME", "recent_events_failed", "warning", error=e)
             recent_runtime_events = []
@@ -58,16 +81,6 @@ class RuntimeViewModelBuilder:
                         if value:
                             ram_records[value] = item
 
-        presence_enabled = bool(cfg.get("presence_api_enabled", False))
-        presence_user_ids = [_account_presence_user_id(acc) for acc in farm._accounts]
-        presence_result = PRESENCE_SERVICE.refresh(
-            presence_user_ids,
-            enabled=presence_enabled,
-            poll_interval=float(cfg.get("presence_poll_interval_seconds", 30) or 30),
-            cache_ttl=float(cfg.get("presence_cache_ttl_seconds", 30) or 30),
-            force=False,
-        )
-        presence_by_user_id = presence_result.get("presences") if isinstance(presence_result.get("presences"), dict) else {}
         any_command_inflight = farm._command_tracker.any_inflight()
         queue_snapshot = farm._queue.snapshot() if farm._queue else {
             "size": 0,
@@ -132,12 +145,16 @@ class RuntimeViewModelBuilder:
             recovery_step, recovery_step_index, recovery_step_started_at = farm._recovery_step_for_account(acc, display_state)
             state_label = meta["label"]
             state_color = meta["color"]
-            if recovery_step == "Checking Disconnect":
-                state_label = "Checking Disconnect"
-                state_color = "#a1a1aa"
-            elif recovery_step in {"Rejoining Server", "Session Reconnect", "Network Rejoin", "Killing Process"}:
+            active_runtime_action = bool(acc.recovery_inflight or account_command)
+            if recovery_step == "Rejoining" and (active_runtime_action or display_state != AccountState.IN_GAME):
                 state_label = "Rejoining"
                 state_color = "#a1a1aa"
+            elif recovery_step == "Disconnected" and display_state != AccountState.IN_GAME:
+                state_label = "Disconnected"
+                state_color = "#f97316"
+            elif display_state == AccountState.IN_GAME and pid_alive:
+                state_label = "In Game"
+                state_color = meta["color"]
             cooldown_until = float(acc.cooldown_until or 0.0)
             cooldown_left = max(0, int(cooldown_until - time.time()))
             blocked_reason = account_launch_block_reason(acc)
@@ -151,10 +168,9 @@ class RuntimeViewModelBuilder:
             if not pid_alive:
                 reported_liveness = "unbound" if snapshot_pid else "unknown"
                 reported_liveness_score = 0.0
-            presence_uid = _account_presence_user_id(acc)
-            roblox_presence = dict(presence_by_user_id.get(presence_uid) or {})
-            presence_age = roblox_presence.get("presence_age_seconds")
-            presence_type_name = str(roblox_presence.get("presence_type_name") or "")
+            roblox_presence: Dict[str, Any] = {}
+            presence_age = None
+            presence_type_name = ""
 
             account_payload = {
                 "username": acc.username,
@@ -223,8 +239,8 @@ class RuntimeViewModelBuilder:
                 "presence_last_location": roblox_presence.get("presence_last_location", ""),
                 "presence_age_seconds": presence_age,
                 "presence_limited": bool(roblox_presence.get("presence_limited", False)),
-                "presence_disconnect_for": round(max(0.0, time.time() - float(acc.presence_mismatch_since or time.time())), 1) if acc.presence_mismatch_since else 0.0,
-                "presence_disconnect_reason": acc.presence_mismatch_reason or "",
+                "presence_disconnect_for": 0.0,
+                "presence_disconnect_reason": "",
                 "process_binding_status": acc.process_binding_status or "",
                 "binding_decision": acc.binding_decision or runtime_snapshot.get("binding_decision", ""),
                 "process_binding_confidence": round(float(acc.process_binding_confidence or runtime_snapshot.get("process_binding_confidence", 0.0) or 0.0), 1),
@@ -313,11 +329,12 @@ class RuntimeViewModelBuilder:
             "last_multi_roblox_failure": multi_guard.get("last_failure", ""),
             "multi_roblox_guard_handles": multi_guard.get("handle_names", []),
             "presence_api": {
-                "enabled": presence_enabled,
+                "enabled": False,
                 "poll_interval_seconds": int(cfg.get("presence_poll_interval_seconds", 30) or 30),
                 "cache_ttl_seconds": int(cfg.get("presence_cache_ttl_seconds", 30) or 30),
-                "assist_rejoin_enabled": bool(cfg.get("presence_assist_rejoin_enabled", True)),
-                **{k: v for k, v in presence_result.items() if k not in {"presences"}},
+                "assist_rejoin_enabled": False,
+                "ok": False,
+                "msg": "presence_assist_disabled",
             },
             "queue_snapshot": queue_snapshot,
             "runtime_health": runtime_health,

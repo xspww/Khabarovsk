@@ -142,7 +142,7 @@ def register(app, ctx: ApiContext) -> None:
             updates["roblox_window_arrange_gap"] = normalized_window["arrange_gap"]
             updates["roblox_window_arrange_margin"] = normalized_window["arrange_margin"]
         if "presence_api_enabled" in updates:
-            updates["presence_api_enabled"] = bool(updates["presence_api_enabled"])
+            updates["presence_api_enabled"] = False
         if "popup_disconnected_enabled" in updates:
             updates["popup_disconnected_enabled"] = bool(updates["popup_disconnected_enabled"])
         if "popup_scan_interval_seconds" in updates:
@@ -150,7 +150,7 @@ def register(app, ctx: ApiContext) -> None:
         if "popup_scan_max_parallel" in updates:
             updates["popup_scan_max_parallel"] = _int_setting(updates["popup_scan_max_parallel"], 2, 1, 32)
         if "presence_assist_rejoin_enabled" in updates:
-            updates["presence_assist_rejoin_enabled"] = bool(updates["presence_assist_rejoin_enabled"])
+            updates["presence_assist_rejoin_enabled"] = False
         if "presence_poll_interval_seconds" in updates:
             updates["presence_poll_interval_seconds"] = _int_setting(updates["presence_poll_interval_seconds"], 30, 10, 300)
         if "presence_cache_ttl_seconds" in updates:

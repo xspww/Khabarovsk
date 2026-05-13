@@ -145,6 +145,25 @@ class RuntimeOrchestrator:
             acc=acc,
         )
 
+    def _signal_event_type(self, signal: str, reason: str, accepted: bool) -> str:
+        if not accepted:
+            return "runtime_signal_rejected"
+        signal_name = str(signal or "").strip().lower()
+        reason_key = str(reason or "").strip().lower()
+        if signal_name in {"disconnect_detected", "fault", "crash", "watchdog_timeout", "process_lost", "loading_freeze"}:
+            if reason_key in {"pid_dead", "process_crash", "not_responding"}:
+                return "process_lost"
+            return "disconnect_detected"
+        if signal_name in {"network_lost", "network_drop"}:
+            return "network_lost"
+        if signal_name == "rejoin_requested":
+            return "rejoin_requested"
+        if signal_name == "launch_success":
+            return "launch_success"
+        if signal_name in {"fatal", "auth_failure", "session_failure"}:
+            return "failed"
+        return "runtime_signal"
+
     def request_evaluate(self, acc: Any, trigger: str, force_restart: bool = False) -> bool:
         command = self._command(acc, RuntimeSignal.EVALUATE.value, trigger, {"force_restart": force_restart})
         accepted = self._account_runtime.request_evaluate(acc, trigger=trigger, force_restart=force_restart)
@@ -214,7 +233,7 @@ class RuntimeOrchestrator:
         )
         self.emit_event(
             RuntimeEvent(
-                event_type="runtime_signal_routed",
+                event_type=self._signal_event_type(signal, reason, accepted),
                 account_id=self._account_key(acc),
                 reason=reason or signal,
                 severity="info" if accepted else "warning",

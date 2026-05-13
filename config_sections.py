@@ -63,7 +63,7 @@ class PresenceConfig:
     enabled: bool = False
     poll_interval_seconds: int = 30
     cache_ttl_seconds: int = 30
-    assist_rejoin_enabled: bool = True
+    assist_rejoin_enabled: bool = False
     rejoin_cooldown_seconds: int = 10
 
 
@@ -143,10 +143,10 @@ def build_config_sections(raw: Dict[str, Any]) -> ArgusConfigSections:
             sample_interval_seconds=_float(data, "popup_sample_interval_seconds", 0.25),
         ),
         presence=PresenceConfig(
-            enabled=_bool(data, "presence_api_enabled", False),
+            enabled=False,
             poll_interval_seconds=_int(data, "presence_poll_interval_seconds", 30),
             cache_ttl_seconds=_int(data, "presence_cache_ttl_seconds", 30),
-            assist_rejoin_enabled=_bool(data, "presence_assist_rejoin_enabled", True),
+            assist_rejoin_enabled=False,
             rejoin_cooldown_seconds=_int(data, "presence_rejoin_cooldown_seconds", 10),
         ),
         performance=PerformanceConfig(

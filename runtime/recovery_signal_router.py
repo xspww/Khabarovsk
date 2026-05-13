@@ -106,14 +106,6 @@ class RecoverySignalRouter:
                 return True
 
         self._log_decision(
-            "runtime_signal_received",
-            acc,
-            reason_key,
-            signal=signal_name,
-            payload_keys=",".join(sorted(str(k) for k in payload.keys())),
-            **context.to_dict(),
-        )
-        self._log_decision(
             "runtime_signal_dispatch",
             acc,
             reason_key,
@@ -122,7 +114,6 @@ class RecoverySignalRouter:
         )
         if not self._dispatch(recovery, acc, signal_name, reason_key, payload, context, expected_runtime_generation, expected_session_id, expected_launch_nonce, expected_transaction_id):
             return False
-        self._log_decision("runtime_signal_routed", acc, reason_key, signal=signal_name, **context.to_dict())
         return True
 
     def _suppress_duplicate_signal(

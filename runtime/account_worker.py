@@ -17,11 +17,10 @@ from core import (
     flog_kv,
 )
 from services.process_service import ProcessManager, ProcessService
-from services.presence_service import PRESENCE_SERVICE
 from services.ram_service import RAMManager
 from runtime.roblox_watchdog import RobloxWatchdog
 from runtime.supervisor_runtime import SupervisorRuntime
-from runtime.system_maintenance import _account_presence_user_id, _apply_cpu_limiter_for_bound_process
+from runtime.system_maintenance import _apply_cpu_limiter_for_bound_process
 from runtime.recovery_support import RECOVERY_REASON_MESSAGES, _set_account_cookie_block, compute_backoff
 
 
@@ -207,46 +206,7 @@ class AccountWorker(threading.Thread):
         return False
 
     def _presence_assist_missing_bound_process(self) -> Dict[str, object]:
-        if not bool(self.cfg.get("presence_api_enabled", False)):
-            return {"status": "disabled"}
-        if not bool(self.cfg.get("presence_assist_rejoin_enabled", True)):
-            return {"status": "disabled"}
-        uid = _account_presence_user_id(self.acc)
-        if not uid:
-            return {"status": "skipped", "reason": "missing_user_id"}
-        result = PRESENCE_SERVICE.refresh(
-            [uid],
-            enabled=True,
-            poll_interval=float(self.cfg.get("presence_poll_interval_seconds", 30) or 30),
-            cache_ttl=float(self.cfg.get("presence_cache_ttl_seconds", 30) or 30),
-            force=False,
-        )
-        presence = (result.get("presences") or {}).get(uid) or PRESENCE_SERVICE.get_cached(uid)
-        if not presence:
-            return {"status": "unknown", "reason": str(result.get("msg") or "no_presence"), "presence_api": result}
-        try:
-            presence_type = int(presence.get("presence_type") or -1)
-        except Exception:
-            presence_type = -1
-        if presence_type != 2:
-            return {"status": "not_ingame", "presence": presence, "presence_api": result}
-        observed_places = {
-            str(presence.get("presence_place_id") or "").strip(),
-            str(presence.get("presence_root_place_id") or "").strip(),
-        }
-        observed_places.discard("")
-        if not observed_places:
-            return {"status": "limited", "reason": "presence_limited", "presence": presence, "presence_api": result}
-        with self.acc._lock:
-            expected_places = {
-                str(self.acc.place_id or "").strip(),
-                str((self.acc.launch_intent or {}).get("place_id") or "").strip(),
-                str((self.acc.launch_intent_summary or {}).get("place_id") or "").strip(),
-            }
-        expected_places.discard("")
-        if expected_places and observed_places.intersection(expected_places):
-            return {"status": "hold", "reason": "roblox_presence_ingame", "presence": presence, "presence_api": result}
-        return {"status": "mismatch", "presence": presence, "presence_api": result}
+        return {"status": "disabled", "reason": "presence_assist_disabled"}
 
     def _assess_missing_bound_process(self, source: str) -> Dict[str, object]:
         acc = self.acc
@@ -698,7 +658,7 @@ class AccountWorker(threading.Thread):
                             error_code = str(disconnect_info.get("error_code") or "")
                             action = str(disconnect_info.get("action") or "rejoin")
                             confidence = float(disconnect_info.get("popup_confidence", disconnect_info.get("confidence", 0.0)) or 0.0)
-                            effective_hold_sec = 1.0 if error_code in {"267", "268", "273", "277"} else hold_sec
+                            effective_hold_sec = 1.0 if error_code in {"267", "268", "273", "277", "279"} else hold_sec
                             evidence_note = f"source={disconnect_info.get('evidence_source', '')} confidence={confidence:.2f} samples={disconnect_info.get('positive_samples', 0)}/{disconnect_info.get('sample_count', 0)}"
                             detail_suffix = f" code={error_code}" if error_code else ""
                             if not disconnect_info.get("recovery_allowed"):
@@ -735,7 +695,7 @@ class AccountWorker(threading.Thread):
                                 continue
                             if self._connection_error_since is None:
                                 self._connection_error_since = time.time()
-                                self.runtime_owner.set_recovery_status(acc, status="checking_disconnect", reason=reason_key, inflight=False)
+                                self.runtime_owner.set_recovery_status(acc, status="disconnect_detected", reason=reason_key, inflight=False)
                                 flog(f"[WORKER] {acc.display_name} disconnect dialog detected - will recover in {effective_hold_sec:.0f}s ({reason_key}{detail_suffix} {evidence_note}: {detail})")
                                 self._wake.wait(timeout=min(1.0, effective_hold_sec))
                                 self._wake.clear()
@@ -785,7 +745,7 @@ class AccountWorker(threading.Thread):
                                 continue
                         else:
                             self._connection_error_since = None
-                            if acc.recovery_status == "checking_disconnect" and not acc.recovery_inflight:
+                            if acc.recovery_status in {"checking_disconnect", "disconnect_detected"} and not acc.recovery_inflight:
                                 self.runtime_owner.set_recovery_status(acc, status="in_game", reason="disconnect_check_clear", inflight=False)
 
                     if runtime > 30:

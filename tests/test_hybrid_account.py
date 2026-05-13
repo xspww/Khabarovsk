@@ -144,7 +144,7 @@ class HybridAccountTests(unittest.TestCase):
             account = store.to_roboguard_accounts()[0]
             self.assertEqual(account["browser_tracker_id"], "112233")
 
-    def test_status_step_keeps_active_checking_disconnect_over_in_game(self):
+    def test_status_step_maps_disconnect_check_to_simple_disconnected_label(self):
         controller = FarmController.__new__(FarmController)
         controller._net_mon = None
         account = Account("UserA")
@@ -155,7 +155,7 @@ class HybridAccountTests(unittest.TestCase):
 
         step, index, started_at = controller._recovery_step_for_account(account, AccountState.IN_GAME)
 
-        self.assertEqual(step, "Checking Disconnect")
+        self.assertEqual(step, "Disconnected")
         self.assertEqual(index, 4)
         self.assertEqual(started_at, 123.0)
 
@@ -191,8 +191,7 @@ class HybridAccountTests(unittest.TestCase):
         account.in_game_since = 456.0
         controller.set_accounts([account])
 
-        with patch("runtime.runtime_view_model.PRESENCE_SERVICE.refresh", return_value={"presences": {}}), \
-             patch("runtime.runtime_view_model.ProcessManager.is_bound_game_alive", return_value=True), \
+        with patch("runtime.runtime_view_model.ProcessManager.is_bound_game_alive", return_value=True), \
              patch("runtime.runtime_view_model.ProcessManager.get_pid_owner", return_value="UserA"), \
              patch("runtime.runtime_view_model.ProcessManager.is_not_responding", return_value=False):
             status = controller.get_status()
@@ -1074,8 +1073,8 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn('id="close-all-roblox-btn"><svg class="btn-icon"', html)
         self.assertIn('id="reload-cookies-btn"><svg class="btn-icon"', html)
         self.assertIn('id="add-btn"><svg class="btn-icon"', html)
-        self.assertIn("apiLabel==='Checking Disconnect'||apiLabel==='Rejoining'", html)
-        self.assertIn("rec.includes('checking_disconnect')||step.includes('checking disconnect')", html)
+        self.assertIn("['Idle','Queued','Launching','In Game','Disconnected','Rejoining','Cooldown','Failed'].includes(apiLabel)", html)
+        self.assertNotIn("Checking Disconnect", html)
         self.assertNotIn("save.disabled=!isDirty", html)
         self.assertNotIn("reset.disabled=!isDirty", html)
         self.assertIn("function resetGameSettings()", html)
@@ -1227,7 +1226,7 @@ class HybridAccountTests(unittest.TestCase):
             "Max active accounts.",
             "Used only for rotation.",
             "Delay between launches.",
-            "Help detect disconnects.",
+            "Detect Roblox disconnect popup.",
         ):
             self.assertIn(new_copy, queue_section)
         for old_copy in (
@@ -1246,6 +1245,410 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("MacMinButton", title_source)
         self.assertIn("MacMaxButton", title_source)
         self.assertNotIn("TitleButton", title_source)
+
+    def test_lua_rejoin_helper_is_served_with_token_and_local_endpoint(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        response = client.get("/api/lua/rejoin-helper?account=LuaUnit&port=7777&shutdown_delay=2.5")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text
+        self.assertIn('Host = "127.0.0.1"', script)
+        self.assertIn("Port = 7777", script)
+        self.assertIn(f'Token = "{main.INSTANCE_TOKEN}"', script)
+        self.assertIn('Account = "LuaUnit"', script)
+        self.assertIn('account = safeString(LocalPlayer.Name)', script)
+        self.assertIn('configured_account = safeString(self.Account)', script)
+        self.assertIn("pid = getProcessId()", script)
+        self.assertIn("ShutdownDelay = 2.50", script)
+        self.assertIn('Version = "1.7.0"', script)
+        self.assertIn('token = safeString(self.Token)', script)
+        self.assertIn('argus_token = safeString(self.Token)', script)
+        self.assertIn('api_token = safeString(self.Token)', script)
+        self.assertIn('_argus_token = safeString(self.Token)', script)
+        self.assertIn('function ArgusRejoin:EndpointWithToken', script)
+        self.assertIn('function ArgusRejoin:QueryEndpoint', script)
+        self.assertIn('function ArgusRejoin:GetFallback', script)
+        self.assertIn('["User-Agent"] = "ArgusLuaRejoin/1.7"', script)
+        self.assertIn('Headers = requestHeaders', script)
+        self.assertIn('headers = requestHeaders', script)
+        self.assertIn('body = body', script)
+        self.assertIn('Data = body', script)
+        self.assertIn('return self:GetFallback(eventName, payload, status)', script)
+        self.assertIn('game:HttpGet(url)', script)
+        self.assertIn('["X-RoboGuard-Token"] = self.Token', script)
+        self.assertIn("/api/lua/rejoin-event", script)
+        self.assertIn('"http://" .. host .. ":" .. port .. "/api/lua/rejoin-event"', script)
+        self.assertNotIn('("http://%s:%s/api/lua/rejoin-event"):format', script)
+        self.assertIn("GuiService.ErrorMessageChanged", script)
+        self.assertIn("function ArgusRejoin:PostAsync", script)
+        self.assertIn("function ArgusRejoin:ClientRecoveryFallback", script)
+        self.assertIn('log("post begin"', script)
+        self.assertIn('log("post async"', script)
+        self.assertIn('log("post task error"', script)
+        self.assertIn('log("json encode failed"', script)
+        self.assertIn('log("client fallback start"', script)
+        self.assertIn("TeleportService:Teleport(game.PlaceId, LocalPlayer)", script)
+        self.assertIn('LocalPlayer:Kick("Argus recovery fallback")', script)
+        self.assertIn('reportDisconnect("poll")', script)
+        self.assertIn("task.wait(0.5)", script)
+        self.assertIn("shutdown fallback after disconnect", script)
+        self.assertIn("TeleportService.TeleportInitFailed", script)
+        self.assertNotIn("TeleportToPlaceInstance", script)
+        self.assertIn('G.ArgusRejoin = ArgusRejoin', script)
+        self.assertNotIn("__ARGUS_", script)
+        loader = (Path(__file__).resolve().parents[1] / "lua" / "argus_rejoin_loader.lua").read_text(encoding="utf-8")
+        self.assertIn("/api/lua/rejoin-helper", loader)
+        self.assertIn("local Load = loadstring or load", loader)
+        self.assertIn("Load(source)", loader)
+
+    def test_lua_rejoin_event_requires_api_token(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        response = client.post("/api/lua/rejoin-event", json={"event": "heartbeat", "account": "LuaUnit"})
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_lua_rejoin_event_accepts_body_token_for_executor_requests(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        calls = []
+
+        def fake_lua_event(payload):
+            calls.append(dict(payload))
+            return {
+                "ok": True,
+                "accepted": True,
+                "event": payload.get("event", ""),
+                "account": payload.get("account", ""),
+                "signal": "",
+                "msg": "Lua event accepted",
+            }
+
+        with patch.object(main.farm, "handle_lua_rejoin_event", side_effect=fake_lua_event):
+            response = client.post(
+                "/api/lua/rejoin-event",
+                json={
+                    "event": "heartbeat",
+                    "account": "LuaUnit",
+                    "username": "LuaUnit",
+                    "token": main.INSTANCE_TOKEN,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["accepted"], True)
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("token", calls[0])
+
+    def test_lua_rejoin_event_accepts_argus_token_alias(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        calls = []
+
+        def fake_lua_event(payload):
+            calls.append(dict(payload))
+            return {
+                "ok": True,
+                "accepted": True,
+                "event": payload.get("event", ""),
+                "account": payload.get("account", ""),
+                "signal": "",
+                "msg": "Lua event accepted",
+            }
+
+        with patch.object(main.farm, "handle_lua_rejoin_event", side_effect=fake_lua_event):
+            response = client.post(
+                "/api/lua/rejoin-event",
+                json={
+                    "event": "heartbeat",
+                    "account": "LuaUnit",
+                    "username": "LuaUnit",
+                    "argus_token": main.INSTANCE_TOKEN,
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["accepted"], True)
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("argus_token", calls[0])
+
+    def test_lua_rejoin_event_accepts_query_token_fallback(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        calls = []
+
+        def fake_lua_event(payload):
+            calls.append(dict(payload))
+            return {
+                "ok": True,
+                "accepted": True,
+                "event": payload.get("event", ""),
+                "account": payload.get("account", ""),
+                "signal": "",
+                "msg": "Lua event accepted",
+            }
+
+        with patch.object(main.farm, "handle_lua_rejoin_event", side_effect=fake_lua_event):
+            response = client.post(
+                f"/api/lua/rejoin-event?argus_token={main.INSTANCE_TOKEN}",
+                json={"event": "heartbeat", "account": "LuaUnit", "username": "LuaUnit"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["accepted"], True)
+        self.assertEqual(len(calls), 1)
+
+    def test_lua_rejoin_event_accepts_local_get_fallback_when_executor_token_is_mangled(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        calls = []
+
+        def fake_lua_event(payload):
+            calls.append(dict(payload))
+            return {
+                "ok": True,
+                "accepted": True,
+                "event": payload.get("event", ""),
+                "account": payload.get("account", ""),
+                "signal": "disconnect_detected",
+                "msg": "Lua event accepted",
+            }
+
+        with patch.object(main.farm, "handle_lua_rejoin_event", side_effect=fake_lua_event):
+            response = client.get(
+                "/api/lua/rejoin-event?"
+                "argus_token=bad-token&event=disconnect&account=LuaUnit&username=LuaUnit&"
+                "helper_version=1.7.0&error_code=273&reason_key=lua_disconnect_error"
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["accepted"])
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["event"], "disconnect")
+        self.assertNotIn("argus_token", calls[0])
+
+    def test_lua_rejoin_event_rejects_unauthenticated_get_without_helper_version(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        response = client.get(
+            "/api/lua/rejoin-event?event=disconnect&account=LuaUnit&username=LuaUnit&error_code=273"
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_lua_rejoin_event_routes_to_farm_boundary(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        calls = []
+
+        def fake_lua_event(payload):
+            calls.append(dict(payload))
+            return {
+                "ok": True,
+                "accepted": True,
+                "event": payload.get("event", ""),
+                "account": payload.get("account", ""),
+                "signal": "disconnect_detected",
+                "msg": "Lua event accepted",
+            }
+
+        with patch.object(main.farm, "handle_lua_rejoin_event", side_effect=fake_lua_event):
+            response = auth_post(
+                client,
+                "/api/lua/rejoin-event",
+                json={
+                    "event": "disconnect",
+                    "account": "LuaUnit",
+                    "error_code": "277",
+                    "reason_key": "lua_disconnect_error",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(response.json()["accepted"])
+        self.assertEqual(calls[0]["event"], "disconnect")
+        self.assertEqual(calls[0]["error_code"], "277")
+
+    def test_lua_disconnect_event_maps_to_recovery_signal(self):
+        controller = FarmController.__new__(FarmController)
+        account = Account("LuaUnit")
+        controller._accounts = [account]
+        controller._workers = {}
+        pushed = []
+        routed = []
+
+        class FakeOrchestrator:
+            def handle_runtime_signal(self, acc, signal, reason, payload=None):
+                routed.append((acc, signal, reason, payload or {}))
+                return True
+
+        controller._runtime_orchestrator = FakeOrchestrator()
+        controller._push_event = lambda *args, **kwargs: pushed.append((args, kwargs))
+
+        result = controller.handle_lua_rejoin_event({
+            "event": "disconnect",
+            "account": "LuaUnit",
+            "error_code": "277",
+            "reason_key": "lua_disconnect_test",
+            "detail": "manual disconnect sensor test",
+            "visual_disconnect": "true",
+            "evidence_source": "lua_manual_test",
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["signal"], "disconnect_detected")
+        self.assertEqual(routed[0][0], account)
+        self.assertEqual(routed[0][1], "disconnect_detected")
+        self.assertEqual(routed[0][2], "lua_disconnect_test")
+        self.assertEqual(routed[0][3]["error_code"], "277")
+        self.assertTrue(routed[0][3]["visual_disconnect"])
+        self.assertEqual(routed[0][3]["evidence_source"], "lua_manual_test")
+        self.assertEqual(pushed[0][1]["lua_event"], "disconnect")
+
+    def test_lua_identity_uses_actual_username_over_configured_account_hint(self):
+        controller = FarmController.__new__(FarmController)
+        configured = Account("ConfiguredAccount")
+        actual = Account("RealRobloxUser")
+        controller._accounts = [configured, actual]
+        controller._workers = {}
+        pushed = []
+        routed = []
+
+        class FakeOrchestrator:
+            def handle_runtime_signal(self, acc, signal, reason, payload=None):
+                routed.append((acc, signal, reason, payload or {}))
+                return True
+
+        controller._runtime_orchestrator = FakeOrchestrator()
+        controller._push_event = lambda *args, **kwargs: pushed.append((args, kwargs))
+
+        result = controller.handle_lua_rejoin_event({
+            "event": "disconnect",
+            "account": "ConfiguredAccount",
+            "configured_account": "ConfiguredAccount",
+            "username": "RealRobloxUser",
+            "error_code": "277",
+            "reason_key": "lua_disconnect_identity",
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["account"], "RealRobloxUser")
+        self.assertEqual(result["identity_match"], "username")
+        self.assertEqual(routed[0][0], actual)
+        self.assertEqual(routed[0][3]["lua_username"], "RealRobloxUser")
+        self.assertEqual(routed[0][3]["configured_account"], "ConfiguredAccount")
+
+    def test_lua_identity_can_match_cookie_user_id(self):
+        controller = FarmController.__new__(FarmController)
+        account = Account("ConfigOnlyName")
+        account.cookie_user_id = "123456"
+        controller._accounts = [account]
+        controller._workers = {}
+        routed = []
+
+        class FakeOrchestrator:
+            def handle_runtime_signal(self, acc, signal, reason, payload=None):
+                routed.append((acc, signal, reason, payload or {}))
+                return True
+
+        controller._runtime_orchestrator = FakeOrchestrator()
+        controller._push_event = lambda *args, **kwargs: None
+
+        result = controller.handle_lua_rejoin_event({
+            "event": "disconnect",
+            "account": "RuntimeUsername",
+            "username": "RuntimeUsername",
+            "user_id": "123456",
+            "error_code": "277",
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["account"], "ConfigOnlyName")
+        self.assertEqual(result["identity_match"], "user_id")
+        self.assertEqual(routed[0][0], account)
+
+    def test_lua_disconnect_with_pid_mismatch_is_not_routed(self):
+        controller = FarmController.__new__(FarmController)
+        account = Account("LuaUnit")
+        account.pid = 111
+        controller._accounts = [account]
+        controller._workers = {}
+        pushed = []
+        routed = []
+
+        class FakeOrchestrator:
+            def handle_runtime_signal(self, acc, signal, reason, payload=None):
+                routed.append((acc, signal, reason, payload or {}))
+                return True
+
+        controller._runtime_orchestrator = FakeOrchestrator()
+        controller._push_event = lambda *args, **kwargs: pushed.append((args, kwargs))
+
+        result = controller.handle_lua_rejoin_event({
+            "event": "disconnect",
+            "account": "LuaUnit",
+            "username": "LuaUnit",
+            "pid": "222",
+            "error_code": "277",
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["matched_pid"], 111)
+        self.assertEqual(result["lua_pid"], 222)
+        self.assertEqual(routed, [])
+        self.assertEqual(pushed[0][1]["reason"], "lua_pid_mismatch")
+
+    def test_lua_disconnect_with_matching_pid_routes_targeted_rejoin(self):
+        controller = FarmController.__new__(FarmController)
+        account = Account("LuaUnit")
+        account.pid = 333
+        controller._accounts = [account]
+        controller._workers = {}
+        routed = []
+
+        class FakeOrchestrator:
+            def handle_runtime_signal(self, acc, signal, reason, payload=None):
+                routed.append((acc, signal, reason, payload or {}))
+                return True
+
+        controller._runtime_orchestrator = FakeOrchestrator()
+        controller._push_event = lambda *args, **kwargs: None
+
+        result = controller.handle_lua_rejoin_event({
+            "event": "disconnect",
+            "account": "LuaUnit",
+            "username": "LuaUnit",
+            "pid": "333",
+            "error_code": "277",
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["matched_pid"], 333)
+        self.assertEqual(routed[0][0], account)
+        self.assertEqual(routed[0][3]["matched_pid"], 333)
+        self.assertEqual(routed[0][3]["lua_pid"], 333)
 
     def test_queue_popup_disconnected_toggle_is_separate_from_presence(self):
         from fastapi.testclient import TestClient
@@ -1267,10 +1670,12 @@ class HybridAccountTests(unittest.TestCase):
             self.assertIn("popup_disconnected_enabled:$('popup-disconnected-enabled').checked", html)
             self.assertIn("popup_scan_interval_seconds:Number($('popup-scan-interval').value)||30", html)
             self.assertIn("popup_scan_max_parallel:Number($('popup-scan-max-parallel').value)||2", html)
-            self.assertIn("presence_api_enabled:$('presence-enabled').checked", html)
+            self.assertIn("presence_api_enabled:false", html)
             self.assertIn("presence_poll_interval_seconds:30", html)
             self.assertIn("presence_cache_ttl_seconds:30", html)
-            self.assertIn("presence_assist_rejoin_enabled:true", html)
+            self.assertIn("presence_assist_rejoin_enabled:false", html)
+            self.assertNotIn('id="presence-enabled"', html)
+            self.assertNotIn("Use Presence API", html)
             self.assertNotIn("$('presence-interval')", html)
             self.assertNotIn("$('presence-ttl')", html)
             self.assertNotIn("$('presence-assist')", html)
@@ -1290,8 +1695,8 @@ class HybridAccountTests(unittest.TestCase):
             self.assertFalse(config["popup_disconnected_enabled"])
             self.assertEqual(config["popup_scan_interval_seconds"], 45)
             self.assertEqual(config["popup_scan_max_parallel"], 3)
-            self.assertTrue(config["presence_api_enabled"])
-            self.assertTrue(config["presence_assist_rejoin_enabled"])
+            self.assertFalse(config["presence_api_enabled"])
+            self.assertFalse(config["presence_assist_rejoin_enabled"])
         finally:
             main.cfg_mgr.update(original)
             main.cfg_mgr.save()
@@ -1305,7 +1710,8 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn('self.cfg.get("popup_disconnected_enabled", True)', worker_source)
         self.assertIn("popup_scan_interval_seconds", worker_source)
         self.assertIn("effective_hold_sec", worker_source)
-        self.assertIn("checking_disconnect", worker_source)
+        self.assertIn("disconnect_detected", worker_source)
+        self.assertIn('"279"', worker_source)
         self.assertIn("popup_enabled", maintenance_source)
         self.assertIn("popup_scan_max_parallel", maintenance_source)
         self.assertIn("_popup_periodic_scan_batch", maintenance_source)
@@ -1868,10 +2274,11 @@ class HybridAccountTests(unittest.TestCase):
     def test_auto_minimize_runtime_path_removed(self):
         self.assertFalse(hasattr(SystemMaintenance, "_enforce_auto_minimize"))
 
-    def test_presence_mismatch_forces_popup_inspection_without_rejoin(self):
+    def test_presence_mismatch_no_longer_forces_popup_inspection(self):
         maint = object.__new__(SystemMaintenance)
         maint._cfg = {
             "watchdog_enabled": True,
+            "popup_disconnected_enabled": False,
             "watchdog_hold_time": 60,
             "watchdog_activity_timeout": 180,
             "watchdog_loading_grace": 90,
@@ -1914,7 +2321,8 @@ class HybridAccountTests(unittest.TestCase):
         with patch.object(ProcessManager, "assess_liveness", return_value=liveness) as assess:
             SystemMaintenance._scan_liveness_watchdog(maint)
 
-        self.assertTrue(assess.call_args.kwargs["inspect_ui"])
+        self.assertFalse(assess.call_args.kwargs["inspect_ui"])
+        self.assertFalse(assess.call_args.kwargs["presence_mismatch"])
         self.assertEqual(presence_calls[-1]["allow_rejoin"], False)
 
     def test_alive_process_periodically_scans_popup_dialog(self):
@@ -2712,7 +3120,7 @@ class HybridAccountTests(unittest.TestCase):
             main.cfg_mgr.update(original)
             main.cfg_mgr.save()
 
-    def test_presence_ingame_matching_place_holds_missing_pid(self):
+    def test_presence_assist_missing_pid_is_disabled(self):
         from farm import AccountWorker
 
         acc = Account(username="UserA", user_id="42", place_id="123")
@@ -2725,24 +3133,9 @@ class HybridAccountTests(unittest.TestCase):
             "presence_poll_interval_seconds": 30,
             "presence_cache_ttl_seconds": 30,
         }
-        with patch(
-            "farm.PRESENCE_SERVICE.refresh",
-            return_value={
-                "ok": True,
-                "presences": {
-                    "42": {
-                        "presence_type": 2,
-                        "presence_type_name": "InGame",
-                        "presence_place_id": "123",
-                        "presence_root_place_id": "123",
-                        "presence_game_id_present": True,
-                    }
-                },
-            },
-        ):
-            result = AccountWorker._presence_assist_missing_bound_process(worker)
-        self.assertEqual(result["status"], "hold")
-        self.assertEqual(result["reason"], "roblox_presence_ingame")
+        result = AccountWorker._presence_assist_missing_bound_process(worker)
+        self.assertEqual(result["status"], "disabled")
+        self.assertEqual(result["reason"], "presence_assist_disabled")
 
     def test_presence_private_fields_do_not_force_hold(self):
         from farm import AccountWorker
@@ -2751,12 +3144,8 @@ class HybridAccountTests(unittest.TestCase):
         worker = object.__new__(AccountWorker)
         worker.acc = acc
         worker.cfg = {"presence_api_enabled": True, "presence_assist_rejoin_enabled": True}
-        with patch(
-            "farm.PRESENCE_SERVICE.refresh",
-            return_value={"ok": True, "presences": {"42": {"presence_type": 2, "presence_type_name": "InGame"}}},
-        ):
-            result = AccountWorker._presence_assist_missing_bound_process(worker)
-        self.assertEqual(result["status"], "limited")
+        result = AccountWorker._presence_assist_missing_bound_process(worker)
+        self.assertEqual(result["status"], "disabled")
 
     def test_multi_roblox_guard_failure_requires_recent_pid_overlap(self):
         from farm import AccountWorker
@@ -2791,7 +3180,7 @@ class HybridAccountTests(unittest.TestCase):
             AccountWorker._looks_like_multi_roblox_guard_failure(worker, 111, fresh_presence, 12.0, 10.0)
         )
 
-    def test_presence_offline_with_live_pid_triggers_one_rejoin_then_suppresses_flap(self):
+    def test_presence_offline_with_live_pid_does_not_trigger_rejoin(self):
         maint = object.__new__(SystemMaintenance)
         maint._cfg = {
             "presence_api_enabled": True,
@@ -2819,43 +3208,16 @@ class HybridAccountTests(unittest.TestCase):
                 self.calls.append((args, kwargs))
 
         worker = FakeWorker()
-        presence = {
-            "presence_type": 0,
-            "presence_type_name": "Offline",
-            "presence_last_location": "Website",
-            "presence_fetched_at": time.time(),
-            "presence_age_seconds": 0,
-        }
-        with patch("farm.PRESENCE_SERVICE.refresh", return_value={"ok": True, "presences": {"42": presence}}):
-            first = SystemMaintenance._handle_presence_disconnect_assist(maint, acc, worker, time.time(), 1234, 120, 90)
-            acc.presence_mismatch_since = time.time() - 5
-            second = SystemMaintenance._handle_presence_disconnect_assist(maint, acc, worker, time.time(), 1234, 120, 90)
-            acc.presence_mismatch_since = time.time() - 5
-            third = SystemMaintenance._handle_presence_disconnect_assist(maint, acc, worker, time.time(), 1234, 120, 90)
-            acc.presence_rejoin_suppressed_until = time.time() - 1
-            acc.presence_mismatch_since = time.time() - 5
-            fourth = SystemMaintenance._handle_presence_disconnect_assist(maint, acc, worker, time.time(), 1234, 120, 90)
+        acc.presence_mismatch_since = time.time() - 5
+        acc.presence_mismatch_reason = "presence_not_ingame:Offline"
+        acc.presence_rejoin_pending_clear = True
+        first = SystemMaintenance._handle_presence_disconnect_assist(maint, acc, worker, time.time(), 1234, 120, 90)
+        second = SystemMaintenance._handle_presence_disconnect_assist(maint, acc, worker, time.time(), 1234, 120, 90)
         self.assertFalse(first)
-        self.assertTrue(second)
-        self.assertFalse(third)
-        self.assertTrue(fourth)
-        self.assertEqual(len(worker.calls), 2)
-        self.assertEqual(worker.calls[0][0][0], "connection_error")
-        self.assertIn("Presence API", worker.calls[0][0][1])
-        self.assertEqual(worker.calls[0][1]["expected_runtime_generation"], 7)
-        self.assertGreater(acc.presence_rejoin_suppressed_until, time.time())
-        self.assertTrue(acc.presence_rejoin_pending_clear)
-
-        ingame_presence = {
-            "presence_type": 2,
-            "presence_type_name": "InGame",
-            "presence_place_id": "123",
-            "presence_fetched_at": time.time(),
-            "presence_age_seconds": 0,
-        }
-        with patch("farm.PRESENCE_SERVICE.refresh", return_value={"ok": True, "presences": {"42": ingame_presence}}):
-            cleared = SystemMaintenance._handle_presence_disconnect_assist(maint, acc, worker, time.time(), 1234, 120, 90)
-        self.assertFalse(cleared)
+        self.assertFalse(second)
+        self.assertEqual(worker.calls, [])
+        self.assertEqual(acc.presence_mismatch_since, 0.0)
+        self.assertEqual(acc.presence_mismatch_reason, "")
         self.assertFalse(acc.presence_rejoin_pending_clear)
 
     def test_cookie_and_vip_parsing(self):

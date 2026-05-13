@@ -46,8 +46,5 @@ def popup_confidence_score(
 
     if process_idle:
         breakdown["process_idle"] = 0.3
-    if presence_mismatch:
-        breakdown["presence_mismatch"] = 0.2
-
     score = round(sum(breakdown.values()), 3)
     return {"score": score, "breakdown": breakdown}

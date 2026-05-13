@@ -108,7 +108,7 @@ DEFAULTS: Dict[str, Any] = {
     "presence_api_enabled":     False,
     "presence_poll_interval_seconds": 30,
     "presence_cache_ttl_seconds": 30,
-    "presence_assist_rejoin_enabled": True,
+    "presence_assist_rejoin_enabled": False,
     "presence_rejoin_cooldown_seconds": 10,
     "multi_roblox_enabled": True,
     "rt_rotation_enabled": False,

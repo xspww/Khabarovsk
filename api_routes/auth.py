@@ -10,7 +10,7 @@ from .context import ApiContext
 
 _MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 _TOKEN_HEADERS = ("X-Argus-Token", "X-RoboGuard-Token")
-_EXEMPT_PATHS = {"/api/app/shutdown"}
+_EXEMPT_PATHS = {"/api/app/shutdown", "/api/lua/rejoin-event"}
 
 
 def install_api_token_middleware(app, ctx: ApiContext) -> None:

@@ -6,6 +6,7 @@ from typing import Any, Callable, Dict, List, Tuple
 
 from runtime.recovery_context import (
     RecoveryAttemptContext,
+    SESSION_CONFLICT,
     normalize_disconnect_category,
     priority_for_signal,
 )
@@ -221,6 +222,13 @@ def kill_local_duplicate_for_session_conflict(
     kill_pid: Callable[[int], bool],
     log_event: Callable[..., None],
 ) -> int:
+    if ctx.category != SESSION_CONFLICT or (ctx.popup_code and ctx.popup_code != "273"):
+        log_event(
+            "session_conflict_duplicate_skipped",
+            skip_reason="not_error_273_session_conflict",
+            **ctx.to_dict(),
+        )
+        return 0
     killed = 0
     with account._lock:
         bound_pid = int(account.pid or 0)

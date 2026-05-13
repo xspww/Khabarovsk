@@ -25,6 +25,7 @@ from runtime.runtime_store import RuntimeStore
 from runtime.runtime_timeline import RuntimeTimeline
 from runtime.telemetry_view import build_runtime_telemetry
 from runtime.command_tracker import RuntimeCommandTracker
+from runtime.farm_lifecycle import _clear_manual_start_failure_gate
 from runtime.runtime_scheduler import RuntimeScheduler
 from runtime.runtime_state_manager import RuntimeStateManager
 from services.network_fault_injector import CommandResult, NetworkFaultInjector, RULE_PREFIX
@@ -45,6 +46,47 @@ class RuntimeHardeningTests(unittest.TestCase):
     class _AlwaysOnlineNet:
         def is_online(self):
             return True
+
+    def test_manual_start_clears_max_fail_gate_counters(self):
+        acc = Account(username="manual_retry_user")
+        acc.state = AccountState.FAILED
+        acc.fail_count = 8
+        acc.retry_count = 5
+        acc.launch_fail_count = 5
+        acc.crash_retry_count = 3
+        acc.network_retry_count = 2
+        acc.session_retry_count = 4
+        acc.session_wait_started_at = 10.0
+        acc.pid_missing_since = 11.0
+        acc.last_network_lost_at = 12.0
+        acc.last_crash_reason = "max_fail"
+        acc.last_recovery_reason = "max_fail"
+        acc.recovery_status = "failed"
+        acc.recovery_inflight = True
+        acc.recovery_scheduled_at = 13.0
+        acc.last_rejoin_trigger = "unit"
+        acc.cooldown_until = 9999.0
+        acc.sync_runtime("seed_failed_gate")
+
+        state = RuntimeStateManager(logger=lambda *args, **kwargs: None)
+
+        self.assertTrue(_clear_manual_start_failure_gate(acc, state, max_fail_count=5))
+        self.assertEqual(acc.fail_count, 0)
+        self.assertEqual(acc.retry_count, 0)
+        self.assertEqual(acc.launch_fail_count, 0)
+        self.assertEqual(acc.crash_retry_count, 0)
+        self.assertEqual(acc.network_retry_count, 0)
+        self.assertEqual(acc.session_retry_count, 0)
+        self.assertEqual(acc.session_wait_started_at, 0.0)
+        self.assertEqual(acc.pid_missing_since, 0.0)
+        self.assertIsNone(acc.last_network_lost_at)
+        self.assertEqual(acc.last_crash_reason, "")
+        self.assertEqual(acc.last_recovery_reason, "")
+        self.assertEqual(acc.recovery_status, "")
+        self.assertFalse(acc.recovery_inflight)
+        self.assertEqual(acc.recovery_scheduled_at, 0.0)
+        self.assertEqual(acc.last_rejoin_trigger, "")
+        self.assertEqual(acc.cooldown_until, 0.0)
 
     def _make_recovery(self):
         stop = threading.Event()

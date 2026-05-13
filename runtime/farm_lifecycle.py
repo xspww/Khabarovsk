@@ -17,6 +17,40 @@ from runtime.runtime_scheduler import RuntimeScheduler
 from runtime.system_maintenance import SystemMaintenance
 
 
+def _clear_manual_start_failure_gate(acc: Any, runtime_state: Any, max_fail_count: int) -> bool:
+    max_fail = max(1, int(max_fail_count or 5))
+    reason = str(getattr(acc, "last_crash_reason", "") or "")
+    failed_status = str(getattr(acc, "recovery_status", "") or "") == "failed"
+    over_fail_limit = int(getattr(acc, "fail_count", 0) or 0) >= max_fail
+    if reason not in {"max_fail", "max_retry"} and not (failed_status and over_fail_limit):
+        return False
+
+    acc.retry_count = 0
+    acc.fail_count = 0
+    acc.launch_fail_count = 0
+    acc.crash_retry_count = 0
+    acc.network_retry_count = 0
+    acc.session_retry_count = 0
+    acc.session_wait_started_at = 0.0
+    acc.pid_missing_since = 0.0
+    acc.last_network_lost_at = None
+    acc.last_crash_reason = ""
+    acc.last_recovery_reason = ""
+    acc.recovery_status = ""
+    acc.recovery_inflight = False
+    acc.recovery_scheduled_at = 0.0
+    acc.last_rejoin_trigger = ""
+    runtime_state.set_cooldown(acc, 0.0, reason="manual_start_reset_failure_gate")
+    acc.sync_runtime("manual_start_reset_failure_gate")
+    flog_kv(
+        "RUNTIME",
+        "manual_start_failure_gate_reset",
+        account=acc.display_name,
+        max_fail_count=max_fail,
+    )
+    return True
+
+
 class FarmLifecycleService:
     def __init__(self, farm: Any):
         self._farm = farm
@@ -27,6 +61,7 @@ class FarmLifecycleService:
             return
 
         cfg = farm.cfg_mgr.snapshot()
+        max_fail_count = int(cfg.get("max_fail_count", 5) or 5)
         farm._shutting_down = False
         farm._stop = threading.Event()
         if bool(cfg.get("multi_roblox_enabled", True)):
@@ -68,6 +103,7 @@ class FarmLifecycleService:
         farm._sync_accounts_from_ram(persist=True)
         farm.cfg_mgr.restore_runtime(farm._accounts)
 
+        reset_failure_gate = False
         for acc in farm._accounts:
             restored_pid = acc.pid
             restored_identity = acc.bound_process_identity
@@ -107,8 +143,12 @@ class FarmLifecycleService:
                 acc.presence_mismatch_reason = ""
                 if acc.cooldown_until and acc.cooldown_until <= time.time():
                     farm._runtime_state.set_cooldown(acc, 0.0, reason="expired_restored_cooldown")
-                if acc.last_crash_reason == "max_fail":
-                    acc.last_crash_reason = ""
+                reset_failure_gate = (
+                    _clear_manual_start_failure_gate(acc, farm._runtime_state, max_fail_count)
+                    or reset_failure_gate
+                )
+        if reset_failure_gate:
+            farm.cfg_mgr.save_runtime(farm._accounts)
 
         state_mgr = StateManager(farm.bus)
         farm._state_mgr = state_mgr

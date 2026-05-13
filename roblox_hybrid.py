@@ -1164,6 +1164,7 @@ class HybridLauncher:
             job_id = ""
         client = RobloxHTTP(cookie)
         private_server_meta: Dict[str, Any] = {}
+        private_server_error = ""
         auto_private_enabled = bool(
             target.get(
                 "auto_create_private_server_enabled",
@@ -1215,6 +1216,7 @@ class HybridLauncher:
                 known_servers=known_private_servers,
             )
             if not private_result.get("ok"):
+                private_server_error = str(private_result.get("msg") or "Private server setup failed")
                 ACCOUNT_STORE.update_record(
                     username,
                     {
@@ -1225,58 +1227,76 @@ class HybridLauncher:
                                 "place_id": place_id,
                                 "universe_id": str(private_result.get("universe_id") or ""),
                                 "status": "error",
-                                "error": str(private_result.get("msg") or "private server creation failed"),
+                                "error": private_server_error,
                                 "synced_at": time.time(),
                             },
                         )
                     },
                 )
-                return {
-                    "ok": False,
-                    "fatal": True,
-                    "mode": "vip",
-                    "vip_resolved": False,
-                    "msg": str(private_result.get("msg") or "Private server setup failed"),
-                    "auto_private_server": True,
+                private_server_meta = {
+                    "place_id": place_id,
+                    "universe_id": str(private_result.get("universe_id") or ""),
+                    "source": "fallback_public_after_auto_private_error",
+                    "error": private_server_error,
                 }
-            private_server_meta = dict(private_result)
-            vip_link = str(private_server_meta.get("link") or "").strip()
-            vip_resolution = {
-                "ok": True,
-                "place_id": str(private_server_meta.get("place_id") or place_id),
-                "access_code": str(private_server_meta.get("access_code") or ""),
-                "link_code": str(private_server_meta.get("join_code") or private_server_meta.get("access_code") or ""),
-                "source": f"owned_private_server:{private_server_meta.get('source') or 'unknown'}",
-            }
-            if not vip_link:
-                vip_link = build_owned_private_server_link(place_id, private_server_meta)
-            if not vip_resolution.get("access_code") and vip_link:
-                vip_resolution = resolve_vip_access_code(cookie, vip_link)
-                if not vip_resolution.get("ok"):
+                vip_link = ""
+                vip_resolution = {}
+                vip_resolved = False
+                _multi_roblox_log(
+                    "auto_private_server_public_fallback",
+                    "warning",
+                    account=username or str(identity.get("cookie_username") or ""),
+                    place_id=place_id,
+                    detail=private_server_error,
+                )
+                if not place_id:
                     return {
                         "ok": False,
                         "fatal": True,
-                        "msg": str(vip_resolution.get("msg") or "Owned private server invite resolve failed"),
                         "mode": "vip",
                         "vip_resolved": False,
+                        "msg": private_server_error,
                         "auto_private_server": True,
                     }
-            vip_resolved = True
-            place_id = place_id or str(vip_resolution.get("place_id") or "")
-            owned_servers = _merge_owned_private_server(list(data.get("owned_private_servers") or []), private_server_meta)
-            updated_vip_links = list(data.get("vip_links") or [])
-            if vip_link:
-                components = parse_vip_components(vip_link)
-                if (components.get("link_code") or components.get("access_code")) and vip_link not in updated_vip_links:
-                    updated_vip_links.insert(0, vip_link)
-            ACCOUNT_STORE.update_record(
-                username,
-                {
-                    "owned_private_servers": owned_servers,
-                    "vip_links": updated_vip_links,
-                    "place_id": place_id or data.get("place_id", ""),
-                },
-            )
+            else:
+                private_server_meta = dict(private_result)
+                vip_link = str(private_server_meta.get("link") or "").strip()
+                vip_resolution = {
+                    "ok": True,
+                    "place_id": str(private_server_meta.get("place_id") or place_id),
+                    "access_code": str(private_server_meta.get("access_code") or ""),
+                    "link_code": str(private_server_meta.get("join_code") or private_server_meta.get("access_code") or ""),
+                    "source": f"owned_private_server:{private_server_meta.get('source') or 'unknown'}",
+                }
+                if not vip_link:
+                    vip_link = build_owned_private_server_link(place_id, private_server_meta)
+                if not vip_resolution.get("access_code") and vip_link:
+                    vip_resolution = resolve_vip_access_code(cookie, vip_link)
+                    if not vip_resolution.get("ok"):
+                        return {
+                            "ok": False,
+                            "fatal": True,
+                            "msg": str(vip_resolution.get("msg") or "Owned private server invite resolve failed"),
+                            "mode": "vip",
+                            "vip_resolved": False,
+                            "auto_private_server": True,
+                        }
+                vip_resolved = True
+                place_id = place_id or str(vip_resolution.get("place_id") or "")
+                owned_servers = _merge_owned_private_server(list(data.get("owned_private_servers") or []), private_server_meta)
+                updated_vip_links = list(data.get("vip_links") or [])
+                if vip_link:
+                    components = parse_vip_components(vip_link)
+                    if (components.get("link_code") or components.get("access_code")) and vip_link not in updated_vip_links:
+                        updated_vip_links.insert(0, vip_link)
+                ACCOUNT_STORE.update_record(
+                    username,
+                    {
+                        "owned_private_servers": owned_servers,
+                        "vip_links": updated_vip_links,
+                        "place_id": place_id or data.get("place_id", ""),
+                    },
+                )
         elif not vip_link:
             if isinstance(links, list) and links:
                 vip_link = str(links[0] or "").strip()
@@ -1344,6 +1364,7 @@ class HybridLauncher:
             "private_server_owner_user_id": str(private_server_meta.get("owner_user_id") or ""),
             "private_server_place_id": str(private_server_meta.get("place_id") or ""),
             "private_server_universe_id": str(private_server_meta.get("universe_id") or ""),
+            "auto_private_server_error": private_server_error,
             "msg": "Roblox launch requested",
         }
 

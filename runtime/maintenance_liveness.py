@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 
 from core import AccountState, flog, flog_kv
-from services.process_service import ProcessManager
+from services.process_service import ProcessManager, ProcessService
 from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
 
 
@@ -58,7 +58,7 @@ class MaintenanceLivenessMixin:
                     expected_browser_tracker_id=acc.browser_tracker_id,
                 ))
                 if pid_live:
-                    self._recovery.handle_runtime_signal(
+                    self._runtime_signal(
                         acc,
                         "launch_success",
                         "stale_joining_recovered",
@@ -78,7 +78,7 @@ class MaintenanceLivenessMixin:
                     age=f"{age:.1f}",
                     pid=pid or "",
                 )
-                self._recovery.handle_runtime_signal(
+                self._runtime_signal(
                     acc,
                     "launch_failure",
                     "launch_verify_timeout",
@@ -96,7 +96,7 @@ class MaintenanceLivenessMixin:
                     account=acc.display_name,
                     age=f"{age:.1f}",
                 )
-                self._recovery.request_evaluate(acc, trigger="queue_timeout")
+                self._runtime_evaluate(acc, trigger="queue_timeout")
 
     def _recover_failed_live_sessions(self):
         for acc in self._accounts:
@@ -134,7 +134,7 @@ class MaintenanceLivenessMixin:
                 )
                 continue
 
-            bind_result = ProcessManager.bind_account_process(
+            bind_result = ProcessService.bind_account_process(
                 acc,
                 current_pid,
                 self._state_mgr,
@@ -179,7 +179,7 @@ class MaintenanceLivenessMixin:
                 session_id = acc.session_id
                 launch_nonce = acc.launch_nonce
                 transaction_id = acc.rejoin_transaction_id
-            self._recovery.handle_runtime_signal(
+            self._runtime_signal(
                 acc,
                 "launch_success",
                 "failed_live_session_rebind",
@@ -366,9 +366,7 @@ class MaintenanceLivenessMixin:
                     ):
                         continue
                     if acc.recovery_status == "checking_disconnect" and not acc.recovery_inflight:
-                        runtime_state = getattr(self, "_runtime_state", None) or getattr(self._recovery, "_runtime_state", None)
-                        if runtime_state:
-                            runtime_state.set_recovery(acc, status="in_game", reason="liveness_alive_clear_disconnect_check", inflight=False)
+                        self._set_recovery_status(acc, status="in_game", reason="liveness_alive_clear_disconnect_check", inflight=False)
                     acc.last_activity_at = now
                     acc.last_activity_reason = f"liveness:{state}"
                     acc.liveness_suspect_since = 0.0
@@ -406,14 +404,12 @@ class MaintenanceLivenessMixin:
                             acc.last_watchdog_classification = "disconnect_dialog_rejoin"
                             acc.liveness_state = "reconnecting"
                         else:
-                            runtime_state = getattr(self, "_runtime_state", None) or getattr(self._recovery, "_runtime_state", None)
-                            if runtime_state:
-                                runtime_state.set_recovery(
-                                    acc,
-                                    status="checking_disconnect",
-                                    reason=reason_key or str(dialog.get("reason_key") or "connection_error"),
-                                    inflight=False,
-                                )
+                            self._set_recovery_status(
+                                acc,
+                                status="checking_disconnect",
+                                reason=reason_key or str(dialog.get("reason_key") or "connection_error"),
+                                inflight=False,
+                            )
                             self._state_mgr.set_binding_status(acc, "verified", reason=f"liveness:{state}")
                             continue
                     else:
@@ -453,7 +449,7 @@ class MaintenanceLivenessMixin:
                     session_id=dialog_rejoin.get("session_id"),
                     transaction_id=dialog_rejoin.get("transaction_id"),
                 )
-                self._recovery.handle_runtime_signal(
+                self._runtime_signal(
                     acc,
                     "disconnect_detected",
                     reason_key,

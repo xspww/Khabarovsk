@@ -6,7 +6,7 @@ import re
 import subprocess
 import time
 import urllib.parse
-from typing import Tuple
+from typing import Any, Dict, Optional, Tuple
 
 from core import Account, ServerType, account_launch_block_reason, flog, flog_kv
 from services.browser_tracker import tracker_label
@@ -32,6 +32,107 @@ def parse_vip_link(vip_url: str) -> Tuple[str, str]:
     except Exception as e:
         flog(f"[VIP] parse error: {e}", "warning")
         return "", ""
+
+
+class AccountLaunchService:
+    """Boundary for manual account launch endpoints.
+
+    Queue launch still belongs to LaunchController. This service keeps API
+    routes from calling HybridLauncher or process window mutation directly.
+    """
+
+    @staticmethod
+    def build_target(body: Dict[str, Any], record: Dict[str, Any], cfg_mgr: Any) -> Dict[str, Any]:
+        target = dict(body or {})
+        place_id = str(target.get("place_id") or cfg_mgr.get("game_place_id", "") or record.get("place_id") or "").strip()
+        vip_links = list(record.get("vip_links") or [])
+        if place_id:
+            vip_links = [
+                link for link in vip_links
+                if not parse_vip_link(str(link or "").strip())[0]
+                or parse_vip_link(str(link or "").strip())[0] == place_id
+            ]
+        target.setdefault("vip_links", vip_links)
+        target["place_id"] = place_id
+        global_vip = str(cfg_mgr.get("game_private_server_url", "") or "").strip()
+        global_place = parse_vip_link(global_vip)[0] if global_vip else ""
+        target.setdefault("global_vip_link", global_vip if (not place_id or not global_place or global_place == place_id) else "")
+        target.setdefault("auto_create_private_server_enabled", cfg_mgr.get("auto_create_private_server_enabled", False))
+        target.setdefault("auto_create_private_server_free_only", cfg_mgr.get("auto_create_private_server_free_only", True))
+        return target
+
+    @staticmethod
+    def launch_record(
+        record: Dict[str, Any],
+        body: Dict[str, Any],
+        cfg_mgr: Any,
+        window_settings: Optional[Dict[str, Any]] = None,
+        idempotency_key: str = "",
+        body_hash: str = "",
+    ) -> Dict[str, Any]:
+        from roblox_hybrid import HybridLauncher
+
+        username = str(record.get("username") or "")
+        multi_roblox = bool(body.get("multi_roblox", cfg_mgr.get("multi_roblox_enabled", True)))
+        result = HybridLauncher.launch_record(
+            record,
+            target=AccountLaunchService.build_target(body, record, cfg_mgr),
+            multi_roblox=multi_roblox,
+        )
+        flog_kv(
+            "LAUNCH",
+            "manual_account_launch",
+            account=username,
+            ok=bool(result.get("ok")),
+            mode=result.get("mode", ""),
+            detail=result.get("msg", ""),
+            launch_action="manual_account_launch",
+            idempotency_key=idempotency_key,
+            idempotency_body_hash=body_hash,
+        )
+        if result.get("ok") and window_settings and window_settings.get("enabled"):
+            try:
+                from services.process_service import ProcessService
+
+                resize_result = ProcessService.resize_roblox_windows(
+                    int(window_settings["width"]),
+                    int(window_settings["height"]),
+                    reason="manual_account_launch",
+                    idempotency_key=idempotency_key,
+                )
+                result["window_resize"] = {
+                    "ok": bool(resize_result.get("ok", True)),
+                    "resized": int(resize_result.get("resized") or 0),
+                    "count": int(resize_result.get("count") or 0),
+                    "width": window_settings["width"],
+                    "height": window_settings["height"],
+                }
+            except Exception as exc:
+                flog_kv("WINDOW", "manual_launch_resize_failed", "warning", account=username, error=str(exc))
+        return result
+
+    @staticmethod
+    def kill_duplicate_instances(
+        record: Dict[str, Any],
+        idempotency_key: str = "",
+        body_hash: str = "",
+    ) -> Dict[str, Any]:
+        from roblox_hybrid import HybridLauncher
+
+        username = str(record.get("username") or "")
+        tracker = str(record.get("browser_tracker_id") or "")
+        result = HybridLauncher.kill_duplicate_instances(tracker)
+        flog_kv(
+            "LAUNCH",
+            "manual_kill_duplicate",
+            account=username,
+            ok=bool(result.get("ok")),
+            killed=result.get("killed", []),
+            launch_action="kill_duplicate_instances",
+            idempotency_key=idempotency_key,
+            idempotency_body_hash=body_hash,
+        )
+        return result
 
 def build_launch_url(cls, acc: Account) -> Tuple[str, ServerType, str]:
     use_public_fallback = bool(

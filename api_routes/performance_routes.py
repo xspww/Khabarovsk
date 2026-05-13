@@ -10,7 +10,7 @@ from performance_settings import (
     normalize_process_priority,
 )
 from services.cpu_limiter import CPU_LIMITER
-from services.process_service import ProcessManager
+from services.process_service import ProcessService
 
 from .context import ApiContext
 from .settings_state import (
@@ -225,17 +225,22 @@ def register(app, ctx: ApiContext) -> None:
         resize_result = {"ok": True, "count": 0, "resized": 0, "skipped": 0}
         if settings["enabled"]:
             if settings["arrange_enabled"]:
-                resize_result = ProcessManager.arrange_roblox_windows(
+                resize_result = ProcessService.arrange_roblox_windows(
                     settings["width"],
                     settings["height"],
                     settings["arrange_columns"],
                     settings["arrange_gap"],
                     settings["arrange_margin"],
+                    reason="api_window_size_apply",
                 )
             else:
-                resize_result = ProcessManager.resize_roblox_windows(settings["width"], settings["height"])
+                resize_result = ProcessService.resize_roblox_windows(
+                    settings["width"],
+                    settings["height"],
+                    reason="api_window_size_apply",
+                )
         else:
-            resize_result = ProcessManager.restore_roblox_window_styles()
+            resize_result = ProcessService.restore_roblox_window_styles(reason="api_window_size_apply")
         cfg_mgr.update({
             "roblox_window_resize_enabled": settings["enabled"],
             "roblox_window_size_preset": settings["preset"],

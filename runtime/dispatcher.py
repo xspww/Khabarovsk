@@ -7,7 +7,7 @@ from typing import Any, Dict, Optional, Tuple
 from core import Account, AccountState, EventBus, SmartQueue, StateManager, flog, flog_kv
 from domain.session_identity import build_launch_intent
 from services.network_monitor import NetworkMonitor
-from services.process_service import ProcessManager
+from services.process_service import ProcessManager, ProcessService
 from runtime.account_worker import AccountWorker
 from runtime.launch_controller import LaunchController
 from runtime.recovery_engine import RecoveryEngine
@@ -40,6 +40,7 @@ class Dispatcher(threading.Thread):
         self._bus = bus
         self._workers = workers
         self._recovery = recovery
+        self._runtime_owner = getattr(recovery, "runtime_orchestrator", recovery)
         self._net = net
         self._stop = stop
         self._cfg = cfg or {}
@@ -55,11 +56,24 @@ class Dispatcher(threading.Thread):
         arrange = _window_arrange_settings_from_config(self._cfg)
         if arrange:
             width, height, columns, gap, margin = arrange
-            result = ProcessManager.arrange_roblox_windows(width, height, columns, gap, margin)
+            result = ProcessService.arrange_roblox_windows(
+                width,
+                height,
+                columns,
+                gap,
+                margin,
+                reason="post_launch_window_apply",
+                account=acc,
+            )
             changed = int(result.get("arranged") or 0)
             event = "post_launch_arrange"
         else:
-            result = ProcessManager.resize_roblox_windows(width, height)
+            result = ProcessService.resize_roblox_windows(
+                width,
+                height,
+                reason="post_launch_window_apply",
+                account=acc,
+            )
             changed = int(result.get("resized") or 0)
             event = "post_launch_resize"
         if changed > 0:
@@ -353,7 +367,7 @@ class Dispatcher(threading.Thread):
                             expected=tx_guard,
                         )
                         if rolled_back:
-                            ProcessManager.safe_kill_bound_process(
+                            ProcessService.safe_kill_bound_process(
                                 acc,
                                 self._state_mgr,
                                 reason="server_intent_mismatch",
@@ -361,7 +375,7 @@ class Dispatcher(threading.Thread):
                             )
                             with acc._lock:
                                 signal_generation = acc.runtime_generation
-                            self._recovery.handle_runtime_signal(
+                            self._runtime_owner.handle_runtime_signal(
                                 acc,
                                 "launch_failure",
                                 intent_failure or "server_intent_mismatch",
@@ -383,7 +397,7 @@ class Dispatcher(threading.Thread):
                     )
                     if not committed:
                         continue
-                    self._recovery.handle_runtime_signal(
+                    self._runtime_owner.handle_runtime_signal(
                         acc,
                         "launch_success",
                         launch_trigger,
@@ -400,7 +414,7 @@ class Dispatcher(threading.Thread):
                 else:
                     rolled_back = self._finish_transaction(acc, "rolled_back", "launch_failed", server_validation="launch_failed", expected=tx_guard)
                     if rolled_back:
-                        self._recovery.handle_runtime_signal(
+                        self._runtime_owner.handle_runtime_signal(
                             acc,
                             "launch_failure",
                             "launch_failed",

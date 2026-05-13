@@ -8,6 +8,7 @@ import time
 from typing import Any, Dict, List
 
 from app_paths import APP_DATA_DIR
+from config_validation import CONFIG_SCHEMA_VERSION, validate_config_payload
 from config_sections import ArgusConfigSections, build_config_sections
 from domain.account_state import RuntimeState
 
@@ -136,6 +137,7 @@ class ConfigManager:
 
     def load(self):
         raw = self._read_text_json(CONFIG_FILE, {})
+        raw = validate_config_payload(raw, DEFAULTS)
 
         # Migration from old config filenames/keys
         if "zombie_timeout" in raw and "not_responding_timeout" not in raw:
@@ -152,13 +154,14 @@ class ConfigManager:
 
         with self._lock:
             self._cfg = {k: raw.get(k, v) for k, v in DEFAULTS.items()}
+            self._cfg["schema_version"] = int(raw.get("schema_version") or CONFIG_SCHEMA_VERSION)
 
     def save(self):
         with self._lock:
             data = dict(self._cfg)
         data.pop("accounts", None)
         data.pop("runtime_state", None)
-        data.setdefault("schema_version", 1)
+        data["schema_version"] = CONFIG_SCHEMA_VERSION
         self._write_text_json(CONFIG_FILE, data)
 
     def get(self, key: str, default=None) -> Any:
@@ -167,7 +170,7 @@ class ConfigManager:
 
     def update(self, updates: Dict[str, Any]):
         with self._lock:
-            self._cfg.update(updates)
+            self._cfg = validate_config_payload({**self._cfg, **updates}, DEFAULTS)
 
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
@@ -205,6 +208,7 @@ class ConfigManager:
                             return recovered
                 except Exception as backup_error:
                     _flog(f"Text store backup load error ({backup_path}): {backup_error}", "warning")
+            _flog_kv("CONFIG", "json_corrupt_using_fallback", "warning", path=path)
             return fallback
 
     def _write_text_json(self, path: str, payload):

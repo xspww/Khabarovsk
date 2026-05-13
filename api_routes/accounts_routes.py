@@ -14,10 +14,11 @@ from fastapi import HTTPException, Request
 
 from account_hybrid import ACCOUNT_STORE, audit_event
 from core import Account, account_launch_block_reason, cookie_identity_block_reason, flog_kv
-from roblox_hybrid import HybridLauncher, resolve_vip_access_code, validate_cookie as hybrid_validate_cookie, validate_cookie_details
-from services.process_service import ProcessManager
+from roblox_hybrid import resolve_vip_access_code, validate_cookie_details
+from services.roblox_launch_service import AccountLaunchService, parse_vip_link
 
 from .context import ApiContext
+from .idempotency import begin_idempotent_request, begin_idempotent_request_sync, finish_idempotent_request
 from .settings_state import _apply_game_defaults, _normalize_window_size_settings
 
 APP_USER_AGENT = "ArgusLauncher/RT"
@@ -164,13 +165,13 @@ def register(app, ctx: ApiContext) -> None:
         if place_id:
             vip_links = [
                 link for link in vip_links
-                if not ProcessManager.parse_vip_link(str(link or "").strip())[0]
-                or ProcessManager.parse_vip_link(str(link or "").strip())[0] == place_id
+                if not parse_vip_link(str(link or "").strip())[0]
+                or parse_vip_link(str(link or "").strip())[0] == place_id
             ]
         target.setdefault("vip_links", vip_links)
         target["place_id"] = place_id
         global_vip = str(cfg_mgr.get("game_private_server_url", "") or "").strip()
-        global_place = ProcessManager.parse_vip_link(global_vip)[0] if global_vip else ""
+        global_place = parse_vip_link(global_vip)[0] if global_vip else ""
         target.setdefault("global_vip_link", global_vip if (not place_id or not global_place or global_place == place_id) else "")
         target.setdefault("auto_create_private_server_enabled", cfg_mgr.get("auto_create_private_server_enabled", False))
         target.setdefault("auto_create_private_server_free_only", cfg_mgr.get("auto_create_private_server_free_only", True))
@@ -267,15 +268,22 @@ def register(app, ctx: ApiContext) -> None:
     # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
     @app.post("/api/account/{username}/save-cookie")
-    def api_save_cookie(username: str):
+    def api_save_cookie(username: str, request: Request):
+        idem = begin_idempotent_request_sync(request, "save_cookie", username)
+        if idem.replay:
+            return idem.response
         acc = next((a for a in farm._accounts if a.username == username), None)
         if not acc:
             raise HTTPException(404, "Account not found")
         if not str(acc.cookie or "").strip():
-            return {"ok": False, "msg": "No cookie loaded for this account"}
+            result = {"ok": False, "msg": "No cookie loaded for this account"}
+            finish_idempotent_request(idem, result)
+            return result
         ok, cookie_username, detail, meta = validate_cookie_details(acc.cookie)
         if not ok:
-            return {"ok": False, "msg": detail}
+            result = {"ok": False, "msg": detail}
+            finish_idempotent_request(idem, result)
+            return result
         mismatch = bool(cookie_username and acc.username.lower() != cookie_username.lower())
         if mismatch:
             ACCOUNT_STORE.update_record(
@@ -287,10 +295,14 @@ def register(app, ctx: ApiContext) -> None:
                     "import_status": "cookie_mismatch",
                 },
             )
-            return {"ok": False, "msg": f"Cookie belongs to {cookie_username}, not {username}. Reimport the correct cookie."}
+            result = {"ok": False, "msg": f"Cookie belongs to {cookie_username}, not {username}. Reimport the correct cookie."}
+            finish_idempotent_request(idem, result)
+            return result
         ACCOUNT_STORE.upsert_records([acc.to_dict()])
         cfg_mgr.save_accounts(farm._accounts)
-        return {"ok": True, "msg": f"Saved encrypted cookie to AccountData.json for {username}"}
+        result = {"ok": True, "msg": f"Saved encrypted cookie to AccountData.json for {username}"}
+        finish_idempotent_request(idem, result)
+        return result
 
     @app.get("/api/accounts")
     def api_get_accounts():
@@ -298,7 +310,10 @@ def register(app, ctx: ApiContext) -> None:
 
 
     @app.post("/api/accounts/reload")
-    def api_reload_accounts():
+    def api_reload_accounts(request: Request):
+        idem = begin_idempotent_request_sync(request, "accounts_reload")
+        if idem.replay:
+            return idem.response
         try:
             validation = _validate_cookie_records_from_store()
             count = _replace_farm_accounts_from_store()
@@ -309,7 +324,9 @@ def register(app, ctx: ApiContext) -> None:
         msg = f"Checked cookies: {kept} valid"
         if removed:
             msg += f", removed {removed} invalid"
-        return {"ok": True, "count": count, "msg": msg, **validation}
+        result = {"ok": True, "count": count, "msg": msg, **validation}
+        finish_idempotent_request(idem, result)
+        return result
 
 
     @app.get("/api/accounts/avatars")
@@ -385,6 +402,9 @@ def register(app, ctx: ApiContext) -> None:
 
     @app.post("/api/accounts/import")
     async def api_import_accounts(request: Request):
+        idem = await begin_idempotent_request(request, "accounts_import")
+        if idem.replay:
+            return idem.response
         body = await request.json()
         if not isinstance(body, dict):
             raise HTTPException(400, "Expected object")
@@ -414,6 +434,7 @@ def register(app, ctx: ApiContext) -> None:
                 raise HTTPException(400, "Unsupported import kind")
             count = _replace_farm_accounts_from_store()
             result["count"] = count
+            finish_idempotent_request(idem, result)
             return result
         except HTTPException:
             raise
@@ -423,6 +444,9 @@ def register(app, ctx: ApiContext) -> None:
 
     @app.post("/api/account/{username}/launch")
     async def api_launch_account(username: str, request: Request):
+        idem = await begin_idempotent_request(request, "account_launch", username)
+        if idem.replay:
+            return idem.response
         body = await request.json()
         if not isinstance(body, dict):
             body = {}
@@ -437,36 +461,39 @@ def register(app, ctx: ApiContext) -> None:
         if blocked_reason:
             result = {"ok": False, "fatal": True, "msg": blocked_reason, "blocked_reason": blocked_reason, "cookie_mismatch": True}
             audit_event("launch", username=username, ok=False, detail=blocked_reason, mode="blocked")
+            finish_idempotent_request(idem, result)
             return result
-        multi_roblox = bool(body.get("multi_roblox", cfg_mgr.get("multi_roblox_enabled", True)))
-        result = HybridLauncher.launch_record(record, target=_global_launch_target(body, record), multi_roblox=multi_roblox)
+        window_settings = _normalize_window_size_settings(ctx, {})
+        result = AccountLaunchService.launch_record(
+            record,
+            body,
+            cfg_mgr,
+            window_settings=window_settings,
+            idempotency_key=idem.key,
+            body_hash=idem.body_hash,
+        )
         audit_event("launch", username=username, ok=bool(result.get("ok")), detail=result.get("msg", ""), mode=result.get("mode", ""))
         if result.get("ok"):
-            try:
-                window_settings = _normalize_window_size_settings(ctx, {})
-                if window_settings["enabled"]:
-                    resize_result = ProcessManager.resize_roblox_windows(window_settings["width"], window_settings["height"])
-                    result["window_resize"] = {
-                        "ok": bool(resize_result.get("ok", True)),
-                        "resized": int(resize_result.get("resized") or 0),
-                        "count": int(resize_result.get("count") or 0),
-                        "width": window_settings["width"],
-                        "height": window_settings["height"],
-                    }
-            except Exception as exc:
-                flog_kv("WINDOW", "manual_launch_resize_failed", "warning", account=username, error=str(exc))
             _replace_farm_accounts_from_store()
+        finish_idempotent_request(idem, result)
         return result
 
 
     @app.post("/api/account/{username}/kill-duplicate")
-    def api_kill_duplicate(username: str):
+    def api_kill_duplicate(username: str, request: Request):
+        idem = begin_idempotent_request_sync(request, "kill_duplicate", username)
+        if idem.replay:
+            return idem.response
         record = _find_account_record(username, include_cookie=False)
         if not record:
             raise HTTPException(404, "Account not found")
-        tracker = str(record.get("browser_tracker_id") or "")
-        result = HybridLauncher.kill_duplicate_instances(tracker)
+        result = AccountLaunchService.kill_duplicate_instances(
+            record,
+            idempotency_key=idem.key,
+            body_hash=idem.body_hash,
+        )
         audit_event("kill_duplicate", username=username, ok=bool(result.get("ok")), killed=result.get("killed", []))
+        finish_idempotent_request(idem, result)
         return result
 
     @app.post("/api/account/{username}/test-vip")
@@ -475,7 +502,7 @@ def register(app, ctx: ApiContext) -> None:
         vip_url = body.get("vip_url", "")
         if not vip_url:
             raise HTTPException(400, "vip_url required")
-        place_id, link_code = ProcessManager.parse_vip_link(vip_url)
+        place_id, link_code = parse_vip_link(vip_url)
         if not place_id:
             return {"ok": False, "msg": "Cannot parse place_id"}
         if not link_code:

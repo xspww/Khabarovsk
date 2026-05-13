@@ -15,6 +15,7 @@ from core import flog_kv
 from roblox_hybrid import release_multi_roblox_guard
 
 from .context import ApiContext
+from .idempotency import begin_idempotent_request, begin_idempotent_request_sync, finish_idempotent_request
 from .settings_state import _int_setting
 
 _COOKIE_RE = re.compile(r'(_\|WARNING:[^\s\'"<>]+|\.ROBLOSECURITY[^\s\'"<>]*)', re.IGNORECASE)
@@ -97,6 +98,9 @@ def register(app, ctx: ApiContext) -> None:
 
     @app.post("/api/test/network-fault/block-roblox")
     async def api_network_fault_block_roblox(request: Request):
+        idem = await begin_idempotent_request(request, "network_fault_block")
+        if idem.replay:
+            return idem.response
         body = await request.json()
         if not isinstance(body, dict):
             raise HTTPException(400, "Expected object")
@@ -129,11 +133,15 @@ def register(app, ctx: ApiContext) -> None:
         if not result.get("ok"):
             raise HTTPException(500, result.get("stderr") or result.get("msg") or "Failed to block Roblox outbound")
         result["target"] = {k: target.get(k) for k in ("account_id", "pid", "name", "exe", "create_time")}
+        finish_idempotent_request(idem, result)
         return result
 
 
     @app.post("/api/test/network-fault/restore")
     async def api_network_fault_restore(request: Request):
+        idem = await begin_idempotent_request(request, "network_fault_restore")
+        if idem.replay:
+            return idem.response
         body: Dict[str, Any] = {}
         try:
             parsed = await request.json()
@@ -153,6 +161,7 @@ def register(app, ctx: ApiContext) -> None:
         audit_event("network_fault_restored", ok=bool(result.get("ok")), account_id=account_id)
         if not result.get("ok"):
             raise HTTPException(500, result.get("stderr") or result.get("msg") or "Failed to restore Roblox outbound")
+        finish_idempotent_request(idem, result)
         return result
 
     @app.get("/api/logs")
@@ -165,7 +174,10 @@ def register(app, ctx: ApiContext) -> None:
 
 
     @app.post("/api/logs/clear")
-    def api_clear_logs():
+    def api_clear_logs(request: Request):
+        idem = begin_idempotent_request_sync(request, "logs_clear")
+        if idem.replay:
+            return idem.response
         try:
             log_file = _log_file()
             os.makedirs(os.path.dirname(log_file), exist_ok=True)
@@ -173,7 +185,9 @@ def register(app, ctx: ApiContext) -> None:
                 pass
         except Exception as e:
             raise HTTPException(500, f"clear log failed: {e}")
-        return {"ok": True, "path": _log_file(), "lines": []}
+        result = {"ok": True, "path": _log_file(), "lines": []}
+        finish_idempotent_request(idem, result)
+        return result
 
 
     @app.get("/api/troubleshoot/roblox-install")
@@ -182,13 +196,23 @@ def register(app, ctx: ApiContext) -> None:
 
 
     @app.post("/api/troubleshoot/roblox-install/uninstall")
-    def api_roblox_install_uninstall():
-        return roblox_installer.start_uninstall()
+    def api_roblox_install_uninstall(request: Request):
+        idem = begin_idempotent_request_sync(request, "roblox_install_uninstall")
+        if idem.replay:
+            return idem.response
+        result = roblox_installer.start_uninstall()
+        finish_idempotent_request(idem, result)
+        return result
 
 
     @app.post("/api/troubleshoot/roblox-install/latest")
-    def api_roblox_install_latest():
-        return roblox_installer.start_latest()
+    def api_roblox_install_latest(request: Request):
+        idem = begin_idempotent_request_sync(request, "roblox_install_latest")
+        if idem.replay:
+            return idem.response
+        result = roblox_installer.start_latest()
+        finish_idempotent_request(idem, result)
+        return result
 
 
     @app.get("/api/ram/status")

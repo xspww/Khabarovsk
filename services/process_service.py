@@ -212,8 +212,9 @@ class ProcessService:
                 "info" if validation.get("ok") else "warning",
                 account=_account_name(account),
                 pid=pid or "",
-                reason=reason,
-                reject="" if validation.get("ok") else validation.get("reason", ""),
+            reason=reason,
+            process_action="validate_binding",
+            reject="" if validation.get("ok") else validation.get("reason", ""),
                 identity=validation.get("identity", ""),
                 expected_identity=str(expected_identity or ""),
                 expected_browser_tracker_id=expected_browser_tracker_id,
@@ -269,6 +270,7 @@ class ProcessService:
             account=_account_name(account),
             pid=pid or "",
             reason=reason,
+            process_action="bind_account_process",
             expected_identity=expected_identity or "",
             expected_browser_tracker_id=_account_browser_tracker_id(account),
             runtime_generation=getattr(account, "runtime_generation", 0),
@@ -325,6 +327,7 @@ class ProcessService:
             pid=pid,
             old_pid=old_pid or "",
             reason=reason,
+            process_action="bind_account_process",
             identity=identity,
             confidence=confidence,
             binding_decision="verified",
@@ -478,6 +481,7 @@ class ProcessService:
             account=_account_name(account),
             pid=pid,
             reason=reason,
+            process_action="safe_adopt_visible_process",
             confidence=validation.get("confidence", 0.0),
             runtime_generation=getattr(account, "runtime_generation", 0),
             recovery_generation=getattr(account, "recovery_generation", 0),
@@ -508,6 +512,7 @@ class ProcessService:
             account=_account_name(account),
             pid=target_pid,
             reason=reason,
+            process_action="release_account_process",
             runtime_generation=getattr(account, "runtime_generation", 0),
             recovery_generation=getattr(account, "recovery_generation", 0),
             command_generation=getattr(account, "command_generation", 0),
@@ -557,6 +562,7 @@ class ProcessService:
                 account=_account_name(account),
                 pid=pid,
                 reason=reason,
+                process_action="safe_kill_bound_process",
                 reject=validation.get("reason", ""),
                 identity=identity,
                 owner=validation.get("owner", ""),
@@ -588,6 +594,7 @@ class ProcessService:
             pid=pid,
             killed=killed,
             reason=reason,
+            process_action="safe_kill_bound_process",
             identity=identity,
             confidence=validation.get("confidence", 0.0),
             runtime_generation=getattr(account, "runtime_generation", 0),
@@ -597,6 +604,153 @@ class ProcessService:
             transaction_id=getattr(account, "rejoin_transaction_id", ""),
         )
         return {"ok": True, "killed": bool(killed), "pid": pid, "reason": "killed" if killed else "kill_failed", "validation": validation}
+
+    @staticmethod
+    def evict_pid_cache(pid: Optional[int], reason: str = "", account: Any = None) -> None:
+        if not pid:
+            return
+        _LegacyProcessManager.evict_pid_cache(pid)
+        flog_kv(
+            "PROC",
+            "process_cache_evicted",
+            account=_account_name(account) if account is not None else "",
+            pid=pid,
+            reason=reason,
+            process_action="evict_pid_cache",
+        )
+
+    @staticmethod
+    def kill_all_roblox_clients(
+        wait_seconds: float = 4.0,
+        exclude_pids: Optional[List[int]] = None,
+        reason: str = "",
+        idempotency_key: str = "",
+        command_id: str = "",
+    ) -> int:
+        killed = _LegacyProcessManager.kill_all_roblox_clients(
+            wait_seconds=wait_seconds,
+            exclude_pids=exclude_pids,
+        )
+        flog_kv(
+            "PROC",
+            "process_bulk_kill",
+            account="*",
+            killed=killed,
+            wait_seconds=f"{float(wait_seconds):.1f}",
+            exclude_pids=",".join(str(pid) for pid in (exclude_pids or []) if pid),
+            reason=reason,
+            process_action="kill_all_roblox_clients",
+            idempotency_key=idempotency_key,
+            command_id=command_id,
+        )
+        return int(killed or 0)
+
+    @staticmethod
+    def cleanup_extra_launch_processes(
+        before: set,
+        keep_pids: Optional[List[int]] = None,
+        launched_after: Optional[float] = None,
+        wait_seconds: float = 2.0,
+        reason: str = "",
+        account: Any = None,
+    ) -> int:
+        killed = _LegacyProcessManager.cleanup_extra_launch_processes(
+            before,
+            keep_pids=keep_pids,
+            launched_after=launched_after,
+            wait_seconds=wait_seconds,
+        )
+        flog_kv(
+            "PROC",
+            "process_cleanup_extra",
+            account=_account_name(account) if account is not None else "",
+            killed=killed,
+            keep_pids=",".join(str(pid) for pid in (keep_pids or []) if pid),
+            launched_after=f"{float(launched_after):.3f}" if launched_after else "",
+            reason=reason,
+            process_action="cleanup_extra_launch_processes",
+        )
+        return int(killed or 0)
+
+    @staticmethod
+    def resize_roblox_windows(
+        width: int,
+        height: int,
+        exclude_pids: Optional[List[int]] = None,
+        reason: str = "",
+        account: Any = None,
+        idempotency_key: str = "",
+    ) -> Dict[str, Any]:
+        result = _LegacyProcessManager.resize_roblox_windows(width, height, exclude_pids=exclude_pids)
+        flog_kv(
+            "WINDOW",
+            "process_window_resize",
+            account=_account_name(account) if account is not None else "",
+            width=width,
+            height=height,
+            resized=result.get("resized", 0),
+            count=result.get("count", 0),
+            reason=reason,
+            process_action="resize_roblox_windows",
+            idempotency_key=idempotency_key,
+        )
+        return result
+
+    @staticmethod
+    def arrange_roblox_windows(
+        width: int,
+        height: int,
+        columns: int = 6,
+        gap: int = 2,
+        margin: int = 0,
+        exclude_pids: Optional[List[int]] = None,
+        reason: str = "",
+        account: Any = None,
+        idempotency_key: str = "",
+    ) -> Dict[str, Any]:
+        result = _LegacyProcessManager.arrange_roblox_windows(
+            width,
+            height,
+            columns=columns,
+            gap=gap,
+            margin=margin,
+            exclude_pids=exclude_pids,
+        )
+        flog_kv(
+            "WINDOW",
+            "process_window_arrange",
+            account=_account_name(account) if account is not None else "",
+            width=width,
+            height=height,
+            columns=columns,
+            gap=gap,
+            margin=margin,
+            arranged=result.get("arranged", 0),
+            count=result.get("count", 0),
+            reason=reason,
+            process_action="arrange_roblox_windows",
+            idempotency_key=idempotency_key,
+        )
+        return result
+
+    @staticmethod
+    def restore_roblox_window_styles(
+        reason: str = "",
+        account: Any = None,
+        idempotency_key: str = "",
+    ) -> Dict[str, Any]:
+        result = _LegacyProcessManager.restore_roblox_window_styles()
+        flog_kv(
+            "WINDOW",
+            "process_window_restore",
+            account=_account_name(account) if account is not None else "",
+            restored=result.get("restored", 0),
+            count=result.get("count", 0),
+            reason=reason,
+            process_action="restore_roblox_window_styles",
+            idempotency_key=idempotency_key,
+        )
+        return result
 
 
 class ProcessManager(_LegacyProcessManager):

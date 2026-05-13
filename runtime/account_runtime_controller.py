@@ -31,6 +31,10 @@ class AccountRuntimeController:
     def bind_recovery(self, recovery: Any) -> None:
         self._recovery = recovery
 
+    @property
+    def recovery(self) -> Optional[Any]:
+        return self._recovery
+
     def _emit(self, event: str, level: str = "info", **fields: Any) -> None:
         if not self._log:
             return
@@ -52,6 +56,7 @@ class AccountRuntimeController:
             return {
                 "runtime_generation": int(getattr(acc, "runtime_generation", 0) or 0),
                 "recovery_generation": int(getattr(acc, "recovery_generation", 0) or 0),
+                "command_generation": int(getattr(acc, "command_generation", 0) or 0),
                 "session_id": str(getattr(acc, "session_id", "") or ""),
                 "launch_nonce": str(getattr(acc, "launch_nonce", "") or ""),
                 "transaction_id": str(getattr(acc, "rejoin_transaction_id", "") or ""),

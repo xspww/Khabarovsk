@@ -37,6 +37,7 @@ from performance_settings import (
 from services.presence_service import RobloxPresenceService
 from services.roblox_install_manager import RobloxInstallManager, normalize_roblox_version
 from services.cpu_limiter import CpuLimiter, normalize_cpu_limiter_settings
+from services.process_service import ProcessService
 from process_net import ProcessManager
 from roblox_hybrid import (
     HybridLauncher,
@@ -172,6 +173,39 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(step, "Recovery Complete")
         self.assertEqual(index, 8)
         self.assertEqual(started_at, 456.0)
+
+    def test_status_view_model_does_not_show_stale_disconnect_for_alive_in_game(self):
+        from config_store import ConfigManager
+        from runtime.runtime_view_model import RuntimeViewModelBuilder
+
+        controller = FarmController(ConfigManager())
+        account = Account("UserA")
+        account.state = AccountState.IN_GAME
+        account.desired_state = AccountState.IN_GAME
+        account.pid = 4321
+        account.bound_process_identity = "RobloxPlayerBeta.exe|1|C:\\Roblox\\RobloxPlayerBeta.exe"
+        account.process_binding_status = "verified"
+        account.recovery_status = "checking_disconnect"
+        account.last_recovery_reason = "connection_error"
+        account.liveness_state = "alive"
+        account.in_game_since = 456.0
+        controller.set_accounts([account])
+
+        with patch("runtime.runtime_view_model.PRESENCE_SERVICE.refresh", return_value={"presences": {}}), \
+             patch("runtime.runtime_view_model.ProcessManager.is_bound_game_alive", return_value=True), \
+             patch("runtime.runtime_view_model.ProcessManager.get_pid_owner", return_value="UserA"), \
+             patch("runtime.runtime_view_model.ProcessManager.is_not_responding", return_value=False):
+            status = controller.get_status()
+
+        self.assertIn("runtime_health", status)
+        self.assertIn("queue_snapshot", status)
+        self.assertIn("accounts", status)
+        row = status["accounts"][0]
+        self.assertEqual(row["state"], "IN_GAME")
+        self.assertEqual(row["state_label"], "In Game")
+        self.assertEqual(row["recovery_step"], "Recovery Complete")
+        self.assertNotEqual(row["state_label"], "Checking Disconnect")
+        controller._runtime_store.close()
 
     def test_status_step_marks_in_game_complete_even_with_old_launch_reason(self):
         controller = FarmController.__new__(FarmController)
@@ -836,18 +870,59 @@ class HybridAccountTests(unittest.TestCase):
         client = TestClient(main.app)
         page = client.get("/").text
         css_response = client.get("/ui/dashboard.css")
+        app_response = client.get("/ui/app.js")
+        api_response = client.get("/ui/runtime/api.js")
+        status_response = client.get("/ui/runtime/status.js")
+        account_status_response = client.get("/ui/runtime/accountStatus.js")
+        table_response = client.get("/ui/components/accountsTable.js")
+        feedback_response = client.get("/ui/components/feedback.js")
+        bindings_response = client.get("/ui/events/bindings.js")
+        settings_response = client.get("/ui/panels/settingsPanels.js")
         js_response = client.get("/ui/dashboard.js")
         self.assertEqual(css_response.status_code, 200)
+        self.assertEqual(app_response.status_code, 200)
+        self.assertEqual(api_response.status_code, 200)
+        self.assertEqual(status_response.status_code, 200)
+        self.assertEqual(account_status_response.status_code, 200)
+        self.assertEqual(table_response.status_code, 200)
+        self.assertEqual(feedback_response.status_code, 200)
+        self.assertEqual(bindings_response.status_code, 200)
+        self.assertEqual(settings_response.status_code, 200)
         self.assertEqual(js_response.status_code, 200)
         css = css_response.text
-        js = js_response.text
+        js = "\n".join([
+            app_response.text,
+            api_response.text,
+            status_response.text,
+            account_status_response.text,
+            table_response.text,
+            feedback_response.text,
+            bindings_response.text,
+            settings_response.text,
+            js_response.text,
+        ])
         html = page + "\n" + css + "\n" + js
         self.assertEqual(main.app.title, "Argus Launcher")
         self.assertIn("<title>Argus Launcher</title>", html)
         self.assertIn('<meta name="argus-api-token" content="', page)
         self.assertIn(main.INSTANCE_TOKEN, page)
         self.assertIn('<link rel="stylesheet" href="/ui/dashboard.css">', page)
-        self.assertIn('<script src="/ui/dashboard.js"></script>', page)
+        self.assertIn('<script type="module" src="/ui/app.js"></script>', page)
+        self.assertIn("import './dashboard.js';", js)
+        self.assertIn("export async function api", js)
+        self.assertIn("export function createStatusRuntime", js)
+        self.assertIn("export function rowStatusLabel", js)
+        self.assertIn("export function renderAccountRows", js)
+        self.assertIn("export function createFeedback", js)
+        self.assertIn("export function bindDashboardEvents", js)
+        self.assertIn("export function renderSettingsPanel", js)
+        self.assertIn("from './runtime/status.js'", js)
+        self.assertIn("from './runtime/accountStatus.js'", js)
+        self.assertIn("from './components/accountsTable.js'", js)
+        self.assertIn("from './components/feedback.js'", js)
+        self.assertIn("from './events/bindings.js'", js)
+        self.assertIn("from './panels/settingsPanels.js'", js)
+        self.assertNotIn("setInterval(manualSnapshot,2500)", js)
         self.assertNotIn("<style>", page)
         self.assertNotIn("<span>Argus Launcher</span>", html)
         self.assertNotIn('<header class="topbar">', html)
@@ -1008,8 +1083,8 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("function resetPerformanceSettings()", html)
         self.assertIn("function resetGraphicsSettings()", html)
         self.assertIn("function resetWindowSizeSettings()", html)
-        self.assertIn("$('game-reset').onclick=resetGameSettings", html)
-        self.assertIn("$('queue-reset').onclick=resetQueueSettings", html)
+        self.assertIn("$('game-reset').onclick=a.resetGameSettings", html)
+        self.assertIn("$('queue-reset').onclick=a.resetQueueSettings", html)
         self.assertNotIn("$('game-reset').onclick=async()=>{clearDirty('game');await loadConfig()}", html)
         self.assertNotIn("$('queue-reset').onclick=async()=>{clearDirty('queue');await loadConfig()}", html)
         self.assertNotIn("Auto Minimize", game_section)
@@ -1179,7 +1254,11 @@ class HybridAccountTests(unittest.TestCase):
         original = main.cfg_mgr.snapshot()
         try:
             client = TestClient(main.app)
-            html = client.get("/").text + "\n" + client.get("/ui/dashboard.js").text
+            html = (
+                client.get("/").text
+                + "\n" + client.get("/ui/dashboard.js").text
+                + "\n" + client.get("/ui/panels/settingsPanels.js").text
+            )
             self.assertIn("Popup Detector", html)
             self.assertNotIn("Use Popup Disconnected", html)
             self.assertIn('id="popup-disconnected-enabled"', html)
@@ -1507,6 +1586,44 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["ok"])
 
+    def test_mutating_api_audit_logs_idempotency_key(self):
+        from fastapi.testclient import TestClient
+        import api_routes.auth as auth_routes
+        import main
+
+        client = TestClient(main.app)
+        with patch.object(auth_routes, "flog_kv") as log:
+            response = auth_post(
+                client,
+                "/api/config",
+                headers={"X-Argus-Idempotency-Key": "audit-unit-key"},
+                json={},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        audit_calls = [
+            call for call in log.call_args_list
+            if len(call.args) >= 2 and call.args[0] == "API" and call.args[1] == "mutation_audit"
+        ]
+        self.assertTrue(audit_calls)
+        self.assertEqual(audit_calls[-1].kwargs["method"], "POST")
+        self.assertEqual(audit_calls[-1].kwargs["path"], "/api/config")
+        self.assertEqual(audit_calls[-1].kwargs["status_code"], 200)
+        self.assertEqual(audit_calls[-1].kwargs["idempotency_key"], "audit-unit-key")
+
+    def test_runtime_telemetry_endpoint_is_read_only(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        response = client.get("/api/runtime/telemetry")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertIn("recovery_rate", payload)
+        self.assertIn("memory_usage_mb", payload)
+
     def test_app_shutdown_accepts_legacy_header_token(self):
         from fastapi.testclient import TestClient
         import api_routes.system_routes as system_routes
@@ -1541,7 +1658,7 @@ class HybridAccountTests(unittest.TestCase):
              patch.object(main.farm, "finish_command") as finish_command, \
              patch.object(main.farm, "running", True), \
              patch.object(main.farm, "stop") as stop_guard, \
-             patch.object(main.ProcessManager, "kill_all_roblox_clients", return_value=6) as kill_all:
+             patch.object(ProcessService, "kill_all_roblox_clients", return_value=6) as kill_all:
             response = auth_post(client, "/api/roblox/close-all")
 
         self.assertEqual(response.status_code, 200)
@@ -1550,8 +1667,180 @@ class HybridAccountTests(unittest.TestCase):
         self.assertTrue(data["farm_was_running"])
         self.assertEqual(data["closed"], 6)
         stop_guard.assert_not_called()
-        kill_all.assert_called_once_with(wait_seconds=4.0)
+        kill_all.assert_called_once_with(
+            wait_seconds=4.0,
+            exclude_pids=None,
+            reason="api_close_all_roblox",
+            idempotency_key="",
+            command_id="cmd-close-all",
+        )
         finish_command.assert_called_once()
+
+    def test_close_all_roblox_replays_idempotent_response(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        headers = auth_headers({"X-Argus-Idempotency-Key": "close-all-idem-unit"})
+        with patch.object(ProcessService, "kill_all_roblox_clients", return_value=2) as kill_all:
+            first = client.post("/api/roblox/close-all", headers=headers, json={})
+            second = client.post("/api/roblox/close-all", headers=headers, json={})
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        first_payload = first.json()
+        second_payload = second.json()
+        self.assertEqual(first_payload["command_id"], second_payload["command_id"])
+        self.assertEqual(first_payload["closed"], 2)
+        self.assertEqual(second_payload["closed"], 2)
+        self.assertEqual(kill_all.call_count, 1)
+        self.assertEqual(kill_all.call_args.kwargs["wait_seconds"], 4.0)
+        self.assertEqual(kill_all.call_args.kwargs["idempotency_key"], "close-all-idem-unit")
+
+    def test_account_import_replays_idempotency_without_reimporting(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        headers = auth_headers({"X-Argus-Idempotency-Key": "slice3-import-idem"})
+        with patch("api_routes.accounts_routes.ACCOUNT_STORE.import_cookie_lines", return_value={"ok": True, "imported": 1, "count": 1}) as importer, \
+             patch("api_routes.accounts_routes.ACCOUNT_STORE.to_roboguard_accounts", return_value=[]), \
+             patch.object(main.farm, "set_accounts") as set_accounts, \
+             patch.object(main.cfg_mgr, "save_accounts"):
+            first = client.post("/api/accounts/import", headers=headers, json={"kind": "cookies", "lines": ["_|WARNING:unit"]})
+            second = client.post("/api/accounts/import", headers=headers, json={"lines": ["_|WARNING:unit"], "kind": "cookies"})
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.json(), second.json())
+        importer.assert_called_once()
+        set_accounts.assert_called_once()
+
+    def test_accounts_reload_replays_idempotency_without_reloading_twice(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        headers = auth_headers({"X-Argus-Idempotency-Key": "slice3-reload-idem"})
+        with patch("api_routes.accounts_routes.ACCOUNT_STORE.read_records", return_value=[]) as read_records, \
+             patch("api_routes.accounts_routes.ACCOUNT_STORE.write_records") as write_records, \
+             patch("api_routes.accounts_routes.ACCOUNT_STORE.to_roboguard_accounts", return_value=[]), \
+             patch.object(main.farm, "set_accounts") as set_accounts, \
+             patch.object(main.cfg_mgr, "save_accounts"):
+            first = client.post("/api/accounts/reload", headers=headers, json={})
+            second = client.post("/api/accounts/reload", headers=headers, json={})
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.json(), second.json())
+        read_records.assert_called_once()
+        write_records.assert_called_once()
+        set_accounts.assert_called_once()
+
+    def test_account_launch_replays_idempotency_without_launching_twice(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        headers = auth_headers({"X-Argus-Idempotency-Key": "slice3-launch-idem"})
+        record = {"username": "LaunchUnit", "cookie": "_|WARNING:unit", "cookie_username": "LaunchUnit"}
+        with patch("api_routes.accounts_routes.ACCOUNT_STORE.read_records", return_value=[record]), \
+             patch("api_routes.accounts_routes.AccountLaunchService.launch_record", return_value={"ok": False, "msg": "unit blocked"}) as launch_record, \
+             patch("api_routes.accounts_routes.audit_event"):
+            first = client.post("/api/account/LaunchUnit/launch", headers=headers, json={"place_id": "123456"})
+            second = client.post("/api/account/LaunchUnit/launch", headers=headers, json={"place_id": "123456"})
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.json(), second.json())
+        launch_record.assert_called_once()
+
+    def test_logs_clear_replays_idempotency_without_clearing_twice(self):
+        from fastapi.testclient import TestClient
+        import api_routes.system_routes as system_routes
+        import main
+
+        client = TestClient(main.app)
+        headers = auth_headers({"X-Argus-Idempotency-Key": "slice3-logs-idem"})
+        with patch.object(system_routes.os, "makedirs", wraps=system_routes.os.makedirs) as makedirs:
+            first = client.post("/api/logs/clear", headers=headers, json={})
+            second = client.post("/api/logs/clear", headers=headers, json={})
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(first.json(), second.json())
+        makedirs.assert_called_once()
+
+    def test_network_fault_replays_idempotency_without_reapplying(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        class FakeInjector:
+            def __init__(self):
+                self.block_count = 0
+                self.restore_count = 0
+
+            def validate_roblox_pid(self, pid):
+                return {"ok": True, "pid": int(pid), "name": "RobloxPlayerBeta.exe", "exe": r"C:\Roblox\RobloxPlayerBeta.exe", "create_time": 1.0}
+
+            def find_live_roblox_processes(self):
+                return []
+
+            def block_roblox(self, program_path, *, duration_seconds=90, account_id="", pid=None):
+                self.block_count += 1
+                return {"ok": True, "program": program_path, "duration_seconds": duration_seconds, "account_id": account_id, "pid": pid}
+
+            def restore(self):
+                self.restore_count += 1
+                return {"ok": True, "active": False}
+
+        original = main.NETWORK_FAULT_INJECTOR
+        fake = FakeInjector()
+        main.NETWORK_FAULT_INJECTOR = fake
+        try:
+            client = TestClient(main.app)
+            block_headers = auth_headers({"X-Argus-Idempotency-Key": "slice3-net-block-idem"})
+            body = {"pid": 1234, "account_id": "NetUnit", "duration_seconds": 30}
+            first = client.post("/api/test/network-fault/block-roblox", headers=block_headers, json=body)
+            second = client.post("/api/test/network-fault/block-roblox", headers=block_headers, json=body)
+            restore_headers = auth_headers({"X-Argus-Idempotency-Key": "slice3-net-restore-idem"})
+            restored = client.post("/api/test/network-fault/restore", headers=restore_headers, json={"account_id": "NetUnit"})
+            restored_again = client.post("/api/test/network-fault/restore", headers=restore_headers, json={"account_id": "NetUnit"})
+        finally:
+            main.NETWORK_FAULT_INJECTOR = original
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(restored.status_code, 200)
+        self.assertEqual(restored_again.status_code, 200)
+        self.assertEqual(first.json(), second.json())
+        self.assertEqual(restored.json(), restored_again.json())
+        self.assertEqual(fake.block_count, 1)
+        self.assertEqual(fake.restore_count, 1)
+
+    def test_idempotency_helper_fields_are_in_mutation_audit(self):
+        from fastapi.testclient import TestClient
+        import api_routes.auth as auth_routes
+        import main
+
+        client = TestClient(main.app)
+        with patch.object(auth_routes, "flog_kv") as log:
+            response = client.post(
+                "/api/logs/clear",
+                headers=auth_headers({"X-Argus-Idempotency-Key": "slice3-audit-idem"}),
+                json={},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        audit_calls = [
+            call for call in log.call_args_list
+            if len(call.args) >= 2 and call.args[0] == "API" and call.args[1] == "mutation_audit"
+        ]
+        self.assertTrue(audit_calls)
+        fields = audit_calls[-1].kwargs
+        self.assertEqual(fields["idempotency_key"], "slice3-audit-idem")
+        self.assertEqual(fields["idempotency_action"], "logs_clear")
+        self.assertTrue(fields["idempotency_body_hash"])
 
     def test_single_instance_detection_is_scoped_to_current_folder(self):
         import main
@@ -1567,12 +1856,12 @@ class HybridAccountTests(unittest.TestCase):
         maint._state_mgr = None
         maint._recovery = None
         maint._workers = {}
-        with patch.object(ProcessManager, "kill_all_roblox_clients") as kill_all:
+        with patch.object(ProcessService, "kill_all_roblox_clients") as kill_all:
             SystemMaintenance._enforce_auto_close(maint)
         kill_all.assert_not_called()
 
         maint._last_auto_close_at = time.time() - 121
-        with patch.object(ProcessManager, "kill_all_roblox_clients", return_value=0) as kill_all:
+        with patch.object(ProcessService, "kill_all_roblox_clients", return_value=0) as kill_all:
             SystemMaintenance._enforce_auto_close(maint)
         kill_all.assert_called_once()
 
@@ -2027,23 +2316,23 @@ class HybridAccountTests(unittest.TestCase):
             "roblox_window_resize_interval_seconds": 10,
         }
         maint._last_window_resize_at = time.time() - 5
-        with patch.object(ProcessManager, "resize_roblox_windows") as resize:
+        with patch.object(ProcessService, "resize_roblox_windows") as resize:
             SystemMaintenance._enforce_window_resize(maint)
         resize.assert_not_called()
 
         maint._last_window_resize_at = time.time() - 11
-        with patch.object(ProcessManager, "resize_roblox_windows", return_value={"resized": 2, "count": 2}) as resize:
+        with patch.object(ProcessService, "resize_roblox_windows", return_value={"resized": 2, "count": 2}) as resize:
             SystemMaintenance._enforce_window_resize(maint)
-        resize.assert_called_once_with(640, 480)
+        resize.assert_called_once_with(640, 480, reason="auto_window_resize_cycle")
 
         maint._cfg["roblox_window_arrange_enabled"] = True
         maint._cfg["roblox_window_arrange_columns"] = 4
         maint._cfg["roblox_window_arrange_gap"] = 2
         maint._cfg["roblox_window_arrange_margin"] = 0
         maint._last_window_resize_at = time.time() - 11
-        with patch.object(ProcessManager, "arrange_roblox_windows", return_value={"arranged": 2, "count": 2}) as arrange:
+        with patch.object(ProcessService, "arrange_roblox_windows", return_value={"arranged": 2, "count": 2}) as arrange:
             SystemMaintenance._enforce_window_resize(maint)
-        arrange.assert_called_once_with(640, 480, 4, 2, 0)
+        arrange.assert_called_once_with(640, 480, 4, 2, 0, reason="auto_window_resize_cycle")
 
     def test_process_manager_minimizes_only_visible_roblox_windows(self):
         with patch.object(
@@ -2376,7 +2665,7 @@ class HybridAccountTests(unittest.TestCase):
         original = main.cfg_mgr.snapshot()
         try:
             with patch.object(
-                main.ProcessManager,
+                ProcessService,
                 "resize_roblox_windows",
                 return_value={"ok": True, "count": 1, "resized": 1, "skipped": 0},
             ) as resize:
@@ -2392,7 +2681,7 @@ class HybridAccountTests(unittest.TestCase):
             self.assertEqual(payload["width"], 320)
             self.assertEqual(payload["height"], 240)
             self.assertEqual(payload["resize_result"]["resized"], 1)
-            resize.assert_called_once_with(320, 240)
+            resize.assert_called_once_with(320, 240, reason="api_window_size_apply")
         finally:
             main.cfg_mgr.update(original)
             main.cfg_mgr.save()
@@ -2404,7 +2693,7 @@ class HybridAccountTests(unittest.TestCase):
         original = main.cfg_mgr.snapshot()
         try:
             with patch.object(
-                main.ProcessManager,
+                ProcessService,
                 "arrange_roblox_windows",
                 return_value={"ok": True, "count": 5, "arranged": 5, "failed": 0},
             ) as arrange:
@@ -2418,7 +2707,7 @@ class HybridAccountTests(unittest.TestCase):
             self.assertTrue(payload["arrange_enabled"])
             self.assertEqual(payload["arrange_columns"], 3)
             self.assertEqual(payload["resize_result"]["arranged"], 5)
-            arrange.assert_called_once_with(320, 240, 3, 2, 0)
+            arrange.assert_called_once_with(320, 240, 3, 2, 0, reason="api_window_size_apply")
         finally:
             main.cfg_mgr.update(original)
             main.cfg_mgr.save()

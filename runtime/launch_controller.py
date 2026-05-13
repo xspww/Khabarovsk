@@ -20,7 +20,7 @@ from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
 from runtime.runtime_state_manager import RuntimeStateManager
 from runtime.runtime_store import RuntimeStore
 from runtime.supervisor_runtime import SupervisorRuntime
-from services.process_service import ProcessManager
+from services.process_service import ProcessManager, ProcessService
 from services.ram_service import RAMManager
 
 
@@ -144,7 +144,7 @@ class LaunchController:
         expected_runtime_generation: Optional[int] = None,
         launched_after: Optional[float] = None,
     ) -> bool:
-        bind_result = ProcessManager.bind_account_process(
+        bind_result = ProcessService.bind_account_process(
             acc,
             pid,
             self._state_mgr,
@@ -301,7 +301,7 @@ class LaunchController:
         reason: str,
         expected_runtime_generation: Optional[int] = None,
     ) -> Dict[str, Any]:
-        result = ProcessManager.safe_adopt_visible_process(
+        result = ProcessService.safe_adopt_visible_process(
             acc,
             self._state_mgr,
             accounts=self._accounts,
@@ -396,9 +396,10 @@ class LaunchController:
                     for item in ProcessManager.list_live_game_processes()
                     if item.get("pid")
                 ] if multi_roblox else []
-                killed = ProcessManager.kill_all_roblox_clients(
+                killed = ProcessService.kill_all_roblox_clients(
                     wait_seconds=4.0,
                     exclude_pids=protected_pids,
+                    reason="prepare_direct_launch",
                 )
                 if protected_pids:
                     flog(
@@ -444,7 +445,7 @@ class LaunchController:
 
             if acc.pid:
                 stale_pid = acc.pid
-                kill_result = ProcessManager.safe_kill_bound_process(
+                kill_result = ProcessService.safe_kill_bound_process(
                     acc,
                     self._state_mgr,
                     reason="prelaunch_stale_pid",
@@ -551,10 +552,12 @@ class LaunchController:
                     )
                     return True
             if self._try_bind_any_live_game(acc, "post_launch_existing", launched_after=launch_ts, expected_runtime_generation=launch_guard["runtime_generation"]):
-                ProcessManager.cleanup_extra_launch_processes(
+                ProcessService.cleanup_extra_launch_processes(
                     before_pids,
                     keep_pids=[acc.pid] if acc.pid else [],
                     launched_after=launch_ts,
+                    reason="post_launch_existing_cleanup",
+                    account=acc,
                 )
                 return True
             time.sleep(0.5)
@@ -589,10 +592,12 @@ class LaunchController:
                     )
                     return True
             if self._try_bind_any_live_game(acc, "verify_fallback", launched_after=launch_ts, expected_runtime_generation=launch_guard["runtime_generation"]):
-                ProcessManager.cleanup_extra_launch_processes(
+                ProcessService.cleanup_extra_launch_processes(
                     before_pids,
                     keep_pids=[acc.pid] if acc.pid else [],
                     launched_after=launch_ts,
+                    reason="verify_fallback_cleanup",
+                    account=acc,
                 )
                 return True
 
@@ -700,7 +705,7 @@ class LaunchController:
                     self._bus.emit(EventName.LAUNCH_FAILED, account=acc, reason="transient launch PID rejected")
                 return False
 
-        bind_result = ProcessManager.bind_account_process(
+        bind_result = ProcessService.bind_account_process(
             acc,
             pid,
             self._state_mgr,
@@ -748,10 +753,12 @@ class LaunchController:
                 "post_launch_detected",
             )
         _apply_cpu_limiter_for_bound_process(self._accounts, self._cfg, "post_launch_detected", acc)
-        extra_killed = ProcessManager.cleanup_extra_launch_processes(
+        extra_killed = ProcessService.cleanup_extra_launch_processes(
             before_pids,
             keep_pids=[pid],
             launched_after=launch_ts,
+            reason="post_launch_detected_cleanup",
+            account=acc,
         )
         if extra_killed:
             flog(f"[LAUNCH] Cleaned {extra_killed} leftover Roblox process(es) after bind for {acc.display_name}")

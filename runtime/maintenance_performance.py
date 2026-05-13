@@ -4,7 +4,7 @@ import time
 from typing import List, Optional, Tuple
 
 from core import Account, flog_kv
-from services.process_service import ProcessManager
+from services.process_service import ProcessService
 
 
 def _window_resize_target_from_config(cfg: dict) -> Optional[Tuple[int, int]]:
@@ -151,11 +151,22 @@ class MaintenancePerformanceMixin:
         arrange = _window_arrange_settings_from_config(self._cfg)
         if arrange:
             width, height, columns, gap, margin = arrange
-            result = ProcessManager.arrange_roblox_windows(width, height, columns, gap, margin)
+            result = ProcessService.arrange_roblox_windows(
+                width,
+                height,
+                columns,
+                gap,
+                margin,
+                reason="auto_window_resize_cycle",
+            )
             changed = int(result.get("arranged") or 0)
             event = "auto_window_arrange_cycle"
         else:
-            result = ProcessManager.resize_roblox_windows(width, height)
+            result = ProcessService.resize_roblox_windows(
+                width,
+                height,
+                reason="auto_window_resize_cycle",
+            )
             changed = int(result.get("resized") or 0)
             event = "auto_window_resize_cycle"
         if changed > 0:

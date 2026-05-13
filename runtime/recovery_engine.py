@@ -2,38 +2,37 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 
 from core import Account, AccountState, EventBus, EventName, SmartQueue, StateManager, flog, flog_kv
-from domain.runtime_signals import RuntimeSignal, is_recovery_signal, normalize_runtime_signal
 from services.network_monitor import NetworkMonitor
-from services.process_service import ProcessManager
-from runtime.account_runtime_controller import AccountRuntimeController
+from services.process_service import ProcessManager, ProcessService
 from runtime.runtime_state_manager import RuntimeStateManager
-from runtime.recovery_context import RecoveryAttemptContext, SESSION_CONFLICT, reason_for_category
+from runtime.runtime_orchestrator import RuntimeOrchestrator
+from runtime.runtime_scheduler import RuntimeScheduledJob, RuntimeScheduler
+from runtime.recovery_context import RecoveryAttemptContext, reason_for_category
+from runtime.recovery_evaluator import RecoveryEvaluator
+from runtime.recovery_owner import RecoveryOwnerRegistry
+from runtime.recovery_network import handle_network_restored
 from runtime.recovery_policy import (
     RecoveryDedupeTracker,
     SessionConflictTracker,
-    active_recovery_block_reason,
     adaptive_recovery_delay,
     build_recovery_log_payload,
     canonical_reason,
-    context_from_signal,
     kill_local_duplicate_for_session_conflict,
     policy_for,
 )
+from runtime.recovery_relaunch import detect_relaunch_loop
+from runtime.recovery_signal_router import RecoverySignalRouter
 from runtime.recovery_support import (
     RECOVERY_REASON_MESSAGES,
-    _enrich_visual_disconnect_payload_with_log,
     compute_backoff,
 )
 
 
 class RecoveryCoordinator:
-    """
-    Central recovery/rejoin controller.
-    Every path that wants recovery reports here.
-    """
+    """Central recovery/rejoin controller. Every path that wants recovery reports here."""
 
     def __init__(
         self,
@@ -45,6 +44,10 @@ class RecoveryCoordinator:
         cfg: dict,
         accounts: Optional[List[Account]] = None,
         persist_callback=None,
+        timeline=None,
+        runtime_state: Optional[RuntimeStateManager] = None,
+        runtime_orchestrator: Optional[RuntimeOrchestrator] = None,
+        scheduler: Optional[RuntimeScheduler] = None,
     ):
         self._queue = queue
         self._state_mgr = state_mgr
@@ -55,23 +58,46 @@ class RecoveryCoordinator:
         self._accounts = accounts or []
         self._persist_callback = persist_callback
         self._last_persist = 0.0
-        self._pending: Dict[str, Tuple[float, Account, str, int, int]] = {}
         self._lock = threading.Lock()
-        self._cond = threading.Condition(self._lock)
         self._closed = False
-        self._active_recoveries: Dict[str, Dict[str, Any]] = {}
-        self._runtime_state = RuntimeStateManager(logger=flog_kv)
-        self._account_runtime = AccountRuntimeController(self._runtime_state, recovery=self, logger=flog_kv)
+        self._owner_registry = RecoveryOwnerRegistry()
+        self._runtime_state = runtime_state or RuntimeStateManager(logger=flog_kv)
+        self._runtime_orchestrator = runtime_orchestrator or RuntimeOrchestrator(
+            self._runtime_state,
+            timeline=timeline,
+            logger=flog_kv,
+        )
+        self._runtime_orchestrator.bind_recovery(self)
+        self._account_runtime = self._runtime_orchestrator.account_runtime
         self._duplicate_window = max(1.0, float(cfg.get("recovery_duplicate_window", 8) or 8))
-        self._recent_signals: Dict[Tuple[str, str, str, int], float] = {}
         self._recovery_dedupe = RecoveryDedupeTracker(float(cfg.get("recovery_dedupe_window_seconds", 3) or 3))
+        self._signal_router = RecoverySignalRouter(
+            self._runtime_state,
+            is_closed=self._is_closed,
+            log_decision=self._log_recovery_decision,
+            active_recovery_blocks=self._active_recovery_blocks,
+            dedupe_recovery_context=self._dedupe_recovery_context,
+            duplicate_window=self._duplicate_window,
+        )
         self._session_conflicts = SessionConflictTracker()
-        self._scheduler = threading.Thread(
-            target=self._scheduler_loop,
-            daemon=True,
+        self._owns_scheduler = scheduler is None
+        self._scheduler = scheduler or RuntimeScheduler(
+            stop=stop,
+            state_manager=self._runtime_state,
+            timeline=timeline,
+            logger=flog_kv,
             name="RecoveryScheduler",
         )
-        self._scheduler.start()
+        self._evaluator = RecoveryEvaluator(self)
+
+    @property
+    def runtime_orchestrator(self) -> RuntimeOrchestrator:
+        return self._runtime_orchestrator
+
+    def _is_closed(self) -> bool:
+        with self._lock:
+            return self._closed or self._stop.is_set()
+
     def _persist_runtime(self, force: bool = False):
         if not self._persist_callback:
             return
@@ -85,13 +111,14 @@ class RecoveryCoordinator:
             flog_kv("RECOVERY", "persist_failed", "warning", error=e)
 
     def stop(self):
-        with self._cond:
+        with self._lock:
             self._closed = True
-            pending = len(self._pending)
-            active = len(self._active_recoveries)
-            self._pending.clear()
-            self._active_recoveries.clear()
-            self._cond.notify_all()
+        active = self._owner_registry.clear()
+        self._signal_router.clear()
+        pending = sum(self._scheduler.cancel(f"recovery:{acc._config_username}", reason="recovery_stop") for acc in self._accounts)
+        if self._owns_scheduler:
+            pending += self._scheduler.cancel_all(reason="recovery_stop")
+            self._scheduler.stop()
         try:
             self._queue.cancel_all("recovery_stop")
         except Exception as exc:
@@ -102,13 +129,13 @@ class RecoveryCoordinator:
         result = self._recovery_dedupe.check_and_mark(ctx)
         if not result.get("ignore"):
             return False
-        self._log_recovery_decision("recovery_ignored", acc, reason_key, **result, **ctx.to_dict())
+        ctx_fields = ctx.to_dict()
+        result_fields = {key: value for key, value in result.items() if key not in ctx_fields and key != "reason"}
+        self._log_recovery_decision("recovery_ignored", acc, reason_key, **result_fields, **ctx_fields)
         return True
 
     def _active_recovery_blocks(self, acc: Account, ctx: RecoveryAttemptContext, reason_key: str) -> bool:
-        with self._lock:
-            owner = self._active_recoveries.get(acc._config_username)
-            result = active_recovery_block_reason(owner, ctx)
+        result = self._owner_registry.block_reason(acc._config_username, ctx)
         if not result.get("blocked"):
             return False
         self._log_recovery_decision("recovery_ignored", acc, reason_key, **result, **ctx.to_dict())
@@ -168,123 +195,17 @@ class RecoveryCoordinator:
         expected_transaction_id: str = "",
     ) -> bool:
         """Single boundary for worker/watchdog/maintenance recovery signals."""
-        payload = dict(payload or {})
-        payload = _enrich_visual_disconnect_payload_with_log(payload)
-        raw_signal = str(signal or "").strip().lower()
-        signal_name = RuntimeSignal.REJOIN_REQUESTED.value if raw_signal == RuntimeSignal.REJOIN_REQUESTED.value else normalize_runtime_signal(signal)
-        reason_key = str(payload.get("reason_key") or reason or signal_name or "runtime_signal")
-        context = context_from_signal(acc, signal_name, reason_key, payload)
-        if context.category == SESSION_CONFLICT:
-            reason_key = "session_conflict"
-            payload.setdefault("reason_key", reason_key)
-            payload.setdefault("disconnect_category", SESSION_CONFLICT)
-        with self._lock:
-            if self._closed or self._stop.is_set():
-                self._log_recovery_decision(
-                    "runtime_signal_rejected",
-                    acc,
-                    reason_key,
-                    signal=signal_name,
-                    reject="coordinator_closed",
-                    **context.to_dict(),
-                )
-                return False
-        with acc._lock:
-            if not self._runtime_state.guard_session_identity(
-                acc,
-                expected_generation=expected_runtime_generation,
-                expected_session_id=expected_session_id,
-                expected_launch_nonce=expected_launch_nonce,
-                expected_transaction_id=expected_transaction_id,
-                reason=f"runtime_signal:{signal_name}:{reason_key}",
-            ):
-                self._log_recovery_decision(
-                    "runtime_signal_rejected",
-                    acc,
-                    reason_key,
-                    signal=signal_name,
-                    reject="stale_identity",
-                    expected_runtime_generation=expected_runtime_generation,
-                    expected_session_id=expected_session_id,
-                    expected_transaction_id=expected_transaction_id,
-                    **context.to_dict(),
-                )
-                return False
-            current_recovery_generation = int(acc.recovery_generation or 0)
-
-        if is_recovery_signal(signal_name):
-            if self._active_recovery_blocks(acc, context, reason_key):
-                return True
-            if self._dedupe_recovery_context(context, acc, reason_key):
-                return True
-
-        signal_key = (acc._config_username, signal_name, canonical_reason(reason_key), current_recovery_generation)
-        now = time.time()
-        if is_recovery_signal(signal_name):
-            with self._lock:
-                last_seen = float(self._recent_signals.get(signal_key, 0.0) or 0.0)
-                if last_seen and (now - last_seen) < self._duplicate_window:
-                    self._log_recovery_decision(
-                        "recovery_duplicate_suppressed",
-                        acc,
-                        reason_key,
-                        signal=signal_name,
-                        recovery_generation=current_recovery_generation,
-                        age=f"{now - last_seen:.2f}",
-                        **context.to_dict(),
-                    )
-                    return True
-                self._recent_signals[signal_key] = now
-                if len(self._recent_signals) > 512:
-                    cutoff = now - max(self._duplicate_window * 4, 60.0)
-                    self._recent_signals = {key: ts for key, ts in self._recent_signals.items() if ts >= cutoff}
-
-        self._log_recovery_decision(
-            "runtime_signal_received",
+        return self._signal_router.route(
+            self,
             acc,
-            reason_key,
-            signal=signal_name,
-            payload_keys=",".join(sorted(str(k) for k in payload.keys())),
-            **context.to_dict(),
+            signal,
+            reason,
+            payload=payload,
+            expected_runtime_generation=expected_runtime_generation,
+            expected_session_id=expected_session_id,
+            expected_launch_nonce=expected_launch_nonce,
+            expected_transaction_id=expected_transaction_id,
         )
-
-        if signal_name in {RuntimeSignal.FAULT.value, RuntimeSignal.CRASH.value, RuntimeSignal.WATCHDOG_TIMEOUT.value, RuntimeSignal.PROCESS_LOST.value, RuntimeSignal.LOADING_FREEZE.value}:
-            reason_msg = str(payload.get("reason_msg") or payload.get("detail") or reason_key)
-            self.report_crash(acc, reason_key, reason_msg, cooldown=payload.get("cooldown"), context=context)
-        elif signal_name in {RuntimeSignal.LAUNCH_FAILURE.value, RuntimeSignal.LAUNCH_FAILED.value}:
-            self.report_launch_failure(acc, str(payload.get("detail") or reason_key or "launch_failed"))
-        elif signal_name == RuntimeSignal.LAUNCH_SUCCESS.value:
-            count_rejoin = payload.get("count_rejoin") if "count_rejoin" in payload else None
-            self.report_launch_success(acc, trigger=str(payload.get("trigger") or reason_key or "launch_success"), count_rejoin=count_rejoin)
-        elif signal_name in {RuntimeSignal.FATAL.value, RuntimeSignal.AUTH_FAILURE.value, RuntimeSignal.SESSION_FAILURE.value}:
-            reason_msg = str(payload.get("reason_msg") or payload.get("detail") or reason_key)
-            self.fail_account(acc, reason_key, reason_msg)
-        elif signal_name in {RuntimeSignal.NETWORK_LOST.value, RuntimeSignal.NETWORK_DROP.value}:
-            self.mark_network_lost(acc, trigger=str(payload.get("trigger") or reason_key or "network_lost"))
-        elif signal_name == RuntimeSignal.EVALUATE.value:
-            self.evaluate(
-                acc,
-                trigger=str(payload.get("trigger") or reason_key or "runtime_signal"),
-                force_restart=bool(payload.get("force_restart", False)),
-                expected_runtime_generation=expected_runtime_generation,
-                expected_session_id=expected_session_id,
-                expected_launch_nonce=expected_launch_nonce,
-                expected_transaction_id=expected_transaction_id,
-            )
-        elif signal_name == RuntimeSignal.REJOIN_REQUESTED.value:
-            self.force_rejoin(acc)
-        else:
-            self._log_recovery_decision(
-                "runtime_signal_rejected",
-                acc,
-                reason_key,
-                signal=signal_name,
-                reject="unsupported_signal",
-            )
-            return False
-
-        self._log_recovery_decision("runtime_signal_routed", acc, reason_key, signal=signal_name, **context.to_dict())
-        return True
 
     def _begin_recovery(
         self,
@@ -330,45 +251,29 @@ class RecoveryCoordinator:
                 )
                 return None
             account_key = acc._config_username
-            with self._lock:
-                owner = self._active_recoveries.get(account_key)
-                if owner and not force:
-                    same_runtime = int(owner.get("runtime_generation", -1)) == int(acc.runtime_generation or 0)
-                    same_recovery = int(owner.get("recovery_generation", -1)) == int(acc.recovery_generation or 0)
-                    if same_runtime and same_recovery:
-                        current_state = acc.state
-                        if canonical in {"launch_fail", "watchdog_timeout"} and current_state in (AccountState.LAUNCHING, AccountState.VERIFY):
-                            self._active_recoveries.pop(account_key, None)
-                            self._log_recovery_decision(
-                                "recovery_owner_replaced",
-                                acc,
-                                canonical,
-                                generation=owner.get("recovery_generation", 0),
-                                runtime_generation=owner.get("runtime_generation", 0),
-                                owner_reason=owner.get("reason", ""),
-                                state=current_state.name,
-                            )
-                        else:
-                            self._log_recovery_decision(
-                                "recovery_duplicate_suppressed",
-                                acc,
-                                canonical,
-                                generation=owner.get("recovery_generation", 0),
-                                runtime_generation=owner.get("runtime_generation", 0),
-                                owner_reason=owner.get("reason", ""),
-                            )
-                            return None
-                    else:
-                        self._log_recovery_decision(
-                            "recovery_duplicate_suppressed",
-                            acc,
-                            canonical,
-                            reject="active_recovery_owner_exists",
-                            owner_runtime_generation=owner.get("runtime_generation", 0),
-                            owner_recovery_generation=owner.get("recovery_generation", 0),
-                            owner_reason=owner.get("reason", ""),
-                        )
-                        return None
+            owner_check = self._owner_registry.check_start(
+                account_key,
+                runtime_generation=int(acc.runtime_generation or 0),
+                recovery_generation=int(acc.recovery_generation or 0),
+                reason=canonical,
+                current_state=acc.state,
+                force=force,
+            )
+            if not owner_check.get("accepted"):
+                self._log_recovery_decision(
+                    "recovery_owner_rejected",
+                    acc,
+                    canonical,
+                    **{key: value for key, value in owner_check.items() if key != "accepted"},
+                )
+                return None
+            if owner_check.get("replaced"):
+                self._log_recovery_decision(
+                    "recovery_owner_replaced",
+                    acc,
+                    canonical,
+                    **{key: value for key, value in owner_check.items() if key not in {"accepted", "replaced"}},
+                )
 
             self._runtime_state.begin_recovery(
                 acc,
@@ -390,19 +295,27 @@ class RecoveryCoordinator:
                 "launch_fail_count": acc.launch_fail_count,
                 "bucket": bucket,
             }
-            with self._lock:
-                self._active_recoveries[account_key] = {
-                    "account_id": account_key,
-                    "runtime_generation": int(acc.runtime_generation or 0),
-                    "recovery_generation": int(acc.recovery_generation or 0),
-                    "reason": canonical,
-                    "status": status,
-                    "started_at": now,
-                    "bucket": bucket,
-                    "priority": int(context.priority if context else 0),
-                    "token": context.token if context else "",
-                }
+            owner = self._owner_registry.acquire(
+                account_key,
+                runtime_generation=int(acc.runtime_generation or 0),
+                recovery_generation=int(acc.recovery_generation or 0),
+                command_generation=int(acc.command_generation or 0),
+                session_id=acc.session_id,
+                transaction_id=acc.rejoin_transaction_id,
+                reason=canonical,
+                status=status,
+                bucket=bucket,
+                priority=int(context.priority if context else 0),
+                token=context.token if context else "",
+                now=now,
+            )
 
+        self._log_recovery_decision(
+            "recovery_owner_acquired",
+            acc,
+            canonical,
+            **{key: value for key, value in owner.items() if key != "reason"},
+        )
         self._log_recovery_decision(
             "recovery_policy_applied",
             acc,
@@ -448,22 +361,23 @@ class RecoveryCoordinator:
         recovery_generation: Optional[int],
         reason: str,
     ) -> None:
-        with self._lock:
-            owner = self._active_recoveries.get(account_key)
-            if not owner:
-                return
-            if runtime_generation is not None and int(owner.get("runtime_generation", -1)) != int(runtime_generation):
-                return
-            if recovery_generation is not None and int(owner.get("recovery_generation", -1)) != int(recovery_generation):
-                return
-            self._active_recoveries.pop(account_key, None)
+        result = self._owner_registry.release(account_key, runtime_generation, recovery_generation, reason)
+        if not result.get("found"):
+            return
+        event = "recovery_owner_released" if result.get("released") else "recovery_owner_release_rejected"
+        fields = {
+            key: value
+            for key, value in result.items()
+            if key not in {"found", "released", "reason", "release_reason", "runtime_generation", "recovery_generation"}
+        }
         flog_kv(
             "RECOVERY",
-            "recovery_owner_released",
+            event,
             account=account_key,
             runtime_generation=runtime_generation,
             recovery_generation=recovery_generation,
             reason=reason,
+            **fields,
         )
 
     def _schedule_cooldown(self, acc: Account, delay: float, reason: str, transition_reason: str):
@@ -480,93 +394,8 @@ class RecoveryCoordinator:
         )
         self._schedule(acc, delay, transition_reason)
 
-    def _scheduler_loop(self):
-        while not self._stop.is_set():
-            with self._cond:
-                if self._closed:
-                    break
-                if not self._pending:
-                    self._cond.wait(timeout=1.0)
-                    continue
-                key, item = min(self._pending.items(), key=lambda pair: pair[1][0])
-                due, acc, reason, generation, runtime_generation = item
-                wait_for = due - time.time()
-                if wait_for > 0:
-                    self._cond.wait(timeout=min(wait_for, 5.0))
-                    continue
-                self._pending.pop(key, None)
-            with acc._lock:
-                if generation != acc.recovery_generation:
-                    flog_kv(
-                        "RUNTIME",
-                        "stale_work_rejected",
-                        "warning",
-                        account=acc.display_name,
-                        expected_generation=generation,
-                        current_generation=acc.recovery_generation,
-                        runtime_generation=acc.runtime_generation,
-                        command_generation=acc.command_generation,
-                        reason=f"scheduler:{reason}",
-                    )
-                    continue
-                if not self._runtime_state.guard_runtime_generation(
-                    acc,
-                    runtime_generation,
-                    reason=f"scheduler:{reason}",
-                ):
-                    continue
-                self._runtime_state.set_recovery(acc, status="due", reason="", inflight=True)
-                acc.recovery_scheduled_at = 0.0
-            self._persist_runtime()
-            self.evaluate(
-                acc,
-                trigger=reason,
-                expected_runtime_generation=runtime_generation,
-                expected_recovery_generation=generation,
-            )
-
     def _detect_relaunch_loop(self, acc: Account, reason_key: str) -> Optional[str]:
-        canonical = canonical_reason(reason_key)
-        fast_crash_reasons = {"process_crash", "watchdog_timeout", "loading_freeze"}
-        if canonical not in fast_crash_reasons:
-            with acc._lock:
-                acc.rapid_relaunch_count = 0
-            return None
-
-        window = max(10.0, float(self._cfg.get("relaunch_loop_window", 45) or 45))
-        limit = max(1, int(self._cfg.get("relaunch_loop_limit", 3) or 3))
-        now = time.time()
-        with acc._lock:
-            runtime = (now - acc.in_game_since) if acc.in_game_since else None
-            recent_network_loss = (
-                acc.last_network_lost_at is not None and
-                (now - acc.last_network_lost_at) <= max(window, 30.0)
-            )
-            if runtime is None or runtime > window:
-                acc.rapid_relaunch_count = 0
-                return None
-            if recent_network_loss or not self._net.is_online():
-                acc.rapid_relaunch_count = 0
-                flog(
-                    f"[RECOVERY] {acc.display_name} rapid crash ignored "
-                    f"(reason={canonical}, network_context=true)",
-                    "warning",
-                )
-                return None
-            acc.rapid_relaunch_count += 1
-            rapid_count = acc.rapid_relaunch_count
-
-        flog(
-            f"[RECOVERY] {acc.display_name} rapid crash #{rapid_count}/{limit} "
-            f"(reason={canonical}, runtime={runtime:.1f}s)",
-            "warning",
-        )
-        if rapid_count >= limit:
-            return (
-                f"Stopped auto rejoin after {rapid_count} rapid crashes "
-                f"within {window:.0f}s"
-            )
-        return None
+        return detect_relaunch_loop(acc, reason_key, self._cfg, self._net, flog)
 
     def set_desired(self, acc: Account, desired: AccountState):
         with acc._lock:
@@ -576,10 +405,10 @@ class RecoveryCoordinator:
         flog(f"[RECOVERY] hold {acc.display_name}: trigger={trigger} reason={reason}")
 
     def request_evaluate(self, acc: Account, trigger: str, force_restart: bool = False) -> bool:
-        return self._account_runtime.request_evaluate(acc, trigger=trigger, force_restart=force_restart)
+        return self._runtime_orchestrator.request_evaluate(acc, trigger=trigger, force_restart=force_restart)
 
     def request_rejoin(self, acc: Account, reason: str = "force_rejoin") -> bool:
-        return self._account_runtime.request_rejoin(acc, reason=reason, bump_runtime_generation=True)
+        return self._runtime_orchestrator.request_rejoin(acc, reason=reason, bump_runtime_generation=True)
 
     def _retry_bucket_exceeded(self, acc: Account) -> Optional[str]:
         max_retry = max(1, int(self._cfg.get("max_retry", 10) or 10))
@@ -612,132 +441,16 @@ class RecoveryCoordinator:
         expected_launch_nonce: str = "",
         expected_transaction_id: str = "",
     ):
-        with acc._lock:
-            if not self._runtime_state.guard_session_identity(
-                acc,
-                expected_generation=expected_runtime_generation,
-                expected_session_id=expected_session_id,
-                expected_launch_nonce=expected_launch_nonce,
-                expected_transaction_id=expected_transaction_id,
-                reason=f"evaluate:{trigger}",
-            ):
-                self._log_recovery_decision(
-                    "evaluate_rejected",
-                    acc,
-                    trigger,
-                    reject="stale_identity",
-                    expected_runtime_generation=expected_runtime_generation,
-                    expected_session_id=expected_session_id,
-                    expected_transaction_id=expected_transaction_id,
-                )
-                return
-            if not self._runtime_state.guard_recovery_generation(
-                acc,
-                expected_recovery_generation,
-                reason=f"evaluate:{trigger}",
-            ):
-                self._log_recovery_decision(
-                    "evaluate_rejected",
-                    acc,
-                    trigger,
-                    reject="stale_recovery_generation",
-                    expected_recovery_generation=expected_recovery_generation,
-                )
-                return
-            desired = acc.desired_state
-            current = acc.state
-            fail_count = acc.fail_count
-            retry_count = acc.retry_count
-            cooldown_until = acc.cooldown_until
-            pid = acc.pid
-            runtime_generation = acc.runtime_generation
-            session_valid = acc.session_valid
-            session_checked = acc.session_checked
-            has_cookie = bool(acc.cookie)
-            session_wait_started_at = acc.session_wait_started_at
-
-        if self._stop.is_set() or desired != AccountState.IN_GAME:
-            self._log_hold(acc, trigger, "stopped_or_not_desired")
-            return
-        if current == AccountState.FAILED:
-            self._log_hold(acc, trigger, "already_failed")
-            return
-
-        max_fail = int(self._cfg.get("max_fail_count", 5))
-        if fail_count >= max_fail:
-            self.fail_account(acc, "max_fail", RECOVERY_REASON_MESSAGES["max_fail"])
-            return
-        retry_exceeded = self._retry_bucket_exceeded(acc)
-        if retry_exceeded:
-            self.fail_account(acc, "max_retry", retry_exceeded)
-            return
-
-        if has_cookie and not session_checked:
-            now = time.time()
-            with acc._lock:
-                if not acc.session_wait_started_at:
-                    acc.session_wait_started_at = now
-                    session_wait_started_at = now
-            wait_age = max(0.0, now - (session_wait_started_at or now))
-            self._log_hold(acc, trigger, f"waiting_session_check age={wait_age:.1f}s")
-            self._schedule(acc, min(5.0, max(2.0, float(self._cfg.get('network_check_interval', 5) or 5))), "wait_session_check")
-            return
-
-        if not session_valid:
-            with acc._lock:
-                acc.session_retry_count += 1
-                acc.retry_count += 1
-                if not acc.recovery_inflight:
-                    self._runtime_state.bump_recovery_generation(acc, "session_retry", now=time.time())
-                self._runtime_state.set_recovery(acc, status="session_retry", reason="session_retry", inflight=True)
-                session_retry_count = acc.session_retry_count
-            hard_invalid = acc.last_crash_reason == "cookie_invalid"
-            if hard_invalid:
-                self.fail_account(acc, "cookie_invalid", RECOVERY_REASON_MESSAGES["cookie_invalid"])
-                return
-            delay = compute_backoff(session_retry_count, base=3, cap=30)
-            self._log_hold(acc, trigger, f"session_unverified_retry delay={delay:.1f}s")
-            self._schedule_cooldown(acc, delay, "session_retry", "session_retry")
-            return
-
-        if not self._net.is_online():
-            self.mark_network_lost(acc, trigger)
-            return
-
-        if force_restart and pid:
-            kill_result = ProcessManager.safe_kill_bound_process(
-                acc,
-                self._state_mgr,
-                reason=f"{trigger}:force_restart",
-                expected_runtime_generation=runtime_generation,
-            )
-            if kill_result.get("reason") == "stale_runtime_generation":
-                return
-            self._state_mgr.transition(acc, AccountState.READY, reason=f"{trigger}:force_restart", force=True)
-            current = AccountState.READY
-
-        if current in (AccountState.IN_GAME, AccountState.LAUNCHING, AccountState.VERIFY, AccountState.QUEUED):
-            self._log_hold(acc, trigger, f"active_state={current.name}")
-            return
-
-        remaining = cooldown_until - time.time()
-        if remaining > 0:
-            self._state_mgr.transition(acc, AccountState.COOLDOWN, reason=trigger)
-            self._log_hold(acc, trigger, f"cooldown remaining={remaining:.1f}s")
-            self._schedule(acc, remaining, f"{trigger}:cooldown")
-            return
-
-        if not self._queue_slot_available(acc):
-            delay = self._queue_delay_seconds()
-            self._log_hold(
-                acc,
-                trigger,
-                f"queue_slot_full active={self._active_slot_count(excluding=acc)} max={self._max_concurrent_accounts()}",
-            )
-            self._schedule(acc, delay, "queue_slot_wait")
-            return
-
-        self._queue_account(acc, trigger)
+        return self._evaluator.evaluate(
+            acc,
+            trigger=trigger,
+            force_restart=force_restart,
+            expected_runtime_generation=expected_runtime_generation,
+            expected_recovery_generation=expected_recovery_generation,
+            expected_session_id=expected_session_id,
+            expected_launch_nonce=expected_launch_nonce,
+            expected_transaction_id=expected_transaction_id,
+        )
 
     def reconcile_all(self, accounts: List[Account], trigger: str = "reconcile_all", force_restart: bool = False):
         for acc in accounts:
@@ -788,8 +501,8 @@ class RecoveryCoordinator:
         max_fail = int(self._cfg.get("max_fail_count", 5))
 
         if pid:
-            ProcessManager.evict_pid_cache(pid)
-            kill_result = ProcessManager.safe_kill_bound_process(
+            ProcessService.evict_pid_cache(pid, reason=f"recover:{canonical}", account=acc)
+            kill_result = ProcessService.safe_kill_bound_process(
                 acc,
                 self._state_mgr,
                 reason=f"recover:{canonical}",
@@ -1009,19 +722,7 @@ class RecoveryCoordinator:
         self._persist_runtime()
 
     def on_network_restored(self, accounts: List[Account]):
-        if not self._cfg.get("auto_rejoin", True):
-            flog("[RECOVERY] Auto rejoin disabled - skip reconcile on network restore", "warning")
-            return
-        for acc in accounts:
-            if acc.desired_state != AccountState.IN_GAME or acc.state == AccountState.FAILED:
-                continue
-            with acc._lock:
-                acc.network_retry_count = 0
-                if acc.recovery_status == "network_lost":
-                    self._runtime_state.set_recovery(acc, status="network_restored", reason="network_restored", inflight=True)
-                    acc.sync_runtime("network_restored")
-            self._log_recovery_decision("network_restored", acc, "network_restored")
-            self.request_evaluate(acc, trigger="network_restored", force_restart=True)
+        handle_network_restored(self, accounts)
 
     def force_rejoin(self, acc: Account):
         with acc._lock:
@@ -1056,7 +757,7 @@ class RecoveryCoordinator:
         if not ctx:
             return
         if pid:
-            kill_result = ProcessManager.safe_kill_bound_process(
+            kill_result = ProcessService.safe_kill_bound_process(
                 acc,
                 self._state_mgr,
                 reason="force_rejoin_kill",
@@ -1093,7 +794,7 @@ class RecoveryCoordinator:
         self._persist_runtime()
 
     def _schedule(self, acc: Account, delay: float, reason: str):
-        key = acc._config_username
+        key = f"recovery:{acc._config_username}"
         due = time.time() + max(0.0, delay)
         with acc._lock:
             if self._closed or self._stop.is_set():
@@ -1101,29 +802,42 @@ class RecoveryCoordinator:
                 return
             generation = acc.recovery_generation
             runtime_generation = acc.runtime_generation
+            command_generation = acc.command_generation
             acc.recovery_scheduled_at = due
+            acc.scheduler_slot = key
             if acc.recovery_status not in {"manual", "network_lost"}:
                 self._runtime_state.set_recovery(acc, status="scheduled", reason="", inflight=True)
             else:
                 self._runtime_state.set_recovery(acc, reason="", inflight=True)
-        with self._cond:
-            if self._closed:
-                self._log_recovery_decision("schedule_rejected", acc, reason, reject="coordinator_closed")
-                return
-            current = self._pending.get(key)
-            if current and current[0] <= due and current[3] == generation and current[4] == runtime_generation:
-                self._log_recovery_decision(
-                    "schedule_suppressed",
-                    acc,
-                    reason,
-                    existing_due=f"{current[0]:.3f}",
-                    new_due=f"{due:.3f}",
-                    generation=generation,
-                    runtime_generation=runtime_generation,
-                )
-                return
-            self._pending[key] = (due, acc, reason, generation, runtime_generation)
-            self._cond.notify_all()
+        current = self._scheduler.get(key)
+        if (
+            current
+            and current.due_at <= due
+            and current.recovery_generation == generation
+            and current.runtime_generation == runtime_generation
+            and current.command_generation == command_generation
+        ):
+            self._log_recovery_decision(
+                "schedule_suppressed",
+                acc,
+                reason,
+                existing_due=f"{current.due_at:.3f}",
+                new_due=f"{due:.3f}",
+                generation=generation,
+                runtime_generation=runtime_generation,
+            )
+            return
+        self._scheduler.schedule_once(
+            key,
+            self._run_scheduled_recovery,
+            due_at=due,
+            reason=reason,
+            account=acc,
+            runtime_generation=runtime_generation,
+            recovery_generation=generation,
+            command_generation=command_generation,
+            payload={"scheduler_slot": "recovery", "allow_runtime_generation_drift": True},
+        )
         flog_kv(
             "RECOVERY",
             "schedule_timer",
@@ -1132,8 +846,44 @@ class RecoveryCoordinator:
             delay=f"{max(0.0, delay):.1f}",
             generation=generation,
             runtime_generation=runtime_generation,
+            command_generation=command_generation,
         )
         self._persist_runtime()
+
+    def _run_scheduled_recovery(self, job: RuntimeScheduledJob) -> None:
+        acc = job.account
+        if acc is None:
+            return
+        reason = job.reason
+        generation = int(job.recovery_generation or 0)
+        runtime_generation = int(job.runtime_generation or 0)
+        with acc._lock:
+            if generation != acc.recovery_generation:
+                flog_kv(
+                    "RUNTIME",
+                    "stale_work_rejected",
+                    "warning",
+                    account=acc.display_name,
+                    expected_generation=generation,
+                    current_generation=acc.recovery_generation,
+                    runtime_generation=acc.runtime_generation,
+                    command_generation=acc.command_generation,
+                    reason=f"scheduler:{reason}",
+                )
+                return
+            runtime_generation = self._scheduler.effective_runtime_generation(job)
+            if runtime_generation is None or not self._runtime_state.guard_runtime_generation(acc, runtime_generation, reason=f"scheduler:{reason}"):
+                return
+            self._runtime_state.set_recovery(acc, status="due", reason="", inflight=True)
+            acc.recovery_scheduled_at = 0.0
+            acc.scheduler_slot = ""
+        self._persist_runtime()
+        self.evaluate(
+            acc,
+            trigger=reason,
+            expected_runtime_generation=runtime_generation,
+            expected_recovery_generation=generation,
+        )
 
 
 RecoveryEngine = RecoveryCoordinator

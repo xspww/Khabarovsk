@@ -16,7 +16,7 @@ from core import (
     flog,
     flog_kv,
 )
-from services.process_service import ProcessManager
+from services.process_service import ProcessManager, ProcessService
 from services.presence_service import PRESENCE_SERVICE
 from services.ram_service import RAMManager
 from runtime.roblox_watchdog import RobloxWatchdog
@@ -50,6 +50,7 @@ class AccountWorker(threading.Thread):
         self.bus = bus
         self.cfg = cfg
         self.recovery = recovery
+        self.runtime_owner = getattr(recovery, "runtime_orchestrator", recovery)
         self._stop = stop
         self._supervisor = supervisor
         self._accounts = accounts or [acc]
@@ -87,7 +88,7 @@ class AccountWorker(threading.Thread):
                 reason=reason_key,
                 payload={"detail": msg},
             )
-        self.recovery.handle_runtime_signal(
+        self.runtime_owner.handle_runtime_signal(
             self.acc,
             "fault",
             reason_key,
@@ -130,7 +131,7 @@ class AccountWorker(threading.Thread):
         with acc._lock:
             old_pid = acc.pid
             runtime_generation = acc.runtime_generation
-        bind_result = ProcessManager.bind_account_process(
+        bind_result = ProcessService.bind_account_process(
             acc,
             pid,
             self.state_mgr,
@@ -174,7 +175,7 @@ class AccountWorker(threading.Thread):
         acc = self.acc
         with acc._lock:
             runtime_generation = acc.runtime_generation
-        result = ProcessManager.safe_adopt_visible_process(
+        result = ProcessService.safe_adopt_visible_process(
             acc,
             self.state_mgr,
             accounts=self._accounts,
@@ -473,7 +474,7 @@ class AccountWorker(threading.Thread):
                 )
                 return "stale"
         if pid_was:
-            ProcessManager.evict_pid_cache(pid_was)
+            ProcessService.evict_pid_cache(pid_was, reason=f"missing_bound_process:{source}", account=acc)
         if pid_was:
             self.state_mgr.clear_process_binding(
                 acc,
@@ -510,7 +511,7 @@ class AccountWorker(threading.Thread):
                 acc.manual_status = msg
                 acc.last_error = f"{msg} [{extra}]"
             flog_kv("MULTI_ROBLOX", "guard_runtime_failure_detected", "error", account=acc.display_name, detail=extra)
-            self.recovery.handle_runtime_signal(
+            self.runtime_owner.handle_runtime_signal(
                 acc,
                 "fatal",
                 "multi_roblox_guard_failed",
@@ -540,7 +541,7 @@ class AccountWorker(threading.Thread):
         if block_reason:
             _set_account_cookie_block(acc, block_reason)
             flog(f"[WORKER] {acc.display_name} launch blocked: {block_reason}", "warning")
-            self.recovery.handle_runtime_signal(
+            self.runtime_owner.handle_runtime_signal(
                 acc,
                 "fatal",
                 "cookie_mismatch",
@@ -570,7 +571,7 @@ class AccountWorker(threading.Thread):
                     if mismatch_reason:
                         _set_account_cookie_block(acc, mismatch_reason, cookie_username=username)
                         flog(f"[WORKER] {acc.display_name} launch blocked: {mismatch_reason}", "warning")
-                        self.recovery.handle_runtime_signal(
+                        self.runtime_owner.handle_runtime_signal(
                             acc,
                             "fatal",
                             "cookie_mismatch",
@@ -586,7 +587,7 @@ class AccountWorker(threading.Thread):
                     if username and username != acc.username:
                         flog(f"[WORKER] {acc.display_name} cookie validated as '{username}'")
                     flog(f"[WORKER] {acc.display_name} cookie valid ({username})")
-                    self.recovery.request_evaluate(acc, trigger="cookie_validated")
+                    self.runtime_owner.request_evaluate(acc, trigger="cookie_validated")
                     break
 
                 with acc._lock:
@@ -601,13 +602,13 @@ class AccountWorker(threading.Thread):
                         f"[WORKER] {acc.display_name} cookie validation transient error -> retry in {delay:.1f}s: {detail}",
                         "warning",
                     )
-                    self.recovery.request_evaluate(acc, trigger="cookie_validation_retry")
+                    self.runtime_owner.request_evaluate(acc, trigger="cookie_validation_retry")
                     self._wake.wait(timeout=delay)
                     self._wake.clear()
                     continue
 
                 flog(f"[WORKER] {acc.display_name} cookie invalid -> FAILED: {detail}", "warning")
-                self.recovery.handle_runtime_signal(
+                self.runtime_owner.handle_runtime_signal(
                     acc,
                     "fatal",
                     "cookie_invalid",
@@ -622,7 +623,7 @@ class AccountWorker(threading.Thread):
                     f"[WORKER] {acc.display_name} no cookie from RAM -> block launch to avoid Roblox login screen",
                     "warning",
                 )
-                self.recovery.handle_runtime_signal(
+                self.runtime_owner.handle_runtime_signal(
                     acc,
                     "fatal",
                     "cookie_missing",
@@ -647,7 +648,7 @@ class AccountWorker(threading.Thread):
                 session_id = acc.session_id
                 launch_nonce = acc.launch_nonce
                 transaction_id = acc.rejoin_transaction_id
-            self.recovery.handle_runtime_signal(
+            self.runtime_owner.handle_runtime_signal(
                 acc,
                 "launch_success",
                 "initial_probe",
@@ -660,7 +661,7 @@ class AccountWorker(threading.Thread):
             self._wake.wait(timeout=1.0)
             self._wake.clear()
 
-        self.recovery.request_evaluate(acc, trigger="initial_boot")
+        self.runtime_owner.request_evaluate(acc, trigger="initial_boot")
 
         crash_to = self.cfg.get("crash_timeout", 30)
         nr_timeout = self.cfg.get("not_responding_timeout", 30)
@@ -715,7 +716,7 @@ class AccountWorker(threading.Thread):
                                     transaction_id = acc.rejoin_transaction_id
                                 self._connection_error_since = None
                                 reason_msg = self.REASON_MESSAGES.get(reason_key, reason_key)
-                                self.recovery.handle_runtime_signal(
+                                self.runtime_owner.handle_runtime_signal(
                                     acc,
                                     "fatal",
                                     reason_key,
@@ -734,9 +735,7 @@ class AccountWorker(threading.Thread):
                                 continue
                             if self._connection_error_since is None:
                                 self._connection_error_since = time.time()
-                                runtime_state = getattr(self.recovery, "_runtime_state", None)
-                                if runtime_state:
-                                    runtime_state.set_recovery(acc, status="checking_disconnect", reason=reason_key, inflight=False)
+                                self.runtime_owner.set_recovery_status(acc, status="checking_disconnect", reason=reason_key, inflight=False)
                                 flog(f"[WORKER] {acc.display_name} disconnect dialog detected - will recover in {effective_hold_sec:.0f}s ({reason_key}{detail_suffix} {evidence_note}: {detail})")
                                 self._wake.wait(timeout=min(1.0, effective_hold_sec))
                                 self._wake.clear()
@@ -750,7 +749,7 @@ class AccountWorker(threading.Thread):
                                     transaction_id = acc.rejoin_transaction_id
                                 self._connection_error_since = None
                                 if reason_key == "network_drop" and not self.recovery._net.is_online():
-                                    self.recovery.handle_runtime_signal(
+                                    self.runtime_owner.handle_runtime_signal(
                                         acc,
                                         "network_lost",
                                         "network_drop",
@@ -761,7 +760,7 @@ class AccountWorker(threading.Thread):
                                         expected_transaction_id=transaction_id,
                                     )
                                 else:
-                                    self.recovery.handle_runtime_signal(
+                                    self.runtime_owner.handle_runtime_signal(
                                         acc,
                                         "disconnect_detected",
                                         reason_key,
@@ -787,9 +786,7 @@ class AccountWorker(threading.Thread):
                         else:
                             self._connection_error_since = None
                             if acc.recovery_status == "checking_disconnect" and not acc.recovery_inflight:
-                                runtime_state = getattr(self.recovery, "_runtime_state", None)
-                                if runtime_state:
-                                    runtime_state.set_recovery(acc, status="in_game", reason="disconnect_check_clear", inflight=False)
+                                self.runtime_owner.set_recovery_status(acc, status="in_game", reason="disconnect_check_clear", inflight=False)
 
                     if runtime > 30:
                         if ProcessManager.is_not_responding(acc.pid):
@@ -801,7 +798,7 @@ class AccountWorker(threading.Thread):
                                 pid_was = acc.pid
                                 with acc._lock:
                                     runtime_generation = acc.runtime_generation
-                                kill_result = ProcessManager.safe_kill_bound_process(
+                                kill_result = ProcessService.safe_kill_bound_process(
                                     acc,
                                     self.state_mgr,
                                     reason="not_responding_recover",

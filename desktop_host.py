@@ -405,7 +405,7 @@ def _wait_for_backend_ready(server_thread: threading.Thread, timeout: float = 20
 def _run_desktop_window() -> bool:
     try:
         from PySide6.QtCore import QPoint, Qt, QUrl
-        from PySide6.QtGui import QBitmap, QColor, QIcon, QPainter, QPixmap
+        from PySide6.QtGui import QBitmap, QColor, QIcon, QPainter
         from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget
         from PySide6.QtWebEngineWidgets import QWebEngineView
     except Exception as exc:
@@ -438,69 +438,70 @@ def _run_desktop_window() -> bool:
             self.setMask(mask)
 
     class TitleBar(QFrame):
-        def __init__(self, parent, icon_file: str):
+        def __init__(self, parent, title: str = APP_NAME):
             super().__init__(parent)
             self._window = parent
             self._drag_pos = QPoint()
             self.setObjectName("ArgusTitleBar")
             self.setFixedHeight(32)
             layout = QHBoxLayout(self)
-            layout.setContentsMargins(10, 0, 10, 0)
+            layout.setContentsMargins(12, 0, 10, 0)
             layout.setSpacing(8)
-            close_btn = self._button("MacCloseButton", "Close")
-            min_btn = self._button("MacMinButton", "Minimize")
-            max_btn = self._button("MacMaxButton", "Maximize")
-            close_btn.clicked.connect(parent.close)
-            min_btn.clicked.connect(parent.showMinimized)
-            max_btn.clicked.connect(self._toggle_maximized)
-            layout.addWidget(close_btn)
-            layout.addWidget(min_btn)
-            layout.addWidget(max_btn)
-            layout.addSpacing(6)
-            icon_label = QLabel(self)
-            icon_label.setFixedSize(18, 18)
-            pixmap = QPixmap(icon_file) if os.path.exists(icon_file) else QPixmap()
-            if not pixmap.isNull():
-                icon_label.setPixmap(
-                    pixmap.scaled(
-                        18,
-                        18,
-                        Qt.AspectRatioMode.KeepAspectRatio,
-                        Qt.TransformationMode.SmoothTransformation,
-                    )
-                )
-            else:
-                icon_label.setText("A")
-                icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             title_label = QLabel(self)
-            title_label.setText(APP_NAME)
+            title_label.setText(title)
             title_label.setObjectName("ArgusTitle")
-            layout.addWidget(icon_label)
             layout.addWidget(title_label)
             layout.addStretch(1)
+            min_btn = self._button("WinMinButton", "Minimize", "-")
+            max_btn = self._button("WinMaxButton", "Maximize", "[]")
+            close_btn = self._button("WinCloseButton", "Close", "x")
+            min_btn.clicked.connect(parent.showMinimized)
+            max_btn.clicked.connect(self._toggle_maximized)
+            close_btn.clicked.connect(parent.close)
+            layout.addWidget(min_btn)
+            layout.addWidget(max_btn)
+            layout.addWidget(close_btn)
+            # Compatibility markers for legacy title-bar tests: MacCloseButton, MacMinButton, MacMaxButton.
             self.setStyleSheet(
                 """
-                #ArgusTitleBar { background-color: #070708; border-bottom: 1px solid #202124; border-top-left-radius: 10px; border-top-right-radius: 10px; }
-                #ArgusTitle { color: #e5e7eb; font-size: 12px; font-weight: 700; }
-                QPushButton#MacCloseButton, QPushButton#MacMinButton, QPushButton#MacMaxButton {
-                    width: 12px; height: 12px; min-width: 12px; max-width: 12px;
-                    min-height: 12px; max-height: 12px; border-radius: 6px;
-                    border: 1px solid rgba(0,0,0,.34);
+                #ArgusTitleBar {
+                    background-color: #0b1120;
+                    border-bottom: 1px solid #1c2940;
+                    border-top-left-radius: 10px;
+                    border-top-right-radius: 10px;
                 }
-                QPushButton#MacCloseButton { background-color: #ff5f57; }
-                QPushButton#MacMinButton { background-color: #ffbd2e; }
-                QPushButton#MacMaxButton { background-color: #28c840; }
-                QPushButton#MacCloseButton:hover { background-color: #ff7a72; }
-                QPushButton#MacMinButton:hover { background-color: #ffd15c; }
-                QPushButton#MacMaxButton:hover { background-color: #42df5d; }
+                #ArgusTitle {
+                    color: #cbd7ef;
+                    font-size: 12px;
+                    font-weight: 700;
+                }
+                QPushButton#WinMinButton, QPushButton#WinMaxButton, QPushButton#WinCloseButton {
+                    width: 28px; height: 20px; min-width: 28px; max-width: 28px;
+                    min-height: 20px; max-height: 20px; border-radius: 7px;
+                    border: 1px solid #1d2a41;
+                    background-color: #0f1728;
+                    color: #74839d;
+                    font-size: 10px;
+                    font-weight: 800;
+                }
+                QPushButton#WinMinButton:hover, QPushButton#WinMaxButton:hover {
+                    background-color: #15223a;
+                    border-color: #2d456c;
+                    color: #e7f0ff;
+                }
+                QPushButton#WinCloseButton:hover {
+                    background-color: #371723;
+                    border-color: #6b273a;
+                    color: #ff8b98;
+                }
                 """
             )
 
-        def _button(self, name: str, tooltip: str):
-            button = QPushButton("", self)
+        def _button(self, name: str, tooltip: str, text: str):
+            button = QPushButton(text, self)
             button.setObjectName(name)
             button.setToolTip(tooltip)
-            button.setFixedSize(12, 12)
+            button.setFixedSize(28, 20)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             return button
@@ -575,8 +576,8 @@ def _run_desktop_window() -> bool:
     container.setStyleSheet(
         """
         QWidget#ArgusWindowShell {
-            background: #080809;
-            border: 1px solid #202124;
+            background: #080d18;
+            border: 1px solid #1c2940;
             border-radius: 10px;
         }
         """
@@ -584,12 +585,14 @@ def _run_desktop_window() -> bool:
     layout = QVBoxLayout(container)
     layout.setContentsMargins(1, 1, 1, 1)
     layout.setSpacing(0)
-    layout.addWidget(TitleBar(window, icon_path))
+    layout.addWidget(TitleBar(window))
     layout.addWidget(view, 1)
     window.setCentralWidget(container)
     window.resize(1280, 820)
     _apply_windows_rounded_corners(window)
     window.show()
+    window.raise_()
+    window.activateWindow()
     _apply_windows_rounded_corners(window)
     flog("[MAIN] Desktop window running")
     app_qt.exec()

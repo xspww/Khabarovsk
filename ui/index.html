@@ -5,24 +5,33 @@
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <meta name="argus-api-token" content="__ARGUS_API_TOKEN__">
 <title>Argus Launcher</title>
+<link rel="icon" type="image/svg+xml" href="/ui/argus-favicon.svg">
 <link rel="stylesheet" href="/ui/dashboard.css">
 </head>
 <body>
 <div class="app">
   <aside class="sidebar">
-    <div class="side-launch"><button id="guard-btn" class="btn good guard-action"><svg class="guard-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M7 5v14l11-7z"/></svg><span>START</span></button></div>
+    <div class="side-launch"><button id="guard-btn" class="btn good guard-action"><svg class="guard-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 10-13h-7z"/></svg><span>START</span></button></div>
     <nav id="nav" class="nav">
-      <div class="nav-label">General</div>
-      <button data-view="accounts" class="active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v2"/><circle cx="9.5" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg><span class="nav-text">Accounts</span><span id="nav-accounts-count" class="nav-badge">0</span></button>
-      <button data-view="queue"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4 4 8l8 4 8-4-8-4z"/><path d="m4 12 8 4 8-4"/><path d="m4 16 8 4 8-4"/></svg>Queue</button>
-      <button data-view="game"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v6"/><circle cx="12" cy="6" r="3"/><path d="M6 21h12a2 2 0 0 0 2-2l-2-7H6l-2 7a2 2 0 0 0 2 2z"/><path d="M9 15h6"/></svg>Game</button>
-      <div class="nav-label performance">Performance</div>
-      <button data-view="performance"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15a8 8 0 0 1 16 0"/><path d="M12 15l3.5-5"/><path d="M6 19h12"/><path d="M8 15h.01"/><path d="M16 15h.01"/><path d="M18 6h3"/></svg>FPS Limiter</button>
-      <button data-view="graphics"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M18.5 3.5a2.1 2.1 0 0 1 3 3L13 15l-4-4 8.5-7.5z"/><path d="M12 16c0 3-2.5 5-6.5 5-1.5 0-2.5-.4-3.5-1 2.8-.6 3.6-2.1 4-4 .4-1.8 1.5-3 3.2-3"/></svg>Graphics</button>
-      <button data-view="window-size"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M9 10H6v3"/><path d="M6 10l5 5"/><path d="M15 14h3v-3"/><path d="M18 14l-5-5"/></svg>Window Size</button>
-      <button data-view="cpu-limiter"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><rect x="7" y="7" width="10" height="10" rx="2"/><path d="M4 10h3"/><path d="M4 14h3"/><path d="M17 10h3"/><path d="M17 14h3"/><path d="M10 4v3"/><path d="M14 4v3"/><path d="M10 17v3"/><path d="M14 17v3"/><path d="M10 12h4"/></svg>CPU Limiter</button>
-      <div class="nav-label system">System</div>
-      <button data-view="troubleshoot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5 5L4 17v3h3l5.7-5.7a4 4 0 0 0 5-5l-3 3-2-2 3-3z"/></svg>Troubleshoot</button>
+      <button data-view="accounts" class="nav-root active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13.5 12 5l8 8.5"/><path d="M6.5 11.5V20h11v-8.5"/><path d="M10 20v-5h4v5"/></svg><span class="nav-text">Dashboard</span><span id="nav-accounts-count" class="nav-badge nav-badge-muted">0</span></button>
+      <div class="nav-group expanded">
+        <div class="nav-group-head"><span class="nav-group-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 7l8 4 8-4-8-4z"/><path d="M4 11l8 4 8-4"/><path d="M4 15l8 4 8-4"/></svg></span><span>Automation</span><span class="nav-caret">^</span></div>
+        <div class="nav-branch">
+          <button data-view="queue" class="nav-child"><span class="nav-text">Queue</span></button>
+          <button data-view="game" class="nav-child"><span class="nav-text">Game</span></button>
+        </div>
+      </div>
+      <div class="nav-group expanded">
+        <div class="nav-group-head"><span class="nav-group-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15a8 8 0 0 1 16 0"/><path d="M12 15l3.5-5"/><path d="M6 19h12"/></svg></span><span>Performance</span><span class="nav-caret">^</span></div>
+        <div class="nav-branch">
+          <button data-view="performance" class="nav-child"><span class="nav-text">FPS Limiter</span></button>
+          <button data-view="graphics" class="nav-child"><span class="nav-text">Graphics</span></button>
+          <button data-view="window-size" class="nav-child"><span class="nav-text">Window Size</span></button>
+          <button data-view="cpu-limiter" class="nav-child"><span class="nav-text">CPU Limiter</span></button>
+        </div>
+      </div>
+      <div class="nav-separator"></div>
+      <button data-view="troubleshoot" class="nav-root"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5 5L4 17v3h3l5.7-5.7a4 4 0 0 0 5-5l-3 3-2-2 3-3z"/></svg><span class="nav-text">Settings</span></button>
     </nav>
     <section class="side-status">
       <div class="status-list">

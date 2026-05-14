@@ -654,6 +654,43 @@ class RuntimeStateManager:
             ),
         )
 
+    def clear_manual_start_failure_gate(self, acc: Any, max_fail_count: int = 5) -> bool:
+        max_fail = max(1, int(max_fail_count or 5))
+        reason = str(getattr(acc, "last_crash_reason", "") or "")
+        failed_status = str(getattr(acc, "recovery_status", "") or "") == "failed"
+        over_fail_limit = int(getattr(acc, "fail_count", 0) or 0) >= max_fail
+        if reason not in {"max_fail", "max_retry"} and not (failed_status and over_fail_limit):
+            return False
+
+        acc.retry_count = 0
+        acc.fail_count = 0
+        acc.launch_fail_count = 0
+        acc.crash_retry_count = 0
+        acc.network_retry_count = 0
+        acc.session_retry_count = 0
+        acc.session_wait_started_at = 0.0
+        acc.pid_missing_since = 0.0
+        acc.last_network_lost_at = None
+        acc.last_crash_reason = ""
+        acc.last_recovery_reason = ""
+        acc.recovery_status = ""
+        acc.recovery_inflight = False
+        acc.recovery_scheduled_at = 0.0
+        acc.last_rejoin_trigger = ""
+        self.set_cooldown(acc, 0.0, reason="manual_start_reset_failure_gate")
+        acc.sync_runtime("manual_start_reset_failure_gate")
+        self._emit(
+            "RUNTIME",
+            "owned_mutation",
+            **self._runtime_log_fields(
+                acc,
+                reason="manual_start_reset_failure_gate",
+                field="manual_start_failure_gate",
+                max_fail_count=max_fail,
+            ),
+        )
+        return True
+
     def bump_recovery_generation(self, acc: Any, reason: str = "", now: Optional[float] = None) -> int:
         acc.recovery_generation = int(getattr(acc, "recovery_generation", 0) or 0) + 1
         acc.last_recovery_at = float(now if now is not None else time.time())

@@ -19,29 +19,9 @@ from runtime.system_maintenance import SystemMaintenance
 
 def _clear_manual_start_failure_gate(acc: Any, runtime_state: Any, max_fail_count: int) -> bool:
     max_fail = max(1, int(max_fail_count or 5))
-    reason = str(getattr(acc, "last_crash_reason", "") or "")
-    failed_status = str(getattr(acc, "recovery_status", "") or "") == "failed"
-    over_fail_limit = int(getattr(acc, "fail_count", 0) or 0) >= max_fail
-    if reason not in {"max_fail", "max_retry"} and not (failed_status and over_fail_limit):
+    reset = bool(runtime_state.clear_manual_start_failure_gate(acc, max_fail_count=max_fail))
+    if not reset:
         return False
-
-    acc.retry_count = 0
-    acc.fail_count = 0
-    acc.launch_fail_count = 0
-    acc.crash_retry_count = 0
-    acc.network_retry_count = 0
-    acc.session_retry_count = 0
-    acc.session_wait_started_at = 0.0
-    acc.pid_missing_since = 0.0
-    acc.last_network_lost_at = None
-    acc.last_crash_reason = ""
-    acc.last_recovery_reason = ""
-    acc.recovery_status = ""
-    acc.recovery_inflight = False
-    acc.recovery_scheduled_at = 0.0
-    acc.last_rejoin_trigger = ""
-    runtime_state.set_cooldown(acc, 0.0, reason="manual_start_reset_failure_gate")
-    acc.sync_runtime("manual_start_reset_failure_gate")
     flog_kv(
         "RUNTIME",
         "manual_start_failure_gate_reset",
@@ -252,6 +232,13 @@ class FarmLifecycleService:
 
         farm._runtime_orchestrator.request_reconcile_all(farm._accounts, trigger="farm_start")
         launchable_count = len(farm._accounts) - len(blocked_accounts)
+        flog_kv(
+            "FARM",
+            "started",
+            accounts=len(farm._accounts),
+            launchable=launchable_count,
+            blocked=len(blocked_accounts),
+        )
         flog(f"[FARM] Started {len(farm._accounts)} accounts (launchable={launchable_count} blocked={len(blocked_accounts)})")
         message = f"Farm started - {launchable_count}/{len(farm._accounts)} launchable"
         if blocked_accounts:
@@ -316,6 +303,7 @@ class FarmLifecycleService:
             release_multi_roblox_guard()
         except Exception as exc:
             flog_kv("MULTI_ROBLOX", "guard_stop_failed", "warning", error=exc)
+        flog_kv("FARM", "stopped", accounts=len(farm._accounts))
         flog("[FARM] Stopped")
         farm._push_event("system", "Farm stopped", severity="info")
         farm._shutting_down = False

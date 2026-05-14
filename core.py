@@ -14,6 +14,8 @@ from logging.handlers import RotatingFileHandler
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from app_paths import APP_DATA_DIR, migrate_legacy_data_files
+from console_activity import emit_structured as emit_console_activity
+from console_activity import emit_text as emit_console_text
 from domain.account_state import AccountState, RuntimeState
 from domain.public_state_mapper import (
     LIFECYCLE_STATE,
@@ -103,6 +105,7 @@ def flog_struct(scope: str, event: str, level: str = "info", **fields):
 
 def flog(msg: str, level: str = "info"):
     getattr(_logger, level, _logger.info)(msg)
+    emit_console_text(msg, level)
 
 
 def _kv_value(value: Any) -> str:
@@ -118,6 +121,7 @@ def _kv_value(value: Any) -> str:
 
 def flog_kv(scope: str, name: str, level: str = "info", **fields):
     flog_struct(scope, name, level, **fields)
+    emit_console_activity(scope, name, level, **fields)
     parts = " ".join(f"{key}={_kv_value(_redact_value(key, value))}" for key, value in fields.items())
     suffix = f" {parts}" if parts else ""
     flog(f"[{scope}] {name}{suffix}", level)

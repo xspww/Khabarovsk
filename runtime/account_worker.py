@@ -123,7 +123,7 @@ class AccountWorker(threading.Thread):
                 reason=reason,
                 action=action,
                 confidence=f"{confidence:.1f}",
-                level=reconciliation.get("confidence_level", ""),
+                confidence_level=reconciliation.get("confidence_level", ""),
                 reject=reconciliation.get("reason", ""),
             )
             return False

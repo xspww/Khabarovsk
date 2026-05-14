@@ -11,7 +11,7 @@ if BASE_DIR not in sys.path:
 from app_paths import APP_NAME, resource_path
 
 APP_USER_AGENT = "ArgusLauncher/RT"
-APP_ICON_FILE = "ROBUGUARD Corners  .png"
+APP_ICON_FILE = "argus_icon.png"
 
 if sys.platform != "win32":
     print(f"{APP_NAME} requires Windows.")

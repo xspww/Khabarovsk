@@ -17,10 +17,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import uvicorn
 
 from app_paths import APP_NAME, APP_DATA_DIR, APP_ROOT_DIR, IS_COMPILED, path_targets_current_exe, resource_path
-from core import flog, flog_kv
+from console_activity import format_console_line
+from core import LOG_FILE, flog, flog_kv
 
 APP_USER_AGENT = "ArgusLauncher/RT"
-APP_ICON_FILE = "ROBUGUARD Corners  .png"
+APP_ICON_FILE = "argus_icon.png"
 BASE_DIR = APP_ROOT_DIR
 HOST = "127.0.0.1"
 PORT = 7777
@@ -32,6 +33,56 @@ _SHUTDOWN_REQUESTED = threading.Event()
 _BACKEND_THREAD_ERROR = ""
 _app = None
 _farm = None
+
+
+def _console_write(message: str = "") -> None:
+    try:
+        print(message, flush=True)
+    except UnicodeEncodeError:
+        try:
+            safe_message = str(message).replace("→", "->")
+            print(safe_message.encode("ascii", "replace").decode("ascii"), flush=True)
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _console_event(icon: str, message: str, *, indent: bool = False) -> None:
+    _console_write(format_console_line(icon, message, indent=indent))
+
+
+def _console_status(label: str, detail: str) -> None:
+    label_key = str(label or "").strip().lower()
+    detail_text = str(detail or "").strip()
+    if label_key == "startup":
+        return
+    if label_key == "port":
+        return
+    if label_key == "backend":
+        if detail_text.lower().startswith("not ready"):
+            _console_event("XX", f"Argus backend not ready: {detail_text.replace('Not ready:', '', 1).strip()}")
+        return
+    if label_key == "dashboard":
+        return
+    if label_key == "desktop":
+        return
+    if label_key == "shutdown":
+        return
+    if label_key == "log":
+        return
+    return
+
+
+def _console_header(mode: str) -> None:
+    os.environ.setdefault("ARGUS_CONSOLE_ACTIVITY", "1")
+    os.environ.setdefault("ARGUS_CONSOLE_COLOR", "1")
+    try:
+        if os.name == "nt":
+            ctypes.windll.kernel32.SetConsoleTitleW(f"{APP_NAME} Console")
+    except Exception:
+        pass
+    return
 
 
 def configure(fastapi_app: Any, farm_controller: Any) -> None:
@@ -555,34 +606,48 @@ def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
     if fastapi_app is not None or farm_controller is not None:
         configure(fastapi_app, farm_controller)
     global PORT
+    _console_header("Desktop")
+    _console_status("startup", "Preparing single-instance guard")
     _stop_previous_instance()
     _stop_same_app_processes()
     mutex_ok = _acquire_single_instance_mutex()
     socket_ok = _acquire_instance_socket()
     if (not mutex_ok) or (not socket_ok):
+        _console_status("startup", "Existing Argus instance detected; requesting cleanup")
         _stop_previous_instance()
         _stop_same_app_processes()
         if not socket_ok:
             socket_ok = _acquire_instance_socket()
     PORT = _find_free_port(7777)
+    _console_status("port", f"Selected http://{HOST}:{PORT}")
     _write_instance_state(PORT)
+    _console_status("backend", "Starting FastAPI server")
     server_thread = _start_backend_thread()
     ready, detail = _wait_for_backend_ready(server_thread)
     if ready:
         flog(f"[MAIN] FastAPI ready on http://{HOST}:{PORT}")
+        _console_status("backend", f"Ready ({detail})")
+        _console_status("dashboard", f"http://{HOST}:{PORT}")
     else:
         flog_kv("MAIN", "fastapi_not_ready", "error", port=PORT, detail=detail)
-    if not _run_desktop_window():
-        webbrowser.open(f"http://{HOST}:{PORT}")
-        try:
-            while not _SHUTDOWN_REQUESTED.is_set():
-                time.sleep(1)
-        except KeyboardInterrupt:
-            farm = _require_configured()[1]
-            if farm.running:
-                farm.stop()
-            _clear_instance_state()
-            sys.exit(0)
+        _console_status("backend", f"Not ready: {detail}")
+        _console_status("log", LOG_FILE)
+    _console_status("desktop", "Opening desktop window")
+    if _run_desktop_window():
+        _console_status("shutdown", "Argus window closed")
+        return
+    _console_status("desktop", "Desktop window unavailable; opening browser fallback")
+    webbrowser.open(f"http://{HOST}:{PORT}")
+    try:
+        while not _SHUTDOWN_REQUESTED.is_set():
+            time.sleep(1)
+    except KeyboardInterrupt:
+        _console_status("shutdown", "Ctrl+C received; stopping farm")
+        farm = _require_configured()[1]
+        if farm.running:
+            farm.stop()
+        _clear_instance_state()
+        sys.exit(0)
 
 def run_with_tray(fastapi_app: Any = None, farm_controller: Any = None):
     if fastapi_app is not None or farm_controller is not None:

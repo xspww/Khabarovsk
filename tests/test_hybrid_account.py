@@ -3604,7 +3604,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertTrue(fake.terminated)
         self.assertEqual(multi_roblox_guard_status()["state"], "stopped")
 
-    def test_auto_private_server_failure_falls_back_to_public_launch(self):
+    def test_auto_private_server_failure_blocks_public_launch(self):
         class FakeRobloxHTTP:
             def __init__(self, cookie):
                 self.cookie = cookie
@@ -3652,13 +3652,13 @@ class HybridAccountTests(unittest.TestCase):
                 multi_roblox=True,
             )
 
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["mode"], "public")
-        self.assertEqual(result["attempted_vip"], "")
-        self.assertIn("Private servers are disabled", result["auto_private_server_error"])
-        self.assertEqual(len(started), 1)
-        self.assertIn("RequestGame", started[0])
-        self.assertNotIn("RequestPrivateGame", started[0])
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["fatal"])
+        self.assertEqual(result["mode"], "vip")
+        self.assertFalse(result["vip_resolved"])
+        self.assertTrue(result["auto_private_server"])
+        self.assertIn("Private servers are disabled", result["msg"])
+        self.assertEqual(started, [])
         self.assertTrue(any(payload.get("owned_private_servers") for _username, payload in updates))
 
     def test_multi_roblox_guard_not_ready_blocks_launch(self):

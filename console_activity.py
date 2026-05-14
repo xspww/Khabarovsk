@@ -10,9 +10,12 @@ from typing import Any, Dict, Optional
 
 _LOCK = threading.Lock()
 _ACTIVE_ACCOUNTS: set[str] = set()
+_CAPTCHA_ACCOUNTS: set[str] = set()
 _QUEUE_SIZE = 0
 _LAST_DISCONNECT_AT: Dict[str, float] = {}
+_LAST_CAPTCHA_AT: Dict[str, float] = {}
 _DISCONNECT_DEDUP_SECONDS = 3.0
+_CAPTCHA_DEDUP_SECONDS = 3.0
 
 _ICON_OK = "OK"
 _ICON_WARN = "!!"
@@ -162,6 +165,17 @@ def _disconnect_line(account: str, reason: str = "", delay: str = "", action: st
     return _line(_ICON_WARN, f"{account} disconnected{suffix}")
 
 
+def _captcha_line(account: str, pid: str = "", detail: str = "") -> Optional[str]:
+    now = time.monotonic()
+    key = _text(account, "Account").lower()
+    previous = float(_LAST_CAPTCHA_AT.get(key) or 0.0)
+    if now - previous < _CAPTCHA_DEDUP_SECONDS:
+        return None
+    _LAST_CAPTCHA_AT[key] = now
+    pid_text = f" {_pid_paren(pid)}" if pid else ""
+    return _line(_ICON_WARN, f"{account} CAPTCHA required{pid_text} - paused, solve manually then Resume")
+
+
 def _print_line(line: str) -> None:
     try:
         print(line, flush=True)
@@ -174,14 +188,17 @@ def _print_line(line: str) -> None:
         pass
 
 
+def _title_text_locked() -> str:
+    return f"Argus | Active: {len(_ACTIVE_ACCOUNTS)} | Queue: {_QUEUE_SIZE} | Captcha: {len(_CAPTCHA_ACCOUNTS)}"
+
+
 def _set_title_locked() -> None:
     if os.name != "nt":
         return
     try:
         import ctypes
 
-        title = f"Argus | Active: {len(_ACTIVE_ACCOUNTS)} | Queue: {_QUEUE_SIZE}"
-        ctypes.windll.kernel32.SetConsoleTitleW(title)
+        ctypes.windll.kernel32.SetConsoleTitleW(_title_text_locked())
     except Exception:
         pass
 
@@ -192,6 +209,11 @@ def _update_counters(scope: str, name: str, fields: Dict[str, Any]) -> None:
     if scope == "STATE" and name == "transition":
         old = _text(fields.get("old")).upper()
         new = _text(fields.get("new")).upper()
+        reason = _reason(fields)
+        if reason == "captcha_required":
+            _CAPTCHA_ACCOUNTS.add(account)
+        elif reason in {"manual_resume", "captcha_resume"} or new in {"QUEUED", "LAUNCHING", "VERIFY", "IN_GAME", "IDLE", "READY"}:
+            _CAPTCHA_ACCOUNTS.discard(account)
         if new == "IN_GAME":
             _ACTIVE_ACCOUNTS.add(account)
         if old == "IN_GAME" and new != "IN_GAME":
@@ -200,7 +222,16 @@ def _update_counters(scope: str, name: str, fields: Dict[str, Any]) -> None:
             _ACTIVE_ACCOUNTS.discard(account)
         if new == "LAUNCHING":
             _QUEUE_SIZE = max(0, _QUEUE_SIZE - 1)
+        if reason == "captcha_required":
+            _ACTIVE_ACCOUNTS.discard(account)
     elif scope == "STATE" and name == "forced_reset":
+        _ACTIVE_ACCOUNTS.discard(account)
+        _CAPTCHA_ACCOUNTS.discard(account)
+    elif scope == "CAPTCHA" or name == "captcha_dialog_hold" or (scope == "RECOVERY" and name == "captcha_hold"):
+        if "resume" in name or "clear" in name or _reason(fields) in {"manual_resume", "captcha_resume"}:
+            _CAPTCHA_ACCOUNTS.discard(account)
+        else:
+            _CAPTCHA_ACCOUNTS.add(account)
         _ACTIVE_ACCOUNTS.discard(account)
     elif scope == "QUEUE":
         if "size" in fields:
@@ -217,6 +248,8 @@ def _format_state(name: str, fields: Dict[str, Any]) -> Optional[str]:
     pid = _pid(fields)
     if name == "transition":
         new = _text(fields.get("new")).upper()
+        if _reason(fields) == "captcha_required":
+            return _captcha_line(account, pid, _text(fields.get("detail")))
         if new == "IN_GAME":
             return _line(_ICON_OK, f"{account} {_pid_paren(pid or 'bound')}", indent=True)
         return None
@@ -228,6 +261,8 @@ def _format_state(name: str, fields: Dict[str, Any]) -> Optional[str]:
 def _format_recovery(name: str, fields: Dict[str, Any]) -> Optional[str]:
     account = _account(fields)
     reason = _reason(fields, "recovery")
+    if name == "captcha_hold" or reason == "captcha_required":
+        return _captcha_line(account, _pid(fields), _text(fields.get("detail") or fields.get("captcha_detail")))
     if name == "network_lost":
         return _disconnect_line(account, "network_lost", action="reconnect")
     if name == "cooldown":
@@ -240,6 +275,8 @@ def _format_recovery(name: str, fields: Dict[str, Any]) -> Optional[str]:
 def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]:
     account = _account(fields)
     pid = _pid(fields)
+    if scope == "CAPTCHA" or name == "captcha_dialog_hold" or (name == "account_hold" and _reason(fields) == "captcha_required"):
+        return _captcha_line(account, pid, _text(fields.get("detail") or fields.get("captcha_detail")))
     if scope == "WORKER" and name in {"visible_process_adopted", "rebind_refreshed"} and pid:
         return _line(_ICON_OK, f"Found Roblox process {_pid_value(pid)} for user {account}")
     return None

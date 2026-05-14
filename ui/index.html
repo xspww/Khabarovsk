@@ -11,18 +11,18 @@
 <body>
 <div class="app">
   <aside class="sidebar">
-    <div class="side-launch"><button id="guard-btn" class="btn good guard-action"><svg class="guard-icon" aria-hidden="true" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 10-13h-7z"/></svg><span>START</span></button></div>
+    <div class="side-launch"><button id="guard-btn" class="btn good guard-action"><svg class="guard-icon bolt" aria-hidden="true" viewBox="0 0 24 24"><path d="M13 2 4 14h7l-1 8 10-13h-7z"/></svg><span>START</span></button></div>
     <nav id="nav" class="nav">
-      <button data-view="accounts" class="nav-root active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M4 13.5 12 5l8 8.5"/><path d="M6.5 11.5V20h11v-8.5"/><path d="M10 20v-5h4v5"/></svg><span class="nav-text">Dashboard</span><span id="nav-accounts-count" class="nav-badge nav-badge-muted">0</span></button>
+      <button data-view="accounts" class="nav-root active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.2 9.8 5.4a3.1 3.1 0 0 1 4.4 0L20 11.2"/><path d="M6.4 10.4v5.7c0 2.35 1.45 3.9 3.95 3.9h3.3c2.5 0 3.95-1.55 3.95-3.9v-5.7"/><path d="M17.6 6.4v4.05"/><circle cx="12" cy="12.35" r="1.45"/><path d="M10.1 16.35h3.8"/></svg><span class="nav-text">Dashboard</span><span id="nav-accounts-count" class="nav-badge nav-badge-muted">0</span></button>
       <div class="nav-group expanded">
-        <div class="nav-group-head"><span class="nav-group-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 4 7l8 4 8-4-8-4z"/><path d="M4 11l8 4 8-4"/><path d="M4 15l8 4 8-4"/></svg></span><span>Automation</span><span class="nav-caret">^</span></div>
+        <button type="button" class="nav-group-head" data-nav-toggle><span class="nav-group-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.45" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7.2 12 4.4l7.5 2.8L12 10 4.5 7.2z"/><path d="M4.5 11.5 12 14.3l7.5-2.8"/><path d="M4.5 15.8 12 18.6l7.5-2.8"/></svg></span><span>Launcher</span><span class="nav-caret">^</span></button>
         <div class="nav-branch">
           <button data-view="queue" class="nav-child"><span class="nav-text">Queue</span></button>
           <button data-view="game" class="nav-child"><span class="nav-text">Game</span></button>
         </div>
       </div>
       <div class="nav-group expanded">
-        <div class="nav-group-head"><span class="nav-group-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M4 15a8 8 0 0 1 16 0"/><path d="M12 15l3.5-5"/><path d="M6 19h12"/></svg></span><span>Performance</span><span class="nav-caret">^</span></div>
+        <button type="button" class="nav-group-head" data-nav-toggle><span class="nav-group-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.45" stroke-linecap="round" stroke-linejoin="round"><path d="M4.1 16.4a8.5 8.5 0 1 1 15.8 0"/><path d="M12 3.5v2.2"/><path d="m5.9 7.4 1.6 1.6"/><path d="M3.5 12h2.2"/><path d="m18.1 7.4-1.6 1.6"/><path d="M18.3 12h2.2"/><path d="M12.1 11.5c1.45 0 2.45 1.15 2.72 3.92.06.65-.44 1.16-1.08 1.08-2.77-.33-4.04-1.2-4.04-2.88 0-1.18.96-2.12 2.4-2.12z"/></svg></span><span>Performance</span><span class="nav-caret">^</span></button>
         <div class="nav-branch">
           <button data-view="performance" class="nav-child"><span class="nav-text">FPS Limiter</span></button>
           <button data-view="graphics" class="nav-child"><span class="nav-text">Graphics</span></button>
@@ -31,21 +31,28 @@
         </div>
       </div>
       <div class="nav-separator"></div>
-      <button data-view="troubleshoot" class="nav-root"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.55" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0-5 5L4 17v3h3l5.7-5.7a4 4 0 0 0 5-5l-3 3-2-2 3-3z"/></svg><span class="nav-text">Settings</span></button>
+      <div class="nav-group expanded">
+        <button type="button" class="nav-group-head" data-nav-toggle><span class="nav-group-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.65" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4.6 4.6 0 0 0-5.8 5.8L3.8 17.2a2.1 2.1 0 0 0 3 3l5.1-5.1a4.6 4.6 0 0 0 5.8-5.8l-3.2 3.2-3-3 3.2-3.2z"/></svg></span><span>Settings</span><span class="nav-caret">^</span></button>
+        <div class="nav-branch">
+          <button data-view="troubleshoot" class="nav-child"><span class="nav-text">Troubleshoot</span></button>
+        </div>
+      </div>
     </nav>
     <section class="side-status">
       <div class="status-list">
         <div class="status-row metric-online"><span><i class="mini-dot online"></i>Online</span><strong id="h-online">0</strong></div>
         <div class="status-row metric-queued"><span><i class="mini-dot queued"></i>Queued</span><strong id="h-queued">0</strong></div>
+        <div class="status-row metric-captcha"><span><i class="mini-dot captcha"></i>CAPTCHA</span><strong id="h-captcha">0</strong></div>
       </div>
       <div class="status-running"><svg viewBox="0 0 24 24" fill="none" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M12 8v5l3 2"/></svg><span id="h-running-time">Running: 0s</span></div>
     </section>
   </aside>
   <main class="main">
     <section id="view-accounts" class="view active">
-      <div class="page-head"><div class="title">Accounts</div><div class="actions"><button class="btn danger has-icon" id="close-all-roblox-btn"><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="5" fill="currentColor"/><path d="M8.5 8.5l7 7M15.5 8.5l-7 7" fill="none" stroke="#0A0A0A" stroke-width="2.4" stroke-linecap="round"/></svg>Close All Roblox</button><button class="btn ghost has-icon" id="reload-cookies-btn"><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/></svg>Reload Cookies</button><button class="btn good has-icon" id="add-btn"><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 11 0"/><path d="M18 7v6"/><path d="M15 10h6"/></svg>Add Accounts</button></div></div>
-      <section class="shell shell-body-only">
-        <div class="tools"><input id="account-search" class="search" placeholder="Search..."></div>
+      <div class="page-head"><div class="title">Dashboard</div><div class="actions"><button class="btn danger has-icon" id="close-all-roblox-btn"><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.35" stroke-linecap="round" stroke-linejoin="round"><path d="M20.2 8.1c-.25-2.8-1.55-4.1-4.35-4.35a47.6 47.6 0 0 0-7.7 0C5.35 4 4.05 5.3 3.8 8.1a47.6 47.6 0 0 0 0 7.8c.25 2.8 1.55 4.1 4.35 4.35a47.6 47.6 0 0 0 7.7 0c2.8-.25 4.1-1.55 4.35-4.35"/><path d="m9 9 6 6M15 9l-6 6"/></svg>Close All Roblox</button><button class="btn good has-icon" id="add-btn"><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 11 0"/><path d="M18 7v6"/><path d="M15 10h6"/></svg>Add Accounts</button><button class="btn ghost has-icon" id="reload-cookies-btn"><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-2.34 5.66"/><path d="M20 4v7h-7"/></svg>Reload Cookies</button></div></div>
+      <section class="shell shell-body-only accounts-shell">
+        <div class="tools account-tools"><div class="search-wrap"><svg aria-hidden="true" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m16.5 16.5 4 4"/></svg><input id="account-search" class="search" placeholder="Search..."></div></div>
+        <div id="account-filters" class="account-filters"></div>
         <div class="table-wrap"><table><thead><tr><th class="num">#</th><th>Status</th><th>Username</th><th>Description</th><th class="actions-col">Actions</th></tr></thead><tbody id="accounts-table"></tbody></table></div>
       </section>
     </section>

@@ -18,6 +18,13 @@ from core import (
 )
 from services.process_service import ProcessManager, ProcessService
 from services.ram_service import RAMManager
+from services.captcha_guard import (
+    CAPTCHA_BLOCK_REASON,
+    CAPTCHA_REASON,
+    captcha_detail,
+    is_captcha_text,
+    set_account_captcha_hold,
+)
 from runtime.roblox_watchdog import RobloxWatchdog
 from runtime.supervisor_runtime import SupervisorRuntime
 from runtime.system_maintenance import _apply_cpu_limiter_for_bound_process
@@ -499,13 +506,21 @@ class AccountWorker(threading.Thread):
 
         block_reason = account_launch_block_reason(acc)
         if block_reason:
-            _set_account_cookie_block(acc, block_reason)
-            flog(f"[WORKER] {acc.display_name} launch blocked: {block_reason}", "warning")
+            reason_key = "cookie_mismatch"
+            reason_msg = block_reason
+            if is_captcha_text(block_reason):
+                reason_key = CAPTCHA_REASON
+                reason_msg = CAPTCHA_BLOCK_REASON
+                set_account_captcha_hold(acc, block_reason, source="worker_preflight")
+                flog_kv("CAPTCHA", "account_hold", "warning", account=acc.display_name, detail=block_reason)
+            else:
+                _set_account_cookie_block(acc, block_reason)
+                flog(f"[WORKER] {acc.display_name} launch blocked: {block_reason}", "warning")
             self.runtime_owner.handle_runtime_signal(
                 acc,
                 "fatal",
-                "cookie_mismatch",
-                payload={"reason_msg": block_reason, "detail": block_reason},
+                reason_key,
+                payload={"reason_msg": reason_msg, "detail": block_reason},
             )
             return
 
@@ -566,6 +581,17 @@ class AccountWorker(threading.Thread):
                     self._wake.wait(timeout=delay)
                     self._wake.clear()
                     continue
+
+                if is_captcha_text(detail):
+                    set_account_captcha_hold(acc, detail, source="cookie_validation")
+                    flog_kv("CAPTCHA", "detected", "warning", account=acc.display_name, detail=detail)
+                    self.runtime_owner.handle_runtime_signal(
+                        acc,
+                        "fatal",
+                        CAPTCHA_REASON,
+                        payload={"reason_msg": CAPTCHA_BLOCK_REASON, "detail": detail},
+                    )
+                    return
 
                 flog(f"[WORKER] {acc.display_name} cookie invalid -> FAILED: {detail}", "warning")
                 self.runtime_owner.handle_runtime_signal(
@@ -805,8 +831,19 @@ class AccountWorker(threading.Thread):
             username = data.get("name", "")
             return (True, username, "", False) if username else (False, "", "no username in response", True)
         except urllib.error.HTTPError as e:
+            headers = dict(e.headers.items()) if e.headers else {}
+            try:
+                body = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                body = ""
+            captcha = captcha_detail(e.code, body, headers)
+            if captcha:
+                return False, "", captcha, False
             transient = e.code >= 500 or e.code == 429
+            suffix = body[:180].replace("\r", " ").replace("\n", " ") if body else ""
             detail = f"HTTP {e.code} {'(transient)' if transient else '(cookie expired or invalid)'}"
+            if suffix:
+                detail += f" {suffix}"
             return False, "", detail, transient
         except Exception as e:
             return False, "", str(e), True

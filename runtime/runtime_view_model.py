@@ -9,6 +9,7 @@ from services.network_monitor import NET_ONLINE
 from services.process_service import ProcessManager
 from services.ram_service import RAMManager
 from services.resource_monitor import get_rt_monitor
+from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_LABEL, is_account_captcha_required
 from runtime.account_worker import AccountWorker
 from runtime.runtime_health import account_health_flags, build_runtime_health
 
@@ -21,6 +22,7 @@ IMPORTANT_RUNTIME_EVENTS = {
     "process_lost",
     "network_lost",
     "network_restored",
+    "captcha",
     "rejoin_requested",
     "runtime_rejoin_requested",
     "launch_success",
@@ -157,7 +159,13 @@ class RuntimeViewModelBuilder:
                 state_color = meta["color"]
             cooldown_until = float(acc.cooldown_until or 0.0)
             cooldown_left = max(0, int(cooldown_until - time.time()))
+            captcha_required = is_account_captcha_required(acc)
+            if captcha_required:
+                state_label = CAPTCHA_LABEL
+                state_color = "#f0c76f"
             blocked_reason = account_launch_block_reason(acc)
+            if captcha_required:
+                blocked_reason = CAPTCHA_BLOCK_REASON
             if not blocked_reason and acc.last_crash_reason == "cookie_mismatch":
                 blocked_reason = acc.manual_status or acc.last_error or AccountWorker.REASON_MESSAGES.get("cookie_mismatch", "cookie_mismatch")
             if not blocked_reason and acc.last_crash_reason == "multi_roblox_guard_failed":
@@ -186,6 +194,7 @@ class RuntimeViewModelBuilder:
                 "finished_at": float(acc.finished_at or 0.0),
                 "launchable": launchable,
                 "blocked_reason": blocked_reason,
+                "captcha_required": bool(captcha_required),
                 "cookie_username": acc.cookie_username,
                 "cookie_user_id": acc.cookie_user_id,
                 "user_id": getattr(acc, "user_id", "") or acc.cookie_user_id,
@@ -287,7 +296,7 @@ class RuntimeViewModelBuilder:
                 "command_inflight": account_command,
                 "can_start": bool((not farm.running) and not any_command_inflight),
                 "can_stop": bool(farm.running and not any_command_inflight),
-                "can_rejoin": bool(farm.running and not any_command_inflight and display_state != AccountState.FAILED),
+                "can_rejoin": bool(farm.running and not any_command_inflight and display_state != AccountState.FAILED and not captcha_required),
                 "can_kill": bool(pid_alive and snapshot_pid and not any_command_inflight),
             }
             account_payload["health_flags"] = account_health_flags(account_payload)
@@ -346,4 +355,3 @@ class RuntimeViewModelBuilder:
             "recent_runtime_events": recent_runtime_events,
             "supervisor": farm._supervisor.snapshot(),
         }
-

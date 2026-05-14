@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, Iterable, List
 
+from services.captcha_guard import is_captcha_window_texts
+
 
 CONNECTION_KEYWORDS = (
     "connection error",
@@ -50,6 +52,7 @@ def detect_text_features(texts: Iterable[Any]) -> Dict[str, Any]:
     )
     has_teleport = "teleport failed" in joined_lower or "teleport timeout" in joined_lower
     has_same_account = "same account launched" in joined_lower
+    has_captcha = is_captcha_window_texts(normalized)
     return {
         "texts": normalized,
         "joined": joined_lower,
@@ -61,6 +64,7 @@ def detect_text_features(texts: Iterable[Any]) -> Dict[str, Any]:
         "has_server_full": has_server_full,
         "has_teleport": has_teleport,
         "has_same_account": has_same_account,
-        "matched": bool(error_code or has_disconnected or has_reconnect or has_connection or has_server_full or has_teleport),
+        "has_captcha": has_captcha,
+        "matched": bool(error_code or has_disconnected or has_reconnect or has_connection or has_server_full or has_teleport or has_captcha),
         "detail": " | ".join(normalized[:4]) if normalized else "",
     }

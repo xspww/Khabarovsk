@@ -33,6 +33,13 @@ from services.vip_tracker import VipTracker
 from services.process_service import ProcessManager, ProcessService
 from services.resource_monitor import get_rt_monitor
 from services.roblox_log_evidence import collect_recent_log_evidence
+from services.captcha_guard import (
+    CAPTCHA_BLOCK_REASON,
+    CAPTCHA_REASON,
+    clear_account_captcha_hold,
+    is_captcha_text,
+    set_account_captcha_hold,
+)
 from runtime.account_runtime_controller import AccountRuntimeController
 from runtime.command_tracker import RuntimeCommandTracker
 from runtime.runtime_health import account_health_flags, build_runtime_health
@@ -337,8 +344,12 @@ class FarmController:
         for acc in self._accounts:
             reason = account_launch_block_reason(acc)
             if reason:
-                _set_account_cookie_block(acc, reason)
-                self._recovery.fail_account(acc, "cookie_mismatch", reason)
+                if is_captcha_text(reason):
+                    set_account_captcha_hold(acc, reason, source="preflight")
+                    self._recovery.fail_account(acc, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
+                else:
+                    _set_account_cookie_block(acc, reason)
+                    self._recovery.fail_account(acc, "cookie_mismatch", reason)
                 blocked[acc._config_username] = reason
                 flog_kv("FARM", "account_preflight_blocked", "warning", account=acc.display_name, reason=reason)
                 continue
@@ -469,6 +480,52 @@ class FarmController:
         flog_kv("COMMAND", "verify_finished", account=acc.display_name, killed=killed, finished_at=f"{now:.3f}")
         self._push_event("system", f"Verified finished: {acc.display_name}", account=acc, severity="success", reason="manual_verify_finished")
         return True, f"Verified finished: {username}" + (" (PID killed)" if killed else "")
+
+    def resume_captcha_account(self, username: str) -> Tuple[bool, str]:
+        acc = self._find_account(username)
+        if not acc:
+            return False, "Account not found"
+        was_captcha = clear_account_captcha_hold(acc)
+        if self._runtime_state:
+            with acc._lock:
+                self._runtime_state.set_desired(acc, AccountState.IN_GAME, reason="manual_resume")
+                self._runtime_state.set_cooldown(acc, 0.0, reason="manual_resume")
+        if self._state_mgr:
+            self._state_mgr.transition(acc, AccountState.IDLE, reason="manual_resume", force=True)
+        self.cfg_mgr.save_accounts(self._accounts)
+        self.cfg_mgr.save_runtime(self._accounts)
+        self._bump_status_revision()
+        self._push_event(
+            "captcha",
+            f"Captcha cleared: {acc.display_name} - resume requested",
+            account=acc,
+            severity="warn",
+            reason="captcha_resume",
+            was_captcha=was_captcha,
+        )
+        if not self.running:
+            return True, f"Captcha cleared for {username}. Start Argus when ready."
+        if not self._recovery or not self._state_mgr:
+            return False, "Recovery coordinator unavailable"
+        worker = self._workers.get(acc._config_username)
+        if not worker or not worker.is_alive():
+            worker = AccountWorker(
+                acc=acc,
+                state_mgr=self._state_mgr,
+                bus=self.bus,
+                cfg=self.cfg_mgr.snapshot(),
+                recovery=self._recovery,
+                stop=self._stop,
+                supervisor=self._supervisor,
+                accounts=self._accounts,
+            )
+            self._workers[acc._config_username] = worker
+            worker.start()
+        else:
+            worker.wake()
+        self._runtime_orchestrator.request_evaluate(acc, trigger="manual_resume")
+        worker.wake()
+        return True, f"Captcha cleared for {username}. Resume requested."
 
     def handle_lua_rejoin_event(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         event_name = str(payload.get("event") or "").strip().lower()

@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional
 from core import Account, AccountState, EventBus, EventName, SmartQueue, StateManager, flog, flog_kv
 from services.network_monitor import NetworkMonitor
 from services.process_service import ProcessManager, ProcessService
+from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_captcha_text, set_account_captcha_hold
 from runtime.runtime_state_manager import RuntimeStateManager
 from runtime.runtime_orchestrator import RuntimeOrchestrator
 from runtime.runtime_scheduler import RuntimeScheduledJob, RuntimeScheduler
@@ -559,6 +560,10 @@ class RecoveryCoordinator:
 
     def report_launch_failure(self, acc: Account, reason: str):
         reason_l = str(reason or "").lower()
+        if is_captcha_text(reason_l):
+            set_account_captcha_hold(acc, reason, source="launch_failure")
+            self.fail_account(acc, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
+            return
         if "server full" in reason_l or "experience is full" in reason_l:
             canonical = "server_full"
         elif "cookie" in reason_l or "auth" in reason_l or "login" in reason_l:
@@ -665,6 +670,10 @@ class RecoveryCoordinator:
         self._persist_runtime()
 
     def fail_account(self, acc: Account, reason: str, reason_msg: str):
+        if is_captcha_text(reason, reason_msg):
+            set_account_captcha_hold(acc, reason_msg or reason, source="fail_account")
+            reason = CAPTCHA_REASON
+            reason_msg = CAPTCHA_BLOCK_REASON
         with acc._lock:
             if acc.state == AccountState.FAILED and acc.recovery_status == "failed":
                 self._log_recovery_decision("fail_suppressed", acc, reason, reason_msg=reason_msg)

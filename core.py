@@ -519,6 +519,13 @@ def cookie_identity_block_reason(
 
 
 def account_launch_block_reason(acc: Account) -> str:
+    try:
+        from services.captcha_guard import CAPTCHA_BLOCK_REASON, is_account_captcha_required
+
+        if is_account_captcha_required(acc):
+            return CAPTCHA_BLOCK_REASON
+    except Exception:
+        pass
     return cookie_identity_block_reason(
         getattr(acc, "username", ""),
         getattr(acc, "cookie_username", ""),
@@ -562,11 +569,11 @@ class EventBus:
             try:
                 handler(**kwargs)
             except Exception as e:
-                flog_kv("BUS", "handler_error", "warning", event=event, error=e)
+                flog_kv("BUS", "handler_error", "warning", bus_event=event, error=e)
             finally:
                 elapsed = time.time() - started
                 if elapsed >= self._slow_handler_sec:
-                    flog_kv("BUS", "slow_handler", "warning", event=event, seconds=f"{elapsed:.2f}")
+                    flog_kv("BUS", "slow_handler", "warning", bus_event=event, seconds=f"{elapsed:.2f}")
                 self._tasks.task_done()
 
     def emit(self, event: str, **kwargs):
@@ -574,14 +581,14 @@ class EventBus:
         if required:
             missing = [key for key in required if key not in kwargs]
             if missing:
-                flog_kv("BUS", "contract_violation", "warning", event=event, missing=",".join(missing))
+                flog_kv("BUS", "contract_violation", "warning", bus_event=event, missing=",".join(missing))
         with self._lock:
             handlers = list(self._handlers.get(event, []))
         for h in handlers:
             try:
                 self._tasks.put_nowait((event, h, dict(kwargs)))
             except queue.Full:
-                flog_kv("BUS", "queue_full_drop", "warning", event=event, pending=self._tasks.qsize())
+                flog_kv("BUS", "queue_full_drop", "warning", bus_event=event, pending=self._tasks.qsize())
 
 
 # ─────────────────────────────────────────────────────────────────────────────

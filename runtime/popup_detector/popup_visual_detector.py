@@ -10,6 +10,8 @@ from app_paths import resource_path
 VISUAL_TEMPLATE_BASE_SIZE = (679, 513)
 VISUAL_TITLE_BOX = (222, 157, 459, 205)
 VISUAL_RECONNECT_BOX = (372, 306, 550, 346)
+STRUCTURAL_ANALYSIS_SIZE = (160, 120)
+MODAL_ANALYSIS_SIZE = (320, 240)
 
 _TEMPLATE_CACHE: Dict[str, Any] = {}
 
@@ -35,6 +37,23 @@ def _as_luma(screenshot: Any):
         return screenshot.convert("L")
     except Exception:
         return screenshot
+
+
+def _resize_luma(screenshot: Any, size: Tuple[int, int]):
+    image = _as_luma(screenshot)
+    try:
+        from PIL import Image
+
+        resampling = getattr(getattr(Image, "Resampling", Image), "BILINEAR", 2)
+        if getattr(image, "size", None) == size:
+            return image
+        return image.resize(size, resampling)
+    except Exception:
+        return image.resize(size)
+
+
+def _scaled_min(total: int, ratio: float, floor: int = 1) -> int:
+    return max(int(floor), int(round(max(1, int(total or 0)) * float(ratio))))
 
 
 def _scaled_box(box: Tuple[int, int, int, int], size: Tuple[int, int]) -> Tuple[int, int, int, int]:
@@ -107,7 +126,7 @@ def _binary_components(mask: List[List[bool]]) -> List[Dict[str, int]]:
 
 def _overlay_features(screenshot: Any) -> Dict[str, Any]:
     try:
-        small = _as_luma(screenshot).resize((160, 120))
+        small = _resize_luma(screenshot, STRUCTURAL_ANALYSIS_SIZE)
         pixels = small.load()
         width, height = small.size
         values: List[int] = []
@@ -165,9 +184,13 @@ def _overlay_features(screenshot: Any) -> Dict[str, Any]:
 
 def _structural_popup_features(screenshot: Any) -> Dict[str, Any]:
     try:
-        small = _as_luma(screenshot).resize((160, 120))
+        small = _resize_luma(screenshot, STRUCTURAL_ANALYSIS_SIZE)
         pixels = small.load()
         width, height = small.size
+        min_modal_w = _scaled_min(width, 0.175, 12)
+        min_modal_h = _scaled_min(height, 0.133, 8)
+        min_button_w = _scaled_min(width, 0.088, 8)
+        min_button_h = _scaled_min(height, 0.033, 3)
 
         dark_mask: List[List[bool]] = []
         bright_mask: List[List[bool]] = []
@@ -188,7 +211,7 @@ def _structural_popup_features(screenshot: Any) -> Dict[str, Any]:
             area = int(item["area"])
             center_x = int(item["x"]) + item_w / 2.0
             center_y = int(item["y"]) + item_h / 2.0
-            if item_w < 28 or item_h < 16:
+            if item_w < min_modal_w or item_h < min_modal_h:
                 continue
             if not (width * 0.18 <= center_x <= width * 0.82 and height * 0.18 <= center_y <= height * 0.82):
                 continue
@@ -205,7 +228,7 @@ def _structural_popup_features(screenshot: Any) -> Dict[str, Any]:
             area = int(item["area"])
             center_x = int(item["x"]) + item_w / 2.0
             center_y = int(item["y"]) + item_h / 2.0
-            if item_w < 14 or item_h < 4:
+            if item_w < min_button_w or item_h < min_button_h:
                 continue
             if not (width * 0.10 <= center_x <= width * 0.90 and height * 0.45 <= center_y <= height * 0.95):
                 continue
@@ -258,9 +281,12 @@ def _structural_popup_features(screenshot: Any) -> Dict[str, Any]:
 
 def _center_modal_features(screenshot: Any) -> Dict[str, Any]:
     try:
-        small = _as_luma(screenshot).resize((320, 240))
+        small = _resize_luma(screenshot, MODAL_ANALYSIS_SIZE)
         pixels = small.load()
         width, height = small.size
+        min_body_rows = _scaled_min(height, 0.075, 12)
+        min_modal_cols = _scaled_min(width, 0.141, 24)
+        min_button_rows = _scaled_min(height, 0.013, 2)
         x_min, x_max = int(width * 0.08), int(width * 0.92)
         y_min, y_max = int(height * 0.10), int(height * 0.90)
 
@@ -339,11 +365,11 @@ def _center_modal_features(screenshot: Any) -> Dict[str, Any]:
             and 0.10 <= height_frac <= 0.54
             and body_density >= 0.34
             and col_density >= 0.58
-            and body_rows >= 18
-            and modal_cols >= 45
+            and body_rows >= min_body_rows
+            and modal_cols >= min_modal_cols
         )
         separator_matched = separator_strength >= 0.13
-        button_matched = button_rows >= 3 and button_strength >= 0.18
+        button_matched = button_rows >= min_button_rows and button_strength >= 0.18
         controls = separator_matched and button_matched
 
         breakdown: Dict[str, float] = {}
@@ -382,6 +408,7 @@ def _center_modal_features(screenshot: Any) -> Dict[str, Any]:
             "separator_strength": round(separator_strength, 3),
             "button_rows": button_rows,
             "button_strength": round(button_strength, 3),
+            "analysis_size": f"{width}x{height}",
         }
     except Exception as exc:
         return {"matched": False, "score": 0.0, "reason": f"center_modal:{exc}"}
@@ -389,9 +416,12 @@ def _center_modal_features(screenshot: Any) -> Dict[str, Any]:
 
 def _button_layout_features(screenshot: Any, modal_rect: Dict[str, Any] | None = None) -> Dict[str, Any]:
     try:
-        small = _as_luma(screenshot).resize((320, 240))
+        small = _resize_luma(screenshot, MODAL_ANALYSIS_SIZE)
         pixels = small.load()
         width, height = small.size
+        min_button_w = _scaled_min(width, 0.056, 10)
+        min_button_h = _scaled_min(height, 0.017, 3)
+        min_button_rows = _scaled_min(height, 0.013, 2)
         rect = dict(modal_rect or {})
         if rect:
             left = max(0, int(rect.get("x") or 0))
@@ -419,7 +449,7 @@ def _button_layout_features(screenshot: Any, modal_rect: Dict[str, Any] | None =
             item_h = int(item["height"])
             area = int(item["area"])
             fill = area / float(max(1, item_w * item_h))
-            if item_w < 18 or item_h < 4:
+            if item_w < min_button_w or item_h < min_button_h:
                 continue
             if fill < 0.36:
                 continue
@@ -442,7 +472,7 @@ def _button_layout_features(screenshot: Any, modal_rect: Dict[str, Any] | None =
                 row_hits += 1
 
         count = len(components)
-        pattern = "double" if count >= 2 else ("single" if count == 1 else ("bar" if row_hits >= 3 else "none"))
+        pattern = "double" if count >= 2 else ("single" if count == 1 else ("bar" if row_hits >= min_button_rows else "none"))
         score = 0.0
         if pattern == "double":
             score = 0.62
@@ -459,9 +489,145 @@ def _button_layout_features(screenshot: Any, modal_rect: Dict[str, Any] | None =
             "component_count": count,
             "row_hits": row_hits,
             "row_strength": round(row_strength, 3),
+            "analysis_size": f"{width}x{height}",
         }
     except Exception as exc:
         return {"matched": False, "score": 0.0, "pattern": "none", "reason": f"button:{exc}"}
+
+
+def _small_disconnect_panel_features(screenshot: Any) -> Dict[str, Any]:
+    try:
+        small = _resize_luma(screenshot, MODAL_ANALYSIS_SIZE)
+        pixels = small.load()
+        width, height = small.size
+        x_min, x_max = int(width * 0.03), int(width * 0.97)
+        y_min, y_max = int(height * 0.10), int(height * 0.92)
+        min_body_rows = _scaled_min(height, 0.18, 28)
+        min_panel_width = _scaled_min(width, 0.55, 120)
+        min_button_rows = _scaled_min(height, 0.04, 7)
+
+        spans: List[Tuple[int, int, float, int]] = []
+        start = None
+        values: List[float] = []
+        for y in range(y_min, y_max):
+            hits = sum(1 for x in range(x_min, x_max) if 38 <= int(pixels[x, y]) <= 115)
+            ratio = hits / float(max(1, x_max - x_min))
+            if ratio >= 0.42:
+                if start is None:
+                    start = y
+                    values = []
+                values.append(ratio)
+            elif start is not None:
+                spans.append((start, y - 1, sum(values) / float(max(1, len(values))), len(values)))
+                start = None
+        if start is not None:
+            spans.append((start, y_max - 1, sum(values) / float(max(1, len(values))), len(values)))
+
+        body = max(spans, key=lambda item: item[2] * item[3], default=None)
+        if not body:
+            return {"matched": False, "score": 0.0, "source": "small_panel", "reason": "no_dark_panel"}
+        body_top, body_bottom, body_density, body_rows = body
+
+        col_spans: List[Tuple[int, int, float, int]] = []
+        start = None
+        values = []
+        for x in range(x_min, x_max):
+            hits = sum(1 for y in range(body_top, body_bottom + 1) if 38 <= int(pixels[x, y]) <= 115)
+            ratio = hits / float(max(1, body_rows))
+            if ratio >= 0.34:
+                if start is None:
+                    start = x
+                    values = []
+                values.append(ratio)
+            elif start is not None:
+                col_spans.append((start, x - 1, sum(values) / float(max(1, len(values))), len(values)))
+                start = None
+        if start is not None:
+            col_spans.append((start, x_max - 1, sum(values) / float(max(1, len(values))), len(values)))
+        col = max(col_spans, key=lambda item: item[2] * item[3], default=None)
+        if not col:
+            return {"matched": False, "score": 0.0, "source": "small_panel", "reason": "no_panel_columns"}
+        panel_left, panel_right, col_density, panel_cols = col
+        panel_width = panel_right - panel_left + 1
+
+        text_rows = 0
+        for y in range(body_top + _scaled_min(height, 0.05, 8), body_bottom - _scaled_min(height, 0.03, 4)):
+            hits = sum(1 for x in range(panel_left, panel_right + 1) if 135 <= int(pixels[x, y]) <= 245)
+            ratio = hits / float(max(1, panel_width))
+            if 0.025 <= ratio <= 0.82:
+                text_rows += 1
+
+        button_top = max(y_min, int(body_top + body_rows * 0.52))
+        button_bottom = min(height, body_bottom + _scaled_min(height, 0.20, 28))
+        button_rows = 0
+        button_strength = 0.0
+        button_span = None
+        start = None
+        values = []
+        for y in range(button_top, button_bottom):
+            hits = sum(1 for x in range(panel_left, panel_right + 1) if int(pixels[x, y]) >= 205)
+            ratio = hits / float(max(1, panel_width))
+            button_strength = max(button_strength, ratio)
+            if ratio >= 0.42:
+                button_rows += 1
+                if start is None:
+                    start = y
+                    values = []
+                values.append(ratio)
+            elif start is not None:
+                candidate = (start, y - 1, sum(values) / float(max(1, len(values))), len(values))
+                if button_span is None or candidate[3] > button_span[3]:
+                    button_span = candidate
+                start = None
+        if start is not None:
+            candidate = (start, button_bottom - 1, sum(values) / float(max(1, len(values))), len(values))
+            if button_span is None or candidate[3] > button_span[3]:
+                button_span = candidate
+
+        panel_shape = bool(
+            body_rows >= min_body_rows
+            and panel_width >= min_panel_width
+            and body_density >= 0.50
+            and col_density >= 0.58
+        )
+        button_matched = bool(button_span and button_rows >= min_button_rows and button_strength >= 0.48)
+        text_matched = text_rows >= _scaled_min(height, 0.018, 3)
+        breakdown: Dict[str, float] = {}
+        if panel_shape:
+            breakdown["wide_disconnect_panel"] = 0.42
+        if text_matched:
+            breakdown["panel_text_rows"] = 0.18
+        if button_matched:
+            breakdown["leave_button_bar"] = 0.38
+        score = round(sum(breakdown.values()), 3)
+        matched = bool(panel_shape and text_matched and button_matched)
+        return {
+            "matched": matched,
+            "score": score,
+            "strength": "strong" if matched else ("weak" if panel_shape or button_matched else "none"),
+            "source": "small_panel",
+            "breakdown": breakdown,
+            "rect": {
+                "x": panel_left,
+                "y": body_top,
+                "width": panel_width,
+                "height": body_rows,
+                "body_density": round(body_density, 3),
+                "col_density": round(col_density, 3),
+            },
+            "button": {
+                "rows": button_rows,
+                "strength": round(button_strength, 3),
+                "span": button_span,
+            },
+            "text_rows": text_rows,
+            "panel_shape": panel_shape,
+            "button_matched": button_matched,
+            "text_matched": text_matched,
+            "analysis_size": f"{width}x{height}",
+        }
+    except Exception as exc:
+        return {"matched": False, "score": 0.0, "source": "small_panel", "reason": f"small_panel:{exc}"}
 
 
 def detect_visual_features(screenshot: Any) -> Dict[str, Any]:
@@ -473,6 +639,7 @@ def detect_visual_features(screenshot: Any) -> Dict[str, Any]:
     center_modal = _center_modal_features(screenshot)
     button_layout = _button_layout_features(screenshot, dict(center_modal.get("rect") or {}))
     structural = _structural_popup_features(screenshot)
+    small_panel = _small_disconnect_panel_features(screenshot)
 
     title_template = _load_template("disconnect_title.png")
     reconnect_template = _load_template("disconnect_reconnect_btn.png")
@@ -502,6 +669,7 @@ def detect_visual_features(screenshot: Any) -> Dict[str, Any]:
     button_score = float(button_layout.get("score") or 0.0)
     overlay_score = float(overlay.get("score") or 0.0)
     structural_score = float(structural.get("score") or 0.0)
+    small_panel_score = float(small_panel.get("score") or 0.0)
     structural_separator = float(structural.get("separator_strength") or 0.0)
     structural_button = bool((structural.get("button") or {}).get("area"))
     modal_shape = bool(center_modal.get("centered") and center_modal.get("modal_shape"))
@@ -509,6 +677,7 @@ def detect_visual_features(screenshot: Any) -> Dict[str, Any]:
     button = bool(button_layout.get("matched") or center_modal.get("button_matched"))
     overlay_confirmed = bool(overlay.get("matched"))
     modal_button_confirmed = bool(modal_shape and button and (separator or overlay_confirmed))
+    small_panel_confirmed = bool(small_panel.get("matched"))
     structural_button_confirmed = bool(
         overlay_confirmed
         and structural_score >= 0.96
@@ -525,16 +694,21 @@ def detect_visual_features(screenshot: Any) -> Dict[str, Any]:
         + min(0.75, template_score),
         3,
     )
-    score = round(max(pipeline_score, template_score, structural_score), 3)
-    strong = bool(template_matched or modal_button_confirmed or structural_button_confirmed)
+    score = round(max(pipeline_score, template_score, structural_score, small_panel_score), 3)
+    strong = bool(template_matched or modal_button_confirmed or structural_button_confirmed or small_panel_confirmed)
     weak = bool(structural.get("matched") or modal_shape or button)
     matched = strong or weak
     source = "template" if template_matched else ("visual_pipeline" if strong else ("structural" if weak else "none"))
     stage = (
         "template"
         if template_matched
-        else ("modal_button" if modal_button_confirmed else ("structural_button" if structural_button_confirmed else ("structural_weak" if weak else "none")))
+        else (
+            "modal_button"
+            if modal_button_confirmed
+            else ("small_panel" if small_panel_confirmed else ("structural_button" if structural_button_confirmed else ("structural_weak" if weak else "none")))
+        )
     )
+    button_pattern = "bar" if small_panel_confirmed else str(button_layout.get("pattern") or "none")
 
     return {
         "matched": matched,
@@ -542,17 +716,19 @@ def detect_visual_features(screenshot: Any) -> Dict[str, Any]:
         "strength": "strong" if strong else ("weak" if weak else "none"),
         "source": source,
         "visual_stage": stage,
-        "button_pattern": str(button_layout.get("pattern") or "none"),
+        "button_pattern": button_pattern,
         "overlay_score": round(overlay_score, 3),
         "modal_score": round(modal_score, 3),
         "button_score": round(button_score, 3),
         "template_score": round(template_score, 3),
         "structural_score": round(structural_score, 3),
+        "small_panel_score": round(small_panel_score, 3),
         "title_rms": round(title_rms, 2),
         "reconnect_rms": round(reconnect_rms, 2),
         "overlay": overlay,
         "center_modal": center_modal,
         "button_layout": button_layout,
         "structural": structural,
+        "small_panel": small_panel,
         "reason": template_reason,
     }

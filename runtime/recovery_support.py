@@ -16,6 +16,7 @@ RECOVERY_REASON_MESSAGES = {
     "launch_fail": "à¸«à¸¥à¸¸à¸” - Launch à¸¥à¹‰à¸¡à¹€à¸«à¸¥à¸§ (à¹„à¸¡à¹ˆà¸ªà¸²à¸¡à¸²à¸£à¸–à¹€à¸›à¸´à¸”à¹€à¸à¸¡à¹„à¸”à¹‰)",
     "cookie_invalid": "à¸«à¸¢à¸¸à¸” - Cookie à¹„à¸¡à¹ˆà¸–à¸¹à¸à¸•à¹‰à¸­à¸‡ (session expired)",
     "cookie_missing": "à¸«à¸¢à¸¸à¸” - à¹„à¸¡à¹ˆà¸¡à¸µ cookie login à¸ˆà¸²à¸ Roblox Account Manager",
+    "captcha_required": "CAPTCHA required. Solve it manually, then click Resume or Reload Cookies.",
     "max_fail": "à¸«à¸¢à¸¸à¸” - à¹€à¸à¸´à¸™ fail limit (FAILED state)",
     "relaunch_loop": "à¸«à¸¢à¸¸à¸” - Roblox à¹€à¸”à¹‰à¸‡à¹€à¸£à¹‡à¸§à¸«à¸¥à¸²à¸¢à¸£à¸­à¸šà¸•à¸´à¸”à¸à¸±à¸™ à¸ˆà¸¶à¸‡à¸«à¸¢à¸¸à¸” auto rejoin",
     "watchdog_low_resource": "à¸«à¸¥à¸¸à¸” - CPU/RAM à¸•à¹ˆà¸³à¸œà¸´à¸”à¸›à¸à¸•à¸´ (Watchdog kill)",

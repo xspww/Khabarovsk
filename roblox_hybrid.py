@@ -17,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app_paths import EXECUTABLE_PATH, IS_COMPILED
 from account_hybrid import ACCOUNT_STORE, decrypt_cookie
+from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, captcha_detail, is_captcha_text
 
 
 USER_AGENT = "ArgusLauncherHybrid/1.0"
@@ -114,6 +115,9 @@ class RobloxHTTP:
         if token:
             self.csrf_token = token
             return True, token
+        challenge_detail = captcha_detail(status, body, headers)
+        if challenge_detail:
+            return False, challenge_detail
         return False, f"csrf failed ({status}) {body[:180]}"
 
     def get_auth_ticket(self) -> Tuple[bool, str]:
@@ -130,16 +134,22 @@ class RobloxHTTP:
         ticket = headers.get("rbx-authentication-ticket") or headers.get("Rbx-Authentication-Ticket")
         if ticket:
             return True, ticket
+        challenge_detail = captcha_detail(status, body, headers)
+        if challenge_detail:
+            return False, challenge_detail
         return False, f"auth ticket failed ({status}) {body[:180]}"
 
     def authenticated_user(self) -> Tuple[bool, Dict[str, Any], str]:
-        status, body, _headers = self.request(USERS_BASE + "v1/users/authenticated", method="GET")
+        status, body, headers = self.request(USERS_BASE + "v1/users/authenticated", method="GET")
         if status == 200:
             try:
                 data = json.loads(body)
             except Exception:
                 data = {}
             return True, data, "ok"
+        challenge_detail = captcha_detail(status, body, headers)
+        if challenge_detail:
+            return False, {}, challenge_detail
         return False, {}, f"cookie validation failed ({status}) {body[:180]}"
 
     def csrf_post(self, url: str, data: Optional[Any] = None, method: str = "POST") -> Tuple[bool, Dict[str, Any], str, Dict[str, str]]:
@@ -155,6 +165,9 @@ class RobloxHTTP:
             parsed = {"raw": body}
         if 200 <= status < 300:
             return True, parsed, "ok", headers
+        challenge_detail = captcha_detail(status, body, headers)
+        if challenge_detail:
+            return False, parsed, challenge_detail, headers
         detail = ""
         try:
             detail = parsed.get("errors", [{}])[0].get("message", "")
@@ -855,7 +868,23 @@ def validate_record_cookie_identity(record: Dict[str, Any], cookie: str, update_
     ok, cookie_username, detail, meta = validate_cookie_details(cookie)
     if not ok:
         if update_store and username:
-            ACCOUNT_STORE.update_record(username, {"cookie_mismatch": True, "import_status": "cookie_invalid"})
+            if is_captcha_text(detail):
+                ACCOUNT_STORE.update_record(
+                    username,
+                    {"cookie_mismatch": False, "manual_status": CAPTCHA_BLOCK_REASON, "import_status": CAPTCHA_REASON},
+                )
+            else:
+                ACCOUNT_STORE.update_record(username, {"cookie_mismatch": True, "import_status": "cookie_invalid"})
+        if is_captcha_text(detail):
+            return {
+                "ok": False,
+                "fatal": True,
+                "captcha_required": True,
+                "msg": CAPTCHA_BLOCK_REASON,
+                "detail": detail,
+                "cookie_username": "",
+                "cookie_user_id": "",
+            }
         return {"ok": False, "msg": detail, "cookie_username": "", "cookie_user_id": ""}
     cookie_user_id = str(meta.get("user_id") or "")
     mismatch = bool(username and cookie_username and username.lower() != cookie_username.lower())

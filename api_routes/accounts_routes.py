@@ -8,6 +8,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import webbrowser
 from typing import Any, Dict, List, Optional, Tuple
 
 from fastapi import HTTPException, Request
@@ -15,6 +16,7 @@ from fastapi import HTTPException, Request
 from account_hybrid import ACCOUNT_STORE, audit_event
 from core import Account, account_launch_block_reason, cookie_identity_block_reason, flog_kv
 from roblox_hybrid import resolve_vip_access_code, validate_cookie_details
+from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_captcha_text, set_account_captcha_hold
 from services.roblox_launch_service import AccountLaunchService, parse_vip_link
 
 from .context import ApiContext
@@ -52,6 +54,8 @@ def register(app, ctx: ApiContext) -> None:
                 str(item.get("cookie_username") or ""),
                 bool(item.get("cookie_mismatch", False)),
             )
+            if is_captcha_text(item.get("manual_status"), item.get("import_status")):
+                blocked_reason = CAPTCHA_BLOCK_REASON
             runtime = runtime_by_user.get(str(item.get("username") or "").strip().lower())
             if runtime:
                 runtime_snapshot = runtime.runtime_snapshot()
@@ -94,6 +98,7 @@ def register(app, ctx: ApiContext) -> None:
         records = ACCOUNT_STORE.read_records(include_cookies=True)
         kept: List[Dict[str, Any]] = []
         removed: List[Dict[str, str]] = []
+        captcha: List[Dict[str, str]] = []
 
         for record in records:
             username = str(record.get("username") or "").strip()
@@ -109,6 +114,14 @@ def register(app, ctx: ApiContext) -> None:
                 raise RuntimeError(f"Cookie validation unavailable for {label}: {exc}") from exc
 
             if not ok:
+                if is_captcha_text(detail):
+                    normalized = ACCOUNT_STORE.normalize_record(record)
+                    normalized["cookie_mismatch"] = False
+                    normalized["manual_status"] = CAPTCHA_BLOCK_REASON
+                    normalized["import_status"] = CAPTCHA_REASON
+                    kept.append(normalized)
+                    captcha.append({"username": label, "reason": detail or CAPTCHA_REASON})
+                    continue
                 removed.append({"username": label, "reason": detail or "invalid cookie"})
                 continue
 
@@ -125,6 +138,8 @@ def register(app, ctx: ApiContext) -> None:
                 and username.lower() != validated_username.lower()
             )
             normalized["import_status"] = "cookie_mismatch" if normalized["cookie_mismatch"] else ""
+            if is_captcha_text(normalized.get("manual_status")) and not normalized["cookie_mismatch"]:
+                normalized["manual_status"] = ""
             kept.append(normalized)
 
         ACCOUNT_STORE.write_records(kept)
@@ -141,7 +156,9 @@ def register(app, ctx: ApiContext) -> None:
             "total": len(records),
             "kept": len(kept),
             "removed": len(removed),
+            "captcha": len(captcha),
             "removed_accounts": removed,
+            "captcha_accounts": captcha,
         }
 
 
@@ -308,6 +325,33 @@ def register(app, ctx: ApiContext) -> None:
     def api_get_accounts():
         return _account_data_api_records()
 
+    @app.post("/api/account/{username}/captcha/open-login")
+    def api_open_captcha_login(username: str, request: Request):
+        idem = begin_idempotent_request_sync(request, "captcha_open_login", username)
+        if idem.replay:
+            return idem.response
+        record = _find_account_record(username, include_cookie=False)
+        if not record:
+            raise HTTPException(404, "Account not found")
+        try:
+            opened = bool(webbrowser.open("https://www.roblox.com/login", new=2))
+        except Exception as exc:
+            result = {"ok": False, "opened": False, "msg": f"Failed to open Roblox login: {exc}"}
+            finish_idempotent_request(idem, result)
+            return result
+        audit_event("captcha_open_login", username=username, ok=opened, detail="manual_login")
+        result = {
+            "ok": opened,
+            "opened": opened,
+            "msg": (
+                "Roblox login opened. Solve CAPTCHA manually, then Reload Cookies or import the new cookie and click Resume."
+                if opened
+                else "Roblox login could not be opened automatically."
+            ),
+        }
+        finish_idempotent_request(idem, result)
+        return result
+
 
     @app.post("/api/accounts/reload")
     def api_reload_accounts(request: Request):
@@ -322,6 +366,9 @@ def register(app, ctx: ApiContext) -> None:
         removed = int(validation.get("removed") or 0)
         kept = int(validation.get("kept") or count)
         msg = f"Checked cookies: {kept} valid"
+        captcha_count = int(validation.get("captcha") or 0)
+        if captcha_count:
+            msg += f", {captcha_count} need CAPTCHA"
         if removed:
             msg += f", removed {removed} invalid"
         result = {"ok": True, "count": count, "msg": msg, **validation}
@@ -458,8 +505,10 @@ def register(app, ctx: ApiContext) -> None:
             str(record.get("cookie_username") or ""),
             bool(record.get("cookie_mismatch", False)),
         )
+        if is_captcha_text(record.get("manual_status"), record.get("import_status")):
+            blocked_reason = CAPTCHA_BLOCK_REASON
         if blocked_reason:
-            result = {"ok": False, "fatal": True, "msg": blocked_reason, "blocked_reason": blocked_reason, "cookie_mismatch": True}
+            result = {"ok": False, "fatal": True, "msg": blocked_reason, "blocked_reason": blocked_reason, "cookie_mismatch": not is_captcha_text(blocked_reason)}
             audit_event("launch", username=username, ok=False, detail=blocked_reason, mode="blocked")
             finish_idempotent_request(idem, result)
             return result
@@ -472,6 +521,17 @@ def register(app, ctx: ApiContext) -> None:
             idempotency_key=idem.key,
             body_hash=idem.body_hash,
         )
+        if not result.get("ok") and is_captcha_text(result.get("msg"), result.get("detail")):
+            runtime = next((a for a in farm._accounts if a.username == username), None)
+            if runtime:
+                set_account_captcha_hold(runtime, str(result.get("msg") or ""), source="manual_launch")
+                if farm._recovery:
+                    farm._recovery.fail_account(runtime, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
+                farm._push_event("captcha", f"Captcha required: {runtime.display_name}", account=runtime, severity="warn", reason=CAPTCHA_REASON)
+            result["fatal"] = True
+            result["captcha_required"] = True
+            result["blocked_reason"] = CAPTCHA_BLOCK_REASON
+            result["msg"] = CAPTCHA_BLOCK_REASON
         audit_event("launch", username=username, ok=bool(result.get("ok")), detail=result.get("msg", ""), mode=result.get("mode", ""))
         if result.get("ok"):
             _replace_farm_accounts_from_store()

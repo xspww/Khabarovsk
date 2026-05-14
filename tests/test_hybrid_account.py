@@ -38,6 +38,7 @@ from services.presence_service import RobloxPresenceService
 from services.roblox_install_manager import RobloxInstallManager, normalize_roblox_version
 from services.cpu_limiter import CpuLimiter, normalize_cpu_limiter_settings
 from services.process_service import ProcessService
+from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, captcha_detail, clear_account_captcha_hold, set_account_captcha_hold
 from process_net import ProcessManager
 from roblox_hybrid import (
     HybridLauncher,
@@ -939,11 +940,13 @@ class HybridAccountTests(unittest.TestCase):
         sidebar_head = html.split('<aside class="sidebar">', 1)[1].split('<nav id="nav"', 1)[0]
         self.assertIn('id="guard-btn"', sidebar_head)
         side_status = html.split('<section class="side-status">', 1)[1].split('</section>', 1)[0]
-        for cls in ("metric-online", "metric-queued", "status-running"):
+        for cls in ("metric-online", "metric-queued", "metric-captcha", "status-running"):
             self.assertIn(cls, html)
         self.assertIn('id="h-online"', side_status)
         self.assertIn('id="h-queued"', side_status)
+        self.assertIn('id="h-captcha"', side_status)
         self.assertIn('id="h-running-time"', side_status)
+        self.assertIn(">CAPTCHA<", side_status)
         self.assertIn("Running: 0s", side_status)
         self.assertNotIn("System Healthy", side_status)
         self.assertNotIn(">State<", side_status)
@@ -966,14 +969,40 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("background:#111111", spacex_css)
         self.assertIn(".nav button.active{background:#202020;color:#FFFFFF;box-shadow:inset 2px 0 0 #FFFFFF}", html)
         self.assertIn(".side-launch .guard-action{height:32px;border-radius:6px;background:transparent", html)
-        self.assertIn('class="guard-icon"', html)
         self.assertIn('class="guard-icon stop"', html)
-        self.assertIn('stroke-width="1.55"', html)
+        self.assertIn('class="guard-icon bolt"', html)
+        self.assertIn('d="M13 2 4 14h7l-1 8 10-13h-7z"', html)
+        self.assertIn("rgba(31,157,98,.72)", html)
+        self.assertIn("rgba(224,91,106,.72)", html)
+        self.assertIn("drop-shadow(0 0 5px rgba(31,157,98,.72))", html)
+        self.assertIn("drop-shadow(0 0 5px rgba(224,91,106,.72))", html)
+        self.assertIn('x="3.8" y="3.8" width="16.4" height="16.4" rx="5.2"', html)
+        self.assertIn('x="8" y="7.6" width="2.4" height="8.8" rx="1.2"', html)
+        self.assertIn('x="13.6" y="7.6" width="2.4" height="8.8" rx="1.2"', html)
+        self.assertNotIn('class="guard-icon play"', html)
+        self.assertNotIn('d="M10 8.2v7.6l6-3.8-6-3.8z"', html)
+        self.assertNotIn('x="7" y="7" width="10" height="10" rx="1.5"', html)
+        self.assertIn('d="M4 11.2 9.8 5.4a3.1 3.1 0 0 1 4.4 0L20 11.2"', html)
+        self.assertIn('d="M6.4 10.4v5.7c0 2.35 1.45 3.9 3.95 3.9h3.3c2.5 0 3.95-1.55 3.95-3.9v-5.7"', html)
+        self.assertIn('d="M17.6 6.4v4.05"', html)
+        self.assertIn('circle cx="12" cy="12.35" r="1.45"', html)
+        self.assertIn('d="M10.1 16.35h3.8"', html)
+        for stroke_width in ('stroke-width="2.75"', 'stroke-width="2.45"', 'stroke-width="2.65"'):
+            self.assertIn(stroke_width, html)
+        self.assertIn(".nav-root,.nav-group-head{font-weight:800!important}", html)
+        self.assertIn(".nav-root svg,.nav-group-head svg{width:8px;height:8px;flex-basis:8px}", html)
+        self.assertNotIn('rect x="4" y="4" width="16" height="16" rx="4"', html)
+        self.assertNotIn('d="M4 9.5h16"', html)
+        self.assertNotIn('d="M9.5 9.5V20"', html)
+        self.assertNotIn('circle cx="7" cy="7" r="2.5"', html)
+        self.assertIn('d="M14.7 6.3a4.6 4.6 0 0 0-5.8 5.8L3.8 17.2a2.1 2.1 0 0 0 3 3l5.1-5.1a4.6 4.6 0 0 0 5.8-5.8l-3.2 3.2-3-3 3.2-3.2z"', html)
+        self.assertNotIn('d="M20 7h-9"', html)
         for old_theme in ("rgba(34,197,94", "rgba(126,188,255", "#22c55e", "#3b82f6", "#60a5fa", "#16a34a"):
             self.assertNotIn(old_theme, spacex_css)
         self.assertNotIn(".account-stat-card", html)
         self.assertIn("max-height:calc(100vh - 360px)", html)
         self.assertIn("function renderTop(){const c=counts()", html)
+        self.assertIn("$('h-captcha').textContent=c.captcha", html)
         self.assertIn("function syncToggleLabels()", html)
         self.assertIn("input.checked?'Enabled':'Disabled'", html)
         self.assertIn('.toggle-row input[type="checkbox"]', html)
@@ -998,6 +1027,8 @@ class HybridAccountTests(unittest.TestCase):
         self.assertNotIn("confirm('Close all Roblox", html)
         for removed in ('id="h-finished"', 'id="h-cpu"', 'id="h-ram"', ">Finished<", ">CPU<", ">RAM<"):
             self.assertNotIn(removed, html)
+        self.assertIn(".nav-separator,.nav-badge{display:none!important}", html)
+        self.assertNotIn(".nav-separator,.nav-badge,.side-status{display:none!important}", html)
         self.assertIn("function syncRunningClock()", html)
         self.assertIn("$('nav-accounts-count').textContent=c.all", html)
         self.assertNotIn("Argus Log", html)
@@ -2898,6 +2929,71 @@ class HybridAccountTests(unittest.TestCase):
         self.assertTrue(result.recovery_allowed)
         self.assertEqual(result.evidence_source, "visual_strong")
 
+    def test_visual_pipeline_detects_disconnect_popup_at_supported_window_sizes(self):
+        from PIL import Image, ImageDraw
+        from runtime.popup_detector.popup_classifier import classify_popup_observation
+        from runtime.popup_detector.popup_visual_detector import detect_visual_features
+
+        def make_popup(width: int, height: int):
+            image = Image.new("L", (width, height), 130)
+            draw = ImageDraw.Draw(image)
+            line_width = max(1, int(round(min(width, height) * 0.003)))
+            radius = max(2, int(round(min(width, height) * 0.016)))
+            draw.rectangle((int(width * 0.275), int(height * 0.267), int(width * 0.725), int(height * 0.683)), fill=58)
+            draw.line((int(width * 0.300), int(height * 0.358), int(width * 0.700), int(height * 0.358)), fill=190, width=line_width)
+            draw.rounded_rectangle((int(width * 0.306), int(height * 0.567), int(width * 0.494), int(height * 0.638)), radius=radius, fill=245)
+            draw.rounded_rectangle((int(width * 0.506), int(height * 0.567), int(width * 0.694), int(height * 0.638)), radius=radius, fill=245)
+            return image
+
+        sizes = (
+            (320, 240),
+            (240, 180),
+            (320, 180),
+            (400, 300),
+            (480, 270),
+            (512, 384),
+            (640, 360),
+            (640, 480),
+            (800, 600),
+        )
+        for width, height in sizes:
+            with self.subTest(size=f"{width}x{height}"):
+                visual = detect_visual_features(make_popup(width, height))
+                result = classify_popup_observation([], visual, process_idle=False, presence_mismatch=False)
+
+                self.assertTrue(visual["matched"])
+                self.assertEqual(visual["strength"], "strong")
+                self.assertEqual(visual["visual_stage"], "modal_button")
+                self.assertEqual(visual["button_pattern"], "double")
+                self.assertTrue(result.recovery_allowed)
+                self.assertEqual(result.evidence_source, "visual_strong")
+
+    def test_visual_pipeline_detects_small_window_disconnect_leave_bar(self):
+        from PIL import Image, ImageDraw
+        from runtime.popup_detector.popup_classifier import classify_popup_observation
+        from runtime.popup_detector.popup_visual_detector import detect_visual_features
+
+        image = Image.new("L", (320, 240), 35)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0, 0, 320, 42), fill=28)
+        draw.rectangle((0, 42, 320, 170), fill=64)
+        draw.text((120, 48), "Disconnected", fill=240)
+        draw.text((28, 90), "You have been kicked by this experience or its moderators.", fill=180)
+        draw.text((113, 125), "(Error Code: 267)", fill=198)
+        draw.rectangle((0, 170, 320, 207), fill=238)
+        draw.text((150, 182), "Leave", fill=38)
+        draw.rectangle((0, 207, 320, 240), fill=18)
+
+        visual = detect_visual_features(image)
+        result = classify_popup_observation([], visual, process_idle=False, presence_mismatch=False)
+
+        self.assertTrue(visual["matched"])
+        self.assertEqual(visual["strength"], "strong")
+        self.assertEqual(visual["visual_stage"], "small_panel")
+        self.assertEqual(visual["button_pattern"], "bar")
+        self.assertTrue(result.recovery_allowed)
+        self.assertEqual(result.evidence_source, "visual_strong")
+
     def test_modal_shape_without_button_is_visual_weak_and_ignored(self):
         from PIL import Image, ImageDraw
         from runtime.popup_detector.popup_classifier import classify_popup_observation
@@ -2981,6 +3077,31 @@ class HybridAccountTests(unittest.TestCase):
         self.assertFalse(result["recovery_allowed"])
         self.assertEqual(result["evidence_source"], "visual_weak")
         self.assertEqual(result["action"], "")
+
+    def test_popup_inspection_does_not_resize_supported_window_sizes(self):
+        from runtime.popup_detector.popup_sampler import PopupWindowSampler
+
+        sampler = PopupWindowSampler()
+        for width, height in ((320, 240), (240, 180), (320, 180), (480, 270), (640, 480), (800, 600)):
+            with self.subTest(size=f"{width}x{height}"):
+                sampler.windows_for_pid = lambda pid, include_hidden=True, width=width, height=height: [{
+                    "pid": pid,
+                    "hwnd": 123,
+                    "left": 10,
+                    "top": 20,
+                    "width": width,
+                    "height": height,
+                    "visible": True,
+                    "iconic": False,
+                }]
+
+                with patch("runtime.popup_detector.popup_sampler.ctypes.windll") as windll:
+                    result = sampler.prepare_popup_inspection(100, hold_seconds=1.0)
+
+                self.assertTrue(result["ok"])
+                self.assertFalse(result["resized"])
+                windll.user32.SetWindowPos.assert_not_called()
+                windll.user32.ShowWindow.assert_not_called()
 
     def test_non_disconnect_panel_does_not_match_from_presence_alone(self):
         from PIL import Image, ImageDraw
@@ -3510,6 +3631,88 @@ class HybridAccountTests(unittest.TestCase):
         reason = account_launch_block_reason(acc)
         self.assertIn("RealUser", reason)
         self.assertIn("OtherUser", reason)
+
+    def test_captcha_hold_blocks_launch_until_resume(self):
+        acc = Account(username="CaptchaUser")
+        detail = captcha_detail(403, "", {"Rblx-Challenge-Type": "captcha"})
+        self.assertIn("CAPTCHA", detail)
+        set_account_captcha_hold(acc, detail, source="unit_test")
+        self.assertEqual(acc.last_crash_reason, CAPTCHA_REASON)
+        self.assertEqual(account_launch_block_reason(acc), CAPTCHA_BLOCK_REASON)
+        self.assertTrue(clear_account_captcha_hold(acc))
+        self.assertEqual(account_launch_block_reason(acc), "")
+
+    def test_security_webview_texts_classify_as_captcha_hold(self):
+        from runtime.popup_detector.popup_classifier import classify_popup_observation
+
+        result = classify_popup_observation(
+            ["Roblox", "R", "Zuckmu: 13+", "Security", "Chrome Legacy Window"],
+            threshold=0.75,
+        )
+
+        self.assertTrue(result.matched)
+        self.assertEqual(result.action, "hold")
+        self.assertEqual(result.reason_key, CAPTCHA_REASON)
+        self.assertFalse(result.recovery_allowed)
+        self.assertEqual(result.evidence_source, "text")
+
+    def test_popup_observer_confirms_captcha_security_webview(self):
+        from runtime.popup_detector.popup_sampler import PopupObserver
+
+        observer = PopupObserver(sample_count=2, sample_interval=0, threshold=0.75, stable_samples=2)
+        with patch("runtime.popup_detector.popup_sampler.PopupWindowSampler.windows_for_pid", return_value=[{"hwnd": 123}]), patch(
+            "runtime.popup_detector.popup_sampler.PopupWindowSampler.read_texts",
+            return_value=["Roblox", "R", "Zuckmu: 13+", "Security", "Chrome Legacy Window"],
+        ), patch("runtime.popup_detector.popup_sampler.PopupWindowSampler.capture_window_image", return_value=None):
+            result = observer.inspect_pid(2532, sample_count=2, sample_interval=0)
+
+        self.assertTrue(result["matched"])
+        self.assertEqual(result["reason_key"], CAPTCHA_REASON)
+        self.assertEqual(result["action"], "hold")
+        self.assertFalse(result["recovery_allowed"])
+        self.assertEqual(result["captcha_samples"], 2)
+
+    def test_captcha_open_login_route_uses_manual_browser_flow(self):
+        from fastapi.testclient import TestClient
+        import main
+        from account_hybrid import ACCOUNT_STORE
+
+        username = "CaptchaLoginUser"
+        ACCOUNT_STORE.upsert_records([{"username": username, "manual_status": CAPTCHA_BLOCK_REASON, "import_status": CAPTCHA_REASON}])
+        client = TestClient(main.app)
+        with patch("api_routes.accounts_routes.webbrowser.open", return_value=True) as open_browser:
+            response = auth_post(client, f"/api/account/{username}/captcha/open-login", json={})
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["opened"])
+        self.assertIn("Solve CAPTCHA manually", payload["msg"])
+        open_browser.assert_called_once_with("https://www.roblox.com/login", new=2)
+
+    def test_captcha_focus_route_targets_bound_roblox_window(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        account = Account(username="CaptchaFocusUser")
+        account.pid = 9876
+        command = {"command_id": "captcha-focus-command"}
+        client = TestClient(main.app)
+        with patch.object(main.farm, "begin_command", return_value=(True, command)), patch.object(
+            main.farm,
+            "finish_command",
+        ) as finish_command, patch.object(main.farm, "_find_account", return_value=account), patch(
+            "api_routes.runtime_routes.PopupWindowSampler.focus_pid_window",
+            return_value={"ok": True, "focused": True, "pid": 9876, "hwnd": 123},
+        ) as focus_window:
+            response = auth_post(client, "/api/account/CaptchaFocusUser/captcha/focus", json={})
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["pid"], 9876)
+        self.assertTrue(payload["focused"])
+        focus_window.assert_called_once_with(9876)
+        finish_command.assert_called_once()
 
     def test_process_launch_blocks_cookie_mismatch_without_public_fallback(self):
         acc = Account(username="OtherUser", cookie="_|WARNING:-cookie", cookie_username="RealUser", cookie_mismatch=True)

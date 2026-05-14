@@ -47,6 +47,25 @@ class RuntimeHardeningTests(unittest.TestCase):
         def is_online(self):
             return True
 
+    def test_event_bus_slow_handler_log_keeps_worker_alive(self):
+        bus = EventBus(workers=1, max_pending=8)
+        bus._slow_handler_sec = 0.0
+        handled = threading.Event()
+
+        def handler():
+            handled.set()
+
+        bus.on("unit_slow_event", handler)
+        bus.emit("unit_slow_event")
+
+        self.assertTrue(handled.wait(1.0))
+        deadline = time.time() + 1.0
+        while getattr(bus._tasks, "unfinished_tasks", 0) and time.time() < deadline:
+            time.sleep(0.01)
+
+        self.assertEqual(getattr(bus._tasks, "unfinished_tasks", 0), 0)
+        self.assertTrue(bus._workers[0].is_alive())
+
     def test_manual_start_clears_max_fail_gate_counters(self):
         acc = Account(username="manual_retry_user")
         acc.state = AccountState.FAILED

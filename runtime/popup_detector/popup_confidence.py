@@ -24,6 +24,8 @@ def popup_confidence_score(
         breakdown["connection_text"] = 0.3
     if text_features.get("has_server_full") or text_features.get("has_teleport"):
         breakdown["roblox_error_text"] = 0.5
+    if text_features.get("has_captcha"):
+        breakdown["captcha_text"] = 1.0
 
     if bool(visual_features.get("matched")):
         overlay_score = float(visual_features.get("overlay_score") or 0.0)

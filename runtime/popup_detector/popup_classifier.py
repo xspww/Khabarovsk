@@ -13,6 +13,7 @@ from runtime.recovery_context import (
     TELEPORT_FAILURE,
     VISUAL_DISCONNECT,
 )
+from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON
 
 
 @dataclass(frozen=True)
@@ -110,6 +111,8 @@ def classify_popup_observation(
         )
 
     detail = str(text_features.get("detail") or "")
+    if text_features.get("has_captcha"):
+        return PopupClassification(True, "hold", CAPTCHA_REASON, CAPTCHA_REASON, detail or CAPTCHA_BLOCK_REASON, code, score, dict(confidence["breakdown"]), False, False, "text", visual_strength, **visual_meta)
     if code == "277":
         return PopupClassification(True, "rejoin", "network_drop", NETWORK_DISCONNECT, detail, code, score, dict(confidence["breakdown"]), False, True, "error_code", visual_strength, **visual_meta)
     if code == "278":

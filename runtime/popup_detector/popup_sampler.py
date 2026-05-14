@@ -45,9 +45,9 @@ def _release_inspection_hold(pid: Optional[int]) -> None:
 
 
 class PopupWindowSampler:
-    def __init__(self, inspection_width: int = 800, inspection_height: int = 600):
-        self.inspection_width = max(640, int(inspection_width or 800))
-        self.inspection_height = max(480, int(inspection_height or 600))
+    def __init__(self, inspection_width: int = 320, inspection_height: int = 240):
+        self.inspection_width = max(320, int(inspection_width or 320))
+        self.inspection_height = max(240, int(inspection_height or 240))
 
     def windows_for_pid(self, pid: Optional[int], include_hidden: bool = True) -> List[Dict[str, Any]]:
         if not pid:
@@ -113,27 +113,33 @@ class PopupWindowSampler:
             user32 = ctypes.windll.user32
             SW_RESTORE = 9
             SW_SHOWNA = 8
-            SWP_NOZORDER = 0x0004
-            SWP_NOACTIVATE = 0x0010
-            SWP_SHOWWINDOW = 0x0040
             if bool(target.get("iconic")):
                 user32.ShowWindow(ctypes.c_void_p(hwnd), SW_RESTORE)
             elif not bool(target.get("visible")):
                 user32.ShowWindow(ctypes.c_void_p(hwnd), SW_SHOWNA)
-            width = int(target.get("width") or 0)
-            height = int(target.get("height") or 0)
-            resized = False
-            if width < self.inspection_width or height < self.inspection_height:
-                resized = bool(user32.SetWindowPos(
-                    ctypes.c_void_p(hwnd),
-                    ctypes.c_void_p(0),
-                    int(target.get("left") or 0),
-                    int(target.get("top") or 0),
-                    self.inspection_width,
-                    self.inspection_height,
-                    SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW,
-                ))
-            return {"ok": True, "pid": pid, "hwnd": hwnd, "resized": resized, "windows": windows}
+            return {"ok": True, "pid": pid, "hwnd": hwnd, "resized": False, "windows": windows}
+        except Exception as exc:
+            return {"ok": False, "reason": str(exc), "pid": pid, "hwnd": hwnd, "windows": windows}
+
+    def focus_pid_window(self, pid: Optional[int]) -> Dict[str, Any]:
+        windows = self.windows_for_pid(pid, include_hidden=True)
+        if not windows:
+            return {"ok": False, "reason": "no_hwnd", "pid": pid, "windows": []}
+        target = windows[0]
+        hwnd = int(target.get("hwnd") or 0)
+        if not hwnd:
+            return {"ok": False, "reason": "missing_hwnd", "pid": pid, "windows": windows}
+        try:
+            user32 = ctypes.windll.user32
+            SW_RESTORE = 9
+            SW_SHOW = 5
+            if bool(target.get("iconic")):
+                user32.ShowWindow(ctypes.c_void_p(hwnd), SW_RESTORE)
+            else:
+                user32.ShowWindow(ctypes.c_void_p(hwnd), SW_SHOW)
+            user32.BringWindowToTop(ctypes.c_void_p(hwnd))
+            focused = bool(user32.SetForegroundWindow(ctypes.c_void_p(hwnd)))
+            return {"ok": True, "focused": focused, "pid": pid, "hwnd": hwnd, "windows": windows}
         except Exception as exc:
             return {"ok": False, "reason": str(exc), "pid": pid, "hwnd": hwnd, "windows": windows}
 
@@ -311,17 +317,27 @@ class PopupObserver:
                 item for item in positive
                 if item.evidence_source == "visual_strong"
             ]
+            captcha_confirmed = [
+                item for item in samples
+                if item.reason_key == "captcha_required"
+            ]
             best = max(samples, key=lambda item: item.confidence, default=PopupClassification(False))
-            confirmed = bool(coded or len(text_confirmed) >= self.stable_samples or len(visual_positive) >= self.stable_samples)
+            confirmed = bool(
+                coded
+                or len(text_confirmed) >= self.stable_samples
+                or len(visual_positive) >= self.stable_samples
+                or len(captcha_confirmed) >= self.stable_samples
+            )
             result = best.to_dict()
             result.update({
                 "matched": bool(confirmed),
                 "recovery_allowed": bool(confirmed and best.recovery_allowed),
                 "sample_count": len(samples),
                 "positive_samples": len(positive),
-                "samples_confirmed": len(coded) or len(text_confirmed) or len(visual_positive),
+                "samples_confirmed": len(coded) or len(text_confirmed) or len(visual_positive) or len(captcha_confirmed),
                 "visual_positive_samples": len(visual_positive),
                 "text_positive_samples": len(text_confirmed),
+                "captcha_samples": len(captcha_confirmed),
                 "prepared": prepared,
                 "stable_required": self.stable_samples,
             })

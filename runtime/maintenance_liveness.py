@@ -4,6 +4,7 @@ import time
 
 from core import AccountState, flog, flog_kv
 from services.process_service import ProcessManager, ProcessService
+from services.captcha_guard import CAPTCHA_REASON, is_account_captcha_required, set_account_captcha_hold
 from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
 
 
@@ -323,6 +324,23 @@ class MaintenanceLivenessMixin:
                     confidence=log_evidence.get("confidence", 0.0),
                     source=log_evidence.get("source", "roblox_log"),
                 )
+
+            if state == "captcha" or str(dialog.get("reason_key") or "") == CAPTCHA_REASON:
+                detail = str(dialog.get("detail") or "").strip() or "Roblox Security verification CAPTCHA visible"
+                if not is_account_captcha_required(acc):
+                    flog_kv(
+                        "WATCHDOG",
+                        "captcha_dialog_hold",
+                        "warning",
+                        account=acc.display_name,
+                        pid=pid,
+                        confidence=f"{float(dialog.get('popup_confidence', dialog.get('confidence', 0.0)) or 0.0):.2f}",
+                        source=dialog.get("evidence_source", ""),
+                        detail=detail,
+                    )
+                set_account_captcha_hold(acc, detail, source="watchdog_popup")
+                self._state_mgr.set_binding_status(acc, "verified", reason="captcha_hold")
+                continue
 
             if state == "missing":
                 if worker:

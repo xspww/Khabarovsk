@@ -22,6 +22,8 @@ REASON_ALIASES = {
     "cookie_invalid": "auth_failure",
     "cookie_missing": "auth_failure",
     "cookie_mismatch": "auth_failure",
+    "captcha": "captcha_required",
+    "captcha_required": "captcha_required",
     "multi_roblox_guard_failed": "multi_roblox_guard_failed",
     "launch_verify_timeout": "watchdog_timeout",
 }
@@ -35,6 +37,7 @@ RECOVERY_POLICIES = {
     "loading_freeze": {"bucket": "crash", "cap": 45.0, "fatal": False},
     "watchdog_timeout": {"bucket": "crash", "cap": 35.0, "fatal": False},
     "auth_failure": {"bucket": "session", "cap": 0.0, "fatal": True},
+    "captcha_required": {"bucket": "session", "cap": 0.0, "fatal": True},
     "account_launched_elsewhere": {"bucket": "session", "cap": 0.0, "fatal": True},
     "session_conflict": {"bucket": "session", "cap": 20.0, "fatal": False},
     "multi_roblox_guard_failed": {"bucket": "session", "cap": 0.0, "fatal": True},

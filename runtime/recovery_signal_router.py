@@ -9,6 +9,7 @@ from runtime.recovery_context import SESSION_CONFLICT
 from runtime.recovery_policy import canonical_reason, context_from_signal
 from runtime.recovery_support import _enrich_visual_disconnect_payload_with_log
 from runtime.runtime_state_manager import RuntimeStateManager
+from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_captcha_text, set_account_captcha_hold
 
 
 class RecoverySignalRouter:
@@ -61,6 +62,15 @@ class RecoverySignalRouter:
             reason_key = "session_conflict"
             payload.setdefault("reason_key", reason_key)
             payload.setdefault("disconnect_category", SESSION_CONFLICT)
+        captcha_resume_reason = str(reason_key or "").strip().lower() in {"captcha_resume"}
+        captcha_detected = (not captcha_resume_reason) and is_captcha_text(
+            signal_name,
+            reason_key,
+            payload.get("reason_msg"),
+            payload.get("detail"),
+            payload.get("msg"),
+            payload.get("error"),
+        )
 
         if self._is_closed():
             self._log_decision(
@@ -96,6 +106,13 @@ class RecoverySignalRouter:
                 return False
             current_recovery_generation = int(acc.recovery_generation or 0)
             account_key = acc._config_username
+
+        if captcha_detected:
+            detail = str(payload.get("detail") or payload.get("reason_msg") or reason_key or CAPTCHA_REASON)
+            self._log_decision("captcha_hold", acc, CAPTCHA_REASON, signal=signal_name, captcha_detail=detail, **context.to_dict())
+            set_account_captcha_hold(acc, detail, source=f"runtime_signal:{signal_name}")
+            recovery.fail_account(acc, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
+            return True
 
         if is_recovery_signal(signal_name):
             if self._active_recovery_blocks(acc, context, reason_key):
@@ -159,6 +176,19 @@ class RecoverySignalRouter:
         expected_launch_nonce: str,
         expected_transaction_id: str,
     ) -> bool:
+        captcha_resume_reason = str(reason_key or "").strip().lower() in {"captcha_resume"}
+        if (not captcha_resume_reason) and is_captcha_text(
+            signal_name,
+            reason_key,
+            payload.get("reason_msg"),
+            payload.get("detail"),
+            payload.get("msg"),
+            payload.get("error"),
+        ):
+            detail = str(payload.get("detail") or payload.get("reason_msg") or reason_key or CAPTCHA_REASON)
+            set_account_captcha_hold(acc, detail, source=f"runtime_signal:{signal_name}")
+            recovery.fail_account(acc, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
+            return True
         if signal_name in {
             RuntimeSignal.FAULT.value,
             RuntimeSignal.CRASH.value,

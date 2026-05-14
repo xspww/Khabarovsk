@@ -8,6 +8,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from core import account_launch_block_reason, flog_kv
+from runtime.popup_detector.popup_sampler import PopupWindowSampler
 from .context import ApiContext
 from .settings_state import _apply_game_defaults
 
@@ -37,6 +38,16 @@ def register(app, ctx: ApiContext) -> None:
             "command_id": command.get("command_id", ""),
             "msg": command.get("msg") or fallback_msg,
         }
+
+    def _blocked_summary(blocked: list[dict]) -> str:
+        if not blocked:
+            return ""
+        reasons = [str(item.get("reason") or "").lower() for item in blocked]
+        if reasons and all("captcha" in reason for reason in reasons):
+            return f"{len(blocked)} blocked by CAPTCHA"
+        if reasons and all("cookie" in reason for reason in reasons):
+            return f"{len(blocked)} blocked by cookie"
+        return f"{len(blocked)} blocked"
 
     @app.get("/api/status")
     def api_status():
@@ -142,7 +153,7 @@ def register(app, ctx: ApiContext) -> None:
             ok = True
             msg = f"Farm started: {len(launchable_accounts)}/{len(farm._accounts)} accounts launchable"
             if blocked:
-                msg += f"; {len(blocked)} blocked by cookie mismatch"
+                msg += f"; {_blocked_summary(blocked)}"
             result = {
                 "ok": True,
                 "accepted": True,
@@ -242,6 +253,68 @@ def register(app, ctx: ApiContext) -> None:
         except Exception as e:
             error = str(e)
             flog_kv("API", "rejoin_failed", "error", command_id=command["command_id"], account=username, error=e)
+            raise
+        finally:
+            farm.finish_command(key, command["command_id"], ok=ok, error=error, response=result)
+
+    @app.post("/api/account/{username}/captcha/resume")
+    def api_resume_captcha(username: str, request: Request):
+        key = f"account:{username}"
+        accepted, command = _begin_runtime_command(request, key, "captcha_resume", account=username, ttl=20.0)
+        if not accepted:
+            if command.get("msg") == "Account not found":
+                raise HTTPException(404, "Account not found")
+            return _command_rejected_payload(command, f"Resume unavailable: {username}")
+        ok = False
+        error = ""
+        result = None
+        try:
+            ok, msg = farm.resume_captcha_account(username)
+            if msg == "Account not found":
+                raise HTTPException(404, "Account not found")
+            result = {"ok": ok, "accepted": ok, "command_id": command["command_id"], "msg": msg}
+            return result
+        except Exception as e:
+            error = str(e)
+            flog_kv("API", "captcha_resume_failed", "error", command_id=command["command_id"], account=username, error=e)
+            raise
+        finally:
+            farm.finish_command(key, command["command_id"], ok=ok, error=error, response=result)
+
+    @app.post("/api/account/{username}/captcha/focus")
+    def api_focus_captcha(username: str, request: Request):
+        key = f"account:{username}"
+        accepted, command = _begin_runtime_command(request, key, "captcha_focus", account=username, ttl=8.0)
+        if not accepted:
+            if command.get("msg") == "Account not found":
+                raise HTTPException(404, "Account not found")
+            return _command_rejected_payload(command, f"Focus unavailable: {username}")
+        ok = False
+        error = ""
+        result = None
+        try:
+            acc = getattr(farm, "_find_account", lambda _username: None)(username)
+            if not acc:
+                raise HTTPException(404, "Account not found")
+            pid = int(getattr(acc, "pid", 0) or 0)
+            if not pid:
+                result = {"ok": False, "accepted": False, "command_id": command["command_id"], "msg": "No Roblox window bound to this account.", "pid": 0}
+                return result
+            focused = PopupWindowSampler().focus_pid_window(pid)
+            ok = bool(focused.get("ok"))
+            result = {
+                "ok": ok,
+                "accepted": ok,
+                "command_id": command["command_id"],
+                "pid": pid,
+                "focused": bool(focused.get("focused", False)),
+                "msg": "Roblox CAPTCHA window focused." if ok else str(focused.get("reason") or "Unable to focus Roblox window."),
+            }
+            flog_kv("API", "captcha_focus", "warning" if ok else "error", command_id=command["command_id"], account=username, pid=pid, focused=result["focused"], ok=ok)
+            return result
+        except Exception as e:
+            error = str(e)
+            flog_kv("API", "captcha_focus_failed", "error", command_id=command["command_id"], account=username, error=e)
             raise
         finally:
             farm.finish_command(key, command["command_id"], ok=ok, error=error, response=result)

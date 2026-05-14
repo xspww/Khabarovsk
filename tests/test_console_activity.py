@@ -12,6 +12,10 @@ class ConsoleActivityFormatTests(unittest.TestCase):
         os.environ["ARGUS_CONSOLE_COLOR"] = "0"
         console._COLOR_SUPPORT = None
         console._LAST_DISCONNECT_AT.clear()
+        console._LAST_CAPTCHA_AT.clear()
+        console._ACTIVE_ACCOUNTS.clear()
+        console._CAPTCHA_ACCOUNTS.clear()
+        console._QUEUE_SIZE = 0
 
     def tearDown(self):
         if self._old_activity is None:
@@ -24,6 +28,10 @@ class ConsoleActivityFormatTests(unittest.TestCase):
             os.environ["ARGUS_CONSOLE_COLOR"] = self._old_color
         console._COLOR_SUPPORT = None
         console._LAST_DISCONNECT_AT.clear()
+        console._LAST_CAPTCHA_AT.clear()
+        console._ACTIVE_ACCOUNTS.clear()
+        console._CAPTCHA_ACCOUNTS.clear()
+        console._QUEUE_SIZE = 0
 
     def assertConsoleLine(self, line, suffix):
         self.assertRegex(line, r"^\[\d{2}:\d{2}:\d{2}\] ")
@@ -65,6 +73,46 @@ class ConsoleActivityFormatTests(unittest.TestCase):
         )
 
         self.assertConsoleLine(line, "!! IwasTheGuyOni7899 disconnected (process_crash, restart in 5s)")
+
+    def test_captcha_warning_matches_dashboard_state(self):
+        line = console._format_state(
+            "transition",
+            {"account": "Zuckmu", "old": "IN_GAME", "new": "FAILED", "reason": "captcha_required", "pid": 9108},
+        )
+
+        self.assertConsoleLine(line, "!! Zuckmu CAPTCHA required (PID: 9108) - paused, solve manually then Resume")
+
+    def test_captcha_hold_removes_account_from_active_counter(self):
+        console._ACTIVE_ACCOUNTS.add("Zuckmu")
+
+        console._update_counters("CAPTCHA", "account_hold", {"account": "Zuckmu"})
+
+        self.assertNotIn("Zuckmu", console._ACTIVE_ACCOUNTS)
+        self.assertIn("Zuckmu", console._CAPTCHA_ACCOUNTS)
+
+    def test_console_title_includes_captcha_count(self):
+        console._ACTIVE_ACCOUNTS.update({"A", "B"})
+        console._CAPTCHA_ACCOUNTS.add("Zuckmu")
+        console._QUEUE_SIZE = 3
+
+        self.assertEqual(console._title_text_locked(), "Argus | Active: 2 | Queue: 3 | Captcha: 1")
+
+    def test_manual_resume_removes_captcha_from_console_title_count(self):
+        console._CAPTCHA_ACCOUNTS.add("Zuckmu")
+
+        console._update_counters("STATE", "transition", {"account": "Zuckmu", "old": "FAILED", "new": "IDLE", "reason": "manual_resume"})
+
+        self.assertNotIn("Zuckmu", console._CAPTCHA_ACCOUNTS)
+
+    def test_watchdog_captcha_hold_matches_dashboard_state(self):
+        line = console._format_structured(
+            "WATCHDOG",
+            "captcha_dialog_hold",
+            "warning",
+            {"account": "Zuckmu", "pid": 9108, "detail": "Roblox | Security | Chrome Legacy Window"},
+        )
+
+        self.assertConsoleLine(line, "!! Zuckmu CAPTCHA required (PID: 9108) - paused, solve manually then Resume")
 
 
 if __name__ == "__main__":

@@ -1958,11 +1958,14 @@ class HybridAccountTests(unittest.TestCase):
             {"username": "ValidUser", "cookie": "_|WARNING:valid"},
             {"username": "BadUser", "cookie": "_|WARNING:bad"},
             {"username": "EmptyUser", "cookie": ""},
+            {"username": "CaptchaUser", "cookie": "_|WARNING:captcha"},
         ]
 
         def validate(cookie):
             if cookie == "_|WARNING:valid":
                 return True, "ValidUser", "ok", {"username": "ValidUser", "user_id": "77"}
+            if cookie == "_|WARNING:captcha":
+                return False, "", "CAPTCHA required", {}
             return False, "", "cookie validation failed (401)", {}
 
         with patch.object(
@@ -1979,26 +1982,94 @@ class HybridAccountTests(unittest.TestCase):
         ) as write_records, patch.object(
             accounts_routes.ACCOUNT_STORE,
             "to_roboguard_accounts",
-            return_value=[{"username": "ValidUser", "cookie": "_|WARNING:valid"}],
+            return_value=[
+                {"username": "ValidUser", "cookie": "_|WARNING:valid"},
+                {"username": "CaptchaUser", "cookie": "_|WARNING:captcha", "manual_status": CAPTCHA_BLOCK_REASON},
+            ],
         ), patch.object(accounts_routes, "audit_event"), patch.object(main.farm, "running", False), patch.object(
             main.farm,
             "set_accounts",
         ) as set_accounts, patch.object(
             main.cfg_mgr,
             "save_accounts",
+        ), patch.object(main.farm, "_push_event") as push_event:
+            response = auth_post(client, "/api/accounts/reload", json={})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["kept"], 2)
+        self.assertEqual(data["removed"], 2)
+        self.assertEqual(data["captcha"], 1)
+        self.assertEqual(data["count"], 2)
+        self.assertEqual(validator.call_count, 3)
+        written = write_records.call_args.args[0]
+        self.assertEqual([item["username"] for item in written], ["ValidUser", "CaptchaUser"])
+        self.assertEqual(set_accounts.call_args.args[0][0].username, "ValidUser")
+        messages = [str(call.args[1]) for call in push_event.call_args_list]
+        self.assertIn("Reload Cookies checked: 1 valid, 1 CAPTCHA, 2 invalid", messages)
+        self.assertIn("Reload Cookies OK: ValidUser", messages)
+        self.assertIn("Reload Cookies CAPTCHA: CaptchaUser - solve manually", messages)
+        self.assertIn("Reload Cookies invalid: BadUser - cookie validation failed (401)", messages)
+        self.assertIn("Reload Cookies invalid: EmptyUser - missing cookie", messages)
+
+    def test_accounts_reload_does_not_stop_running_farm(self):
+        from fastapi.testclient import TestClient
+        import api_routes.accounts_routes as accounts_routes
+        import main
+
+        client = TestClient(main.app)
+        runtime_account = Account(username="ReloadUser", cookie="_|WARNING:old")
+        records = [{"username": "ReloadUser", "cookie": "_|WARNING:reload"}]
+        validated_records = [{
+            "username": "ReloadUser",
+            "cookie": "_|WARNING:reload",
+            "cookie_username": "ReloadUser",
+            "cookie_user_id": "42",
+        }]
+
+        with patch.object(
+            accounts_routes.ACCOUNT_STORE,
+            "read_records",
+            return_value=records,
+        ), patch.object(
+            accounts_routes,
+            "validate_cookie_details",
+            return_value=(True, "ReloadUser", "ok", {"username": "ReloadUser", "user_id": "42"}),
+        ), patch.object(
+            accounts_routes.ACCOUNT_STORE,
+            "write_records",
+        ), patch.object(
+            accounts_routes.ACCOUNT_STORE,
+            "to_roboguard_accounts",
+            return_value=validated_records,
+        ), patch.object(main.farm, "running", True), patch.object(
+            main.farm,
+            "_accounts",
+            [runtime_account],
+        ), patch.object(main.farm, "stop") as stop, patch.object(main.farm, "start") as start, patch.object(
+            main.farm,
+            "set_accounts",
+        ) as set_accounts, patch.object(
+            main.cfg_mgr,
+            "save_accounts",
+        ) as save_accounts, patch.object(
+            main.farm._runtime_store,
+            "record_account_snapshot",
         ):
             response = auth_post(client, "/api/accounts/reload", json={})
 
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertTrue(data["ok"])
-        self.assertEqual(data["kept"], 1)
-        self.assertEqual(data["removed"], 2)
         self.assertEqual(data["count"], 1)
-        self.assertEqual(validator.call_count, 2)
-        written = write_records.call_args.args[0]
-        self.assertEqual([item["username"] for item in written], ["ValidUser"])
-        self.assertEqual(set_accounts.call_args.args[0][0].username, "ValidUser")
+        stop.assert_not_called()
+        start.assert_not_called()
+        set_accounts.assert_not_called()
+        save_accounts.assert_called()
+        self.assertEqual(runtime_account.cookie, "_|WARNING:reload")
+        self.assertEqual(runtime_account.cookie_username, "ReloadUser")
+        self.assertEqual(runtime_account.cookie_user_id, "42")
 
     def test_app_shutdown_rejects_wrong_token(self):
         from fastapi.testclient import TestClient

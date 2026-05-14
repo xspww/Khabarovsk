@@ -16,7 +16,13 @@ from fastapi import HTTPException, Request
 from account_hybrid import ACCOUNT_STORE, audit_event
 from core import Account, account_launch_block_reason, cookie_identity_block_reason, flog_kv
 from roblox_hybrid import resolve_vip_access_code, validate_cookie_details
-from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_captcha_text, set_account_captcha_hold
+from services.captcha_guard import (
+    CAPTCHA_BLOCK_REASON,
+    CAPTCHA_REASON,
+    is_captcha_text,
+    set_account_captcha_hold,
+)
+from services.account_reload import emit_reload_cookie_events, load_accounts_from_store, replace_farm_accounts
 from services.roblox_launch_service import AccountLaunchService, parse_vip_link
 
 from .context import ApiContext
@@ -77,21 +83,13 @@ def register(app, ctx: ApiContext) -> None:
 
 
     def _load_accounts_from_account_data() -> List[Account]:
-        return [Account.from_dict(item) for item in ACCOUNT_STORE.to_roboguard_accounts()]
+        return load_accounts_from_store(ACCOUNT_STORE)
 
 
     def _replace_farm_accounts_from_store() -> int:
         new_accounts = _load_accounts_from_account_data()
         _apply_game_defaults(ctx, new_accounts, persist=False)
-        was_running = farm.running
-        if was_running:
-            farm.stop()
-            time.sleep(0.5)
-        farm.set_accounts(new_accounts)
-        cfg_mgr.save_accounts(new_accounts)
-        if was_running:
-            farm.start()
-        return len(new_accounts)
+        return replace_farm_accounts(farm, cfg_mgr, new_accounts)
 
 
     def _validate_cookie_records_from_store() -> Dict[str, Any]:
@@ -99,6 +97,7 @@ def register(app, ctx: ApiContext) -> None:
         kept: List[Dict[str, Any]] = []
         removed: List[Dict[str, str]] = []
         captcha: List[Dict[str, str]] = []
+        valid: List[Dict[str, str]] = []
 
         for record in records:
             username = str(record.get("username") or "").strip()
@@ -141,6 +140,7 @@ def register(app, ctx: ApiContext) -> None:
             if is_captcha_text(normalized.get("manual_status")) and not normalized["cookie_mismatch"]:
                 normalized["manual_status"] = ""
             kept.append(normalized)
+            valid.append({"username": username or label})
 
         ACCOUNT_STORE.write_records(kept)
         for item in removed:
@@ -157,6 +157,7 @@ def register(app, ctx: ApiContext) -> None:
             "kept": len(kept),
             "removed": len(removed),
             "captcha": len(captcha),
+            "valid_accounts": valid,
             "removed_accounts": removed,
             "captcha_accounts": captcha,
         }
@@ -361,11 +362,12 @@ def register(app, ctx: ApiContext) -> None:
         try:
             validation = _validate_cookie_records_from_store()
             count = _replace_farm_accounts_from_store()
+            emit_reload_cookie_events(farm, validation)
         except Exception as e:
             raise HTTPException(400, f"Reload failed: {e}")
         removed = int(validation.get("removed") or 0)
-        kept = int(validation.get("kept") or count)
-        msg = f"Checked cookies: {kept} valid"
+        valid_count = len(validation.get("valid_accounts") or [])
+        msg = f"Checked cookies: {valid_count} valid"
         captcha_count = int(validation.get("captcha") or 0)
         if captcha_count:
             msg += f", {captcha_count} need CAPTCHA"

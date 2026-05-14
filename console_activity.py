@@ -23,6 +23,7 @@ _ICON_FAIL = "XX"
 
 _COLOR_RESET = "\x1b[0m"
 _COLOR_DIM = "\x1b[90m"
+_COLOR_WHITE = "\x1b[97m"
 _COLOR_BY_ICON = {
     _ICON_OK: "\x1b[92m",
     _ICON_WARN: "\x1b[93m",
@@ -135,12 +136,12 @@ def _duration_text(value: Any) -> str:
         return text
 
 
-def _line(icon: str, message: str, *, indent: bool = False) -> str:
+def _line(icon: str, message: str, *, indent: bool = False, stamp_color: str = _COLOR_DIM) -> str:
     stamp = f"[{time.strftime('%H:%M:%S')}]"
     prefix = f"{icon:<2}"
     gap = "   " if indent else " "
     if _colors_enabled():
-        stamp = _paint(stamp, _COLOR_DIM)
+        stamp = _paint(stamp, stamp_color)
         prefix = _paint(prefix, _COLOR_BY_ICON.get(icon, ""))
     return f"{stamp}{gap}{prefix} {message}"
 
@@ -254,7 +255,7 @@ def _format_state(name: str, fields: Dict[str, Any]) -> Optional[str]:
             return _line(_ICON_OK, f"{account} {_pid_paren(pid or 'bound')}", indent=True)
         return None
     if name == "process_bind_verified" and pid:
-        return _line(_ICON_OK, f"Found Roblox process {_pid_value(pid)} for user {account}")
+        return _line(_ICON_OK, f"Found Roblox process {_pid_value(pid)} for user {account}", stamp_color=_COLOR_WHITE)
     return None
 
 
@@ -278,7 +279,7 @@ def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]
     if scope == "CAPTCHA" or name == "captcha_dialog_hold" or (name == "account_hold" and _reason(fields) == "captcha_required"):
         return _captcha_line(account, pid, _text(fields.get("detail") or fields.get("captcha_detail")))
     if scope == "WORKER" and name in {"visible_process_adopted", "rebind_refreshed"} and pid:
-        return _line(_ICON_OK, f"Found Roblox process {_pid_value(pid)} for user {account}")
+        return _line(_ICON_OK, f"Found Roblox process {_pid_value(pid)} for user {account}", stamp_color=_COLOR_WHITE)
     return None
 
 

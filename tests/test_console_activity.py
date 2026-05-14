@@ -1,5 +1,6 @@
 import os
 import unittest
+from unittest.mock import patch
 
 import console_activity as console
 
@@ -49,6 +50,16 @@ class ConsoleActivityFormatTests(unittest.TestCase):
 
         self.assertConsoleLine(found, "OK Found Roblox process 6504 for user IwasTheGuyOni7899")
         self.assertConsoleLine(ready, "  OK IwasTheGuyOni7899 (PID: 6504)")
+
+    def test_found_process_timestamp_is_white_when_color_is_enabled(self):
+        with patch.object(console, "_colors_enabled", return_value=True):
+            line = console._format_state(
+                "process_bind_verified",
+                {"account": "IwasTheGuyOni7899", "pid": 6504},
+            )
+
+        self.assertTrue(line.startswith("\x1b[97m["), line)
+        self.assertIn("\x1b[0m \x1b[92mOK", line)
 
     def test_launch_wait_and_queue_noise_are_hidden(self):
         self.assertIsNone(

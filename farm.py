@@ -40,6 +40,7 @@ from services.captcha_guard import (
     is_captcha_text,
     set_account_captcha_hold,
 )
+from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
 from runtime.account_runtime_controller import AccountRuntimeController
 from runtime.command_tracker import RuntimeCommandTracker
 from runtime.runtime_health import account_health_flags, build_runtime_health
@@ -66,6 +67,7 @@ from runtime.runtime_orchestrator import RuntimeOrchestrator
 from runtime.lua_identity import lua_event_requires_pid_guard, resolve_lua_account
 from runtime.farm_lifecycle import FarmLifecycleService
 from runtime.recovery_view import recovery_step_for_account
+from runtime.diagnostic_bundle import build_runtime_diagnostic_bundle
 from runtime.telemetry_view import build_runtime_telemetry
 from runtime.runtime_view_model import RuntimeViewModelBuilder
 from runtime.supervisor_runtime import SupervisorRuntime
@@ -342,16 +344,12 @@ class FarmController:
         if not self._recovery or not self._state_mgr:
             return blocked
         for acc in self._accounts:
-            reason = account_launch_block_reason(acc)
-            if reason:
-                if is_captcha_text(reason):
-                    set_account_captcha_hold(acc, reason, source="preflight", runtime_writer=self._runtime_state)
-                    self._recovery.fail_account(acc, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
-                else:
-                    _set_account_cookie_block(acc, reason)
-                    self._recovery.fail_account(acc, "cookie_mismatch", reason)
-                blocked[acc._config_username] = reason
-                flog_kv("FARM", "account_preflight_blocked", "warning", account=acc.display_name, reason=reason)
+            decision = evaluate_account_auth_gate(acc)
+            if decision.blocked:
+                mark_account_auth_quarantined(acc, decision, source="preflight", runtime_writer=self._runtime_state)
+                self._recovery.fail_account(acc, decision.reason_key, decision.reason)
+                blocked[acc._config_username] = decision.reason
+                flog_kv("FARM", "account_preflight_blocked", "warning", account=acc.display_name, **decision.to_dict())
                 continue
             with acc._lock:
                 if acc.state == AccountState.FAILED and acc.last_crash_reason == "cookie_mismatch":
@@ -486,12 +484,48 @@ class FarmController:
         if not acc:
             return False, "Account not found"
         was_captcha = clear_account_captcha_hold(acc, runtime_writer=self._runtime_state)
+        decision = evaluate_account_auth_gate(acc)
+        if decision.blocked:
+            mark_account_auth_quarantined(acc, decision, source="manual_resume", runtime_writer=self._runtime_state)
+            if self._recovery:
+                self._recovery.fail_account(acc, decision.reason_key, decision.reason)
+            self.cfg_mgr.save_accounts(self._accounts)
+            self.cfg_mgr.save_runtime(self._accounts)
+            self._bump_status_revision()
+            self._push_event(
+                "captcha",
+                f"Captcha cleared: {acc.display_name} - still blocked: {decision.reason}",
+                account=acc,
+                severity="warn",
+                reason=decision.reason_key,
+                was_captcha=was_captcha,
+            )
+            return False, f"Captcha cleared for {username}, but launch is still blocked: {decision.reason}"
         if self._runtime_state:
             with acc._lock:
                 self._runtime_state.set_desired(acc, AccountState.IN_GAME, reason="manual_resume")
                 self._runtime_state.set_cooldown(acc, 0.0, reason="manual_resume")
+        live_session = False
+        with acc._lock:
+            pid = acc.pid
+            identity = acc.bound_process_identity
+            tracker_id = acc.browser_tracker_id
+        if pid:
+            live_session = bool(
+                ProcessManager.is_bound_game_alive(
+                    pid,
+                    owner_key=acc._config_username,
+                    expected_identity=identity,
+                    expected_browser_tracker_id=tracker_id,
+                )
+            )
         if self._state_mgr:
-            self._state_mgr.transition(acc, AccountState.IDLE, reason="manual_resume", force=True)
+            if live_session:
+                self._state_mgr.transition(acc, AccountState.IN_GAME, reason="manual_resume_live_session", force=True)
+                self._state_mgr.clear_recovery(acc, reason="manual_resume_live_session", inflight=False)
+                self._state_mgr.set_binding_status(acc, "verified", reason="manual_resume_live_session")
+            else:
+                self._state_mgr.transition(acc, AccountState.IDLE, reason="manual_resume", force=True)
         self.cfg_mgr.save_accounts(self._accounts)
         self.cfg_mgr.save_runtime(self._accounts)
         self._bump_status_revision()
@@ -507,6 +541,11 @@ class FarmController:
             return True, f"Captcha cleared for {username}. Start Argus when ready."
         if not self._recovery or not self._state_mgr:
             return False, "Recovery coordinator unavailable"
+        if live_session:
+            worker = self._workers.get(acc._config_username)
+            if worker:
+                worker.wake()
+            return True, f"Captcha cleared for {username}. Live session verified."
         worker = self._workers.get(acc._config_username)
         if not worker or not worker.is_alive():
             worker = AccountWorker(
@@ -690,19 +729,65 @@ class FarmController:
     def get_runtime_telemetry(self) -> dict:
         return build_runtime_telemetry(self.get_status())
 
-    def get_runtime_events(self, account_id: str = "", limit: int = 100) -> dict:
+    def get_runtime_events(
+        self,
+        account_id: str = "",
+        limit: int = 100,
+        event_type: str = "",
+        severity: str = "",
+    ) -> dict:
         safe_limit = max(1, min(int(limit or 100), 500))
         try:
-            events = self._runtime_store.list_recent_events(account_id=account_id, limit=safe_limit)
+            events = self._runtime_store.list_recent_events(
+                account_id=account_id,
+                limit=safe_limit,
+                event_type=event_type,
+                severity=severity,
+            )
         except Exception as exc:
             flog_kv("RUNTIME", "runtime_events_query_failed", "warning", account=account_id, error=exc)
             events = []
         return {
             "ok": True,
             "account_id": account_id or "",
+            "event_type": event_type or "",
+            "severity": severity or "",
             "limit": safe_limit,
             "events": events,
         }
+
+    def get_runtime_diagnostics(
+        self,
+        account_id: str = "",
+        limit: int = 200,
+        event_type: str = "",
+        severity: str = "",
+    ) -> dict:
+        safe_limit = max(1, min(int(limit or 200), 500))
+        status = self.get_status()
+        try:
+            events = self._runtime_store.list_recent_events(
+                account_id=account_id,
+                limit=safe_limit,
+                event_type=event_type,
+                severity=severity,
+            )
+        except Exception as exc:
+            flog_kv("RUNTIME", "runtime_diagnostics_events_failed", "warning", account=account_id, error=exc)
+            events = []
+        try:
+            cfg = self.cfg_mgr.snapshot()
+        except Exception:
+            cfg = {}
+        return build_runtime_diagnostic_bundle(
+            status,
+            events,
+            cfg,
+            account_id=account_id,
+            event_type=event_type,
+            severity=severity,
+            limit=safe_limit,
+        )
 
     def get_account(self, username: str) -> Optional[dict]:
         status = self.get_status()

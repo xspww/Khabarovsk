@@ -519,6 +519,97 @@ class ProcessService:
         )
 
     @staticmethod
+    def safe_kill_owned_orphan(
+        account: Any,
+        pid: Optional[int],
+        runtime_state: Any = None,
+        expected_identity: str = "",
+        reason: str = "",
+        min_confidence: float = 45.0,
+    ) -> Dict[str, Any]:
+        try:
+            target_pid = int(pid or 0)
+        except Exception:
+            target_pid = 0
+        if not target_pid:
+            return {"ok": False, "killed": False, "pid": None, "reason": "missing_pid"}
+
+        validation = ProcessService.validate_binding(
+            account,
+            target_pid,
+            expected_identity=expected_identity or "",
+            require_window=False,
+            reason=reason or "safe_kill_owned_orphan",
+            min_ram_mb=0.0,
+            log_success=False,
+            log_failure=False,
+        )
+        confidence = float(validation.get("confidence") or 0.0)
+        if not validation.get("ok") or confidence < float(min_confidence or 45.0):
+            reject = str(validation.get("reason") or "low_confidence")
+            flog_kv(
+                "PROC",
+                "orphan_process_kill_rejected",
+                "warning",
+                account=_account_name(account),
+                pid=target_pid,
+                reason=reason,
+                reject=reject,
+                confidence=confidence,
+                owner=validation.get("owner", ""),
+                identity=validation.get("identity", ""),
+                expected_identity=expected_identity or "",
+            )
+            return {
+                "ok": False,
+                "killed": False,
+                "pid": target_pid,
+                "reason": reject,
+                "validation": validation,
+            }
+
+        try:
+            current_pid = int(getattr(account, "pid", 0) or 0)
+        except Exception:
+            current_pid = 0
+        killed = _LegacyProcessManager.kill_pid(target_pid)
+        _LegacyProcessManager.release_pid_owner(target_pid, _account_key(account))
+        if killed:
+            if runtime_state is not None and current_pid == target_pid and hasattr(runtime_state, "clear_process_binding"):
+                runtime_state.clear_process_binding(account, reason=reason or "safe_kill_owned_orphan")
+            elif runtime_state is not None and hasattr(runtime_state, "clear_orphan_diagnostics"):
+                runtime_state.clear_orphan_diagnostics(account, reason=reason or "safe_kill_owned_orphan")
+            _set_process_diagnostics(
+                account,
+                "released",
+                0.0,
+                "",
+                "",
+                reason=reason or "safe_kill_owned_orphan",
+            )
+        flog_kv(
+            "PROC",
+            "orphan_process_kill_allowed",
+            account=_account_name(account),
+            pid=target_pid,
+            killed=killed,
+            reason=reason,
+            confidence=confidence,
+            owner=validation.get("owner", ""),
+            identity=validation.get("identity", ""),
+            runtime_generation=getattr(account, "runtime_generation", 0),
+            recovery_generation=getattr(account, "recovery_generation", 0),
+            command_generation=getattr(account, "command_generation", 0),
+        )
+        return {
+            "ok": bool(killed),
+            "killed": bool(killed),
+            "pid": target_pid,
+            "reason": "killed" if killed else "kill_failed",
+            "validation": validation,
+        }
+
+    @staticmethod
     def safe_kill_bound_process(
         account: Any,
         state_manager: Any = None,
@@ -760,6 +851,7 @@ class ProcessManager(_LegacyProcessManager):
     bind_account_process = staticmethod(ProcessService.bind_account_process)
     safe_adopt_visible_process = staticmethod(ProcessService.safe_adopt_visible_process)
     release_account_process = staticmethod(ProcessService.release_account_process)
+    safe_kill_owned_orphan = staticmethod(ProcessService.safe_kill_owned_orphan)
     safe_kill_bound_process = staticmethod(ProcessService.safe_kill_bound_process)
 
     @classmethod

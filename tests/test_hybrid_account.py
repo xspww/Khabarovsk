@@ -38,7 +38,7 @@ from services.presence_service import RobloxPresenceService
 from services.roblox_install_manager import RobloxInstallManager, normalize_roblox_version
 from services.cpu_limiter import CpuLimiter, normalize_cpu_limiter_settings
 from services.process_service import ProcessService
-from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, captcha_detail, clear_account_captcha_hold, set_account_captcha_hold
+from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, captcha_detail, clear_account_captcha_hold, is_account_captcha_required, set_account_captcha_hold
 from runtime.runtime_state_manager import RuntimeStateManager
 from process_net import ProcessManager
 from roblox_hybrid import (
@@ -206,6 +206,32 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(row["state_label"], "In Game")
         self.assertEqual(row["recovery_step"], "Recovery Complete")
         self.assertNotEqual(row["state_label"], "Checking Disconnect")
+        controller._runtime_store.close()
+
+    def test_status_view_model_counts_blocked_live_captcha_out_of_online_total(self):
+        from config_store import ConfigManager
+
+        controller = FarmController(ConfigManager())
+        account = Account("CaptchaLiveUser")
+        account.state = AccountState.IN_GAME
+        account.desired_state = AccountState.IN_GAME
+        account.pid = 4321
+        account.bound_process_identity = "RobloxPlayerBeta.exe|1|C:\\Roblox\\RobloxPlayerBeta.exe"
+        account.process_binding_status = "verified"
+        set_account_captcha_hold(account, "Roblox Security verification visible", source="unit")
+        controller.set_accounts([account])
+
+        with patch("runtime.runtime_view_model.ProcessManager.is_bound_game_alive", return_value=True), \
+             patch("runtime.runtime_view_model.ProcessManager.get_pid_owner", return_value="CaptchaLiveUser"), \
+             patch("runtime.runtime_view_model.ProcessManager.is_not_responding", return_value=False):
+            status = controller.get_status()
+
+        self.assertEqual(status["blocked_count"], 1)
+        self.assertEqual(status["in_game"], 0)
+        self.assertEqual(status["failed"], 1)
+        row = status["accounts"][0]
+        self.assertEqual(row["state_label"], "Captcha")
+        self.assertTrue(row["captcha_required"])
         controller._runtime_store.close()
 
     def test_status_step_marks_in_game_complete_even_with_old_launch_reason(self):
@@ -1959,7 +1985,7 @@ class HybridAccountTests(unittest.TestCase):
             {"username": "ValidUser", "cookie": "_|WARNING:valid"},
             {"username": "BadUser", "cookie": "_|WARNING:bad"},
             {"username": "EmptyUser", "cookie": ""},
-            {"username": "CaptchaUser", "cookie": "_|WARNING:captcha"},
+            {"username": "CaptchaUser", "cookie": "_|WARNING:captcha", "cookie_mismatch": True},
         ]
 
         def validate(cookie):
@@ -2006,6 +2032,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(validator.call_count, 3)
         written = write_records.call_args.args[0]
         self.assertEqual([item["username"] for item in written], ["ValidUser", "CaptchaUser"])
+        self.assertTrue(written[1]["cookie_mismatch"])
         self.assertEqual(set_accounts.call_args.args[0][0].username, "ValidUser")
         messages = [str(call.args[1]) for call in push_event.call_args_list]
         self.assertIn("Reload Cookies checked: 1 valid, 1 CAPTCHA, 2 invalid", messages)
@@ -2071,6 +2098,68 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(runtime_account.cookie, "_|WARNING:reload")
         self.assertEqual(runtime_account.cookie_username, "ReloadUser")
         self.assertEqual(runtime_account.cookie_user_id, "42")
+
+    def test_running_account_reload_reconciles_added_and_removed_accounts(self):
+        from services.account_reload import replace_farm_accounts
+
+        class Store:
+            def record_account_snapshot(self, *_args, **_kwargs):
+                return None
+
+        class Cfg:
+            def __init__(self):
+                self.saved = []
+
+            def save_accounts(self, accounts):
+                self.saved = [account.username for account in accounts]
+
+        class Farm:
+            running = True
+
+            def __init__(self):
+                self._accounts = [Account(username="OldUser")]
+                self._workers = {}
+                self._runtime_store = Store()
+                self._runtime_state = RuntimeStateManager(logger=lambda *_args, **_kwargs: None)
+                self._runtime_scheduler = None
+                self._runtime_orchestrator = None
+                self._state_mgr = None
+                self._recovery = None
+                self._maintenance = None
+                self._dispatcher = None
+                self.events = []
+                self.revisions = 0
+
+            def _push_event(self, *args, **kwargs):
+                self.events.append((args, kwargs))
+
+            def _bump_status_revision(self):
+                self.revisions += 1
+
+            def resume_captcha_account(self, _username):
+                return True, "resumed"
+
+        farm = Farm()
+        cfg = Cfg()
+
+        count = replace_farm_accounts(farm, cfg, [Account(username="NewUser")])
+
+        self.assertEqual(count, 1)
+        self.assertEqual([account.username for account in farm._accounts], ["NewUser"])
+        self.assertEqual(cfg.saved, ["NewUser"])
+        self.assertEqual(farm.revisions, 1)
+
+    def test_account_reload_rejects_duplicate_runtime_keys(self):
+        from services.account_reload import AccountReconciliationError, replace_farm_accounts
+
+        class Farm:
+            running = False
+
+            def set_accounts(self, _accounts):
+                raise AssertionError("duplicate account data must not be applied")
+
+        with self.assertRaisesRegex(AccountReconciliationError, "Duplicate account username"):
+            replace_farm_accounts(Farm(), object(), [Account(username="DupUser"), Account(username="dupuser")])
 
     def test_app_shutdown_rejects_wrong_token(self):
         from fastapi.testclient import TestClient
@@ -2471,6 +2560,77 @@ class HybridAccountTests(unittest.TestCase):
             SystemMaintenance._scan_liveness_watchdog(maint)
 
         self.assertTrue(assess.call_args.kwargs["inspect_ui"])
+        self.assertIn(acc._config_username, maint._last_popup_scan_at)
+
+    def test_recovery_active_ingame_account_still_scans_captcha_popup(self):
+        maint = object.__new__(SystemMaintenance)
+        maint._cfg = {
+            "watchdog_enabled": True,
+            "popup_disconnected_enabled": True,
+            "popup_scan_interval_seconds": 1,
+            "watchdog_hold_time": 60,
+            "watchdog_activity_timeout": 180,
+            "watchdog_loading_grace": 90,
+            "watchdog_cpu_low": 0.9,
+        }
+        maint._accounts = []
+        maint._workers = {}
+        maint._last_popup_scan_at = {}
+        maint._handle_presence_disconnect_assist = lambda *args, **kwargs: False
+
+        class Net:
+            def is_online(self):
+                return True
+
+        class Recovery:
+            _net = Net()
+
+        class State:
+            def __init__(self):
+                self.runtime = RuntimeStateManager(logger=lambda *_args, **_kwargs: None)
+                self.bound_status = []
+
+            def set_recovery(self, account, status="", reason="", inflight=None):
+                self.runtime.set_recovery(account, status=status, reason=reason, inflight=inflight)
+
+            def set_cooldown(self, account, until_ts, reason=""):
+                self.runtime.set_cooldown(account, until_ts, reason=reason)
+
+            def set_binding_status(self, account, status, reason=""):
+                self.bound_status.append((account.username, status, reason))
+
+        maint._recovery = Recovery()
+        maint._state_mgr = State()
+        acc = Account(username="recovery_active_captcha_user")
+        acc.state = AccountState.IN_GAME
+        acc.pid = 4321
+        acc.in_game_since = time.time() - 120
+        acc.last_activity_at = time.time()
+        acc.liveness_state = "alive"
+        acc.recovery_inflight = True
+        acc.recovery_status = "due"
+        maint._accounts = [acc]
+
+        liveness = {
+            "state": "captcha",
+            "score": 8.0,
+            "validation": {"cpu": 3.0, "ram_mb": 300.0, "windows": 1},
+            "reason_key": CAPTCHA_REASON,
+            "dialog": {
+                "matched": True,
+                "action": "hold",
+                "reason_key": CAPTCHA_REASON,
+                "detail": "Roblox | R | recovery_active_captcha_user: 13+ | Security",
+                "popup_confidence": 1.5,
+                "evidence_source": "text",
+            },
+        }
+        with patch.object(ProcessManager, "assess_liveness", return_value=liveness) as assess:
+            SystemMaintenance._scan_liveness_watchdog(maint)
+
+        self.assertTrue(assess.call_args.kwargs["inspect_ui"])
+        self.assertTrue(is_account_captcha_required(acc))
+        self.assertEqual(acc.recovery_status, CAPTCHA_REASON)
         self.assertIn(acc._config_username, maint._last_popup_scan_at)
 
     def test_popup_scan_max_parallel_limits_periodic_window_scans(self):
@@ -3698,11 +3858,40 @@ class HybridAccountTests(unittest.TestCase):
         self.assertTrue(result["cookie_mismatch"])
         self.assertIn("RealUser", result["msg"])
 
+    def test_captcha_identity_validation_preserves_cookie_mismatch_gate(self):
+        import roblox_hybrid
+
+        with patch("roblox_hybrid.validate_cookie_details", return_value=(False, "", "CAPTCHA required", {})), patch.object(
+            roblox_hybrid.ACCOUNT_STORE,
+            "update_record",
+        ) as update_record:
+            result = validate_record_cookie_identity(
+                {"username": "CaptchaUser", "cookie_mismatch": True},
+                "_|WARNING:-cookie",
+                update_store=True,
+            )
+
+        self.assertFalse(result["ok"])
+        self.assertTrue(result["captcha_required"])
+        update_record.assert_called_once()
+        self.assertNotIn("cookie_mismatch", update_record.call_args.args[1])
+
     def test_account_launch_block_reason_detects_cookie_owner_mismatch(self):
         acc = Account(username="OtherUser", cookie_username="RealUser", cookie_mismatch=True)
         reason = account_launch_block_reason(acc)
         self.assertIn("RealUser", reason)
         self.assertIn("OtherUser", reason)
+
+    def test_auth_gate_does_not_treat_captcha_username_cookie_mismatch_as_captcha(self):
+        from services.auth_gate import evaluate_account_auth_gate
+
+        acc = Account(username="CaptchaUser", cookie_mismatch=True)
+        acc.manual_status = "Cookie identity mismatch for CaptchaUser. Reimport the correct .ROBLOSECURITY for this account."
+
+        decision = evaluate_account_auth_gate(acc)
+
+        self.assertTrue(decision.blocked)
+        self.assertEqual(decision.reason_key, "cookie_mismatch")
 
     def test_captcha_hold_blocks_launch_until_resume(self):
         acc = Account(username="CaptchaUser")
@@ -3713,6 +3902,72 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(account_launch_block_reason(acc), CAPTCHA_BLOCK_REASON)
         self.assertTrue(clear_account_captcha_hold(acc))
         self.assertEqual(account_launch_block_reason(acc), "")
+
+    def test_captcha_hold_persists_only_configured_account_key(self):
+        import account_hybrid
+
+        class Store:
+            def __init__(self):
+                self.calls = []
+
+            def update_record(self, username, updates):
+                self.calls.append((username, dict(updates)))
+
+        store = Store()
+        acc = Account(username="ConfigUser", cookie_username="CookieOwner", alias="AliasUser")
+        with patch.object(account_hybrid, "ACCOUNT_STORE", store):
+            set_account_captcha_hold(acc, "CAPTCHA challenge detected", source="unit_test")
+            clear_account_captcha_hold(acc)
+
+        self.assertEqual([call[0] for call in store.calls], ["ConfigUser", "ConfigUser"])
+        self.assertNotIn("cookie_mismatch", store.calls[0][1])
+        self.assertNotIn("cookie_mismatch", store.calls[1][1])
+
+    def test_captcha_resume_preserves_cookie_mismatch_gate(self):
+        acc = Account(username="CaptchaUser", cookie_mismatch=True, manual_status=CAPTCHA_BLOCK_REASON)
+        acc.last_crash_reason = CAPTCHA_REASON
+
+        self.assertTrue(clear_account_captcha_hold(acc))
+
+        self.assertTrue(acc.cookie_mismatch)
+        self.assertIn("Cookie identity mismatch", account_launch_block_reason(acc))
+
+    def test_farm_captcha_resume_keeps_auth_quarantine_when_cookie_mismatch_remains(self):
+        from farm import FarmController
+
+        class Cfg:
+            def save_accounts(self, _accounts):
+                return None
+
+            def save_runtime(self, _accounts):
+                return None
+
+        class Recovery:
+            def __init__(self):
+                self.failed = []
+
+            def fail_account(self, account, reason, msg):
+                account.last_crash_reason = reason
+                account.state = AccountState.FAILED
+                self.failed.append((reason, msg))
+
+        acc = Account(username="CaptchaUser", cookie_mismatch=True, manual_status=CAPTCHA_BLOCK_REASON)
+        farm = object.__new__(FarmController)
+        farm._accounts = [acc]
+        farm._runtime_state = RuntimeStateManager(logger=lambda *_args, **_kwargs: None)
+        farm._recovery = Recovery()
+        farm.cfg_mgr = Cfg()
+        farm.running = True
+        farm._push_event = lambda *_args, **_kwargs: None
+        farm._bump_status_revision = lambda: None
+
+        ok, msg = FarmController.resume_captcha_account(farm, "CaptchaUser")
+
+        self.assertFalse(ok)
+        self.assertIn("still blocked", msg)
+        self.assertEqual(acc.state, AccountState.FAILED)
+        self.assertEqual(farm._recovery.failed[-1][0], "cookie_mismatch")
+        self.assertIn("Cookie identity mismatch", account_launch_block_reason(acc))
 
     def test_captcha_hold_runtime_fields_go_through_runtime_writer(self):
         acc = Account(username="CaptchaUser")
@@ -3771,12 +4026,13 @@ class HybridAccountTests(unittest.TestCase):
     def test_captcha_open_login_route_uses_manual_browser_flow(self):
         from fastapi.testclient import TestClient
         import main
-        from account_hybrid import ACCOUNT_STORE
 
         username = "CaptchaLoginUser"
-        ACCOUNT_STORE.upsert_records([{"username": username, "manual_status": CAPTCHA_BLOCK_REASON, "import_status": CAPTCHA_REASON}])
         client = TestClient(main.app)
-        with patch("api_routes.accounts_routes.webbrowser.open", return_value=True) as open_browser:
+        with patch(
+            "api_routes.accounts_routes.ACCOUNT_STORE.read_records",
+            return_value=[{"username": username, "manual_status": CAPTCHA_BLOCK_REASON, "import_status": CAPTCHA_REASON}],
+        ), patch("api_routes.accounts_routes.webbrowser.open", return_value=True) as open_browser:
             response = auth_post(client, f"/api/account/{username}/captcha/open-login", json={})
         self.assertEqual(response.status_code, 200)
         payload = response.json()

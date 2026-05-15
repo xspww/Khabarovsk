@@ -62,8 +62,22 @@ def register(app, ctx: ApiContext) -> None:
         return farm.get_runtime_telemetry()
 
     @app.get("/api/runtime/events")
-    def api_runtime_events(account_id: str = "", limit: int = 100):
-        return farm.get_runtime_events(account_id=account_id, limit=limit)
+    def api_runtime_events(account_id: str = "", limit: int = 100, event_type: str = "", severity: str = ""):
+        return farm.get_runtime_events(
+            account_id=account_id,
+            limit=limit,
+            event_type=event_type,
+            severity=severity,
+        )
+
+    @app.get("/api/runtime/diagnostics")
+    def api_runtime_diagnostics(account_id: str = "", limit: int = 200, event_type: str = "", severity: str = ""):
+        return farm.get_runtime_diagnostics(
+            account_id=account_id,
+            limit=limit,
+            event_type=event_type,
+            severity=severity,
+        )
 
     @app.get("/api/stream")
     async def api_stream(request: Request):

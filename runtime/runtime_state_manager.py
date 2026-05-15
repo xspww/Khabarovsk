@@ -867,6 +867,23 @@ class RuntimeStateManager:
             **self._runtime_log_fields(acc, reason=reason, pid="", PID=""),
         )
 
+    def clear_orphan_diagnostics(self, acc: Any, reason: str = "") -> None:
+        acc.unmanaged_live_process_count = 0
+        acc.unmanaged_live_pids = []
+        acc.adopt_candidate_pid = None
+        acc.adopt_reject_reason = ""
+        acc.orphan_confidence = 0.0
+        acc.orphan_pid = None
+        acc.orphan_identity = ""
+        acc.orphan_observed_at = 0.0
+        acc.orphan_verify_after = 0.0
+        acc.sync_runtime(reason or "orphan_diagnostics_clear")
+        self._emit(
+            "STATE",
+            "orphan_diagnostics_cleared",
+            **self._runtime_log_fields(acc, reason=reason or "orphan_diagnostics_clear"),
+        )
+
     def bind_process(
         self,
         acc: Any,

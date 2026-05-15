@@ -5,6 +5,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 _TEST_USER_ROOT = tempfile.mkdtemp(prefix="argus-test-user-root-")
 if "ARGUS_USER_ROOT" not in os.environ:
@@ -20,12 +21,15 @@ from runtime.recovery_context import NETWORK_DISCONNECT, SESSION_CONFLICT, Recov
 from runtime.recovery_owner import RecoveryOwnerRegistry
 from runtime.recovery_policy import kill_local_duplicate_for_session_conflict
 from runtime.runtime_invariants import check_runtime_invariants
+from runtime.invariant_monitor import RuntimeInvariantMonitor
+from runtime.orphan_sweeper import RuntimeOrphanSweeper
+from runtime.diagnostic_bundle import build_runtime_diagnostic_bundle
 from runtime.runtime_health import build_runtime_health
 from runtime.runtime_store import RuntimeStore
 from runtime.runtime_timeline import RuntimeTimeline
 from runtime.telemetry_view import build_runtime_telemetry
 from runtime.command_tracker import RuntimeCommandTracker
-from runtime.farm_lifecycle import _clear_manual_start_failure_gate
+from runtime.farm_lifecycle import FarmLifecycleService, _clear_manual_start_failure_gate
 from runtime.runtime_scheduler import RuntimeScheduler
 from runtime.runtime_state_manager import RuntimeStateManager
 from services.network_fault_injector import CommandResult, NetworkFaultInjector, RULE_PREFIX
@@ -107,6 +111,171 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertEqual(acc.last_rejoin_trigger, "")
         self.assertEqual(acc.cooldown_until, 0.0)
 
+    def test_farm_stop_skips_unstarted_blocked_workers(self):
+        class Cfg:
+            def __init__(self):
+                self.saved = False
+
+            def save_runtime(self, _accounts):
+                self.saved = True
+
+        class UnstartedWorker(threading.Thread):
+            def __init__(self):
+                super().__init__(daemon=True, name="BlockedWorker")
+                self.woken = False
+
+            def wake(self):
+                self.woken = True
+
+            def run(self):
+                pass
+
+        acc = Account(username="BlockedCaptchaUser")
+        farm = type("Farm", (), {})()
+        farm.running = True
+        farm._shutting_down = False
+        farm._stop = threading.Event()
+        farm._accounts = [acc]
+        farm._workers = {"BlockedCaptchaUser": UnstartedWorker()}
+        farm._recovery = None
+        farm._queue = None
+        farm._dispatcher = None
+        farm._maintenance = None
+        farm._net_mon = None
+        farm._runtime_scheduler = None
+        farm._state_mgr = None
+        farm._runtime_state = RuntimeStateManager(logger=lambda *_args, **_kwargs: None)
+        farm.cfg_mgr = Cfg()
+        farm._bump_status_revision = lambda: None
+        farm._cancel_commands_for_shutdown = lambda: None
+        farm._push_event = lambda *_args, **_kwargs: None
+
+        with patch("runtime.farm_lifecycle.get_rt_monitor") as monitor, patch(
+            "roblox_hybrid.release_multi_roblox_guard"
+        ):
+            FarmLifecycleService(farm).stop()
+
+        self.assertFalse(farm.running)
+        self.assertTrue(farm._workers["BlockedCaptchaUser"].woken)
+        self.assertFalse(farm._workers["BlockedCaptchaUser"].is_alive())
+        self.assertTrue(farm.cfg_mgr.saved)
+        monitor.return_value.stop.assert_called_once()
+
+    def test_runtime_invariant_monitor_records_suppressed_timeline_events(self):
+        acc = Account(username="InvariantUser")
+        acc.state = AccountState.IN_GAME
+        acc.desired_state = AccountState.IN_GAME
+        acc.pid = None
+        events = []
+
+        monitor = RuntimeInvariantMonitor(
+            [acc],
+            record_event=lambda *args, **kwargs: events.append((args, kwargs)),
+            suppress_seconds=60.0,
+        )
+
+        result = monitor.scan(now=100.0)
+        self.assertEqual(result["violations"], 1)
+        self.assertEqual(result["emitted"], 1)
+        self.assertEqual(events[0][0][0], "runtime_invariant_violation")
+        self.assertEqual(events[0][0][1], "InvariantUser")
+        self.assertEqual(events[0][1]["reason"], "running_without_pid")
+        self.assertEqual(events[0][1]["snapshot"]["public_state"], "IN_GAME")
+
+        self.assertEqual(monitor.scan(now=120.0)["emitted"], 0)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(monitor.scan(now=161.0)["emitted"], 1)
+        self.assertEqual(len(events), 2)
+
+    def test_orphan_sweeper_kills_elapsed_idle_account_orphan(self):
+        class FakeProcessService:
+            def __init__(self):
+                self.calls = []
+
+            def safe_kill_owned_orphan(self, account, pid, runtime_state=None, **kwargs):
+                self.calls.append((account, pid, kwargs))
+                if runtime_state:
+                    runtime_state.clear_orphan_diagnostics(account, reason="unit_swept")
+                return {"ok": True, "killed": True, "pid": pid, "reason": "killed"}
+
+        class FakeProcessManager:
+            def list_live_game_processes(self, launched_after=None):
+                return []
+
+            def get_pid_owner(self, pid):
+                return ""
+
+        acc = Account(username="OrphanUser")
+        acc.state = AccountState.IDLE
+        acc.orphan_pid = 4242
+        acc.orphan_identity = "robloxplayerbeta.exe|1|c:\\roblox\\robloxplayerbeta.exe"
+        acc.orphan_confidence = 80.0
+        acc.orphan_verify_after = 90.0
+        events = []
+        service = FakeProcessService()
+        state = RuntimeStateManager(logger=lambda *args, **kwargs: None)
+
+        sweeper = RuntimeOrphanSweeper(
+            [acc],
+            runtime_state=state,
+            process_service=service,
+            process_manager=FakeProcessManager(),
+            record_event=lambda *args, **kwargs: events.append((args, kwargs)),
+        )
+
+        result = sweeper.sweep(
+            {
+                "orphan_sweeper_enabled": True,
+                "orphan_sweeper_kill_enabled": True,
+                "orphan_sweeper_min_confidence": 45.0,
+            },
+            now=100.0,
+        )
+
+        self.assertEqual(result["candidates"], 1)
+        self.assertEqual(result["killed"], 1)
+        self.assertEqual(service.calls[0][1], 4242)
+        self.assertIsNone(acc.orphan_pid)
+        self.assertEqual(acc.orphan_confidence, 0.0)
+        self.assertEqual(events[0][0][0], "orphan_process_swept")
+
+    def test_orphan_sweeper_skips_active_desired_account(self):
+        class FakeProcessService:
+            def __init__(self):
+                self.calls = []
+
+            def safe_kill_owned_orphan(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+                return {"ok": True, "killed": True}
+
+        class FakeProcessManager:
+            def list_live_game_processes(self, launched_after=None):
+                return []
+
+            def get_pid_owner(self, pid):
+                return ""
+
+        acc = Account(username="ActiveUser")
+        acc.state = AccountState.IN_GAME
+        acc.desired_state = AccountState.IN_GAME
+        acc.orphan_pid = 5252
+        acc.orphan_confidence = 80.0
+        acc.orphan_verify_after = 90.0
+        service = FakeProcessService()
+
+        sweeper = RuntimeOrphanSweeper(
+            [acc],
+            process_service=service,
+            process_manager=FakeProcessManager(),
+        )
+        result = sweeper.sweep(
+            {"orphan_sweeper_enabled": True, "orphan_sweeper_kill_enabled": True},
+            now=100.0,
+        )
+
+        self.assertEqual(result["candidates"], 0)
+        self.assertEqual(service.calls, [])
+
     def _make_recovery(self):
         stop = threading.Event()
         queue = SmartQueue()
@@ -128,6 +297,107 @@ class RuntimeHardeningTests(unittest.TestCase):
             accounts=[],
         )
         return recovery, queue, stop
+
+    def test_recovery_evaluator_quarantines_cookie_mismatch_before_queue(self):
+        recovery, queue, stop = self._make_recovery()
+        acc = Account(username="GateUser", cookie_username="OtherUser", cookie_mismatch=True)
+        acc.session_checked = True
+        acc.session_valid = True
+        try:
+            recovery.evaluate(acc, trigger="unit_gate")
+
+            self.assertEqual(acc.state, AccountState.FAILED)
+            self.assertEqual(acc.last_crash_reason, "cookie_mismatch")
+            self.assertEqual(queue.snapshot()["size"], 0)
+        finally:
+            stop.set()
+            recovery.stop()
+
+    def test_launch_success_detail_can_mention_captcha_without_creating_hold(self):
+        from services.captcha_guard import is_account_captcha_required
+
+        recovery, _queue, stop = self._make_recovery()
+        acc = Account(username="SolvedCaptchaUser")
+        try:
+            accepted = recovery.handle_runtime_signal(
+                acc,
+                "launch_success",
+                "manual_verified",
+                payload={"detail": "CAPTCHA solved manually", "count_rejoin": False},
+            )
+
+            self.assertTrue(accepted)
+            self.assertFalse(is_account_captcha_required(acc))
+            self.assertNotEqual(acc.last_crash_reason, "captcha_required")
+        finally:
+            stop.set()
+            recovery.stop()
+
+    def test_launch_success_cannot_override_existing_captcha_hold(self):
+        from services.captcha_guard import is_account_captcha_required, set_account_captcha_hold
+
+        recovery, _queue, stop = self._make_recovery()
+        acc = Account(username="BlockedCaptchaUser")
+        set_account_captcha_hold(acc, "Roblox Security verification visible", source="unit")
+        try:
+            accepted = recovery.handle_runtime_signal(
+                acc,
+                "launch_success",
+                "launch_success",
+                payload={"detail": "loaded", "count_rejoin": False},
+            )
+
+            self.assertTrue(accepted)
+            self.assertTrue(is_account_captcha_required(acc))
+            self.assertEqual(acc.state, AccountState.FAILED)
+            self.assertEqual(acc.last_crash_reason, "captcha_required")
+        finally:
+            stop.set()
+            recovery.stop()
+
+    def test_recovery_budget_trips_circuit_breaker(self):
+        recovery, _queue, stop = self._make_recovery()
+        recovery._cfg.update({
+            "recovery_budget_enabled": True,
+            "recovery_budget_max_attempts": 2,
+            "recovery_budget_window_seconds": 60,
+        })
+        acc = Account(username="BudgetUser")
+        try:
+            for _ in range(2):
+                ctx = recovery._begin_recovery(acc, "connection_error", "recovering", "network", "unit", force=True)
+                self.assertIsNotNone(ctx)
+                recovery._release_recovery_owner(
+                    acc._config_username,
+                    acc.runtime_generation,
+                    acc.recovery_generation,
+                    "unit_release",
+                )
+                with acc._lock:
+                    acc.recovery_inflight = False
+                    acc.recovery_status = ""
+
+            ctx = recovery._begin_recovery(acc, "connection_error", "recovering", "network", "unit", force=True)
+
+            self.assertIsNone(ctx)
+            self.assertEqual(acc.state, AccountState.FAILED)
+            self.assertEqual(acc.last_crash_reason, "recovery_budget_exceeded")
+            self.assertEqual(len(acc.recovery_budget_attempts), 2)
+        finally:
+            stop.set()
+            recovery.stop()
+
+    def test_launch_success_clears_recovery_budget(self):
+        recovery, _queue, stop = self._make_recovery()
+        acc = Account(username="BudgetClearUser")
+        acc.recovery_budget_attempts = [time.time(), time.time()]
+        try:
+            recovery.report_launch_success(acc, count_rejoin=False)
+
+            self.assertEqual(acc.recovery_budget_attempts, [])
+        finally:
+            stop.set()
+            recovery.stop()
 
     def test_recovery_owner_registry_rejects_duplicate_and_stale_release(self):
         registry = RecoveryOwnerRegistry()
@@ -711,6 +981,118 @@ class RuntimeHardeningTests(unittest.TestCase):
                 self.assertEqual(events[0]["event_type"], "command_accepted")
             finally:
                 store.close()
+
+    def test_runtime_store_filters_events_by_type_and_severity(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = RuntimeStore(os.path.join(tmp, "runtime.db"))
+            try:
+                store.record_event({
+                    "event_type": "runtime_invariant_violation",
+                    "severity": "warning",
+                    "account": "u1",
+                    "reason": "running_without_pid",
+                })
+                store.record_event({
+                    "event_type": "command_accepted",
+                    "severity": "info",
+                    "account": "u1",
+                    "reason": "unit",
+                })
+                store.record_event({
+                    "event_type": "runtime_invariant_violation",
+                    "severity": "error",
+                    "account": "u2",
+                    "reason": "running_pid_not_live",
+                })
+
+                events = store.list_recent_events(
+                    account_id="u1",
+                    event_type="runtime_invariant_violation",
+                    severity="warning",
+                    limit=10,
+                )
+
+                self.assertEqual(len(events), 1)
+                self.assertEqual(events[0]["account"], "u1")
+                self.assertEqual(events[0]["event_type"], "runtime_invariant_violation")
+                self.assertEqual(events[0]["severity"], "warning")
+            finally:
+                store.close()
+
+    def test_runtime_diagnostic_bundle_filters_and_redacts_secrets(self):
+        status = {
+            "running": True,
+            "total_accounts": 2,
+            "launchable_count": 1,
+            "blocked_count": 1,
+            "in_game": 1,
+            "crash": 0,
+            "queued": 0,
+            "failed": 1,
+            "runtime_health": {"warnings": ["runtime_invariant_violations"]},
+            "queue_snapshot": {"size": 0},
+            "supervisor": {"ok": True},
+            "accounts": [
+                {
+                    "username": "DiagUser",
+                    "account_id": "DiagUser",
+                    "display": "DiagUser",
+                    "state": "FAILED",
+                    "blocked_reason": "Cookie identity mismatch",
+                    "cookie_username": "CookieOwner",
+                    "cookie": "_|WARNING:secret-cookie",
+                    "active_vip": "https://roblox.com/games/1?privateServerLinkCode=secret-link",
+                    "health_flags": ["blocked", "process_binding_warning"],
+                    "runtime": {
+                        "orphan_pid": 4321,
+                        "orphan_identity": "robloxplayerbeta.exe|1|c:\\roblox\\robloxplayerbeta.exe",
+                    },
+                    "launch_intent_summary": {"place_id": "1"},
+                },
+                {"username": "OtherUser", "account_id": "OtherUser", "state": "IN_GAME"},
+            ],
+        }
+        events = [
+            {
+                "event_type": "runtime_invariant_violation",
+                "severity": "warning",
+                "account": "DiagUser",
+                "payload": {"cookie": "_|WARNING:event-cookie", "url": "privateServerLinkCode=event-link"},
+            }
+        ]
+        cfg = {
+            "max_retry": 10,
+            "runtime_invariant_monitor_enabled": True,
+            "ram_password": "secret",
+            "game_private_server_url": "privateServerLinkCode=config-link",
+        }
+
+        bundle = build_runtime_diagnostic_bundle(
+            status,
+            events,
+            cfg,
+            account_id="DiagUser",
+            event_type="runtime_invariant_violation",
+            severity="warning",
+            limit=50,
+            now=1000.0,
+        )
+
+        self.assertTrue(bundle["ok"])
+        self.assertEqual(bundle["summary"]["selected_accounts"], 1)
+        self.assertEqual(bundle["accounts"][0]["account_id"], "DiagUser")
+        self.assertEqual(bundle["accounts"][0]["cookie_username"], "CookieOwner")
+        self.assertNotIn("cookie", bundle["accounts"][0])
+        self.assertNotIn("active_vip", bundle["accounts"][0])
+        self.assertEqual(bundle["accounts"][0]["orphan_pid"], 4321)
+        self.assertEqual(bundle["config"]["max_retry"], 10)
+        self.assertNotIn("ram_password", bundle["config"])
+        self.assertNotIn("game_private_server_url", bundle["config"])
+        serialized = str(bundle)
+        self.assertNotIn("secret-cookie", serialized)
+        self.assertNotIn("event-cookie", serialized)
+        self.assertNotIn("event-link", serialized)
+        self.assertIn("Resolve blocked account gates", " ".join(bundle["recommendations"]))
 
     def test_runtime_health_does_not_count_normal_start_as_relaunch_pressure(self):
         accounts = [{"state": "IN_GAME", "process_alive": True, "last_heartbeat": 100.0} for _ in range(6)]

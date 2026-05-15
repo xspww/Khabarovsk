@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from core import AccountState
 from services.process_service import ProcessService
-from services.captcha_guard import CAPTCHA_REASON, is_account_captcha_required
+from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
 from runtime.recovery_support import RECOVERY_REASON_MESSAGES, compute_backoff
 
 
@@ -76,11 +76,11 @@ class RecoveryEvaluator:
         if current == AccountState.FAILED:
             r._log_hold(acc, trigger, "already_failed")
             return
-        if is_account_captcha_required(acc):
-            with acc._lock:
-                r._runtime_state.set_recovery(acc, status=CAPTCHA_REASON, reason=CAPTCHA_REASON, inflight=False)
-                r._runtime_state.set_cooldown(acc, 0.0, reason=CAPTCHA_REASON)
-            r._log_hold(acc, trigger, CAPTCHA_REASON)
+        auth_gate = evaluate_account_auth_gate(acc)
+        if auth_gate.blocked:
+            mark_account_auth_quarantined(acc, auth_gate, source=f"evaluate:{trigger}", runtime_writer=r._runtime_state)
+            r._log_hold(acc, trigger, auth_gate.reason_key)
+            r.fail_account(acc, auth_gate.reason_key, auth_gate.reason)
             return
 
         max_fail = int(r._cfg.get("max_fail_count", 5))

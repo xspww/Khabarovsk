@@ -11,13 +11,13 @@ from core import (
     AccountState,
     EventBus,
     StateManager,
-    account_launch_block_reason,
     cookie_identity_block_reason,
     flog,
     flog_kv,
 )
 from services.process_service import ProcessManager, ProcessService
 from services.ram_service import RAMManager
+from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
 from services.captcha_guard import (
     CAPTCHA_BLOCK_REASON,
     CAPTCHA_REASON,
@@ -504,23 +504,20 @@ class AccountWorker(threading.Thread):
         acc = self.acc
         flog(f"[WORKER] {acc.display_name} started")
 
-        block_reason = account_launch_block_reason(acc)
-        if block_reason:
-            reason_key = "cookie_mismatch"
-            reason_msg = block_reason
-            if is_captcha_text(block_reason):
-                reason_key = CAPTCHA_REASON
-                reason_msg = CAPTCHA_BLOCK_REASON
-                set_account_captcha_hold(acc, block_reason, source="worker_preflight", runtime_writer=self.state_mgr)
-                flog_kv("CAPTCHA", "account_hold", "warning", account=acc.display_name, detail=block_reason)
+        auth_gate = evaluate_account_auth_gate(acc)
+        if auth_gate.blocked:
+            mark_account_auth_quarantined(acc, auth_gate, source="worker_preflight", runtime_writer=self.state_mgr)
+            reason_key = auth_gate.reason_key
+            reason_msg = auth_gate.reason
+            if auth_gate.reason_key == CAPTCHA_REASON:
+                flog_kv("CAPTCHA", "account_hold", "warning", account=acc.display_name, detail=auth_gate.reason)
             else:
-                _set_account_cookie_block(acc, block_reason)
-                flog(f"[WORKER] {acc.display_name} launch blocked: {block_reason}", "warning")
+                flog(f"[WORKER] {acc.display_name} launch blocked: {auth_gate.reason}", "warning")
             self.runtime_owner.handle_runtime_signal(
                 acc,
                 "fatal",
                 reason_key,
-                payload={"reason_msg": reason_msg, "detail": block_reason},
+                payload={"reason_msg": reason_msg, "detail": auth_gate.reason},
             )
             return
 

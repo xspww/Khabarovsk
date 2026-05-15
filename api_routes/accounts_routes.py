@@ -19,6 +19,7 @@ from roblox_hybrid import resolve_vip_access_code, validate_cookie_details
 from services.captcha_guard import (
     CAPTCHA_BLOCK_REASON,
     CAPTCHA_REASON,
+    is_captcha_status_text,
     is_captcha_text,
     set_account_captcha_hold,
 )
@@ -60,7 +61,7 @@ def register(app, ctx: ApiContext) -> None:
                 str(item.get("cookie_username") or ""),
                 bool(item.get("cookie_mismatch", False)),
             )
-            if is_captcha_text(item.get("manual_status"), item.get("import_status")):
+            if is_captcha_status_text(item.get("manual_status"), item.get("import_status")):
                 blocked_reason = CAPTCHA_BLOCK_REASON
             runtime = runtime_by_user.get(str(item.get("username") or "").strip().lower())
             if runtime:
@@ -115,7 +116,6 @@ def register(app, ctx: ApiContext) -> None:
             if not ok:
                 if is_captcha_text(detail):
                     normalized = ACCOUNT_STORE.normalize_record(record)
-                    normalized["cookie_mismatch"] = False
                     normalized["manual_status"] = CAPTCHA_BLOCK_REASON
                     normalized["import_status"] = CAPTCHA_REASON
                     kept.append(normalized)
@@ -137,7 +137,7 @@ def register(app, ctx: ApiContext) -> None:
                 and username.lower() != validated_username.lower()
             )
             normalized["import_status"] = "cookie_mismatch" if normalized["cookie_mismatch"] else ""
-            if is_captcha_text(normalized.get("manual_status")) and not normalized["cookie_mismatch"]:
+            if is_captcha_status_text(normalized.get("manual_status")) and not normalized["cookie_mismatch"]:
                 normalized["manual_status"] = ""
             kept.append(normalized)
             valid.append({"username": username or label})
@@ -507,10 +507,10 @@ def register(app, ctx: ApiContext) -> None:
             str(record.get("cookie_username") or ""),
             bool(record.get("cookie_mismatch", False)),
         )
-        if is_captcha_text(record.get("manual_status"), record.get("import_status")):
+        if is_captcha_status_text(record.get("manual_status"), record.get("import_status")):
             blocked_reason = CAPTCHA_BLOCK_REASON
         if blocked_reason:
-            result = {"ok": False, "fatal": True, "msg": blocked_reason, "blocked_reason": blocked_reason, "cookie_mismatch": not is_captcha_text(blocked_reason)}
+            result = {"ok": False, "fatal": True, "msg": blocked_reason, "blocked_reason": blocked_reason, "cookie_mismatch": blocked_reason != CAPTCHA_BLOCK_REASON}
             audit_event("launch", username=username, ok=False, detail=blocked_reason, mode="blocked")
             finish_idempotent_request(idem, result)
             return result
@@ -523,7 +523,7 @@ def register(app, ctx: ApiContext) -> None:
             idempotency_key=idem.key,
             body_hash=idem.body_hash,
         )
-        if not result.get("ok") and is_captcha_text(result.get("msg"), result.get("detail")):
+        if not result.get("ok") and is_captcha_status_text(result.get("msg"), result.get("detail")):
             runtime = next((a for a in farm._accounts if a.username == username), None)
             if runtime:
                 set_account_captcha_hold(runtime, str(result.get("msg") or ""), source="manual_launch", runtime_writer=farm._runtime_state)

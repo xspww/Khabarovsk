@@ -9,7 +9,8 @@ from runtime.recovery_context import SESSION_CONFLICT
 from runtime.recovery_policy import canonical_reason, context_from_signal
 from runtime.recovery_support import _enrich_visual_disconnect_payload_with_log
 from runtime.runtime_state_manager import RuntimeStateManager
-from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_captcha_text, set_account_captcha_hold
+from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
+from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_captcha_status_text, set_account_captcha_hold
 
 
 class RecoverySignalRouter:
@@ -63,7 +64,8 @@ class RecoverySignalRouter:
             payload.setdefault("reason_key", reason_key)
             payload.setdefault("disconnect_category", SESSION_CONFLICT)
         captcha_resume_reason = str(reason_key or "").strip().lower() in {"captcha_resume"}
-        captcha_detected = (not captcha_resume_reason) and is_captcha_text(
+        captcha_detection_allowed = signal_name != RuntimeSignal.LAUNCH_SUCCESS.value
+        captcha_detected = captcha_detection_allowed and (not captcha_resume_reason) and is_captcha_status_text(
             signal_name,
             reason_key,
             payload.get("reason_msg"),
@@ -115,6 +117,26 @@ class RecoverySignalRouter:
             return True
 
         if is_recovery_signal(signal_name):
+            auth_gate = evaluate_account_auth_gate(acc)
+            if auth_gate.blocked and not captcha_resume_reason:
+                gate_fields = {key: value for key, value in auth_gate.to_dict().items() if key != "reason"}
+                self._log_decision(
+                    "auth_gate_hold",
+                    acc,
+                    auth_gate.reason_key,
+                    signal=signal_name,
+                    auth_gate_reason=auth_gate.reason,
+                    **gate_fields,
+                    **context.to_dict(),
+                )
+                mark_account_auth_quarantined(
+                    acc,
+                    auth_gate,
+                    source=f"runtime_signal:{signal_name}",
+                    runtime_writer=self._runtime_state,
+                )
+                recovery.fail_account(acc, auth_gate.reason_key, auth_gate.reason)
+                return True
             if self._active_recovery_blocks(acc, context, reason_key):
                 return True
             if self._dedupe_recovery_context(context, acc, reason_key):
@@ -177,7 +199,7 @@ class RecoverySignalRouter:
         expected_transaction_id: str,
     ) -> bool:
         captcha_resume_reason = str(reason_key or "").strip().lower() in {"captcha_resume"}
-        if (not captcha_resume_reason) and is_captcha_text(
+        if signal_name != RuntimeSignal.LAUNCH_SUCCESS.value and (not captcha_resume_reason) and is_captcha_status_text(
             signal_name,
             reason_key,
             payload.get("reason_msg"),

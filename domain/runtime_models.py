@@ -27,6 +27,11 @@ class AccountRuntime:
     unmanaged_live_pids: list[int] = field(default_factory=list)
     adopt_candidate_pid: Optional[int] = None
     adopt_reject_reason: str = ""
+    orphan_pid: Optional[int] = None
+    orphan_identity: str = ""
+    orphan_confidence: float = 0.0
+    orphan_observed_at: float = 0.0
+    orphan_verify_after: float = 0.0
     destination_validation: str = "unverified"
     launch_intent_summary: Dict[str, Any] = field(default_factory=dict)
     generation: int = 0
@@ -36,6 +41,7 @@ class AccountRuntime:
     retry_count: int = 0
     crash_count: int = 0
     fail_count: int = 0
+    recovery_budget_count: int = 0
     cooldown_until: float = 0.0
     recovery_status: str = ""
     recovery_reason: str = ""
@@ -83,6 +89,11 @@ class AccountRuntime:
             "unmanaged_live_pids": list(self.unmanaged_live_pids or []),
             "adopt_candidate_pid": self.adopt_candidate_pid,
             "adopt_reject_reason": self.adopt_reject_reason,
+            "orphan_pid": self.orphan_pid,
+            "orphan_identity": self.orphan_identity,
+            "orphan_confidence": self.orphan_confidence,
+            "orphan_observed_at": self.orphan_observed_at,
+            "orphan_verify_after": self.orphan_verify_after,
             "destination_validation": self.destination_validation,
             "launch_intent_summary": dict(self.launch_intent_summary or {}),
             "runtime_generation": self.runtime_generation,
@@ -92,6 +103,7 @@ class AccountRuntime:
             "retry_count": self.retry_count,
             "crash_count": self.crash_count,
             "fail_count": self.fail_count,
+            "recovery_budget_count": self.recovery_budget_count,
             "cooldown_until": self.cooldown_until,
             "cooldown_left": cooldown_left,
             "recovery_status": self.recovery_status,

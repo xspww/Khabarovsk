@@ -871,7 +871,7 @@ def validate_record_cookie_identity(record: Dict[str, Any], cookie: str, update_
             if is_captcha_text(detail):
                 ACCOUNT_STORE.update_record(
                     username,
-                    {"cookie_mismatch": False, "manual_status": CAPTCHA_BLOCK_REASON, "import_status": CAPTCHA_REASON},
+                    {"manual_status": CAPTCHA_BLOCK_REASON, "import_status": CAPTCHA_REASON},
                 )
             else:
                 ACCOUNT_STORE.update_record(username, {"cookie_mismatch": True, "import_status": "cookie_invalid"})

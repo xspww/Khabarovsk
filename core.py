@@ -280,6 +280,7 @@ class Account:
     last_crash_at:  Optional[float] = None
     last_launch_at: Optional[float] = None
     retry_history:  List[Dict]      = field(default_factory=list)
+    recovery_budget_attempts: List[float] = field(default_factory=list)
     session_valid:  bool            = False
     session_checked: bool           = False
     session_wait_started_at: float  = 0.0
@@ -387,6 +388,11 @@ class Account:
         self.runtime.unmanaged_live_pids = list(self.unmanaged_live_pids or [])
         self.runtime.adopt_candidate_pid = self.adopt_candidate_pid
         self.runtime.adopt_reject_reason = self.adopt_reject_reason or ""
+        self.runtime.orphan_pid = self.orphan_pid
+        self.runtime.orphan_identity = self.orphan_identity or ""
+        self.runtime.orphan_confidence = float(self.orphan_confidence or 0.0)
+        self.runtime.orphan_observed_at = float(self.orphan_observed_at or 0.0)
+        self.runtime.orphan_verify_after = float(self.orphan_verify_after or 0.0)
         self.runtime.destination_validation = self.destination_validation or self.server_validation or "unverified"
         self.runtime.launch_intent_summary = dict(self.launch_intent_summary or (self.launch_intent or {}).get("launch_intent_summary", {}) or {})
         self.runtime.runtime_generation = int(self.runtime_generation or 0)
@@ -396,6 +402,7 @@ class Account:
         self.runtime.retry_count = int(self.retry_count or 0)
         self.runtime.crash_count = int(self.crash_count or 0)
         self.runtime.fail_count = int(self.fail_count or 0)
+        self.runtime.recovery_budget_count = len(self.recovery_budget_attempts or [])
         self.runtime.cooldown_until = float(self.cooldown_until or 0.0)
         self.runtime.recovery_status = self.recovery_status or ""
         self.runtime.recovery_reason = self.last_recovery_reason or self.last_crash_reason or ""

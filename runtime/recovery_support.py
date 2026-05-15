@@ -18,6 +18,7 @@ RECOVERY_REASON_MESSAGES = {
     "cookie_missing": "Stopped - missing Roblox cookie",
     "captcha_required": "CAPTCHA required. Solve it manually, then click Resume or Reload Cookies.",
     "max_fail": "Stopped - fail limit reached (FAILED state)",
+    "recovery_budget_exceeded": "Stopped - recovery circuit breaker tripped. Reload cookies or restart the account after reviewing failures.",
     "relaunch_loop": "Stopped - rapid Roblox relaunch loop detected",
     "watchdog_low_resource": "Disconnected - abnormal low CPU/RAM (watchdog kill)",
     "cookie_mismatch": "Stopped - cookie belongs to a different Roblox account. Reimport the correct cookie.",

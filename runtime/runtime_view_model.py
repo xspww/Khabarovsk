@@ -213,6 +213,7 @@ class RuntimeViewModelBuilder:
                 "crash_count": acc.crash_count,
                 "fail": acc.fail_count,
                 "fail_count": acc.fail_count,
+                "recovery_budget_count": len(acc.recovery_budget_attempts or []),
                 "cpu": cpu,
                 "mem_mb": mem,
                 "is_vip": acc.is_vip,
@@ -296,15 +297,16 @@ class RuntimeViewModelBuilder:
                 "command_inflight": account_command,
                 "can_start": bool((not farm.running) and not any_command_inflight),
                 "can_stop": bool(farm.running and not any_command_inflight),
-                "can_rejoin": bool(farm.running and not any_command_inflight and display_state != AccountState.FAILED and not captcha_required),
+                "can_rejoin": bool(farm.running and not any_command_inflight and display_state != AccountState.FAILED and not blocked_reason),
                 "can_kill": bool(pid_alive and snapshot_pid and not any_command_inflight),
             }
             account_payload["health_flags"] = account_health_flags(account_payload)
             accounts_data.append(account_payload)
 
-        states = [a["state"] for a in accounts_data]
         blocked_count = sum(1 for a in accounts_data if a.get("blocked_reason"))
         launchable_count = sum(1 for a in accounts_data if a.get("launchable", True))
+        in_game_count = sum(1 for a in accounts_data if a.get("state") == "IN_GAME" and not a.get("blocked_reason"))
+        failed_count = sum(1 for a in accounts_data if a.get("state") == "FAILED" or a.get("blocked_reason"))
         with farm._event_lock:
             total_rejoin = farm._total_rejoin
             total_crash = farm._total_crash
@@ -320,11 +322,11 @@ class RuntimeViewModelBuilder:
             "total_accounts": len(farm._accounts),
             "launchable_count": launchable_count,
             "blocked_count": blocked_count,
-            "in_game": states.count("IN_GAME"),
-            "crash": states.count("CRASH"),
-            "launching": states.count("LAUNCHING") + states.count("VERIFY"),
-            "queued": states.count("QUEUED"),
-            "failed": states.count("FAILED"),
+            "in_game": in_game_count,
+            "crash": sum(1 for a in accounts_data if a.get("state") == "CRASH" and not a.get("blocked_reason")),
+            "launching": sum(1 for a in accounts_data if a.get("state") in {"LAUNCHING", "VERIFY"} and not a.get("blocked_reason")),
+            "queued": sum(1 for a in accounts_data if a.get("state") == "QUEUED" and not a.get("blocked_reason")),
+            "failed": failed_count,
             "total_rejoin": total_rejoin,
             "total_crash": total_crash,
             "network_state": farm._net_mon.get_state() if farm._net_mon else NET_ONLINE,

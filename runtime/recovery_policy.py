@@ -43,6 +43,7 @@ RECOVERY_POLICIES = {
     "multi_roblox_guard_failed": {"bucket": "session", "cap": 0.0, "fatal": True},
     "server_full": {"bucket": "launch", "cap": 20.0, "fatal": False},
     "launch_fail": {"bucket": "launch", "cap": 45.0, "fatal": False},
+    "recovery_budget_exceeded": {"bucket": "session", "cap": 0.0, "fatal": True},
 }
 
 

@@ -221,6 +221,7 @@ class FarmLifecycleService:
             farm._stop,
             supervisor=farm._supervisor,
             scheduler=farm._runtime_scheduler,
+            record_runtime_event=farm._record_timeline,
         )
         farm._maintenance.start()
 
@@ -282,11 +283,12 @@ class FarmLifecycleService:
 
         for worker in farm._workers.values():
             worker.wake()
-            worker.join(timeout=2.0)
+            if worker.is_alive():
+                worker.join(timeout=2.0)
 
-        if farm._dispatcher:
+        if farm._dispatcher and farm._dispatcher.is_alive():
             farm._dispatcher.join(timeout=2.0)
-        if farm._maintenance:
+        if farm._maintenance and farm._maintenance.is_alive():
             farm._maintenance.join(timeout=2.0)
         if farm._net_mon:
             farm._net_mon.join(timeout=2.0)

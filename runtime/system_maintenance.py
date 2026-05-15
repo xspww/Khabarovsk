@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from core import Account, StateManager, flog
+from runtime.invariant_monitor import RuntimeInvariantMonitor
+from runtime.orphan_sweeper import RuntimeOrphanSweeper
 from runtime.runtime_scheduler import RuntimeScheduledJob, RuntimeScheduler
 from runtime.supervisor_runtime import SupervisorRuntime
 from services.process_service import ProcessManager
@@ -36,6 +38,7 @@ class SystemMaintenance(
         stop: threading.Event,
         supervisor: Optional[SupervisorRuntime] = None,
         scheduler: Optional[RuntimeScheduler] = None,
+        record_runtime_event: Optional[Callable[..., None]] = None,
     ):
         super().__init__(daemon=True, name="Maintenance")
         self._accounts = accounts
@@ -61,6 +64,17 @@ class SystemMaintenance(
             name="MaintenanceScheduler",
         )
         self._maintenance_job_keys: List[str] = []
+        self._invariant_monitor = RuntimeInvariantMonitor(
+            accounts,
+            pid_validator=self._runtime_pid_validator,
+            record_event=record_runtime_event,
+            suppress_seconds=float(cfg.get("runtime_invariant_suppress_seconds", 60) or 60),
+        )
+        self._orphan_sweeper = RuntimeOrphanSweeper(
+            accounts,
+            runtime_state=self._runtime_state,
+            record_event=record_runtime_event,
+        )
 
     def run(self):
         flog("[MAINT] started")
@@ -107,8 +121,19 @@ class SystemMaintenance(
     def _run_housekeeping(self, job: RuntimeScheduledJob) -> None:
         ProcessManager.cleanup_stale_pid_claims()
         self._reconcile_duplicate_pid_claims()
+        if bool(self._cfg.get("runtime_invariant_monitor_enabled", True)):
+            self._invariant_monitor.scan()
+        self._orphan_sweeper.sweep(self._cfg)
         self._recover_stale_joining_states()
         self._recover_failed_live_sessions()
+
+    def _runtime_pid_validator(self, account: Any, pid: int) -> bool:
+        return bool(ProcessManager.is_bound_game_alive(
+            pid,
+            owner_key=getattr(account, "_config_username", ""),
+            expected_identity=getattr(account, "bound_process_identity", ""),
+            expected_browser_tracker_id=getattr(account, "browser_tracker_id", ""),
+        ))
 
     def _run_liveness(self, job: RuntimeScheduledJob) -> None:
         self._scan_liveness_watchdog()

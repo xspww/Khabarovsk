@@ -254,7 +254,7 @@ class MaintenanceLivenessMixin:
                 with candidate._lock:
                     if candidate.state != AccountState.IN_GAME:
                         continue
-                    if not candidate.pid or candidate.recovery_inflight:
+                    if not candidate.pid:
                         continue
                     candidate_in_game_for = now - (candidate.in_game_since or now)
                 if candidate_in_game_for >= startup_grace:

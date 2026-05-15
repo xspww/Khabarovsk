@@ -279,20 +279,30 @@ class RuntimeStore:
             return snapshot
         return None
 
-    def list_recent_events(self, account_id: str = "", limit: int = 100) -> List[Dict[str, Any]]:
+    def list_recent_events(
+        self,
+        account_id: str = "",
+        limit: int = 100,
+        event_type: str = "",
+        severity: str = "",
+    ) -> List[Dict[str, Any]]:
         safe_limit = max(1, min(int(limit or 100), 500))
-        params: tuple
+        filters: List[str] = []
+        params: List[Any] = []
         if account_id:
-            sql = (
-                "SELECT * FROM runtime_events WHERE account_id=? "
-                "ORDER BY ts DESC, id DESC LIMIT ?"
-            )
-            params = (str(account_id or ""), safe_limit)
-        else:
-            sql = "SELECT * FROM runtime_events ORDER BY ts DESC, id DESC LIMIT ?"
-            params = (safe_limit,)
+            filters.append("account_id=?")
+            params.append(str(account_id or ""))
+        if event_type:
+            filters.append("LOWER(event_type)=LOWER(?)")
+            params.append(str(event_type or ""))
+        if severity:
+            filters.append("LOWER(severity)=LOWER(?)")
+            params.append(str(severity or ""))
+        where = f" WHERE {' AND '.join(filters)}" if filters else ""
+        sql = f"SELECT * FROM runtime_events{where} ORDER BY ts DESC, id DESC LIMIT ?"
+        params.append(safe_limit)
         with self._lock:
-            rows = list(self._conn.execute(sql, params).fetchall())
+            rows = list(self._conn.execute(sql, tuple(params)).fetchall())
         events: List[Dict[str, Any]] = []
         for row in rows:
             payload = self._decode_json(row["payload_json"])

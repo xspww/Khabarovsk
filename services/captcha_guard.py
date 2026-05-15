@@ -86,6 +86,25 @@ def is_captcha_window_texts(values: Any) -> bool:
     return "security" in normalized and "chrome legacy window" in normalized
 
 
+def _is_cookie_auth_status_text(text: str) -> bool:
+    return (
+        "cookie identity mismatch" in text
+        or "cookie belongs to" in text
+        or ".roblosecurity" in text
+        or "cookie invalid" in text
+    )
+
+
+def is_captcha_status_text(*values: Any) -> bool:
+    for value in values:
+        text = _lower(value)
+        if not text or _is_cookie_auth_status_text(text):
+            continue
+        if is_captcha_text(text):
+            return True
+    return False
+
+
 def captcha_detail(status: Any = "", body: Any = "", headers: Mapping[str, Any] | None = None) -> str:
     header_text = challenge_header_summary(headers)
     if not is_captcha_text(status, body, header_text):
@@ -106,40 +125,39 @@ def is_account_captcha_required(account: Any) -> bool:
         getattr(account, "last_recovery_reason", ""),
         getattr(account, "recovery_status", ""),
         getattr(account, "last_state_reason", ""),
+        getattr(account, "import_status", ""),
     )
     if _lower(getattr(account, "last_crash_reason", "")) == CAPTCHA_REASON:
         return True
     if _lower(getattr(account, "recovery_status", "")) == CAPTCHA_REASON:
         return True
-    return is_captcha_text(*fields)
+    return is_captcha_status_text(*fields)
 
 
 def persist_account_captcha_status(account: Any, active: bool = True) -> None:
     try:
         from account_hybrid import ACCOUNT_STORE
 
-        names = []
-        for attr in ("_config_username", "username", "cookie_username", "display_name"):
+        username = ""
+        for attr in ("_config_username", "username"):
             value = str(getattr(account, attr, "") or "").strip()
-            if value and value.lower() not in {item.lower() for item in names}:
-                names.append(value)
-        if not names:
+            if value:
+                username = value
+                break
+        if not username:
             return
         updates = (
             {
                 "manual_status": CAPTCHA_BLOCK_REASON,
                 "import_status": CAPTCHA_REASON,
-                "cookie_mismatch": False,
             }
             if active
             else {
                 "manual_status": "",
                 "import_status": "",
-                "cookie_mismatch": False,
             }
         )
-        for username in names:
-            ACCOUNT_STORE.update_record(username, updates)
+        ACCOUNT_STORE.update_record(username, updates)
     except Exception:
         pass
 
@@ -177,7 +195,6 @@ def set_account_captcha_hold(account: Any, detail: str = "", source: str = "", r
     lock = getattr(account, "_lock", None)
 
     def _set() -> None:
-        account.cookie_mismatch = False
         account.session_checked = True
         account.session_valid = False
         account.session_wait_started_at = 0.0
@@ -202,18 +219,17 @@ def clear_account_captcha_hold(account: Any, runtime_writer: Any = None) -> bool
     lock = getattr(account, "_lock", None)
 
     def _clear() -> None:
-        account.cookie_mismatch = False
-        if is_captcha_text(getattr(account, "manual_status", "")):
+        if is_captcha_status_text(getattr(account, "manual_status", "")):
             account.manual_status = ""
-        if is_captcha_text(getattr(account, "last_error", "")):
+        if is_captcha_status_text(getattr(account, "last_error", "")):
             account.last_error = ""
         if _lower(getattr(account, "last_crash_reason", "")) == CAPTCHA_REASON:
             account.last_crash_reason = ""
         if _lower(getattr(account, "last_recovery_reason", "")) == CAPTCHA_REASON:
             account.last_recovery_reason = ""
-        if is_captcha_text(getattr(account, "last_state_reason", "")):
+        if is_captcha_status_text(getattr(account, "last_state_reason", "")):
             account.last_state_reason = ""
-        if is_captcha_text(getattr(account, "import_status", "")):
+        if is_captcha_status_text(getattr(account, "import_status", "")):
             account.import_status = ""
         account.recovery_scheduled_at = 0.0
         account.session_checked = False

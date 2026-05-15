@@ -7,30 +7,20 @@ from typing import Any, Dict, List, Optional
 from core import Account, AccountState, EventBus, EventName, SmartQueue, StateManager, flog, flog_kv
 from services.network_monitor import NetworkMonitor
 from services.process_service import ProcessManager, ProcessService
-from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_captcha_text, set_account_captcha_hold
+from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
+from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_captcha_status_text, set_account_captcha_hold
 from runtime.runtime_state_manager import RuntimeStateManager
 from runtime.runtime_orchestrator import RuntimeOrchestrator
 from runtime.runtime_scheduler import RuntimeScheduledJob, RuntimeScheduler
 from runtime.recovery_context import RecoveryAttemptContext, reason_for_category
+from runtime.recovery_budget import record_recovery_budget_attempt
 from runtime.recovery_evaluator import RecoveryEvaluator
 from runtime.recovery_owner import RecoveryOwnerRegistry
 from runtime.recovery_network import handle_network_restored
-from runtime.recovery_policy import (
-    RecoveryDedupeTracker,
-    SessionConflictTracker,
-    adaptive_recovery_delay,
-    build_recovery_log_payload,
-    canonical_reason,
-    kill_local_duplicate_for_session_conflict,
-    policy_for,
-)
+from runtime.recovery_policy import RecoveryDedupeTracker, SessionConflictTracker, adaptive_recovery_delay, build_recovery_log_payload, canonical_reason, kill_local_duplicate_for_session_conflict, policy_for
 from runtime.recovery_relaunch import detect_relaunch_loop
 from runtime.recovery_signal_router import RecoverySignalRouter
-from runtime.recovery_support import (
-    RECOVERY_REASON_MESSAGES,
-    compute_backoff,
-)
-
+from runtime.recovery_support import RECOVERY_REASON_MESSAGES, compute_backoff
 
 class RecoveryCoordinator:
     """Central recovery/rejoin controller. Every path that wants recovery reports here."""
@@ -94,11 +84,9 @@ class RecoveryCoordinator:
     @property
     def runtime_orchestrator(self) -> RuntimeOrchestrator:
         return self._runtime_orchestrator
-
     def _is_closed(self) -> bool:
         with self._lock:
             return self._closed or self._stop.is_set()
-
     def _persist_runtime(self, force: bool = False):
         if not self._persist_callback:
             return
@@ -222,6 +210,7 @@ class RecoveryCoordinator:
         context: Optional[RecoveryAttemptContext] = None,
     ) -> Optional[Dict[str, Any]]:
         now = time.time()
+        budget_reason = ""
         with acc._lock:
             if self._stop.is_set() or self._closed or acc.desired_state != AccountState.IN_GAME:
                 self._log_recovery_decision(
@@ -276,41 +265,47 @@ class RecoveryCoordinator:
                     **{key: value for key, value in owner_check.items() if key not in {"accepted", "replaced"}},
                 )
 
-            self._runtime_state.begin_recovery(
-                acc,
-                status=status,
-                reason=canonical,
-                bucket=bucket,
-                now=now,
-                count_retry=count_retry,
-                count_crash=count_crash,
-                count_fail=count_fail,
-            )
-            ctx = {
-                "generation": acc.recovery_generation,
-                "recovery_generation": acc.recovery_generation,
-                "runtime_generation": acc.runtime_generation,
-                "pid": acc.pid,
-                "active_vip": acc.active_vip,
-                "fail_count": acc.fail_count,
-                "launch_fail_count": acc.launch_fail_count,
-                "bucket": bucket,
-            }
-            owner = self._owner_registry.acquire(
-                account_key,
-                runtime_generation=int(acc.runtime_generation or 0),
-                recovery_generation=int(acc.recovery_generation or 0),
-                command_generation=int(acc.command_generation or 0),
-                session_id=acc.session_id,
-                transaction_id=acc.rejoin_transaction_id,
-                reason=canonical,
-                status=status,
-                bucket=bucket,
-                priority=int(context.priority if context else 0),
-                token=context.token if context else "",
-                now=now,
-            )
+            budget_reason = record_recovery_budget_attempt(self._cfg, acc, canonical, bucket, now)
+            if not budget_reason:
+                self._runtime_state.begin_recovery(
+                    acc,
+                    status=status,
+                    reason=canonical,
+                    bucket=bucket,
+                    now=now,
+                    count_retry=count_retry,
+                    count_crash=count_crash,
+                    count_fail=count_fail,
+                )
+                ctx = {
+                    "generation": acc.recovery_generation,
+                    "recovery_generation": acc.recovery_generation,
+                    "runtime_generation": acc.runtime_generation,
+                    "pid": acc.pid,
+                    "active_vip": acc.active_vip,
+                    "fail_count": acc.fail_count,
+                    "launch_fail_count": acc.launch_fail_count,
+                    "bucket": bucket,
+                }
+                owner = self._owner_registry.acquire(
+                    account_key,
+                    runtime_generation=int(acc.runtime_generation or 0),
+                    recovery_generation=int(acc.recovery_generation or 0),
+                    command_generation=int(acc.command_generation or 0),
+                    session_id=acc.session_id,
+                    transaction_id=acc.rejoin_transaction_id,
+                    reason=canonical,
+                    status=status,
+                    bucket=bucket,
+                    priority=int(context.priority if context else 0),
+                    token=context.token if context else "",
+                    now=now,
+                )
 
+        if budget_reason:
+            self._log_recovery_decision("recovery_budget_exceeded", acc, canonical, reason_msg=budget_reason, bucket=bucket)
+            self.fail_account(acc, "recovery_budget_exceeded", budget_reason)
+            return None
         self._log_recovery_decision(
             "recovery_owner_acquired",
             acc,
@@ -560,7 +555,7 @@ class RecoveryCoordinator:
 
     def report_launch_failure(self, acc: Account, reason: str):
         reason_l = str(reason or "").lower()
-        if is_captcha_text(reason_l):
+        if is_captcha_status_text(reason_l):
             set_account_captcha_hold(acc, reason, source="launch_failure", runtime_writer=self._runtime_state)
             self.fail_account(acc, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
             return
@@ -629,6 +624,11 @@ class RecoveryCoordinator:
         self._persist_runtime()
 
     def report_launch_success(self, acc: Account, trigger: str = "launch_success", count_rejoin: Optional[bool] = None):
+        auth_gate = evaluate_account_auth_gate(acc)
+        if auth_gate.blocked:
+            mark_account_auth_quarantined(acc, auth_gate, source="launch_success", runtime_writer=self._runtime_state)
+            self.fail_account(acc, auth_gate.reason_key, auth_gate.reason)
+            return
         with acc._lock:
             runtime_generation = int(acc.runtime_generation or 0)
             recovery_generation = int(acc.recovery_generation or 0)
@@ -651,6 +651,7 @@ class RecoveryCoordinator:
             acc.crash_retry_count = 0
             acc.network_retry_count = 0
             acc.session_retry_count = 0
+            acc.recovery_budget_attempts.clear()
             acc.session_wait_started_at = 0.0
             acc.last_network_lost_at = None
             acc.last_crash_reason = ""
@@ -670,7 +671,7 @@ class RecoveryCoordinator:
         self._persist_runtime()
 
     def fail_account(self, acc: Account, reason: str, reason_msg: str):
-        if is_captcha_text(reason, reason_msg):
+        if is_captcha_status_text(reason, reason_msg):
             set_account_captcha_hold(acc, reason_msg or reason, source="fail_account", runtime_writer=self._runtime_state)
             reason = CAPTCHA_REASON
             reason_msg = CAPTCHA_BLOCK_REASON
@@ -741,6 +742,7 @@ class RecoveryCoordinator:
             acc.crash_retry_count = 0
             acc.network_retry_count = 0
             acc.session_retry_count = 0
+            acc.recovery_budget_attempts.clear()
             acc.session_wait_started_at = 0.0
             acc.last_network_lost_at = None
             acc.pid_missing_since = 0.0

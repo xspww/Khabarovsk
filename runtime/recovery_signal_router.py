@@ -110,7 +110,7 @@ class RecoverySignalRouter:
         if captcha_detected:
             detail = str(payload.get("detail") or payload.get("reason_msg") or reason_key or CAPTCHA_REASON)
             self._log_decision("captcha_hold", acc, CAPTCHA_REASON, signal=signal_name, captcha_detail=detail, **context.to_dict())
-            set_account_captcha_hold(acc, detail, source=f"runtime_signal:{signal_name}")
+            set_account_captcha_hold(acc, detail, source=f"runtime_signal:{signal_name}", runtime_writer=self._runtime_state)
             recovery.fail_account(acc, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
             return True
 
@@ -186,7 +186,7 @@ class RecoverySignalRouter:
             payload.get("error"),
         ):
             detail = str(payload.get("detail") or payload.get("reason_msg") or reason_key or CAPTCHA_REASON)
-            set_account_captcha_hold(acc, detail, source=f"runtime_signal:{signal_name}")
+            set_account_captcha_hold(acc, detail, source=f"runtime_signal:{signal_name}", runtime_writer=self._runtime_state)
             recovery.fail_account(acc, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
             return True
         if signal_name in {

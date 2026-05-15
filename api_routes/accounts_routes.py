@@ -283,7 +283,7 @@ def register(app, ctx: ApiContext) -> None:
             "url": f"https://www.roblox.com/games/{place}",
         }
 
-    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Account APIs
 
     @app.post("/api/account/{username}/save-cookie")
     def api_save_cookie(username: str, request: Request):
@@ -526,7 +526,7 @@ def register(app, ctx: ApiContext) -> None:
         if not result.get("ok") and is_captcha_text(result.get("msg"), result.get("detail")):
             runtime = next((a for a in farm._accounts if a.username == username), None)
             if runtime:
-                set_account_captcha_hold(runtime, str(result.get("msg") or ""), source="manual_launch")
+                set_account_captcha_hold(runtime, str(result.get("msg") or ""), source="manual_launch", runtime_writer=farm._runtime_state)
                 if farm._recovery:
                     farm._recovery.fail_account(runtime, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
                 farm._push_event("captcha", f"Captcha required: {runtime.display_name}", account=runtime, severity="warn", reason=CAPTCHA_REASON)
@@ -569,7 +569,7 @@ def register(app, ctx: ApiContext) -> None:
             return {"ok": False, "msg": "Cannot parse place_id"}
         if not link_code:
             return {"ok": False,
-                    "msg": "âš  No linkCode found â€” this link will join a PUBLIC server, not VIP!"}
+                    "msg": "No linkCode found - this link will join a PUBLIC server, not VIP!"}
         resolved = {}
         record = _find_account_record(username, include_cookie=True)
         if record and record.get("cookie"):
@@ -581,7 +581,7 @@ def register(app, ctx: ApiContext) -> None:
             "vip_resolved": bool(resolved.get("ok")) if resolved else False,
             "access_code_present": bool(resolved.get("access_code")) if resolved else False,
             "url":       f"roblox://experiences/start?placeId={place_id}&linkCode=***",
-            "msg":       "âœ… VIP link valid" + (" and accessCode resolved" if resolved.get("ok") else ""),
+            "msg":       "VIP link valid" + (" and accessCode resolved" if resolved.get("ok") else ""),
         }
 
 
@@ -606,8 +606,5 @@ def register(app, ctx: ApiContext) -> None:
         if not acc._vip_tracker:
             return {"ok": False, "msg": "No VipTracker (no VIP links)"}
         return {"ok": True, "links": acc._vip_tracker.status()}
-
-
-    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    #  WEB UI â€” Argus Launcher
-    # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    # Web UI routes
+    # Argus Launcher dashboard is served by system_routes.py.

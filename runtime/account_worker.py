@@ -511,7 +511,7 @@ class AccountWorker(threading.Thread):
             if is_captcha_text(block_reason):
                 reason_key = CAPTCHA_REASON
                 reason_msg = CAPTCHA_BLOCK_REASON
-                set_account_captcha_hold(acc, block_reason, source="worker_preflight")
+                set_account_captcha_hold(acc, block_reason, source="worker_preflight", runtime_writer=self.state_mgr)
                 flog_kv("CAPTCHA", "account_hold", "warning", account=acc.display_name, detail=block_reason)
             else:
                 _set_account_cookie_block(acc, block_reason)
@@ -583,7 +583,7 @@ class AccountWorker(threading.Thread):
                     continue
 
                 if is_captcha_text(detail):
-                    set_account_captcha_hold(acc, detail, source="cookie_validation")
+                    set_account_captcha_hold(acc, detail, source="cookie_validation", runtime_writer=self.state_mgr)
                     flog_kv("CAPTCHA", "detected", "warning", account=acc.display_name, detail=detail)
                     self.runtime_owner.handle_runtime_signal(
                         acc,

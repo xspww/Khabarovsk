@@ -561,7 +561,7 @@ class RecoveryCoordinator:
     def report_launch_failure(self, acc: Account, reason: str):
         reason_l = str(reason or "").lower()
         if is_captcha_text(reason_l):
-            set_account_captcha_hold(acc, reason, source="launch_failure")
+            set_account_captcha_hold(acc, reason, source="launch_failure", runtime_writer=self._runtime_state)
             self.fail_account(acc, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
             return
         if "server full" in reason_l or "experience is full" in reason_l:
@@ -671,7 +671,7 @@ class RecoveryCoordinator:
 
     def fail_account(self, acc: Account, reason: str, reason_msg: str):
         if is_captcha_text(reason, reason_msg):
-            set_account_captcha_hold(acc, reason_msg or reason, source="fail_account")
+            set_account_captcha_hold(acc, reason_msg or reason, source="fail_account", runtime_writer=self._runtime_state)
             reason = CAPTCHA_REASON
             reason_msg = CAPTCHA_BLOCK_REASON
         with acc._lock:

@@ -772,6 +772,20 @@ class StateManager:
             command_generation=acc.command_generation,
         )
 
+    def clear_recovery(self, acc: Account, reason: str = "", inflight: Optional[bool] = False):
+        with acc._lock:
+            self._runtime.clear_recovery(acc, reason=reason, inflight=inflight)
+        flog_kv(
+            "STATE",
+            "recovery_clear",
+            account=acc.display_name,
+            reason=reason,
+            inflight=acc.recovery_inflight,
+            generation=acc.recovery_generation,
+            runtime_generation=acc.runtime_generation,
+            command_generation=acc.command_generation,
+        )
+
     def set_binding_status(self, acc: Account, status: str, reason: str = ""):
         with acc._lock:
             self._runtime.set_binding_status(acc, status, reason or "binding_status")

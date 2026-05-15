@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import random
 import sys
@@ -10,16 +10,16 @@ from services.roblox_log_evidence import collect_recent_log_evidence
 
 
 RECOVERY_REASON_MESSAGES = {
-    "pid_dead": "à¸«à¸¥à¸¸à¸” - Process à¸«à¸²à¸¢à¹„à¸› (game crashed/closed)",
-    "not_responding": "à¸«à¸¥à¸¸à¸” - Not Responding (à¹€à¸à¸¡à¸„à¹‰à¸²à¸‡, à¸•à¸£à¸§à¸ˆà¸žà¸šà¸ˆà¸²à¸ Task Manager)",
-    "network_drop": "à¸«à¸¥à¸¸à¸” - à¹€à¸™à¹‡à¸•à¸«à¸¥à¸¸à¸” (network dropped)",
-    "launch_fail": "à¸«à¸¥à¸¸à¸” - Launch à¸¥à¹‰à¸¡à¹€à¸«à¸¥à¸§ (à¹„à¸¡à¹ˆà¸ªà¸²à¸¡à¸²à¸£à¸–à¹€à¸›à¸´à¸”à¹€à¸à¸¡à¹„à¸”à¹‰)",
-    "cookie_invalid": "à¸«à¸¢à¸¸à¸” - Cookie à¹„à¸¡à¹ˆà¸–à¸¹à¸à¸•à¹‰à¸­à¸‡ (session expired)",
-    "cookie_missing": "à¸«à¸¢à¸¸à¸” - à¹„à¸¡à¹ˆà¸¡à¸µ cookie login à¸ˆà¸²à¸ Roblox Account Manager",
+    "pid_dead": "Disconnected - Roblox process disappeared (crashed or closed)",
+    "not_responding": "Disconnected - Roblox is not responding",
+    "network_drop": "Disconnected - network dropped",
+    "launch_fail": "Disconnected - launch failed",
+    "cookie_invalid": "Stopped - cookie invalid or expired",
+    "cookie_missing": "Stopped - missing Roblox cookie",
     "captcha_required": "CAPTCHA required. Solve it manually, then click Resume or Reload Cookies.",
-    "max_fail": "à¸«à¸¢à¸¸à¸” - à¹€à¸à¸´à¸™ fail limit (FAILED state)",
-    "relaunch_loop": "à¸«à¸¢à¸¸à¸” - Roblox à¹€à¸”à¹‰à¸‡à¹€à¸£à¹‡à¸§à¸«à¸¥à¸²à¸¢à¸£à¸­à¸šà¸•à¸´à¸”à¸à¸±à¸™ à¸ˆà¸¶à¸‡à¸«à¸¢à¸¸à¸” auto rejoin",
-    "watchdog_low_resource": "à¸«à¸¥à¸¸à¸” - CPU/RAM à¸•à¹ˆà¸³à¸œà¸´à¸”à¸›à¸à¸•à¸´ (Watchdog kill)",
+    "max_fail": "Stopped - fail limit reached (FAILED state)",
+    "relaunch_loop": "Stopped - rapid Roblox relaunch loop detected",
+    "watchdog_low_resource": "Disconnected - abnormal low CPU/RAM (watchdog kill)",
     "cookie_mismatch": "Stopped - cookie belongs to a different Roblox account. Reimport the correct cookie.",
     "process_crash": "Process crashed or disappeared",
     "watchdog_timeout": "Watchdog timeout - no process activity",

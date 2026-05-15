@@ -654,6 +654,24 @@ class RuntimeStateManager:
             ),
         )
 
+    def clear_recovery(self, acc: Any, reason: str = "", inflight: Optional[bool] = False) -> None:
+        acc.recovery_status = ""
+        acc.last_recovery_reason = ""
+        if inflight is not None:
+            acc.recovery_inflight = bool(inflight)
+        acc.sync_runtime(reason or "recovery_clear")
+        self._emit(
+            "RUNTIME",
+            "owned_mutation",
+            **self._runtime_log_fields(
+                acc,
+                reason=reason or "recovery_clear",
+                field="recovery_clear",
+                status=getattr(acc, "recovery_status", ""),
+                inflight=getattr(acc, "recovery_inflight", False),
+            ),
+        )
+
     def clear_manual_start_failure_gate(self, acc: Any, max_fail_count: int = 5) -> bool:
         max_fail = max(1, int(max_fail_count or 5))
         reason = str(getattr(acc, "last_crash_reason", "") or "")

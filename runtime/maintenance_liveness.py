@@ -338,7 +338,7 @@ class MaintenanceLivenessMixin:
                         source=dialog.get("evidence_source", ""),
                         detail=detail,
                     )
-                set_account_captcha_hold(acc, detail, source="watchdog_popup")
+                set_account_captcha_hold(acc, detail, source="watchdog_popup", runtime_writer=self._state_mgr)
                 self._state_mgr.set_binding_status(acc, "verified", reason="captcha_hold")
                 continue
 

@@ -345,7 +345,7 @@ class FarmController:
             reason = account_launch_block_reason(acc)
             if reason:
                 if is_captcha_text(reason):
-                    set_account_captcha_hold(acc, reason, source="preflight")
+                    set_account_captcha_hold(acc, reason, source="preflight", runtime_writer=self._runtime_state)
                     self._recovery.fail_account(acc, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
                 else:
                     _set_account_cookie_block(acc, reason)
@@ -356,7 +356,7 @@ class FarmController:
             with acc._lock:
                 if acc.state == AccountState.FAILED and acc.last_crash_reason == "cookie_mismatch":
                     _clear_account_cookie_block(acc)
-                    self._runtime_state.set_recovery(acc, status="", reason="cookie_mismatch_cleared", inflight=False)
+                    self._runtime_state.clear_recovery(acc, reason="cookie_mismatch_cleared", inflight=False)
                     self._runtime_state.set_cooldown(acc, 0.0, reason="cookie_mismatch_cleared")
                     self._state_mgr.transition(acc, AccountState.IDLE, reason="cookie_mismatch_cleared", force=True)
         return blocked
@@ -485,7 +485,7 @@ class FarmController:
         acc = self._find_account(username)
         if not acc:
             return False, "Account not found"
-        was_captcha = clear_account_captcha_hold(acc)
+        was_captcha = clear_account_captcha_hold(acc, runtime_writer=self._runtime_state)
         if self._runtime_state:
             with acc._lock:
                 self._runtime_state.set_desired(acc, AccountState.IN_GAME, reason="manual_resume")

@@ -144,7 +144,35 @@ def persist_account_captcha_status(account: Any, active: bool = True) -> None:
         pass
 
 
-def set_account_captcha_hold(account: Any, detail: str = "", source: str = "") -> None:
+def _apply_runtime_captcha_hold(account: Any, runtime_writer: Any = None, reason: str = "") -> None:
+    if runtime_writer:
+        if hasattr(runtime_writer, "set_recovery"):
+            runtime_writer.set_recovery(account, status=CAPTCHA_REASON, reason=reason or CAPTCHA_REASON, inflight=False)
+        if hasattr(runtime_writer, "set_cooldown"):
+            runtime_writer.set_cooldown(account, 0.0, reason=reason or CAPTCHA_REASON)
+        return
+    try:
+        account.sync_runtime(reason or CAPTCHA_REASON)
+    except Exception:
+        pass
+
+
+def _apply_runtime_captcha_clear(account: Any, runtime_writer: Any = None, reason: str = "manual_resume") -> None:
+    if runtime_writer:
+        if hasattr(runtime_writer, "clear_recovery"):
+            runtime_writer.clear_recovery(account, reason=reason, inflight=False)
+        elif hasattr(runtime_writer, "set_recovery"):
+            runtime_writer.set_recovery(account, reason=reason, inflight=False)
+        if hasattr(runtime_writer, "set_cooldown"):
+            runtime_writer.set_cooldown(account, 0.0, reason=reason)
+        return
+    try:
+        account.sync_runtime(reason)
+    except Exception:
+        pass
+
+
+def set_account_captcha_hold(account: Any, detail: str = "", source: str = "", runtime_writer: Any = None) -> None:
     reason = CAPTCHA_BLOCK_REASON
     lock = getattr(account, "_lock", None)
 
@@ -157,15 +185,9 @@ def set_account_captcha_hold(account: Any, detail: str = "", source: str = "") -
         account.last_error = detail or reason
         account.last_crash_reason = CAPTCHA_REASON
         account.last_recovery_reason = CAPTCHA_REASON
-        account.recovery_status = CAPTCHA_REASON
-        account.recovery_inflight = False
-        account.cooldown_until = 0.0
         account.recovery_scheduled_at = 0.0
         account.last_state_reason = source or CAPTCHA_REASON
-        try:
-            account.sync_runtime(source or CAPTCHA_REASON)
-        except Exception:
-            pass
+        _apply_runtime_captcha_hold(account, runtime_writer, source or CAPTCHA_REASON)
 
     if lock:
         with lock:
@@ -175,7 +197,7 @@ def set_account_captcha_hold(account: Any, detail: str = "", source: str = "") -
     persist_account_captcha_status(account, active=True)
 
 
-def clear_account_captcha_hold(account: Any) -> bool:
+def clear_account_captcha_hold(account: Any, runtime_writer: Any = None) -> bool:
     was_captcha = is_account_captcha_required(account)
     lock = getattr(account, "_lock", None)
 
@@ -189,15 +211,11 @@ def clear_account_captcha_hold(account: Any) -> bool:
             account.last_crash_reason = ""
         if _lower(getattr(account, "last_recovery_reason", "")) == CAPTCHA_REASON:
             account.last_recovery_reason = ""
-        if _lower(getattr(account, "recovery_status", "")) == CAPTCHA_REASON:
-            account.recovery_status = ""
         if is_captcha_text(getattr(account, "last_state_reason", "")):
             account.last_state_reason = ""
         if is_captcha_text(getattr(account, "import_status", "")):
             account.import_status = ""
-        account.recovery_inflight = False
         account.recovery_scheduled_at = 0.0
-        account.cooldown_until = 0.0
         account.session_checked = False
         account.session_valid = False
         account.session_wait_started_at = 0.0
@@ -207,13 +225,11 @@ def clear_account_captcha_hold(account: Any) -> bool:
         account.crash_retry_count = 0
         account.network_retry_count = 0
         account.session_retry_count = 0
+        _apply_runtime_captcha_clear(account, runtime_writer, "manual_resume")
         try:
-            account.sync_runtime("manual_resume")
             account.runtime.last_error = ""
-            account.runtime.recovery_status = ""
             account.runtime.recovery_reason = ""
             account.runtime.recovery_active = False
-            account.runtime.recovery_inflight = False
         except Exception:
             pass
 

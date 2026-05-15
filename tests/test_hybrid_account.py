@@ -39,6 +39,7 @@ from services.roblox_install_manager import RobloxInstallManager, normalize_robl
 from services.cpu_limiter import CpuLimiter, normalize_cpu_limiter_settings
 from services.process_service import ProcessService
 from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, captcha_detail, clear_account_captcha_hold, set_account_captcha_hold
+from runtime.runtime_state_manager import RuntimeStateManager
 from process_net import ProcessManager
 from roblox_hybrid import (
     HybridLauncher,
@@ -3712,6 +3713,30 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(account_launch_block_reason(acc), CAPTCHA_BLOCK_REASON)
         self.assertTrue(clear_account_captcha_hold(acc))
         self.assertEqual(account_launch_block_reason(acc), "")
+
+    def test_captcha_hold_runtime_fields_go_through_runtime_writer(self):
+        acc = Account(username="CaptchaUser")
+        runtime = RuntimeStateManager()
+        acc.recovery_status = "scheduled"
+        acc.recovery_inflight = True
+        acc.cooldown_until = time.time() + 60
+        acc.sync_runtime("test_seed")
+
+        set_account_captcha_hold(acc, "CAPTCHA challenge detected", source="unit_test", runtime_writer=runtime)
+
+        self.assertEqual(acc.recovery_status, CAPTCHA_REASON)
+        self.assertFalse(acc.recovery_inflight)
+        self.assertEqual(acc.cooldown_until, 0.0)
+        self.assertEqual(acc.runtime.recovery_status, CAPTCHA_REASON)
+        self.assertFalse(acc.runtime.recovery_inflight)
+
+        self.assertTrue(clear_account_captcha_hold(acc, runtime_writer=runtime))
+
+        self.assertEqual(acc.recovery_status, "")
+        self.assertFalse(acc.recovery_inflight)
+        self.assertEqual(acc.cooldown_until, 0.0)
+        self.assertEqual(acc.runtime.recovery_status, "")
+        self.assertFalse(acc.runtime.recovery_inflight)
 
     def test_security_webview_texts_classify_as_captcha_hold(self):
         from runtime.popup_detector.popup_classifier import classify_popup_observation

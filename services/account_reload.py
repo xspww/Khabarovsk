@@ -123,7 +123,7 @@ def _sync_running_farm_accounts(farm: Any, cfg_mgr: Any, new_accounts: List[Acco
         synced += 1
         if now_captcha:
             captcha_synced += 1
-            set_account_captcha_hold(account, fresh.manual_status or CAPTCHA_BLOCK_REASON, source="reload_cookies")
+            set_account_captcha_hold(account, fresh.manual_status or CAPTCHA_BLOCK_REASON, source="reload_cookies", runtime_writer=farm._runtime_state)
             if farm._recovery:
                 farm._recovery.fail_account(account, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
         elif was_captcha:

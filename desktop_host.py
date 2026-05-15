@@ -714,9 +714,9 @@ def run_with_tray(fastapi_app: Any = None, farm_controller: Any = None):
 
         menu = pystray.Menu(
             Item("Open Argus Launcher", lambda: open_browser()),
-            Item("â–¶  Start Farm",     lambda: (_require_configured()[1].start() if not _require_configured()[1].running else None)),
-            Item("â–   Stop Farm",      lambda: (_require_configured()[1].stop() if _require_configured()[1].running else None)),
-            Item("ðŸ” Restart Farm",   lambda: (_require_configured()[1].stop() or time.sleep(0.5) or _require_configured()[1].start())),
+            Item("Start Farm",        lambda: (_require_configured()[1].start() if not _require_configured()[1].running else None)),
+            Item("Stop Farm",         lambda: (_require_configured()[1].stop() if _require_configured()[1].running else None)),
+            Item("Restart Farm",      lambda: (_require_configured()[1].stop() or time.sleep(0.5) or _require_configured()[1].start())),
             pystray.Menu.SEPARATOR,
             Item("Exit",              lambda i, _: exit_app(i)),
         )
@@ -727,15 +727,15 @@ def run_with_tray(fastapi_app: Any = None, farm_controller: Any = None):
         icon.run()
 
     except ImportError:
-        flog("[MAIN] pystray not available â€” running as console")
+        flog("[MAIN] pystray not available - running as console")
         webbrowser.open(f"http://{HOST}:{PORT}")
         print(f"""
-â•”â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•—
-â•‘             Argus Launcher Console           â•‘
-â• â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•£
-â•‘  Web UI: http://{HOST}:{PORT}                 â•‘
-â•‘  Stop  : Ctrl+C                               â•‘
-â•šâ•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
++-----------------------------------------------+
+|             Argus Launcher Console            |
++-----------------------------------------------+
+|  Web UI: http://{HOST}:{PORT}
+|  Stop  : Ctrl+C
++-----------------------------------------------+
 """)
         try:
             while True:

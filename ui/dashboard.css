@@ -193,7 +193,7 @@ tbody tr:hover,tbody tr.active{background:#101d33;box-shadow:inset 2px 0 0 #3478
 #nav .nav-child:before{content:"";position:absolute;left:-9px;top:50%;width:8px;height:1px;background:#263651}
 #nav .nav-child:hover{background:#101b2e;color:#d7e6ff}
 #nav .nav-child.active{background:#13264a;color:#dceaff;box-shadow:none}
-#nav .nav-child.active:before{background:#3478d4}
+#nav .nav-child.active:before{background:#263651}
 .nav-text{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .nav-badge{margin-left:6px;min-width:17px;height:16px;padding:0 5px;border-radius:999px;border:0;display:inline-flex;align-items:center;justify-content:center;font:800 9px var(--mono)}
 .nav-badge-muted{background:#1c2941;color:#aebbd1}
@@ -335,28 +335,34 @@ tbody tr:hover,tbody tr.active{background:#101d33;box-shadow:inset 2px 0 0 #3478
 }
 .nav-group.collapsed .nav-branch{display:none}
 .nav-branch:before{
-  left:5px;
-  top:0;
-  bottom:18px;
-  width:1px;
+  left:4px;
+  top:4px;
+  bottom:17px;
+  width:2px;
   background:#25334d;
+  border-radius:999px;
 }
 #nav .nav-child{
+  position:relative;
   height:34px;
   grid-template-columns:minmax(0,1fr);
   padding:0 10px;
-  border-radius:8px;
+  border-radius:14px;
   color:#8b9ab2;
   background:transparent;
   font-size:13px;
   font-weight:520;
 }
 #nav .nav-child:before{
-  left:-13px;
+  z-index:1;
+  pointer-events:none;
+  left:-14px;
   top:50%;
-  width:12px;
-  height:1px;
+  width:14px;
+  height:2px;
+  transform:translateY(-50%);
   background:#25334d;
+  border:0;
 }
 #nav .nav-child:hover{
   background:#111d31;
@@ -367,7 +373,7 @@ tbody tr:hover,tbody tr.active{background:#101d33;box-shadow:inset 2px 0 0 #3478
   color:#e8f1ff;
   box-shadow:0 1px 2px rgba(0,0,0,.18),0 10px 22px rgba(0,0,0,.18);
 }
-#nav .nav-child.active:before{background:#2d4670}
+#nav .nav-child.active:before{background:#25334d}
 .side-launch{
   order:0;
   margin:0 0 12px;

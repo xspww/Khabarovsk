@@ -9,7 +9,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
-from account_hybrid import redact_secret
+from account_hybrid import ACCOUNT_STORE, audit_event, redact_secret
 from core import (
     Account,
     AccountState,
@@ -479,6 +479,31 @@ class FarmController:
         self._push_event("system", f"Verified finished: {acc.display_name}", account=acc, severity="success", reason="manual_verify_finished")
         return True, f"Verified finished: {username}" + (" (PID killed)" if killed else "")
 
+    def _set_lua_account_description(self, acc: Account, description: str) -> Tuple[bool, str]:
+        text = str(description or "").strip()
+        if len(text) > 500:
+            text = text[:500]
+        with acc._lock:
+            acc.description = text
+
+        persisted = False
+        try:
+            persisted = ACCOUNT_STORE.update_record(acc._config_username, {"description": text}) is not None
+        except Exception as e:
+            flog_kv("ACCOUNT_DATA", "lua_description_update_failed", "warning", account=acc.display_name, error=e)
+
+        try:
+            self.cfg_mgr.save_accounts(self._accounts)
+        except Exception as e:
+            flog_kv("ACCOUNT_DATA", "lua_description_legacy_save_failed", "warning", account=acc.display_name, error=e)
+
+        try:
+            audit_event("lua_description", username=acc._config_username, ok=persisted, description=text)
+        except Exception as e:
+            flog_kv("ACCOUNT_DATA", "lua_description_audit_failed", "warning", account=acc.display_name, error=e)
+
+        return persisted, text
+
     def resume_captcha_account(self, username: str) -> Tuple[bool, str]:
         acc = self._find_account(username)
         if not acc:
@@ -638,6 +663,77 @@ class FarmController:
                 "matched_pid": resolution.bound_pid,
                 "lua_pid": identity.pid,
                 "msg": "Lua event ignored because PID does not match Argus binding",
+            }
+
+        if event_name in {"description", "set_description", "status_note"}:
+            persisted, description = self._set_lua_account_description(
+                acc,
+                str(payload.get("description") or payload.get("text") or payload.get("detail") or ""),
+            )
+            self._bump_status_revision()
+            self._push_event(
+                "lua",
+                f"Lua helper: description - {acc.display_name}",
+                account=acc,
+                severity="success",
+                reason=reason,
+                lua_event=event_name,
+                signal="description_updated",
+                accepted=True,
+                persisted=persisted,
+            )
+            return {
+                "ok": True,
+                "accepted": True,
+                "event": event_name,
+                "account": acc._config_username,
+                "matched_pid": resolution.bound_pid,
+                "identity_match": resolution.match_reason,
+                "signal": "description_updated",
+                "persisted": persisted,
+                "description": description,
+                "msg": "Description updated",
+            }
+
+        if event_name in {"finished", "mark_finished"}:
+            raw_description = str(payload.get("description") or "").strip()
+            description_persisted = False
+            if raw_description:
+                description_persisted, _ = self._set_lua_account_description(acc, raw_description)
+            result = self._runtime_orchestrator.request_verify_finished(
+                acc,
+                self._state_mgr or self._runtime_state,
+                reason=reason,
+            )
+            try:
+                self.cfg_mgr.save_accounts(self._accounts)
+            except Exception as e:
+                flog_kv("ACCOUNT_DATA", "lua_finished_save_failed", "warning", account=acc.display_name, error=e)
+            self._bump_status_revision()
+            self._push_event(
+                "lua",
+                f"Lua helper: finished - {acc.display_name}",
+                account=acc,
+                severity="success",
+                reason=reason,
+                lua_event=event_name,
+                signal="verify_finished",
+                accepted=True,
+                killed=bool(result.get("killed")),
+                description_persisted=description_persisted,
+            )
+            return {
+                "ok": True,
+                "accepted": True,
+                "event": event_name,
+                "account": acc._config_username,
+                "matched_pid": resolution.bound_pid,
+                "identity_match": resolution.match_reason,
+                "signal": "verify_finished",
+                "killed": bool(result.get("killed")),
+                "finished_at": result.get("finished_at", 0.0),
+                "description_persisted": description_persisted,
+                "msg": "Account marked finished",
             }
 
         signal = ""

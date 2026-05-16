@@ -936,6 +936,15 @@ def _read_guard_ready_line(proc: subprocess.Popen, timeout: float) -> Tuple[str,
     return box.get("line", ""), box.get("error", "")
 
 
+def _parse_multi_roblox_ready_line(ready_line: str) -> Tuple[str, List[str], bool, bool]:
+    detail = str(ready_line or "").replace("multi_roblox_guard_ready", "", 1).strip()
+    handle_part = detail.split(" pid=", 1)[0].strip()
+    handle_names = [name for name in handle_part.split(",") if name]
+    has_mutex = any("ROBLOX_singletonMutex" in name for name in handle_names)
+    has_event = any("ROBLOX_singletonEvent" in name for name in handle_names)
+    return detail, handle_names, has_mutex, has_event
+
+
 def _terminate_multi_roblox_helper_locked(reason: str = "release") -> None:
     global _MULTI_ROBLOX_HELPER
     proc = _MULTI_ROBLOX_HELPER
@@ -1037,11 +1046,27 @@ def ensure_multi_roblox_guard(timeout: float = 6.0) -> Tuple[bool, str]:
                 raise RuntimeError(f"guard helper exited before ready rc={_MULTI_ROBLOX_HELPER.poll()} {ready_line}".strip())
             if not ready_line.startswith("multi_roblox_guard_ready"):
                 raise RuntimeError(ready_line or "guard helper did not report ready")
-            if "ROBLOX_singletonMutex" not in ready_line or "ROBLOX_singletonEvent" not in ready_line:
-                raise RuntimeError(f"guard helper missing required handles: {ready_line}")
-            detail = ready_line.replace("multi_roblox_guard_ready", "", 1).strip()
-            handle_part = detail.split(" pid=", 1)[0].strip()
-            _MULTI_ROBLOX_HANDLE_NAMES = [name for name in handle_part.split(",") if name]
+            detail, handle_names, has_mutex, has_event = _parse_multi_roblox_ready_line(ready_line)
+            if not has_mutex and not has_event:
+                raise RuntimeError(f"guard helper missing Roblox singleton handles: {ready_line}")
+            if not (has_mutex and has_event):
+                missing = ",".join(
+                    name
+                    for name, present in (
+                        ("ROBLOX_singletonMutex", has_mutex),
+                        ("ROBLOX_singletonEvent", has_event),
+                    )
+                    if not present
+                )
+                detail = f"{detail} external_provider=possible missing={missing}".strip()
+                _multi_roblox_log(
+                    "guard_partial_ready",
+                    "warning",
+                    pid=_MULTI_ROBLOX_HELPER.pid,
+                    detail=detail,
+                    missing=missing,
+                )
+            _MULTI_ROBLOX_HANDLE_NAMES = handle_names
             _MULTI_ROBLOX_STATE = "ready"
             _MULTI_ROBLOX_DETAIL = detail
             _MULTI_ROBLOX_LAST_FAILURE = ""

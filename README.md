@@ -66,6 +66,16 @@ python main.py
 
 The backend binds to `127.0.0.1` and uses a per-process local API token for mutating API requests. The dashboard receives that token from the local HTML page and sends it automatically.
 
+## Lua Client Module
+
+Argus can serve a local drop-in Lua module for Roblox client scripts:
+
+```text
+http://127.0.0.1:7777/api/lua/account-module?account=YourAccountName
+```
+
+The module wraps the existing `/api/lua/rejoin-event` contract and supports safe runtime signals such as heartbeat, disconnect, rejoin request, description update, and mark-finished. It deliberately does not expose Roblox cookies, CSRF tokens, or RAM passwords to Lua.
+
 ## Data Location
 
 Runtime data is stored under:

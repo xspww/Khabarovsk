@@ -903,6 +903,7 @@ class HybridAccountTests(unittest.TestCase):
         account_status_response = client.get("/ui/runtime/accountStatus.js")
         table_response = client.get("/ui/components/accountsTable.js")
         feedback_response = client.get("/ui/components/feedback.js")
+        icons_response = client.get("/ui/components/icons.js")
         bindings_response = client.get("/ui/events/bindings.js")
         settings_response = client.get("/ui/panels/settingsPanels.js")
         js_response = client.get("/ui/dashboard.js")
@@ -913,6 +914,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(account_status_response.status_code, 200)
         self.assertEqual(table_response.status_code, 200)
         self.assertEqual(feedback_response.status_code, 200)
+        self.assertEqual(icons_response.status_code, 200)
         self.assertEqual(bindings_response.status_code, 200)
         self.assertEqual(settings_response.status_code, 200)
         self.assertEqual(js_response.status_code, 200)
@@ -924,6 +926,7 @@ class HybridAccountTests(unittest.TestCase):
             account_status_response.text,
             table_response.text,
             feedback_response.text,
+            icons_response.text,
             bindings_response.text,
             settings_response.text,
             js_response.text,
@@ -941,12 +944,15 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("export function rowStatusLabel", js)
         self.assertIn("export function renderAccountRows", js)
         self.assertIn("export function createFeedback", js)
+        self.assertIn("export function solarIcon", js)
+        self.assertIn("export function applySolarStaticIcons", js)
         self.assertIn("export function bindDashboardEvents", js)
         self.assertIn("export function renderSettingsPanel", js)
         self.assertIn("from './runtime/status.js'", js)
         self.assertIn("from './runtime/accountStatus.js'", js)
         self.assertIn("from './components/accountsTable.js'", js)
         self.assertIn("from './components/feedback.js'", js)
+        self.assertIn("from './components/icons.js'", js)
         self.assertIn("from './events/bindings.js'", js)
         self.assertIn("from './panels/settingsPanels.js'", js)
         self.assertNotIn("setInterval(manualSnapshot,2500)", js)
@@ -996,16 +1002,30 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("background:#111111", spacex_css)
         self.assertIn(".nav button.active{background:#202020;color:#FFFFFF;box-shadow:inset 2px 0 0 #FFFFFF}", html)
         self.assertIn(".side-launch .guard-action{height:32px;border-radius:6px;background:transparent", html)
+        self.assertIn("SOLAR_ICON_SOURCE='SVGRepo Solar Linear Icons'", html)
+        self.assertIn("data-solar-icon=", html)
+        self.assertIn("applySolarStaticIcons(document);", html)
+        self.assertNotIn("solarIcon('exit','guard-icon stop')", html)
         self.assertIn('class="guard-icon stop"', html)
+        self.assertIn('x="7.2" y="5" width="3.8" height="14" rx="1.5"', html)
+        self.assertIn('x="13" y="5" width="3.8" height="14" rx="1.5"', html)
         self.assertIn('class="guard-icon bolt"', html)
         self.assertIn('d="M13 2 4 14h7l-1 8 10-13h-7z"', html)
+        self.assertNotIn("solarIcon('playCircle','guard-icon bolt')", html)
+        self.assertIn("'home','nav-icon'", html)
+        self.assertIn("solarIcon('presentationGraph','nav-icon')", html)
+        self.assertIn("solarIcon('tuning','nav-icon')", html)
+        self.assertIn("'userPlus','btn-icon'", html)
+        self.assertIn("'restart','btn-icon'", html)
+        self.assertIn("solarIcon('checkSquare','btn-icon')", html)
+        self.assertIn("delete:'trash'", html)
+        self.assertIn("install:'downloadSquare'", html)
+        self.assertIn("M9 4.5H8", html)
+        self.assertIn('<circle cx="12" cy="12" r="10"', html)
         self.assertIn("rgba(31,157,98,.72)", html)
         self.assertIn("rgba(224,91,106,.72)", html)
         self.assertIn("drop-shadow(0 0 5px rgba(31,157,98,.72))", html)
         self.assertIn("drop-shadow(0 0 5px rgba(224,91,106,.72))", html)
-        self.assertIn('x="3.8" y="3.8" width="16.4" height="16.4" rx="5.2"', html)
-        self.assertIn('x="8" y="7.6" width="2.4" height="8.8" rx="1.2"', html)
-        self.assertIn('x="13.6" y="7.6" width="2.4" height="8.8" rx="1.2"', html)
         self.assertNotIn('class="guard-icon play"', html)
         self.assertNotIn('d="M10 8.2v7.6l6-3.8-6-3.8z"', html)
         self.assertNotIn('x="7" y="7" width="10" height="10" rx="1.5"', html)
@@ -1018,6 +1038,12 @@ class HybridAccountTests(unittest.TestCase):
             self.assertIn(stroke_width, html)
         self.assertIn(".nav-root,.nav-group-head{font-weight:800!important}", html)
         self.assertIn(".nav-root svg,.nav-group-head svg{width:8px;height:8px;flex-basis:8px}", html)
+        self.assertIn("left:4px", html)
+        self.assertIn("pointer-events:none", html)
+        self.assertIn("transform:translateY(-50%)", html)
+        self.assertIn("#nav .nav-child.active:before{background:#25334d}", html)
+        self.assertNotIn("--branch-curve:url", html)
+        self.assertIn("background:#13264a", html)
         self.assertNotIn('rect x="4" y="4" width="16" height="16" rx="4"', html)
         self.assertNotIn('d="M4 9.5h16"', html)
         self.assertNotIn('d="M9.5 9.5V20"', html)
@@ -1359,6 +1385,39 @@ class HybridAccountTests(unittest.TestCase):
         self.assertNotIn("__ARGUS_", script)
         loader = (Path(__file__).resolve().parents[1] / "lua" / "argus_rejoin_loader.lua").read_text(encoding="utf-8")
         self.assertIn("/api/lua/rejoin-helper", loader)
+        self.assertIn("local Load = loadstring or load", loader)
+        self.assertIn("Load(source)", loader)
+
+    def test_lua_account_module_is_served_with_safe_api_contract(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        response = client.get("/api/lua/account-module?account=LuaUnit&port=7777")
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text
+        self.assertIn('Host = "127.0.0.1"', script)
+        self.assertIn("Port = 7777", script)
+        self.assertIn(f'Token = "{main.INSTANCE_TOKEN}"', script)
+        self.assertIn('Account = "LuaUnit"', script)
+        self.assertIn('Version = "account-1.0.0"', script)
+        self.assertIn("function Account.new", script)
+        self.assertIn("function Account.SetKey", script)
+        self.assertIn("function Account:Send", script)
+        self.assertIn("function Account:SetDescription", script)
+        self.assertIn("function Account:MarkFinished", script)
+        self.assertIn("/api/lua/rejoin-event", script)
+        self.assertIn('["X-Argus-Token"] = self.Token', script)
+        self.assertIn('["X-RoboGuard-Token"] = self.Token', script)
+        self.assertIn('return self:Send("finished"', script)
+        self.assertIn('client:Loaded("ArgusAccount module loaded")', script)
+        self.assertNotIn("__ARGUS_", script)
+        self.assertNotIn("GetCookie", script)
+        self.assertNotIn("GetCSRFToken", script)
+        self.assertNotIn("Password", script)
+        loader = (Path(__file__).resolve().parents[1] / "lua" / "argus_account_loader.lua").read_text(encoding="utf-8")
+        self.assertIn("/api/lua/account-module", loader)
         self.assertIn("local Load = loadstring or load", loader)
         self.assertIn("Load(source)", loader)
 
@@ -1707,6 +1766,87 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(routed[0][0], account)
         self.assertEqual(routed[0][3]["matched_pid"], 333)
         self.assertEqual(routed[0][3]["lua_pid"], 333)
+
+    def test_lua_description_event_updates_account_note_without_credentials(self):
+        controller = FarmController.__new__(FarmController)
+        account = Account("LuaUnit")
+        controller._accounts = [account]
+        controller._workers = {}
+        controller._bump_status_revision = lambda: None
+        pushed = []
+        saved = []
+
+        class FakeConfig:
+            def save_accounts(self, accounts):
+                saved.append(list(accounts))
+
+        controller.cfg_mgr = FakeConfig()
+        controller._push_event = lambda *args, **kwargs: pushed.append((args, kwargs))
+
+        with patch("farm.ACCOUNT_STORE.update_record", return_value={"username": "LuaUnit", "description": "ready"}) as update_record, \
+             patch("farm.audit_event") as audit:
+            result = controller.handle_lua_rejoin_event({
+                "event": "description",
+                "account": "LuaUnit",
+                "username": "LuaUnit",
+                "description": "ready",
+            })
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["signal"], "description_updated")
+        self.assertEqual(account.description, "ready")
+        self.assertTrue(result["persisted"])
+        update_record.assert_called_once_with("LuaUnit", {"description": "ready"})
+        audit.assert_called_once()
+        self.assertTrue(saved)
+        self.assertEqual(pushed[0][1]["lua_event"], "description")
+
+    def test_lua_finished_event_marks_account_finished_through_runtime_orchestrator(self):
+        controller = FarmController.__new__(FarmController)
+        account = Account("LuaUnit")
+        account.pid = 444
+        controller._accounts = [account]
+        controller._workers = {}
+        controller._state_mgr = object()
+        controller._runtime_state = None
+        controller._bump_status_revision = lambda: None
+        pushed = []
+        saved = []
+        calls = []
+
+        class FakeConfig:
+            def save_accounts(self, accounts):
+                saved.append(list(accounts))
+
+        class FakeOrchestrator:
+            def request_verify_finished(self, acc, state_manager=None, reason=""):
+                calls.append((acc, state_manager, reason))
+                return {"ok": True, "killed": True, "finished_at": 123.5}
+
+        controller.cfg_mgr = FakeConfig()
+        controller._runtime_orchestrator = FakeOrchestrator()
+        controller._push_event = lambda *args, **kwargs: pushed.append((args, kwargs))
+
+        with patch("farm.ACCOUNT_STORE.update_record", return_value={"username": "LuaUnit", "description": "done"}):
+            result = controller.handle_lua_rejoin_event({
+                "event": "finished",
+                "account": "LuaUnit",
+                "username": "LuaUnit",
+                "pid": "444",
+                "reason_key": "lua_finished_unit",
+                "description": "done",
+            })
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["signal"], "verify_finished")
+        self.assertTrue(result["killed"])
+        self.assertEqual(result["finished_at"], 123.5)
+        self.assertEqual(account.description, "done")
+        self.assertEqual(calls, [(account, controller._state_mgr, "lua_finished_unit")])
+        self.assertTrue(saved)
+        self.assertEqual(pushed[0][1]["lua_event"], "finished")
 
     def test_queue_popup_disconnected_toggle_is_separate_from_presence(self):
         from fastapi.testclient import TestClient
@@ -4158,6 +4298,49 @@ class HybridAccountTests(unittest.TestCase):
         release_multi_roblox_guard()
         self.assertTrue(fake.terminated)
         self.assertEqual(multi_roblox_guard_status()["state"], "stopped")
+
+    def test_multi_roblox_guard_accepts_partial_external_provider(self):
+        class FakeStdout:
+            def readline(self):
+                return "multi_roblox_guard_ready ROBLOX_singletonEvent:err=0 pid=6380\n"
+
+        class FakeProcess:
+            def __init__(self):
+                self.pid = 6380
+                self.stdout = FakeStdout()
+                self.terminated = False
+                self._poll = None
+
+            def poll(self):
+                return self._poll
+
+            def terminate(self):
+                self.terminated = True
+                self._poll = 0
+
+            def wait(self, timeout=None):
+                self._poll = 0
+                return 0
+
+            def kill(self):
+                self._poll = -9
+
+        fake = FakeProcess()
+        release_multi_roblox_guard()
+        try:
+            with patch("roblox_hybrid.subprocess.Popen", return_value=fake):
+                ok, detail = ensure_multi_roblox_guard()
+
+            self.assertTrue(ok)
+            self.assertIn("ROBLOX_singletonEvent", detail)
+            self.assertIn("external_provider=possible", detail)
+            self.assertIn("missing=ROBLOX_singletonMutex", detail)
+            status = multi_roblox_guard_status()
+            self.assertEqual(status["state"], "ready")
+            self.assertEqual(status["pid"], 6380)
+            self.assertEqual(status["handle_names"], ["ROBLOX_singletonEvent:err=0"])
+        finally:
+            release_multi_roblox_guard()
 
     def test_auto_private_server_failure_blocks_public_launch(self):
         class FakeRobloxHTTP:

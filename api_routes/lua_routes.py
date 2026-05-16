@@ -15,6 +15,7 @@ from .context import ApiContext
 
 
 _SCRIPT_PATH = resource_path("lua", "argus_rejoin_helper.lua")
+_ACCOUNT_MODULE_PATH = resource_path("lua", "argus_account_client.lua")
 _TOKEN_HEADERS = ("X-Argus-Token", "X-RoboGuard-Token")
 _TOKEN_BODY_KEYS = ("token", "argus_token", "api_token", "_argus_token")
 _LOCAL_FALLBACK_EVENTS = {
@@ -38,20 +39,54 @@ def _load_script_template() -> str:
         return handle.read()
 
 
+def _load_account_module_template() -> str:
+    with open(_ACCOUNT_MODULE_PATH, "r", encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _render_lua_template(template: str, replacements: Dict[str, str]) -> str:
+    for key, value in replacements.items():
+        template = template.replace(key, value)
+    return template
+
+
+def _selected_lua_port(request: Request, port: int) -> int:
+    return int(port or request.url.port or 7777)
+
+
 def _render_rejoin_helper(ctx: ApiContext, request: Request, account: str, port: int, shutdown_delay: float) -> str:
     selected_port = int(port or request.url.port or 7777)
     delay = max(0.5, min(float(shutdown_delay or 3.0), 60.0))
     template = _load_script_template()
-    replacements = {
+    return _render_lua_template(template, {
         "__ARGUS_HOST__": _lua_literal("127.0.0.1"),
         "__ARGUS_PORT__": str(selected_port),
         "__ARGUS_TOKEN__": _lua_literal(ctx.instance_token),
         "__ARGUS_ACCOUNT__": _lua_literal(account),
         "__ARGUS_SHUTDOWN_DELAY__": f"{delay:.2f}",
-    }
-    for key, value in replacements.items():
-        template = template.replace(key, value)
-    return template
+    })
+
+
+def _render_account_module(ctx: ApiContext, request: Request, account: str, port: int) -> str:
+    template = _load_account_module_template()
+    return _render_lua_template(template, {
+        "__ARGUS_HOST__": _lua_literal("127.0.0.1"),
+        "__ARGUS_PORT__": str(_selected_lua_port(request, port)),
+        "__ARGUS_TOKEN__": _lua_literal(ctx.instance_token),
+        "__ARGUS_ACCOUNT__": _lua_literal(account),
+    })
+
+
+def _lua_text_response(script: str) -> PlainTextResponse:
+    return PlainTextResponse(
+        script,
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+    )
 
 
 def _lua_request_token(request: Request, body: Dict[str, Any]) -> str:
@@ -153,15 +188,28 @@ def register(app, ctx: ApiContext) -> None:
         if not os.path.exists(_SCRIPT_PATH):
             raise HTTPException(404, "Lua helper template not found")
         script = _render_rejoin_helper(ctx, request, account, port, shutdown_delay)
-        return PlainTextResponse(
-            script,
-            media_type="text/plain; charset=utf-8",
-            headers={
-                "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
-                "Pragma": "no-cache",
-                "Expires": "0",
-            },
+        flog_kv(
+            "LUA",
+            "rejoin_helper_served",
+            account=str(account or ""),
+            port=_selected_lua_port(request, port),
+            client=str(getattr(getattr(request, "client", None), "host", "") or ""),
         )
+        return _lua_text_response(script)
+
+    @app.get("/api/lua/account-module", response_class=PlainTextResponse)
+    def api_lua_account_module(request: Request, account: str = "", port: int = 0):
+        if not os.path.exists(_ACCOUNT_MODULE_PATH):
+            raise HTTPException(404, "Lua account module template not found")
+        script = _render_account_module(ctx, request, account, port)
+        flog_kv(
+            "LUA",
+            "account_module_served",
+            account=str(account or ""),
+            port=_selected_lua_port(request, port),
+            client=str(getattr(getattr(request, "client", None), "host", "") or ""),
+        )
+        return _lua_text_response(script)
 
     @app.post("/api/lua/rejoin-event")
     async def api_lua_rejoin_event(request: Request):

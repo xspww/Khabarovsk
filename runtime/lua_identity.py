@@ -162,4 +162,6 @@ def lua_event_requires_pid_guard(event_name: str) -> bool:
         "error_code",
         "teleport_error",
         "rejoin_requested",
+        "finished",
+        "mark_finished",
     }

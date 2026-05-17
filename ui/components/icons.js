@@ -1,6 +1,7 @@
 // Solar Linear icons from SVGRepo, normalized to currentColor for the local UI theme.
 const ICONS={
   home:'<path d="M22 22L2 22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M2 11L10.1259 4.49931C11.2216 3.62279 12.7784 3.62279 13.8741 4.49931L22 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M15.5 5.5V3.5C15.5 3.22386 15.7239 3 16 3H18.5C18.7761 3 19 3.22386 19 3.5V8.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M4 22V9.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M20 22V9.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M15 22V17C15 15.5858 15 14.8787 14.5607 14.4393C14.1213 14 13.4142 14 12 14C10.5858 14 9.87868 14 9.43934 14.4393C9 14.8787 9 15.5858 9 17V22" stroke="currentColor" stroke-width="1.5"/><path d="M14 9.5C14 10.6046 13.1046 11.5 12 11.5C10.8954 11.5 10 10.6046 10 9.5C10 8.39543 10.8954 7.5 12 7.5C13.1046 7.5 14 8.39543 14 9.5Z" stroke="currentColor" stroke-width="1.5"/>',
+  noticeBell:'<circle cx="505" cy="790" r="96" fill="currentColor"/><path d="M162 704C220 669 241 619 260 548L304 380C338 251 462 169 584 188" stroke="currentColor" stroke-width="86" stroke-linecap="round"/><path d="M562 184C602 190 626 204 630 240L636 286C606 318 583 360 574 412C546 404 520 400 493 402C504 319 529 249 562 184Z" fill="currentColor"/><circle cx="752" cy="307" r="104" fill="currentColor"/><path d="M686 509C682 581 683 634 731 687C761 720 762 760 733 789" stroke="currentColor" stroke-width="86" stroke-linecap="round"/><path d="M162 704L763 786" stroke="currentColor" stroke-width="88" stroke-linecap="round"/>',
   playCircle:'<circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="1.5"/><path d="M15.4137 10.941C16.1954 11.4026 16.1954 12.5974 15.4137 13.059L10.6935 15.8458C9.93371 16.2944 9 15.7105 9 14.7868L9 9.21316C9 8.28947 9.93371 7.70561 10.6935 8.15419L15.4137 10.941Z" stroke="currentColor" stroke-width="1.5"/>',
   presentationGraph:'<path d="M2 2H22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M9 10.5L10.2929 9.20711C10.6262 8.87377 10.7929 8.70711 11 8.70711C11.2071 8.70711 11.3738 8.87377 11.7071 9.20711L12.2929 9.79289C12.6262 10.1262 12.7929 10.2929 13 10.2929C13.2071 10.2929 13.3738 10.1262 13.7071 9.79289L15 8.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M12 21L12 17" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M10 22L12 21" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M14 22L12 21" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M20 2V10.5C20 13.5641 20 15.0962 18.9958 16.0481C17.9916 17 16.3753 17 13.1429 17H10.8571C7.62465 17 6.00841 17 5.00421 16.0481C4 15.0962 4 13.5641 4 10.5V2" stroke="currentColor" stroke-width="1.5"/>',
   tuning:'<path d="M2 12C2 7.28595 2 4.92893 3.46447 3.46447C4.92893 2 7.28595 2 12 2C16.714 2 19.0711 2 20.5355 3.46447C22 4.92893 22 7.28595 22 12C22 16.714 22 19.0711 20.5355 20.5355C19.0711 22 16.714 22 12 22C7.28595 22 4.92893 22 3.46447 20.5355C2 19.0711 2 16.714 2 12Z" stroke="currentColor" stroke-width="1.5"/><circle cx="8" cy="10" r="2" stroke="currentColor" stroke-width="1.5"/><circle cx="2" cy="2" r="2" transform="matrix(1 0 0 -1 14 16)" stroke="currentColor" stroke-width="1.5"/><path d="M8 14V19" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M16 10V5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M8 5V6" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M16 19V18" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>',
@@ -13,12 +14,17 @@ const ICONS={
   downloadSquare:'<path d="M12 7L12 14M12 14L15 11M12 14L9 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><path d="M16 17H12H8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M2 12C2 7.28595 2 4.92893 3.46447 3.46447C4.92893 2 7.28595 2 12 2C16.714 2 19.0711 2 20.5355 3.46447C22 4.92893 22 7.28595 22 12C22 16.714 22 19.0711 20.5355 20.5355C19.0711 22 16.714 22 12 22C7.28595 22 4.92893 22 3.46447 20.5355C2 19.0711 2 16.714 2 12Z" stroke="currentColor" stroke-width="1.5"/>'
 };
 
+const ICON_VIEWBOX={
+  noticeBell:'0 0 1024 1024'
+};
+
 export const SOLAR_ICON_SOURCE='SVGRepo Solar Linear Icons';
 
 export function solarIcon(name,className=''){
   const body=ICONS[name]||ICONS.home;
   const cls=className?` class="${className}"`:'';
-  return `<svg${cls} data-solar-icon="${name}" aria-hidden="true" viewBox="0 0 24 24" fill="none">${body}</svg>`;
+  const viewBox=ICON_VIEWBOX[name]||'0 0 24 24';
+  return `<svg${cls} data-solar-icon="${name}" aria-hidden="true" viewBox="${viewBox}" fill="none">${body}</svg>`;
 }
 
 function replaceSvg(root,selector,name,className){

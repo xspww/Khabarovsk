@@ -119,7 +119,7 @@ class RobloxInstallManager:
 
     def _start_job(self, action: str, target: Callable[..., None], *args: Any) -> Dict[str, Any]:
         if self.guard_running() or self.roblox_running():
-            return {"ok": False, "accepted": False, "msg": "Stop Argus and close Roblox first."}
+            return {"ok": False, "accepted": False, "msg": "Stop Cronus and close Roblox first."}
         blockers = self.find_install_blockers()
         if blockers:
             return {"ok": False, "accepted": False, "msg": self._format_blockers(blockers), "blockers": blockers}
@@ -337,7 +337,7 @@ class RobloxInstallManager:
                 raise RuntimeError(self._format_blockers(blockers))
             detail = self._first_remaining_path(root)
             suffix = f": {last_error}" if last_error else ""
-            raise RuntimeError(f"Cannot remove {detail}. Close apps using Roblox files or run Argus as Administrator{suffix}")
+            raise RuntimeError(f"Cannot remove {detail}. Close apps using Roblox files or run Cronus as Administrator{suffix}")
         if last_error:
             raise RuntimeError(str(last_error))
 
@@ -474,7 +474,7 @@ class RobloxInstallManager:
         return normalize_roblox_version(str(version))
 
     def fetch_official_latest_version(self) -> str:
-        with urllib.request.urlopen(urllib.request.Request(LATEST_VERSION_URL, headers={"User-Agent": "ArgusLauncher/RT"}), timeout=20) as response:
+        with urllib.request.urlopen(urllib.request.Request(LATEST_VERSION_URL, headers={"User-Agent": "CronusLauncher/RT"}), timeout=20) as response:
             data = json.loads(response.read().decode("utf-8", "replace"))
         version = data.get("clientVersionUpload") or data.get("version")
         return normalize_roblox_version(str(version or ""))
@@ -621,11 +621,11 @@ class RobloxInstallManager:
             pass
 
     def _download_text(self, url: str) -> str:
-        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "ArgusLauncher/RT"}), timeout=45) as response:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "CronusLauncher/RT"}), timeout=45) as response:
             return response.read().decode("utf-8", "replace")
 
     def _download_file(self, url: str, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "ArgusLauncher/RT"}), timeout=90) as response:
+        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "CronusLauncher/RT"}), timeout=90) as response:
             with open(path, "wb") as fh:
                 shutil.copyfileobj(response, fh)

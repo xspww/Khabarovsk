@@ -30,7 +30,7 @@ from .context import ApiContext
 from .idempotency import begin_idempotent_request, begin_idempotent_request_sync, finish_idempotent_request
 from .settings_state import _apply_game_defaults, _normalize_window_size_settings
 
-APP_USER_AGENT = "ArgusLauncher/RT"
+APP_USER_AGENT = "CronusLauncher/RT"
 _AVATAR_CACHE: Dict[str, Tuple[float, str]] = {}
 _AVATAR_CACHE_TTL = 300.0
 
@@ -607,4 +607,4 @@ def register(app, ctx: ApiContext) -> None:
             return {"ok": False, "msg": "No VipTracker (no VIP links)"}
         return {"ok": True, "links": acc._vip_tracker.status()}
     # Web UI routes
-    # Argus Launcher dashboard is served by system_routes.py.
+    # Cronus Launcher dashboard is served by system_routes.py.

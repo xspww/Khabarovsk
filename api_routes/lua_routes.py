@@ -14,8 +14,8 @@ from core import flog_kv
 from .context import ApiContext
 
 
-_SCRIPT_PATH = resource_path("lua", "argus_rejoin_helper.lua")
-_ACCOUNT_MODULE_PATH = resource_path("lua", "argus_account_client.lua")
+_SCRIPT_PATH = resource_path("lua", "internal", "rejoin_monitor.lua")
+_ACCOUNT_MODULE_PATH = resource_path("lua", "internal", "account_status_client.lua")
 _TOKEN_HEADERS = ("X-Argus-Token", "X-RoboGuard-Token")
 _TOKEN_BODY_KEYS = ("token", "argus_token", "api_token", "_argus_token")
 _LOCAL_FALLBACK_EVENTS = {

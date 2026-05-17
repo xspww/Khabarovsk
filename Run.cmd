@@ -1,6 +1,6 @@
 @echo off
 setlocal
-title Argus Launcher Console
+title Cronus Launcher Console
 chcp 65001 >nul
 set PYTHONUTF8=1
 set PYTHONIOENCODING=utf-8
@@ -10,7 +10,7 @@ cd /d "%~dp0"
 python main.py
 if errorlevel 1 (
   echo.
-  echo Argus Launcher exited with an error.
+  echo Cronus Launcher exited with an error.
   echo Check the message above or the log file shown in this window.
   pause
 )

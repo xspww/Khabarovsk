@@ -190,7 +190,7 @@ def _print_line(line: str) -> None:
 
 
 def _title_text_locked() -> str:
-    return f"Argus | Active: {len(_ACTIVE_ACCOUNTS)} | Queue: {_QUEUE_SIZE} | Captcha: {len(_CAPTCHA_ACCOUNTS)}"
+    return f"Cronus | Active: {len(_ACTIVE_ACCOUNTS)} | Queue: {_QUEUE_SIZE} | Captcha: {len(_CAPTCHA_ACCOUNTS)}"
 
 
 def _set_title_locked() -> None:

@@ -106,7 +106,7 @@ class ConsoleActivityFormatTests(unittest.TestCase):
         console._CAPTCHA_ACCOUNTS.add("Zuckmu")
         console._QUEUE_SIZE = 3
 
-        self.assertEqual(console._title_text_locked(), "Argus | Active: 2 | Queue: 3 | Captcha: 1")
+        self.assertEqual(console._title_text_locked(), "Cronus | Active: 2 | Queue: 3 | Captcha: 1")
 
     def test_manual_resume_removes_captcha_from_console_title_count(self):
         console._CAPTCHA_ACCOUNTS.add("Zuckmu")

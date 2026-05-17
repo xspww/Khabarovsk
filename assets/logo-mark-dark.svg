@@ -1,0 +1,44 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="240" y1="240" x2="784" y2="784" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#D1D5DB"/>
+    </linearGradient>
+    <filter id="s" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="12" stdDeviation="18" flood-opacity="0.22"/>
+    </filter>
+  </defs>
+
+  <!-- Dark background variant -->
+  <rect x="112" y="112" width="800" height="800" rx="180" fill="#0B0F17"/>
+
+  <g filter="url(#s)">
+    <circle cx="512" cy="512" r="268" stroke="#FFFFFF" stroke-width="44" opacity="0.10"/>
+
+    <!-- Cube -->
+    <g>
+      <path d="M420 512L512 560L512 682L420 632L420 512Z" fill="url(#g)"/>
+      <path d="M512 560L604 512L604 632L512 682L512 560Z" fill="#E5E7EB"/>
+      <path d="M420 512L512 460L604 512L512 560L420 512Z" fill="#F9FAFB"/>
+      <path d="M512 520L548 500L548 544L512 564L476 544L476 500L512 520Z" fill="#0B0F17" opacity="0.92"/>
+    </g>
+
+    <!-- Rejoin loop -->
+    <path
+      d="M706 474C680 390 604 330 512 330C398 330 306 422 306 536C306 650 398 742 512 742C604 742 682 682 708 598"
+      stroke="#FFFFFF"
+      stroke-width="44"
+      stroke-linecap="round"
+      opacity="0.96"
+    />
+    <path
+      d="M712 592L746 608L736 570"
+      stroke="#FFFFFF"
+      stroke-width="44"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      opacity="0.96"
+    />
+  </g>
+</svg>
+

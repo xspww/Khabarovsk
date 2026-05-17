@@ -1,0 +1,51 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="g" x1="240" y1="240" x2="784" y2="784" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#111827"/>
+      <stop offset="1" stop-color="#000000"/>
+    </linearGradient>
+    <filter id="s" x="-20%" y="-20%" width="140%" height="140%" color-interpolation-filters="sRGB">
+      <feDropShadow dx="0" dy="10" stdDeviation="18" flood-opacity="0.10"/>
+    </filter>
+  </defs>
+
+  <!-- Background (Apple-like: soft, minimal, high-contrast) -->
+  <rect x="112" y="112" width="800" height="800" rx="180" fill="#FFFFFF"/>
+
+  <!-- Mark -->
+  <g filter="url(#s)">
+    <!-- Outer ring -->
+    <circle cx="512" cy="512" r="268" stroke="#0B0F17" stroke-width="44" opacity="0.08"/>
+
+    <!-- Cube (Roblox-inspired) -->
+    <g>
+      <!-- Front face -->
+      <path d="M420 512L512 560L512 682L420 632L420 512Z" fill="url(#g)"/>
+      <!-- Right face -->
+      <path d="M512 560L604 512L604 632L512 682L512 560Z" fill="#0B1220"/>
+      <!-- Top face -->
+      <path d="M420 512L512 460L604 512L512 560L420 512Z" fill="#111827"/>
+
+      <!-- Center cut (Roblox-like negative space) -->
+      <path d="M512 520L548 500L548 544L512 564L476 544L476 500L512 520Z" fill="#FFFFFF" opacity="0.92"/>
+    </g>
+
+    <!-- Rejoin loop (clean circular arrow) -->
+    <path
+      d="M706 474C680 390 604 330 512 330C398 330 306 422 306 536C306 650 398 742 512 742C604 742 682 682 708 598"
+      stroke="#0B0F17"
+      stroke-width="44"
+      stroke-linecap="round"
+      opacity="0.95"
+    />
+    <path
+      d="M712 592L746 608L736 570"
+      stroke="#0B0F17"
+      stroke-width="44"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+      opacity="0.95"
+    />
+  </g>
+</svg>
+

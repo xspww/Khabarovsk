@@ -6,7 +6,9 @@ import sys
 from typing import Iterable
 
 
-APP_NAME = "Argus Launcher"
+# The visible product name changed, but the local data folder stays on the
+# original name so existing accounts/cookies are not orphaned by a rebrand.
+APP_NAME = "Cronus Launcher"
 APP_FOLDER_NAME = "Argus Launcher"
 APP_ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
 

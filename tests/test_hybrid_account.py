@@ -2,6 +2,7 @@ import os
 import atexit
 import hashlib
 import json
+import re
 import shutil
 import stat
 import tempfile
@@ -34,7 +35,6 @@ from performance_settings import (
     read_fps_settings,
     set_readonly,
 )
-from services.presence_service import RobloxPresenceService
 from services.roblox_install_manager import RobloxInstallManager, normalize_roblox_version
 from services.cpu_limiter import CpuLimiter, normalize_cpu_limiter_settings
 from services.process_service import ProcessService
@@ -613,45 +613,6 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(limiter._job_handles[1234]["handle"], 333)
         self.assertEqual(limiter._job_handles[1234]["create_time"], 2.0)
 
-    def test_presence_service_batch_cache_and_rate_limit_backoff(self):
-        service = RobloxPresenceService()
-
-        class FakeResponse:
-            status = 200
-
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_):
-                return False
-
-            def read(self):
-                return (
-                    b'{"userPresences":[{"userPresenceType":2,"lastLocation":"Map","placeId":123,'
-                    b'"rootPlaceId":123,"gameId":"job","universeId":456,"userId":42,"lastOnline":"now"}]}'
-                )
-
-        with patch("services.presence_service.urllib.request.urlopen", return_value=FakeResponse()) as urlopen:
-            first = service.refresh([42, "", "bad"], enabled=True, poll_interval=30, cache_ttl=30)
-            second = service.refresh([42], enabled=True, poll_interval=30, cache_ttl=30)
-        self.assertTrue(first["ok"])
-        self.assertEqual(first["skipped"], 2)
-        self.assertEqual(first["presences"]["42"]["presence_type_name"], "InGame")
-        self.assertEqual(second["presences"]["42"]["presence_place_id"], "123")
-        self.assertEqual(urlopen.call_count, 1)
-
-        from urllib.error import HTTPError
-
-        limited = RobloxPresenceService()
-        with patch(
-            "services.presence_service.urllib.request.urlopen",
-            side_effect=HTTPError("url", 429, "Too Many Requests", {}, None),
-        ):
-            result = limited.refresh([99], enabled=True, poll_interval=0, cache_ttl=0, force=True)
-        self.assertFalse(result["ok"])
-        self.assertTrue(result["rate_limited"])
-        self.assertGreater(result["backoff_until"], time.time())
-
     def test_roblox_install_version_normalization(self):
         self.assertEqual(normalize_roblox_version("abcdef1234567890"), "version-abcdef1234567890")
         self.assertEqual(normalize_roblox_version("version-abcdef1234567890"), "version-abcdef1234567890")
@@ -878,7 +839,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertFalse(payload["ok"])
-        self.assertEqual(payload["msg"], "Stop Argus and close Roblox first.")
+        self.assertEqual(payload["msg"], "Stop Cronus and close Roblox first.")
 
     def test_roblox_install_downgrade_endpoint_removed(self):
         from fastapi.testclient import TestClient
@@ -932,8 +893,14 @@ class HybridAccountTests(unittest.TestCase):
             js_response.text,
         ])
         html = page + "\n" + css + "\n" + js
-        self.assertEqual(main.app.title, "Argus Launcher")
-        self.assertIn("<title>Argus Launcher</title>", html)
+        def normalize_css_fragment(value: str) -> str:
+            return re.sub(r";}", "}", re.sub(r"\s+", "", value))
+
+        compact_css = normalize_css_fragment(css)
+        assert_css_contains = lambda snippet: self.assertIn(normalize_css_fragment(snippet), compact_css)
+        self.assertEqual(main.app.title, "Cronus Launcher")
+        self.assertIn("<title>Cronus Launcher</title>", html)
+        self.assertIn('<link rel="icon" type="image/png" href="/ui/cronus-favicon.png">', page)
         self.assertIn('<meta name="argus-api-token" content="', page)
         self.assertIn(main.INSTANCE_TOKEN, page)
         self.assertIn('<link rel="stylesheet" href="/ui/dashboard.css">', page)
@@ -995,22 +962,26 @@ class HybridAccountTests(unittest.TestCase):
         self.assertNotIn('id="accounts-stat-queued"', html)
         self.assertNotIn('id="accounts-stat-ingame"', html)
         self.assertNotIn('id="accounts-stat-attention"', html)
-        self.assertIn("--panel2:#1A1A1A", html)
-        self.assertIn("--muted:#71717A", html)
-        spacex_css = css
-        self.assertIn("background:#0A0A0A", spacex_css)
-        self.assertIn("background:#111111", spacex_css)
-        self.assertIn(".nav button.active{background:#202020;color:#FFFFFF;box-shadow:inset 2px 0 0 #FFFFFF}", html)
-        self.assertIn(".side-launch .guard-action{height:32px;border-radius:6px;background:transparent", html)
+        assert_css_contains("--panel2:#1A1A1A")
+        assert_css_contains("--muted:#71717A")
+        spacex_css = compact_css
+        assert_css_contains("background:#0A0A0A")
+        assert_css_contains("background:#111111")
+        assert_css_contains(".nav button.active{background:#202020;color:#FFFFFF;box-shadow:inset 2px 0 0 #FFFFFF}")
+        assert_css_contains(".side-launch .guard-action{height:32px;border-radius:6px;background:transparent")
         self.assertIn("SOLAR_ICON_SOURCE='SVGRepo Solar Linear Icons'", html)
         self.assertIn("data-solar-icon=", html)
         self.assertIn("applySolarStaticIcons(document);", html)
         self.assertNotIn("solarIcon('exit','guard-icon stop')", html)
         self.assertIn('class="guard-icon stop"', html)
-        self.assertIn('x="7.2" y="5" width="3.8" height="14" rx="1.5"', html)
-        self.assertIn('x="13" y="5" width="3.8" height="14" rx="1.5"', html)
-        self.assertIn('class="guard-icon bolt"', html)
-        self.assertIn('d="M13 2 4 14h7l-1 8 10-13h-7z"', html)
+        self.assertIn('x="6.2" y="4.5" width="4.9" height="15" rx="1.8"', html)
+        self.assertIn('x="12.9" y="4.5" width="4.9" height="15" rx="1.8"', html)
+        self.assertIn('class="guard-icon start"', html)
+        self.assertIn('d="M7.5 5.4 18 12 7.5 18.6Z"', html)
+        self.assertNotIn('class="guard-icon start-logo"', html)
+        self.assertNotIn('src="/ui/cronus-start-icon.png"', sidebar_head)
+        self.assertNotIn('class="guard-icon bolt"', html)
+        self.assertNotIn('d="M13 2 4 14h7l-1 8 10-13h-7z"', html)
         self.assertNotIn("solarIcon('playCircle','guard-icon bolt')", html)
         self.assertIn("'home','nav-icon'", html)
         self.assertIn("solarIcon('presentationGraph','nav-icon')", html)
@@ -1022,10 +993,10 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("install:'downloadSquare'", html)
         self.assertIn("M9 4.5H8", html)
         self.assertIn('<circle cx="12" cy="12" r="10"', html)
-        self.assertIn("rgba(31,157,98,.72)", html)
-        self.assertIn("rgba(224,91,106,.72)", html)
-        self.assertIn("drop-shadow(0 0 5px rgba(31,157,98,.72))", html)
-        self.assertIn("drop-shadow(0 0 5px rgba(224,91,106,.72))", html)
+        assert_css_contains("rgba(31,157,98,.72)")
+        assert_css_contains("rgba(224,91,106,.72)")
+        assert_css_contains("drop-shadow(0 0 5px rgba(31,157,98,.72))")
+        assert_css_contains("drop-shadow(0 0 5px rgba(224,91,106,.72))")
         self.assertNotIn('class="guard-icon play"', html)
         self.assertNotIn('d="M10 8.2v7.6l6-3.8-6-3.8z"', html)
         self.assertNotIn('x="7" y="7" width="10" height="10" rx="1.5"', html)
@@ -1036,14 +1007,14 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn('d="M10.1 16.35h3.8"', html)
         for stroke_width in ('stroke-width="2.75"', 'stroke-width="2.45"', 'stroke-width="2.65"'):
             self.assertIn(stroke_width, html)
-        self.assertIn(".nav-root,.nav-group-head{font-weight:800!important}", html)
-        self.assertIn(".nav-root svg,.nav-group-head svg{width:8px;height:8px;flex-basis:8px}", html)
-        self.assertIn("left:4px", html)
-        self.assertIn("pointer-events:none", html)
-        self.assertIn("transform:translateY(-50%)", html)
-        self.assertIn("#nav .nav-child.active:before{background:#25334d}", html)
+        assert_css_contains(".nav-root,.nav-group-head{font-weight:800!important}")
+        assert_css_contains(".nav-root svg,.nav-group-head svg{width:8px;height:8px;flex-basis:8px}")
+        assert_css_contains("left:4px")
+        assert_css_contains("pointer-events:none")
+        assert_css_contains("transform:translateY(-50%)")
+        assert_css_contains("#nav .nav-child.active:before{background:#25334d}")
         self.assertNotIn("--branch-curve:url", html)
-        self.assertIn("background:#13264a", html)
+        assert_css_contains("background:#13264a")
         self.assertNotIn('rect x="4" y="4" width="16" height="16" rx="4"', html)
         self.assertNotIn('d="M4 9.5h16"', html)
         self.assertNotIn('d="M9.5 9.5V20"', html)
@@ -1053,7 +1024,7 @@ class HybridAccountTests(unittest.TestCase):
         for old_theme in ("rgba(34,197,94", "rgba(126,188,255", "#22c55e", "#3b82f6", "#60a5fa", "#16a34a"):
             self.assertNotIn(old_theme, spacex_css)
         self.assertNotIn(".account-stat-card", html)
-        self.assertIn("max-height:calc(100vh - 360px)", html)
+        assert_css_contains("max-height:calc(100vh - 360px)")
         self.assertIn("function renderTop(){const c=counts()", html)
         self.assertIn("$('h-captcha').textContent=c.captcha", html)
         self.assertIn("function syncToggleLabels()", html)
@@ -1067,20 +1038,20 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("toast-close", html)
         self.assertIn("Close notification", html)
         self.assertIn(".toast:before", html)
-        self.assertIn(".status{border:0;border-radius:0;padding:0;background:transparent;color:#E5E5E5;font-weight:500;gap:7px}", html)
-        self.assertIn(".status.finished,.status.blocked{background:transparent;border-color:transparent;color:#C88989}", html)
+        assert_css_contains(".status{border:0;border-radius:0;padding:0;background:transparent;color:#E5E5E5;font-weight:500;gap:7px}")
+        assert_css_contains(".status.finished,.status.blocked{background:transparent;border-color:transparent;color:#C88989}")
         self.assertIn("/roblox/close-all", html)
         self.assertIn("function confirmCloseAllRoblox()", html)
         self.assertIn("cardIcon('close')", html)
         self.assertIn("Close Roblox only", html)
-        self.assertIn("Closes every Roblox window. Argus stays running.", html)
-        self.assertNotIn("Stop Argus and close Roblox</strong>", html)
-        self.assertNotIn("Stops Argus, then closes every Roblox window.", html)
+        self.assertIn("Closes every Roblox window. Cronus stays running.", html)
+        self.assertNotIn("Stop Cronus and close Roblox</strong>", html)
+        self.assertNotIn("Stops Cronus, then closes every Roblox window.", html)
         self.assertNotIn("STATUS.running=false", html)
         self.assertNotIn("confirm('Close all Roblox", html)
         for removed in ('id="h-finished"', 'id="h-cpu"', 'id="h-ram"', ">Finished<", ">CPU<", ">RAM<"):
             self.assertNotIn(removed, html)
-        self.assertIn(".nav-separator,.nav-badge{display:none!important}", html)
+        assert_css_contains(".nav-separator,.nav-badge{display:none!important}")
         self.assertNotIn(".nav-separator,.nav-badge,.side-status{display:none!important}", html)
         self.assertIn("function syncRunningClock()", html)
         self.assertIn("$('nav-accounts-count').textContent=c.all", html)
@@ -1110,7 +1081,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("/troubleshoot/roblox-install", html)
         self.assertIn("function robloxInstallConfirm(action)", html)
         self.assertIn("cardIcon('install')", html)
-        self.assertIn("Stop Argus and close Roblox first.", html)
+        self.assertIn("Stop Cronus and close Roblox first.", html)
         self.assertIn("TROUBLESHOOT.block_msg", html)
         self.assertNotIn("Downgrade", html)
         self.assertNotIn("roblox-version", html)
@@ -1148,7 +1119,7 @@ class HybridAccountTests(unittest.TestCase):
             self.assertIn(f'id="{button_id}" hidden', html)
         self.assertIn("save.hidden=!isDirty", html)
         self.assertIn("reset.hidden=!isDirty", html)
-        self.assertIn(".savebar .save-action,.btn.good.settings-dirty,.savebar .save-action.settings-dirty{background:transparent;border-color:rgba(255,255,255,.42);color:#FFFFFF;box-shadow:none}", html)
+        assert_css_contains(".savebar .save-action,.btn.good.settings-dirty,.savebar .save-action.settings-dirty{background:transparent;border-color:rgba(255,255,255,.42);color:#FFFFFF;box-shadow:none}")
         self.assertIn(".savebar .reset-action", html)
         self.assertIn(".savebar .save-action.settings-dirty", html)
         self.assertEqual(html.count('class="btn ghost reset-action"'), 6)
@@ -1248,8 +1219,8 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("function saveCpuLimiter()", html)
         self.assertIn("/performance/cpu-limiter", html)
         self.assertIn("'cpu-limiter':'cpu-save'", html)
-        self.assertIn("grid-template-columns:minmax(180px,250px) minmax(220px,320px)", html)
-        self.assertIn("#window-size-controls,#window-arrange-controls,#graphics-quality-controls,#priority-controls,#cpu-controls{display:grid;gap:15px}", html)
+        assert_css_contains("grid-template-columns:minmax(180px,250px) minmax(220px,320px)")
+        assert_css_contains("#window-size-controls,#window-arrange-controls,#graphics-quality-controls,#priority-controls,#cpu-controls{display:grid;gap:15px}")
         for label in ("Settings File", "Current File Cap", "Read-only", "Roblox State"):
             self.assertNotIn(label, fps_section)
             self.assertNotIn(label, graphics_section)
@@ -1383,7 +1354,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertNotIn("TeleportToPlaceInstance", script)
         self.assertIn('G.ArgusRejoin = ArgusRejoin', script)
         self.assertNotIn("__ARGUS_", script)
-        loader = (Path(__file__).resolve().parents[1] / "lua" / "argus_rejoin_loader.lua").read_text(encoding="utf-8")
+        loader = (Path(__file__).resolve().parents[1] / "lua" / "run_in_executor.lua").read_text(encoding="utf-8")
         self.assertIn("/api/lua/rejoin-helper", loader)
         self.assertIn("local Load = loadstring or load", loader)
         self.assertIn("Load(source)", loader)
@@ -1416,7 +1387,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertNotIn("GetCookie", script)
         self.assertNotIn("GetCSRFToken", script)
         self.assertNotIn("Password", script)
-        loader = (Path(__file__).resolve().parents[1] / "lua" / "argus_account_loader.lua").read_text(encoding="utf-8")
+        loader = (Path(__file__).resolve().parents[1] / "lua" / "internal" / "load_account_status.lua").read_text(encoding="utf-8")
         self.assertIn("/api/lua/account-module", loader)
         self.assertIn("local Load = loadstring or load", loader)
         self.assertIn("Load(source)", loader)
@@ -1848,7 +1819,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertTrue(saved)
         self.assertEqual(pushed[0][1]["lua_event"], "finished")
 
-    def test_queue_popup_disconnected_toggle_is_separate_from_presence(self):
+    def test_queue_popup_disconnected_toggle_persists(self):
         from fastapi.testclient import TestClient
         import main
 
@@ -1868,10 +1839,6 @@ class HybridAccountTests(unittest.TestCase):
             self.assertIn("popup_disconnected_enabled:$('popup-disconnected-enabled').checked", html)
             self.assertIn("popup_scan_interval_seconds:Number($('popup-scan-interval').value)||30", html)
             self.assertIn("popup_scan_max_parallel:Number($('popup-scan-max-parallel').value)||2", html)
-            self.assertIn("presence_api_enabled:false", html)
-            self.assertIn("presence_poll_interval_seconds:30", html)
-            self.assertIn("presence_cache_ttl_seconds:30", html)
-            self.assertIn("presence_assist_rejoin_enabled:false", html)
             self.assertNotIn('id="presence-enabled"', html)
             self.assertNotIn("Use Presence API", html)
             self.assertNotIn("$('presence-interval')", html)
@@ -1884,8 +1851,6 @@ class HybridAccountTests(unittest.TestCase):
                     "popup_disconnected_enabled": False,
                     "popup_scan_interval_seconds": 45,
                     "popup_scan_max_parallel": 3,
-                    "presence_api_enabled": True,
-                    "presence_assist_rejoin_enabled": True,
                 },
             )
             self.assertEqual(response.status_code, 200)
@@ -1893,8 +1858,6 @@ class HybridAccountTests(unittest.TestCase):
             self.assertFalse(config["popup_disconnected_enabled"])
             self.assertEqual(config["popup_scan_interval_seconds"], 45)
             self.assertEqual(config["popup_scan_max_parallel"], 3)
-            self.assertFalse(config["presence_api_enabled"])
-            self.assertFalse(config["presence_assist_rejoin_enabled"])
         finally:
             main.cfg_mgr.update(original)
             main.cfg_mgr.save()
@@ -2606,7 +2569,7 @@ class HybridAccountTests(unittest.TestCase):
     def test_auto_minimize_runtime_path_removed(self):
         self.assertFalse(hasattr(SystemMaintenance, "_enforce_auto_minimize"))
 
-    def test_presence_mismatch_no_longer_forces_popup_inspection(self):
+    def test_disabled_popup_setting_avoids_popup_inspection(self):
         maint = object.__new__(SystemMaintenance)
         maint._cfg = {
             "watchdog_enabled": True,
@@ -2618,13 +2581,6 @@ class HybridAccountTests(unittest.TestCase):
         }
         maint._accounts = []
         maint._workers = {}
-        presence_calls = []
-
-        def _presence_assist(*args, **kwargs):
-            presence_calls.append(kwargs)
-            return False
-
-        maint._handle_presence_disconnect_assist = _presence_assist
 
         class Net:
             def is_online(self):
@@ -2640,7 +2596,6 @@ class HybridAccountTests(unittest.TestCase):
         acc.in_game_since = time.time() - 120
         acc.last_activity_at = time.time()
         acc.liveness_state = "alive"
-        acc.presence_mismatch_since = time.time() - 10
         maint._accounts = [acc]
 
         liveness = {
@@ -2654,8 +2609,6 @@ class HybridAccountTests(unittest.TestCase):
             SystemMaintenance._scan_liveness_watchdog(maint)
 
         self.assertFalse(assess.call_args.kwargs["inspect_ui"])
-        self.assertFalse(assess.call_args.kwargs["presence_mismatch"])
-        self.assertEqual(presence_calls[-1]["allow_rejoin"], False)
 
     def test_alive_process_periodically_scans_popup_dialog(self):
         maint = object.__new__(SystemMaintenance)
@@ -2671,7 +2624,6 @@ class HybridAccountTests(unittest.TestCase):
         maint._accounts = []
         maint._workers = {}
         maint._last_popup_scan_at = {}
-        maint._handle_presence_disconnect_assist = lambda *args, **kwargs: False
 
         class Net:
             def is_online(self):
@@ -2716,7 +2668,6 @@ class HybridAccountTests(unittest.TestCase):
         maint._accounts = []
         maint._workers = {}
         maint._last_popup_scan_at = {}
-        maint._handle_presence_disconnect_assist = lambda *args, **kwargs: False
 
         class Net:
             def is_online(self):
@@ -2788,7 +2739,6 @@ class HybridAccountTests(unittest.TestCase):
         maint._accounts = []
         maint._workers = {}
         maint._last_popup_scan_at = {}
-        maint._handle_presence_disconnect_assist = lambda *args, **kwargs: False
 
         class Net:
             def is_online(self):
@@ -2844,7 +2794,6 @@ class HybridAccountTests(unittest.TestCase):
         maint._last_popup_scan_at = {}
         maint._last_popup_batch_at = 0.0
         maint._popup_scan_cursor = 0
-        maint._handle_presence_disconnect_assist = lambda *args, **kwargs: False
 
         class Net:
             def is_online(self):
@@ -3071,7 +3020,7 @@ class HybridAccountTests(unittest.TestCase):
             "services.roblox_liveness.collect_recent_log_evidence",
             return_value={"matched": False, "source": "roblox_log", "reason": "none"},
         ):
-            result = assess_liveness(FakeProcessManager, 1234, inspect_ui=True, presence_mismatch=False)
+            result = assess_liveness(FakeProcessManager, 1234, inspect_ui=True)
 
         self.assertEqual(result["state"], "reconnecting")
         self.assertEqual(result["reason_key"], "connection_error")
@@ -3266,7 +3215,7 @@ class HybridAccountTests(unittest.TestCase):
             "button_score": 0.6,
             "template_score": 0.7,
         }
-        result = classify_popup_observation([], visual, process_idle=True, presence_mismatch=True)
+        result = classify_popup_observation([], visual, process_idle=True)
 
         self.assertTrue(visual["matched"])
         self.assertTrue(result.matched)
@@ -3289,7 +3238,7 @@ class HybridAccountTests(unittest.TestCase):
         draw.rounded_rectangle((405, 340, 555, 382), radius=8, fill=245)
 
         visual = detect_visual_features(image)
-        result = classify_popup_observation([], visual, process_idle=False, presence_mismatch=False)
+        result = classify_popup_observation([], visual, process_idle=False)
 
         self.assertTrue(visual["matched"])
         self.assertEqual(visual["strength"], "strong")
@@ -3331,7 +3280,7 @@ class HybridAccountTests(unittest.TestCase):
         for width, height in sizes:
             with self.subTest(size=f"{width}x{height}"):
                 visual = detect_visual_features(make_popup(width, height))
-                result = classify_popup_observation([], visual, process_idle=False, presence_mismatch=False)
+                result = classify_popup_observation([], visual, process_idle=False)
 
                 self.assertTrue(visual["matched"])
                 self.assertEqual(visual["strength"], "strong")
@@ -3357,7 +3306,7 @@ class HybridAccountTests(unittest.TestCase):
         draw.rectangle((0, 207, 320, 240), fill=18)
 
         visual = detect_visual_features(image)
-        result = classify_popup_observation([], visual, process_idle=False, presence_mismatch=False)
+        result = classify_popup_observation([], visual, process_idle=False)
 
         self.assertTrue(visual["matched"])
         self.assertEqual(visual["strength"], "strong")
@@ -3377,7 +3326,7 @@ class HybridAccountTests(unittest.TestCase):
         draw.line((240, 215, 560, 215), fill=190, width=2)
 
         visual = detect_visual_features(image)
-        result = classify_popup_observation([], visual, process_idle=True, presence_mismatch=True)
+        result = classify_popup_observation([], visual, process_idle=True)
 
         self.assertTrue(visual["matched"])
         self.assertEqual(visual["strength"], "weak")
@@ -3399,7 +3348,7 @@ class HybridAccountTests(unittest.TestCase):
         draw.rounded_rectangle((180, 492, 620, 535), radius=8, fill=245)
 
         visual = detect_visual_features(image)
-        result = classify_popup_observation([], visual, process_idle=True, presence_mismatch=False)
+        result = classify_popup_observation([], visual, process_idle=True)
 
         self.assertTrue(visual["matched"])
         self.assertTrue(result.matched)
@@ -3475,7 +3424,7 @@ class HybridAccountTests(unittest.TestCase):
                 windll.user32.SetWindowPos.assert_not_called()
                 windll.user32.ShowWindow.assert_not_called()
 
-    def test_non_disconnect_panel_does_not_match_from_presence_alone(self):
+    def test_non_disconnect_panel_does_not_match_from_process_idle_alone(self):
         from PIL import Image, ImageDraw
         from runtime.popup_detector.popup_classifier import classify_popup_observation
         from runtime.popup_detector.popup_visual_detector import detect_visual_features
@@ -3486,7 +3435,7 @@ class HybridAccountTests(unittest.TestCase):
         draw.line((260, 250, 620, 250), fill=180, width=1)
 
         visual = detect_visual_features(image)
-        result = classify_popup_observation([], visual, process_idle=True, presence_mismatch=True)
+        result = classify_popup_observation([], visual, process_idle=True)
 
         self.assertFalse(visual["matched"])
         self.assertFalse(result.matched)
@@ -3613,33 +3562,6 @@ class HybridAccountTests(unittest.TestCase):
             main.cfg_mgr.update(original)
             main.cfg_mgr.save()
 
-    def test_presence_assist_missing_pid_is_disabled(self):
-        from farm import AccountWorker
-
-        acc = Account(username="UserA", user_id="42", place_id="123")
-        acc.launch_intent = {"place_id": "123"}
-        worker = object.__new__(AccountWorker)
-        worker.acc = acc
-        worker.cfg = {
-            "presence_api_enabled": True,
-            "presence_assist_rejoin_enabled": True,
-            "presence_poll_interval_seconds": 30,
-            "presence_cache_ttl_seconds": 30,
-        }
-        result = AccountWorker._presence_assist_missing_bound_process(worker)
-        self.assertEqual(result["status"], "disabled")
-        self.assertEqual(result["reason"], "presence_assist_disabled")
-
-    def test_presence_private_fields_do_not_force_hold(self):
-        from farm import AccountWorker
-
-        acc = Account(username="UserA", user_id="42", place_id="123")
-        worker = object.__new__(AccountWorker)
-        worker.acc = acc
-        worker.cfg = {"presence_api_enabled": True, "presence_assist_rejoin_enabled": True}
-        result = AccountWorker._presence_assist_missing_bound_process(worker)
-        self.assertEqual(result["status"], "disabled")
-
     def test_multi_roblox_guard_failure_requires_recent_pid_overlap(self):
         from farm import AccountWorker
 
@@ -3672,46 +3594,6 @@ class HybridAccountTests(unittest.TestCase):
         self.assertTrue(
             AccountWorker._looks_like_multi_roblox_guard_failure(worker, 111, fresh_presence, 12.0, 10.0)
         )
-
-    def test_presence_offline_with_live_pid_does_not_trigger_rejoin(self):
-        maint = object.__new__(SystemMaintenance)
-        maint._cfg = {
-            "presence_api_enabled": True,
-            "presence_assist_rejoin_enabled": True,
-            "connection_error_rejoin": True,
-            "connection_error_hold_time": 3,
-            "presence_poll_interval_seconds": 30,
-            "presence_cache_ttl_seconds": 30,
-        }
-        maint._supervisor = None
-        acc = Account(username="UserA", user_id="42", place_id="123")
-        acc.state = AccountState.IN_GAME
-        acc.pid = 1234
-        acc.in_game_since = time.time() - 120
-        acc.runtime_generation = 7
-        acc.session_id = "sess"
-        acc.launch_nonce = "nonce"
-        acc.rejoin_transaction_id = "tx"
-
-        class FakeWorker:
-            def __init__(self):
-                self.calls = []
-
-            def report_fault(self, *args, **kwargs):
-                self.calls.append((args, kwargs))
-
-        worker = FakeWorker()
-        acc.presence_mismatch_since = time.time() - 5
-        acc.presence_mismatch_reason = "presence_not_ingame:Offline"
-        acc.presence_rejoin_pending_clear = True
-        first = SystemMaintenance._handle_presence_disconnect_assist(maint, acc, worker, time.time(), 1234, 120, 90)
-        second = SystemMaintenance._handle_presence_disconnect_assist(maint, acc, worker, time.time(), 1234, 120, 90)
-        self.assertFalse(first)
-        self.assertFalse(second)
-        self.assertEqual(worker.calls, [])
-        self.assertEqual(acc.presence_mismatch_since, 0.0)
-        self.assertEqual(acc.presence_mismatch_reason, "")
-        self.assertFalse(acc.presence_rejoin_pending_clear)
 
     def test_cookie_and_vip_parsing(self):
         username, cookie = parse_cookie_line("UserA:pass:_|WARNING:-DO-NOT-SHARE-THIS.--abc")

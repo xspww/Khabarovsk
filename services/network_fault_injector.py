@@ -10,8 +10,8 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
 
-RULE_PREFIX = "ArgusLauncher_Test_Block_Roblox"
-RULE_GROUP = "Argus Launcher Test Network Fault"
+RULE_PREFIX = "CronusLauncher_Test_Block_Roblox"
+RULE_GROUP = "Cronus Launcher Test Network Fault"
 ROBLOX_EXE_NAME = "robloxplayerbeta.exe"
 
 
@@ -97,7 +97,7 @@ class NetworkFaultInjector:
             f"-DisplayName {_ps_quote(rule_name)} "
             f"-Group {_ps_quote(RULE_GROUP)} "
             "-Direction Outbound -Action Block -Program $program -Profile Any -Enabled True "
-            f"-Description {_ps_quote('Temporary Argus Launcher reliability test fault')} | Out-Null\n"
+            f"-Description {_ps_quote('Temporary Cronus Launcher reliability test fault')} | Out-Null\n"
             "@{ ok = $true; active = $true; display_name = "
             f"{_ps_quote(rule_name)}; program = $program }} | ConvertTo-Json -Compress\n"
         )

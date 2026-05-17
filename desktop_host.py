@@ -20,8 +20,8 @@ from app_paths import APP_NAME, APP_DATA_DIR, APP_ROOT_DIR, IS_COMPILED, path_ta
 from console_activity import format_console_line
 from core import LOG_FILE, flog, flog_kv
 
-APP_USER_AGENT = "ArgusLauncher/RT"
-APP_ICON_FILE = "argus_icon.png"
+APP_USER_AGENT = "CronusLauncher/RT"
+APP_ICON_FILE = "cronus_icon.png"
 BASE_DIR = APP_ROOT_DIR
 HOST = "127.0.0.1"
 PORT = 7777
@@ -61,7 +61,7 @@ def _console_status(label: str, detail: str) -> None:
         return
     if label_key == "backend":
         if detail_text.lower().startswith("not ready"):
-            _console_event("XX", f"Argus backend not ready: {detail_text.replace('Not ready:', '', 1).strip()}")
+            _console_event("XX", f"Cronus backend not ready: {detail_text.replace('Not ready:', '', 1).strip()}")
         return
     if label_key == "dashboard":
         return
@@ -348,7 +348,7 @@ def _make_tray_icon():
 
 def _set_app_user_model_id():
     try:
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Argus.Launcher.Desktop")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Cronus.Launcher.Desktop")
     except Exception:
         pass
 
@@ -404,8 +404,8 @@ def _wait_for_backend_ready(server_thread: threading.Thread, timeout: float = 20
 
 def _run_desktop_window() -> bool:
     try:
-        from PySide6.QtCore import QPoint, Qt, QUrl
-        from PySide6.QtGui import QBitmap, QColor, QIcon, QPainter
+        from PySide6.QtCore import QPoint, QTimer, Qt, QUrl
+        from PySide6.QtGui import QBitmap, QColor, QIcon, QPainter, QPixmap
         from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget
         from PySide6.QtWebEngineWidgets import QWebEngineView
     except Exception as exc:
@@ -413,6 +413,29 @@ def _run_desktop_window() -> bool:
         return False
 
     WINDOW_RADIUS = 10
+    TITLE_ICON_FILE = resource_path("ui", "cronus-start-icon.png")
+
+    def _tinted_title_icon(color: QColor) -> QPixmap:
+        source = QPixmap(TITLE_ICON_FILE)
+        if source.isNull():
+            return QPixmap()
+        source = source.scaled(
+            24,
+            16,
+            Qt.AspectRatioMode.KeepAspectRatio,
+            Qt.TransformationMode.SmoothTransformation,
+        )
+        tinted = QPixmap(source.size())
+        tinted.fill(QColor(0, 0, 0, 0))
+        painter = QPainter(tinted)
+        painter.drawPixmap(0, 0, source)
+        try:
+            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+        except AttributeError:
+            painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+        painter.fillRect(tinted.rect(), color)
+        painter.end()
+        return tinted
 
     class RoundedMainWindow(QMainWindow):
         def resizeEvent(self, event):
@@ -442,14 +465,23 @@ def _run_desktop_window() -> bool:
             super().__init__(parent)
             self._window = parent
             self._drag_pos = QPoint()
-            self.setObjectName("ArgusTitleBar")
+            self._running = False
+            self._idle_icon = _tinted_title_icon(QColor("#616777"))
+            self._active_icon = _tinted_title_icon(QColor("#16a964"))
+            self.setObjectName("CronusTitleBar")
             self.setFixedHeight(32)
             layout = QHBoxLayout(self)
             layout.setContentsMargins(12, 0, 10, 0)
             layout.setSpacing(8)
+            self._status_icon = QLabel(self)
+            self._status_icon.setObjectName("CronusStatusIcon")
+            self._status_icon.setFixedSize(24, 18)
+            if not self._idle_icon.isNull():
+                self._status_icon.setPixmap(self._idle_icon)
+            layout.addWidget(self._status_icon)
             title_label = QLabel(self)
             title_label.setText(title)
-            title_label.setObjectName("ArgusTitle")
+            title_label.setObjectName("CronusTitle")
             layout.addWidget(title_label)
             layout.addStretch(1)
             min_btn = self._button("WinMinButton", "Minimize", "-")
@@ -464,16 +496,19 @@ def _run_desktop_window() -> bool:
             # Compatibility markers for legacy title-bar tests: MacCloseButton, MacMinButton, MacMaxButton.
             self.setStyleSheet(
                 """
-                #ArgusTitleBar {
+                #CronusTitleBar {
                     background-color: #0b1120;
                     border-bottom: 1px solid #1c2940;
                     border-top-left-radius: 10px;
                     border-top-right-radius: 10px;
                 }
-                #ArgusTitle {
+                #CronusTitle {
                     color: #cbd7ef;
                     font-size: 12px;
                     font-weight: 700;
+                }
+                #CronusStatusIcon {
+                    margin-right: 0px;
                 }
                 QPushButton#WinMinButton, QPushButton#WinMaxButton, QPushButton#WinCloseButton {
                     width: 28px; height: 20px; min-width: 28px; max-width: 28px;
@@ -496,6 +531,15 @@ def _run_desktop_window() -> bool:
                 }
                 """
             )
+
+        def set_running(self, running: bool):
+            running = bool(running)
+            if running == self._running:
+                return
+            self._running = running
+            icon = self._active_icon if running else self._idle_icon
+            if not icon.isNull():
+                self._status_icon.setPixmap(icon)
 
         def _button(self, name: str, tooltip: str, text: str):
             button = QPushButton(text, self)
@@ -562,20 +606,20 @@ def _run_desktop_window() -> bool:
     if not icon.isNull():
         window.setWindowIcon(icon)
     view = QWebEngineView(window)
-    view.setObjectName("ArgusWebView")
+    view.setObjectName("CronusWebView")
     view.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-    view.setStyleSheet("#ArgusWebView { background: transparent; border: 0; }")
+    view.setStyleSheet("#CronusWebView { background: transparent; border: 0; }")
     try:
         view.page().setBackgroundColor(QColor(0, 0, 0, 0))
     except Exception as exc:
         flog_kv("MAIN", "desktop_webview_transparency_unavailable", "debug", error=str(exc))
     view.setUrl(QUrl(f"http://{HOST}:{PORT}"))
     container = QWidget(window)
-    container.setObjectName("ArgusWindowShell")
+    container.setObjectName("CronusWindowShell")
     container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
     container.setStyleSheet(
         """
-        QWidget#ArgusWindowShell {
+        QWidget#CronusWindowShell {
             background: #080d18;
             border: 1px solid #1c2940;
             border-radius: 10px;
@@ -585,7 +629,8 @@ def _run_desktop_window() -> bool:
     layout = QVBoxLayout(container)
     layout.setContentsMargins(1, 1, 1, 1)
     layout.setSpacing(0)
-    layout.addWidget(TitleBar(window))
+    title_bar = TitleBar(window)
+    layout.addWidget(title_bar)
     layout.addWidget(view, 1)
     window.setCentralWidget(container)
     window.resize(1280, 820)
@@ -594,6 +639,19 @@ def _run_desktop_window() -> bool:
     window.raise_()
     window.activateWindow()
     _apply_windows_rounded_corners(window)
+    title_timer = QTimer(window)
+
+    def _refresh_title_status():
+        try:
+            running = bool(getattr(_require_configured()[1], "running", False))
+        except Exception:
+            running = False
+        title_bar.set_running(running)
+
+    title_timer.timeout.connect(_refresh_title_status)
+    title_timer.start(500)
+    window._cronus_title_timer = title_timer
+    _refresh_title_status()
     flog("[MAIN] Desktop window running")
     app_qt.exec()
     try:
@@ -616,7 +674,7 @@ def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
     mutex_ok = _acquire_single_instance_mutex()
     socket_ok = _acquire_instance_socket()
     if (not mutex_ok) or (not socket_ok):
-        _console_status("startup", "Existing Argus instance detected; requesting cleanup")
+        _console_status("startup", "Existing Cronus instance detected; requesting cleanup")
         _stop_previous_instance()
         _stop_same_app_processes()
         if not socket_ok:
@@ -637,7 +695,7 @@ def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
         _console_status("log", LOG_FILE)
     _console_status("desktop", "Opening desktop window")
     if _run_desktop_window():
-        _console_status("shutdown", "Argus window closed")
+        _console_status("shutdown", "Cronus window closed")
         return
     _console_status("desktop", "Desktop window unavailable; opening browser fallback")
     webbrowser.open(f"http://{HOST}:{PORT}")
@@ -713,7 +771,7 @@ def run_with_tray(fastapi_app: Any = None, farm_controller: Any = None):
             os._exit(0)
 
         menu = pystray.Menu(
-            Item("Open Argus Launcher", lambda: open_browser()),
+            Item("Open Cronus Launcher", lambda: open_browser()),
             Item("Start Farm",        lambda: (_require_configured()[1].start() if not _require_configured()[1].running else None)),
             Item("Stop Farm",         lambda: (_require_configured()[1].stop() if _require_configured()[1].running else None)),
             Item("Restart Farm",      lambda: (_require_configured()[1].stop() or time.sleep(0.5) or _require_configured()[1].start())),
@@ -721,7 +779,7 @@ def run_with_tray(fastapi_app: Any = None, farm_controller: Any = None):
             Item("Exit",              lambda i, _: exit_app(i)),
         )
 
-        icon = pystray.Icon("ArgusLauncher", icon_img, APP_NAME, menu)
+        icon = pystray.Icon("CronusLauncher", icon_img, APP_NAME, menu)
         threading.Thread(target=open_browser, daemon=True).start()
         flog("[MAIN] Tray icon running")
         icon.run()
@@ -731,7 +789,7 @@ def run_with_tray(fastapi_app: Any = None, farm_controller: Any = None):
         webbrowser.open(f"http://{HOST}:{PORT}")
         print(f"""
 +-----------------------------------------------+
-|             Argus Launcher Console            |
+|            Cronus Launcher Console           |
 +-----------------------------------------------+
 |  Web UI: http://{HOST}:{PORT}
 |  Stop  : Ctrl+C

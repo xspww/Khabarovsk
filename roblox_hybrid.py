@@ -20,7 +20,7 @@ from account_hybrid import ACCOUNT_STORE, decrypt_cookie
 from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, captcha_detail, is_captcha_text
 
 
-USER_AGENT = "ArgusLauncherHybrid/1.0"
+USER_AGENT = "CronusLauncherHybrid/1.0"
 _MULTI_ROBLOX_LOCK = threading.RLock()
 _MULTI_ROBLOX_HANDLES: List[Tuple[str, int]] = []
 _MULTI_ROBLOX_HELPER: Optional[subprocess.Popen] = None
@@ -239,7 +239,7 @@ def resolve_vip_access_code(cookie: str, vip_link: str, timeout: float = 12.0) -
     req = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "Mozilla/5.0 ArgusLauncherHybrid/1.0",
+            "User-Agent": "Mozilla/5.0 CronusLauncherHybrid/1.0",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
             "Referer": f"{ROBLOX_HOME}games/{urllib.parse.quote(place_id)}",
             "Cookie": f".ROBLOSECURITY={cookie}",
@@ -1014,7 +1014,7 @@ def ensure_multi_roblox_guard(timeout: float = 6.0) -> Tuple[bool, str]:
             _MULTI_ROBLOX_HELPER = None
 
         if IS_COMPILED:
-            guard_path = EXECUTABLE_PATH or sys.executable or "ArgusLauncher.exe"
+            guard_path = EXECUTABLE_PATH or sys.executable or "CronusLauncher.exe"
             cmd = [guard_path, "--multi-roblox-guard", "both", "--parent-pid", str(os.getpid())]
         else:
             guard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "multi_roblox_guard.py")

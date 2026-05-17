@@ -130,6 +130,14 @@ def classify_popup_observation(
     if text_matched:
         return PopupClassification(True, "rejoin", "connection_error", NETWORK_DISCONNECT, detail or "Disconnected", code, score, dict(confidence["breakdown"]), False, True, "text", visual_strength, **visual_meta)
     if visual_matched:
+        template_confirmed = bool(
+            visual_strong
+            and (
+                str(visual_features.get("source") or "") == "template"
+                or str(visual_features.get("visual_stage") or "") == "template"
+                or float(visual_features.get("template_score") or 0.0) >= 0.55
+            )
+        )
         visual_detail = "visual_disconnect"
         if visual_features:
             visual_detail += (
@@ -142,15 +150,15 @@ def classify_popup_observation(
             )
         return PopupClassification(
             True,
-            "rejoin" if visual_strong else "",
-            "connection_error" if visual_strong else "",
-            VISUAL_DISCONNECT if visual_strong else "",
+            "rejoin" if template_confirmed else "",
+            "connection_error" if template_confirmed else "",
+            VISUAL_DISCONNECT if template_confirmed else "",
             visual_detail,
             code,
             score,
             dict(confidence["breakdown"]),
             True,
-            visual_strong,
+            template_confirmed,
             "visual_strong" if visual_strong else "visual_weak",
             visual_strength,
             **visual_meta,

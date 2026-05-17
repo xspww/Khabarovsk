@@ -55,6 +55,13 @@ class AccountRuntime:
     account_runtime_id: str = ""
     rejoin_transaction_id: str = ""
     server_validation: str = "unverified"
+    observed_server_type: str = ""
+    observed_private_server_id: str = ""
+    observed_private_server_owner_id: str = ""
+    observed_place_id: str = ""
+    observed_job_id: str = ""
+    observed_universe_id: str = ""
+    observed_server_at: float = 0.0
     scheduler_slot: str = ""
     supervisor_state: str = "stopped"
     last_transaction_status: str = ""
@@ -118,6 +125,13 @@ class AccountRuntime:
             "account_runtime_id": self.account_runtime_id,
             "rejoin_transaction_id": self.rejoin_transaction_id,
             "server_validation": self.server_validation,
+            "observed_server_type": self.observed_server_type,
+            "observed_private_server_id": self.observed_private_server_id,
+            "observed_private_server_owner_id": self.observed_private_server_owner_id,
+            "observed_place_id": self.observed_place_id,
+            "observed_job_id": self.observed_job_id,
+            "observed_universe_id": self.observed_universe_id,
+            "observed_server_at": self.observed_server_at,
             "scheduler_slot": self.scheduler_slot,
             "supervisor_state": self.supervisor_state,
             "last_transaction_status": self.last_transaction_status,

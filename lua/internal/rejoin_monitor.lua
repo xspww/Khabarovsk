@@ -11,8 +11,9 @@ local ArgusRejoin = {
     Port = __ARGUS_PORT__,
     Token = __ARGUS_TOKEN__,
     Account = __ARGUS_ACCOUNT__,
-    Version = "1.7.0",
+    Version = "1.7.1",
     ShutdownDelay = __ARGUS_SHUTDOWN_DELAY__,
+    RequeueSource = __ARGUS_REQUEUE_SOURCE__,
     Running = true,
     Connections = {},
     LastSent = {},
@@ -20,6 +21,9 @@ local ArgusRejoin = {
     LastDisconnectAt = 0,
     LastPostOk = {},
     FallbackScheduled = {},
+    TeleportQueueInstalled = false,
+    TeleportStartedAt = 0,
+    TeleportState = "",
 }
 
 local HttpService = game:GetService("HttpService")
@@ -112,6 +116,46 @@ local function getProcessId()
     return ""
 end
 
+local function getServerInfo()
+    local privateServerId = ""
+    local privateServerOwnerId = ""
+    pcall(function()
+        privateServerId = safeString(game.PrivateServerId)
+    end)
+    pcall(function()
+        privateServerOwnerId = safeString(game.PrivateServerOwnerId)
+    end)
+
+    local ownerNumber = tonumber(privateServerOwnerId) or 0
+    local isPrivate = privateServerId ~= "" or ownerNumber > 0
+    return {
+        private_server_id = privateServerId,
+        private_server_owner_id = privateServerOwnerId,
+        is_vip_server = isPrivate and "true" or "false",
+        server_type = isPrivate and "VIP" or "PUBLIC",
+    }
+end
+
+local function getQueueOnTeleport()
+    local providers = {
+        rawget(_G, "queue_on_teleport"),
+        rawget(_G, "queueonteleport"),
+        rawget(_G, "queueonTeleport"),
+    }
+    if syn then
+        table.insert(providers, syn.queue_on_teleport)
+    end
+    if fluxus then
+        table.insert(providers, fluxus.queue_on_teleport)
+    end
+    for _, provider in ipairs(providers) do
+        if type(provider) == "function" then
+            return provider
+        end
+    end
+    return nil
+end
+
 function ArgusRejoin:Endpoint()
     local host = safeString(self and self.Host or ArgusRejoin.Host)
     if host == "" then
@@ -141,6 +185,15 @@ function ArgusRejoin:QueryEndpoint(payload)
         "pid",
         "place_id",
         "job_id",
+        "universe_id",
+        "private_server_id",
+        "private_server_owner_id",
+        "is_vip_server",
+        "server_type",
+        "teleport_state",
+        "teleport_place_id",
+        "teleport_elapsed",
+        "requeue",
         "error_code",
         "message",
         "reason_key",
@@ -166,6 +219,7 @@ end
 
 function ArgusRejoin:Payload(eventName, extra)
     extra = extra or {}
+    local serverInfo = getServerInfo()
     local payload = {
         event = safeString(eventName),
         account = safeString(LocalPlayer.Name),
@@ -175,6 +229,11 @@ function ArgusRejoin:Payload(eventName, extra)
         pid = getProcessId(),
         place_id = safeString(game.PlaceId),
         job_id = safeString(game.JobId),
+        universe_id = safeString(game.GameId),
+        private_server_id = serverInfo.private_server_id,
+        private_server_owner_id = serverInfo.private_server_owner_id,
+        is_vip_server = serverInfo.is_vip_server,
+        server_type = serverInfo.server_type,
         error_code = safeString(extra.error_code or ""),
         message = safeString(extra.message or ""),
         reason_key = safeString(extra.reason_key or ""),
@@ -326,6 +385,39 @@ function ArgusRejoin:GetFallback(eventName, payload, previousStatus)
     return success, accepted
 end
 
+function ArgusRejoin:QueueOnTeleport(reason)
+    if self.TeleportQueueInstalled then
+        return true
+    end
+    local source = safeString(self.RequeueSource)
+    if source == "" then
+        log("teleport requeue unavailable", "missing_source", safeString(reason))
+        return false
+    end
+    local provider = getQueueOnTeleport()
+    if not provider then
+        log("teleport requeue unavailable", "missing_executor_api", safeString(reason))
+        return false
+    end
+
+    local ok, err = pcall(provider, source)
+    if ok then
+        self.TeleportQueueInstalled = true
+        log("teleport requeue registered", safeString(reason))
+        return true
+    end
+
+    log("teleport requeue failed", safeString(reason), safeString(err))
+    return false
+end
+
+function ArgusRejoin:IsTeleportTransitionActive()
+    if not self.TeleportStartedAt or self.TeleportStartedAt <= 0 then
+        return false
+    end
+    return (now() - self.TeleportStartedAt) <= 45.0
+end
+
 function ArgusRejoin:PostAsync(eventName, extra)
     log("post async", eventName)
     task.spawn(function()
@@ -423,6 +515,27 @@ local function reportDisconnect(source)
     ArgusRejoin.LastErrorCode = codeText
     ArgusRejoin.LastDisconnectAt = t
 
+    if ArgusRejoin:IsTeleportTransitionActive() then
+        local elapsed = t - ArgusRejoin.TeleportStartedAt
+        log(
+            "disconnect ignored during teleport",
+            "source=" .. safeString(source or "event"),
+            "state=" .. safeString(ArgusRejoin.TeleportState),
+            "error_code=" .. codeText
+        )
+        ArgusRejoin:PostAsync("teleport_state", {
+            reason_key = "lua_teleport_transition",
+            error_code = codeText,
+            detail = "Disconnect signal ignored during active Roblox teleport",
+            teleport_state = safeString(ArgusRejoin.TeleportState),
+            teleport_place_id = safeString(game.PlaceId),
+            teleport_elapsed = safeString(string.format("%.2f", elapsed)),
+            evidence_source = "lua_guiservice_teleport_guard",
+            detection_source = safeString(source or "event"),
+        })
+        return
+    end
+
     log("disconnect detected", "source=" .. safeString(source or "event"), "error_code=" .. codeText)
     ArgusRejoin:PostAsync("disconnect", {
         reason_key = "lua_disconnect_error",
@@ -455,24 +568,38 @@ pcall(function()
         if player and player ~= LocalPlayer then
             return
         end
+        ArgusRejoin.TeleportStartedAt = 0
+        ArgusRejoin.TeleportState = "failed"
         log("teleport failed", safeString(result), safeString(message))
         ArgusRejoin:PostAsync("teleport_error", {
             reason_key = "lua_teleport_error",
             message = safeString(message),
             detail = ("Teleport failed: %s"):format(safeString(result)),
             place_id = safeString(placeId or game.PlaceId),
+            teleport_state = "failed",
+            evidence_source = "lua_teleport_init_failed",
         })
     end))
 end)
 
 pcall(function()
     table.insert(ArgusRejoin.Connections, LocalPlayer.OnTeleport:Connect(function(state)
+        local stateText = safeString(state)
+        ArgusRejoin.TeleportStartedAt = now()
+        ArgusRejoin.TeleportState = stateText
+        ArgusRejoin:QueueOnTeleport("teleport_state")
         ArgusRejoin:PostAsync("teleport_state", {
             reason_key = "lua_teleport_state",
-            detail = safeString(state),
+            detail = stateText,
+            teleport_state = stateText,
+            teleport_place_id = safeString(game.PlaceId),
+            requeue = ArgusRejoin.TeleportQueueInstalled and "true" or "false",
+            evidence_source = "lua_on_teleport",
         })
     end))
 end)
+
+ArgusRejoin:QueueOnTeleport("startup")
 
 task.spawn(function()
     if not game:IsLoaded() then

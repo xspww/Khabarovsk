@@ -332,6 +332,13 @@ class Account:
     rejoin_transaction_id: str      = ""
     server_validation: str          = "unverified"
     destination_validation: str     = "unverified"
+    observed_server_type: str       = ""
+    observed_private_server_id: str = ""
+    observed_private_server_owner_id: str = ""
+    observed_place_id: str          = ""
+    observed_job_id: str            = ""
+    observed_universe_id: str       = ""
+    observed_server_at: float       = 0.0
     scheduler_slot: str             = ""
     supervisor_state: str           = "stopped"
     last_transaction_status: str    = ""
@@ -410,6 +417,13 @@ class Account:
         self.runtime.account_runtime_id = self.account_runtime_id or ""
         self.runtime.rejoin_transaction_id = self.rejoin_transaction_id or ""
         self.runtime.server_validation = self.server_validation or "unverified"
+        self.runtime.observed_server_type = self.observed_server_type or ""
+        self.runtime.observed_private_server_id = self.observed_private_server_id or ""
+        self.runtime.observed_private_server_owner_id = self.observed_private_server_owner_id or ""
+        self.runtime.observed_place_id = self.observed_place_id or ""
+        self.runtime.observed_job_id = self.observed_job_id or ""
+        self.runtime.observed_universe_id = self.observed_universe_id or ""
+        self.runtime.observed_server_at = float(self.observed_server_at or 0.0)
         self.runtime.scheduler_slot = self.scheduler_slot or ""
         self.runtime.supervisor_state = self.supervisor_state or LIFECYCLE_STATE.get(self.state, "STOPPED").lower()
         self.runtime.last_transaction_status = self.last_transaction_status or ""

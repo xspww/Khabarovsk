@@ -34,8 +34,8 @@ def _last_error_suffix() -> str:
     return "existing" if err == ERROR_ALREADY_EXISTS else f"err={err}"
 
 
-def create_multi_roblox_handles(mode: str = "both") -> List[Tuple[str, int]]:
-    mode = str(mode or "both").strip().lower()
+def create_multi_roblox_handles(mode: str = "mutex") -> List[Tuple[str, int]]:
+    mode = str(mode or "mutex").strip().lower()
     handles: List[Tuple[str, int]] = []
     if mode in {"mutex", "both"}:
         ctypes.set_last_error(0)
@@ -77,8 +77,8 @@ def _parent_alive(parent_pid: Optional[int]) -> bool:
 
 
 def _parse_args(argv: List[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Hold Roblox singleton handles for RoboGuard Multi Roblox.")
-    parser.add_argument("mode", nargs="?", default="both", choices=["mutex", "event", "both"])
+    parser = argparse.ArgumentParser(description="Hold Roblox singleton handles for Cronus Multi Roblox.")
+    parser.add_argument("mode", nargs="?", default="mutex", choices=["mutex", "event", "both"])
     parser.add_argument("--parent-pid", type=int, default=0)
     parser.add_argument("--heartbeat", type=float, default=1.0)
     return parser.parse_args(argv)

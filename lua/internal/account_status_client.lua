@@ -66,6 +66,26 @@ local function getProcessId()
     return ""
 end
 
+local function getServerInfo()
+    local privateServerId = ""
+    local privateServerOwnerId = ""
+    pcall(function()
+        privateServerId = safeString(game.PrivateServerId)
+    end)
+    pcall(function()
+        privateServerOwnerId = safeString(game.PrivateServerOwnerId)
+    end)
+
+    local ownerNumber = tonumber(privateServerOwnerId) or 0
+    local isPrivate = privateServerId ~= "" or ownerNumber > 0
+    return {
+        private_server_id = privateServerId,
+        private_server_owner_id = privateServerOwnerId,
+        is_vip_server = isPrivate and "true" or "false",
+        server_type = isPrivate and "VIP" or "PUBLIC",
+    }
+end
+
 local function decodeJson(body)
     local text = safeString(body)
     if text == "" then
@@ -124,6 +144,7 @@ function Account:Payload(eventName, fields)
     fields = fields or {}
     local playerName = safeString(LocalPlayer and LocalPlayer.Name or "")
     local configured = safeString(self.Username)
+    local serverInfo = getServerInfo()
     local payload = {
         event = safeString(eventName),
         account = playerName ~= "" and playerName or configured,
@@ -134,6 +155,11 @@ function Account:Payload(eventName, fields)
         pid = getProcessId(),
         place_id = safeString(game.PlaceId),
         job_id = safeString(game.JobId),
+        universe_id = safeString(game.GameId),
+        private_server_id = serverInfo.private_server_id,
+        private_server_owner_id = serverInfo.private_server_owner_id,
+        is_vip_server = serverInfo.is_vip_server,
+        server_type = serverInfo.server_type,
         executor = identifyexecutor and safeString(identifyexecutor()) or "",
         helper_version = safeString(Account.Config.Version),
         token = safeString(self.Token),
@@ -162,6 +188,13 @@ function Account:QueryEndpoint(payload)
         "pid",
         "place_id",
         "job_id",
+        "universe_id",
+        "private_server_id",
+        "private_server_owner_id",
+        "is_vip_server",
+        "server_type",
+        "teleport_state",
+        "teleport_place_id",
         "error_code",
         "message",
         "reason_key",
@@ -299,14 +332,20 @@ function Account:TeleportError(message, placeId)
         reason_key = "lua_account_teleport_error",
         message = safeString(message),
         place_id = safeString(placeId or game.PlaceId),
+        teleport_state = "failed",
+        evidence_source = "argus_account_module",
         detail = "Lua reported teleport error",
     })
 end
 
 function Account:TeleportState(state)
+    local stateText = safeString(state)
     return self:Send("teleport_state", {
         reason_key = "lua_account_teleport_state",
-        detail = safeString(state),
+        detail = stateText,
+        teleport_state = stateText,
+        teleport_place_id = safeString(game.PlaceId),
+        evidence_source = "argus_account_module",
     })
 end
 

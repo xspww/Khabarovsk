@@ -4,6 +4,7 @@ import json
 import os
 import secrets
 from typing import Any, Dict
+from urllib.parse import quote
 
 from fastapi import HTTPException, Request
 from fastapi.responses import PlainTextResponse
@@ -54,6 +55,29 @@ def _selected_lua_port(request: Request, port: int) -> int:
     return int(port or request.url.port or 7777)
 
 
+def _render_requeue_source(account: str, port: int, shutdown_delay: float) -> str:
+    account_qs = quote(str(account or ""), safe="")
+    helper_url = f"http://127.0.0.1:{int(port)}/api/lua/rejoin-helper?account={account_qs}&shutdown_delay={shutdown_delay:.2f}"
+    return "\n".join(
+        [
+            "local Request = (syn and syn.request) or (http and http.request) or http_request or request",
+            "local Load = loadstring or load",
+            f"local url = {_lua_literal(helper_url)}",
+            "local source = nil",
+            "if Request then",
+            "    local response = Request({ Method = \"GET\", Url = url, Headers = { [\"User-Agent\"] = \"CronusRejoinTeleport/1.0\" } })",
+            "    source = response and (response.Body or response.body or response.Data or response.data)",
+            "elseif game.HttpGet then",
+            "    source = game:HttpGet(url)",
+            "end",
+            "assert(type(source) == \"string\" and #source > 0, \"Cronus teleport reload failed\")",
+            "local fn, err = Load(source)",
+            "assert(fn, err)",
+            "return fn()",
+        ]
+    )
+
+
 def _render_rejoin_helper(ctx: ApiContext, request: Request, account: str, port: int, shutdown_delay: float) -> str:
     selected_port = int(port or request.url.port or 7777)
     delay = max(0.5, min(float(shutdown_delay or 3.0), 60.0))
@@ -64,6 +88,7 @@ def _render_rejoin_helper(ctx: ApiContext, request: Request, account: str, port:
         "__ARGUS_TOKEN__": _lua_literal(ctx.instance_token),
         "__ARGUS_ACCOUNT__": _lua_literal(account),
         "__ARGUS_SHUTDOWN_DELAY__": f"{delay:.2f}",
+        "__ARGUS_REQUEUE_SOURCE__": _lua_literal(_render_requeue_source(account, selected_port, delay)),
     })
 
 

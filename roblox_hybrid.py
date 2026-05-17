@@ -29,6 +29,7 @@ _MULTI_ROBLOX_DETAIL = ""
 _MULTI_ROBLOX_LAST_FAILURE = ""
 _MULTI_ROBLOX_STARTED_AT = 0.0
 _MULTI_ROBLOX_HANDLE_NAMES: List[str] = []
+_MULTI_ROBLOX_GUARD_MODE = "mutex"
 ROBLOX_HOME = "https://www.roblox.com/"
 AUTH_BASE = "https://auth.roblox.com/"
 USERS_BASE = "https://users.roblox.com/"
@@ -1015,13 +1016,13 @@ def ensure_multi_roblox_guard(timeout: float = 6.0) -> Tuple[bool, str]:
 
         if IS_COMPILED:
             guard_path = EXECUTABLE_PATH or sys.executable or "CronusLauncher.exe"
-            cmd = [guard_path, "--multi-roblox-guard", "both", "--parent-pid", str(os.getpid())]
+            cmd = [guard_path, "--multi-roblox-guard", _MULTI_ROBLOX_GUARD_MODE, "--parent-pid", str(os.getpid())]
         else:
             guard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "multi_roblox_guard.py")
             cmd = [
                 sys.executable or "python",
                 guard_path,
-                "both",
+                _MULTI_ROBLOX_GUARD_MODE,
                 "--parent-pid",
                 str(os.getpid()),
             ]
@@ -1047,24 +1048,15 @@ def ensure_multi_roblox_guard(timeout: float = 6.0) -> Tuple[bool, str]:
             if not ready_line.startswith("multi_roblox_guard_ready"):
                 raise RuntimeError(ready_line or "guard helper did not report ready")
             detail, handle_names, has_mutex, has_event = _parse_multi_roblox_ready_line(ready_line)
-            if not has_mutex and not has_event:
-                raise RuntimeError(f"guard helper missing Roblox singleton handles: {ready_line}")
-            if not (has_mutex and has_event):
-                missing = ",".join(
-                    name
-                    for name, present in (
-                        ("ROBLOX_singletonMutex", has_mutex),
-                        ("ROBLOX_singletonEvent", has_event),
-                    )
-                    if not present
-                )
-                detail = f"{detail} external_provider=possible missing={missing}".strip()
+            if not has_mutex:
+                raise RuntimeError(f"guard helper missing Roblox singleton mutex: {ready_line}")
+            if has_event:
+                detail = f"{detail} unexpected_event_handle=present".strip()
                 _multi_roblox_log(
-                    "guard_partial_ready",
+                    "guard_event_handle_present",
                     "warning",
                     pid=_MULTI_ROBLOX_HELPER.pid,
                     detail=detail,
-                    missing=missing,
                 )
             _MULTI_ROBLOX_HANDLE_NAMES = handle_names
             _MULTI_ROBLOX_STATE = "ready"

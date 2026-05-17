@@ -30,7 +30,7 @@ def _text_hint_from_log_evidence(evidence: Dict[str, Any]) -> list[str]:
 
 
 def _merge_log_evidence_into_dialog(cls, dialog: Dict[str, Any], evidence: Dict[str, Any]) -> Dict[str, Any]:
-    if not dialog or not dialog.get("matched") or not dialog.get("recovery_allowed"):
+    if not dialog or not dialog.get("matched"):
         return dialog
     if dialog.get("error_code") or not evidence.get("matched") or not evidence.get("error_code"):
         return dialog
@@ -343,7 +343,7 @@ def assess_liveness(
             process_idle=score <= 4.0,
             sample_count=6 if inspect_ui else 2,
         )
-        if inspect_ui and dialog.get("matched") and dialog.get("recovery_allowed") and not dialog.get("error_code"):
+        if inspect_ui and dialog.get("matched") and not dialog.get("error_code"):
             log_evidence = _collect_popup_log_evidence()
             dialog = _merge_log_evidence_into_dialog(cls, dialog, log_evidence)
         if dialog.get("matched") and str(dialog.get("reason_key") or "") == CAPTCHA_REASON:

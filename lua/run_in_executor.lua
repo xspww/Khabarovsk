@@ -53,6 +53,32 @@ local function encode(value)
     return value
 end
 
+local function queueOnTeleport(sourceCode)
+    local providers = {
+        rawget(_G, "queue_on_teleport"),
+        rawget(_G, "queueonteleport"),
+        rawget(_G, "queueonTeleport"),
+    }
+    if syn then
+        table.insert(providers, syn.queue_on_teleport)
+    end
+    if fluxus then
+        table.insert(providers, fluxus.queue_on_teleport)
+    end
+    for _, provider in ipairs(providers) do
+        if type(provider) == "function" then
+            local ok, err = pcall(provider, sourceCode)
+            if ok then
+                log("helper queued for teleport")
+                return true
+            end
+            log("queue_on_teleport failed", err)
+        end
+    end
+    log("queue_on_teleport unavailable")
+    return false
+end
+
 local url = ("http://%s:%s/api/lua/rejoin-helper?account=%s"):format(
     CRONUS_HOST,
     tostring(CRONUS_PORT),
@@ -86,6 +112,10 @@ if source:sub(1, 1) == "{" then
 end
 if not source:find("ArgusRejoin", 1, true) then
     failDownload("Downloaded text is not the Cronus rejoin monitor", statusCode, source)
+end
+
+if not source:find("ArgusRejoin:QueueOnTeleport", 1, true) then
+    queueOnTeleport(source)
 end
 
 local fn, err = Load(source)

@@ -65,6 +65,7 @@ from runtime.runtime_timeline import RuntimeTimeline
 from runtime.runtime_orchestrator import RuntimeOrchestrator
 from runtime.lua_identity import lua_event_requires_pid_guard, resolve_lua_account
 from runtime.farm_lifecycle import FarmLifecycleService
+from runtime.lua_server_detection import LuaServerDetection, detect_lua_server
 from runtime.recovery_view import recovery_step_for_account
 from runtime.diagnostic_bundle import build_runtime_diagnostic_bundle
 from runtime.telemetry_view import build_runtime_telemetry
@@ -589,6 +590,93 @@ class FarmController:
         worker.wake()
         return True, f"Captcha cleared for {username}. Resume requested."
 
+    @staticmethod
+    def _account_expects_private_server(acc: Account) -> bool:
+        server_type = str(getattr(getattr(acc, "server_type", None), "value", getattr(acc, "server_type", "")) or "").upper()
+        launch_intent = dict(getattr(acc, "launch_intent", {}) or {})
+        return bool(
+            str(getattr(acc, "active_vip", "") or "").strip()
+            or server_type == "VIP"
+            or launch_intent.get("private_server_intent")
+            or str(launch_intent.get("active_private_link_code_hash") or "").strip()
+        )
+
+    def _apply_lua_server_detection(self, acc: Account, payload: Dict[str, Any]) -> Dict[str, Any]:
+        detection = detect_lua_server(payload)
+        if not detection.observed:
+            return {}
+
+        now = time.time()
+        expects_private = self._account_expects_private_server(acc)
+        if detection.server_type == "PUBLIC" and expects_private:
+            detection = LuaServerDetection(
+                observed=True,
+                server_type="VIP",
+                is_vip=True,
+                private_server_id=detection.private_server_id,
+                private_server_owner_id=detection.private_server_owner_id,
+                place_id=detection.place_id,
+                job_id=detection.job_id,
+                universe_id=detection.universe_id,
+            )
+        pid_key = str(payload.get("pid") or getattr(acc, "pid", "") or "").strip()
+        log_key = ":".join(
+            [
+                detection.server_type,
+                detection.private_server_id,
+                detection.private_server_owner_id,
+                detection.job_id,
+                pid_key,
+            ]
+        )
+        with acc._lock:
+            previous_type = str(acc.observed_server_type or "")
+            previous_private_id = str(acc.observed_private_server_id or "")
+            previous_log_key = str(getattr(acc, "_last_server_detection_log_key", "") or "")
+            if detection.server_type == "PUBLIC" and previous_type.upper() == "VIP":
+                return {}
+            acc.observed_server_type = detection.server_type
+            acc.observed_private_server_id = detection.private_server_id
+            acc.observed_private_server_owner_id = detection.private_server_owner_id
+            acc.observed_place_id = detection.place_id
+            acc.observed_job_id = detection.job_id
+            acc.observed_universe_id = detection.universe_id
+            acc.observed_server_at = now
+            acc.sync_runtime("lua_server_detection")
+            should_log = (
+                previous_type != detection.server_type
+                or previous_private_id != detection.private_server_id
+                or (detection.is_vip and previous_log_key != log_key)
+            )
+            if should_log:
+                setattr(acc, "_last_server_detection_log_key", log_key)
+
+        if should_log:
+            private_label = detection.private_server_id[:8] if detection.private_server_id else ""
+            flog_kv(
+                "VIP",
+                "server_detected",
+                account=acc.display_name,
+                is_vip=detection.is_vip,
+                server_type=detection.server_type,
+                private_server_id=private_label,
+                place_id=detection.place_id,
+                job_id=detection.job_id,
+            )
+            if hasattr(self, "_bump_status_revision"):
+                self._bump_status_revision()
+
+        return {
+            "observed_server_type": detection.server_type,
+            "observed_is_vip": detection.is_vip,
+            "observed_private_server_id": detection.private_server_id,
+            "observed_private_server_owner_id": detection.private_server_owner_id,
+            "observed_place_id": detection.place_id,
+            "observed_job_id": detection.job_id,
+            "observed_universe_id": detection.universe_id,
+            "observed_server_at": now,
+        }
+
     def handle_lua_rejoin_event(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         event_name = str(payload.get("event") or "").strip().lower()
         if not event_name:
@@ -662,6 +750,9 @@ class FarmController:
                 "lua_pid": identity.pid,
                 "msg": "Lua event ignored because PID does not match Cronus binding",
             }
+
+        server_detection = self._apply_lua_server_detection(acc, payload)
+        event_payload.update(server_detection)
 
         if event_name in {"description", "set_description", "status_note"}:
             persisted, description = self._set_lua_account_description(
@@ -804,6 +895,8 @@ class FarmController:
             "matched_pid": resolution.bound_pid,
             "identity_match": resolution.match_reason,
             "signal": signal,
+            "observed_server_type": server_detection.get("observed_server_type", ""),
+            "observed_is_vip": bool(server_detection.get("observed_is_vip", False)),
             "msg": "Lua event accepted" if accepted else "Lua event routed but not accepted",
         }
 

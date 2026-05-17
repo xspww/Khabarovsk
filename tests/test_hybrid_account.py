@@ -850,6 +850,20 @@ class HybridAccountTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
 
+    def test_console_header_sets_cronus_console_icon(self):
+        import inspect
+        import desktop_host
+
+        header_source = inspect.getsource(desktop_host._console_header)
+        icon_source = inspect.getsource(desktop_host._set_console_window_icon)
+        ensure_source = inspect.getsource(desktop_host._ensure_console_icon_file)
+
+        self.assertIn("_set_console_window_icon()", header_source)
+        self.assertIn("WM_SETICON", icon_source)
+        self.assertIn("SetClassLongPtrW", icon_source)
+        self.assertIn("APP_ICON_FILE", ensure_source)
+        self.assertIn("cronus_console_icon.ico", ensure_source)
+
     def test_ui_separates_graphics_and_hides_toggle_controls(self):
         import inspect
         from fastapi.testclient import TestClient
@@ -1318,11 +1332,14 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn('configured_account = safeString(self.Account)', script)
         self.assertIn("pid = getProcessId()", script)
         self.assertIn("ShutdownDelay = 2.50", script)
-        self.assertIn('Version = "1.7.0"', script)
+        self.assertIn('Version = "1.7.1"', script)
+        self.assertIn('RequeueSource = "local Request', script)
         self.assertIn('token = safeString(self.Token)', script)
         self.assertIn('argus_token = safeString(self.Token)', script)
         self.assertIn('api_token = safeString(self.Token)', script)
         self.assertIn('_argus_token = safeString(self.Token)', script)
+        self.assertIn("function ArgusRejoin:QueueOnTeleport", script)
+        self.assertIn("function ArgusRejoin:IsTeleportTransitionActive", script)
         self.assertIn('function ArgusRejoin:EndpointWithToken', script)
         self.assertIn('function ArgusRejoin:QueryEndpoint', script)
         self.assertIn('function ArgusRejoin:GetFallback', script)
@@ -1347,16 +1364,28 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn('log("client fallback start"', script)
         self.assertIn("TeleportService:Teleport(game.PlaceId, LocalPlayer)", script)
         self.assertIn('LocalPlayer:Kick("Argus recovery fallback")', script)
+        self.assertIn("disconnect ignored during teleport", script)
         self.assertIn('reportDisconnect("poll")', script)
         self.assertIn("task.wait(0.5)", script)
         self.assertIn("shutdown fallback after disconnect", script)
         self.assertIn("TeleportService.TeleportInitFailed", script)
+        self.assertIn("teleport_state = stateText", script)
+        self.assertIn("teleport_place_id = safeString(game.PlaceId)", script)
+        self.assertIn("universe_id = safeString(game.GameId)", script)
+        self.assertIn("private_server_id = serverInfo.private_server_id", script)
+        self.assertIn("private_server_owner_id = serverInfo.private_server_owner_id", script)
+        self.assertIn("is_vip_server = serverInfo.is_vip_server", script)
+        self.assertIn("server_type = serverInfo.server_type", script)
+        self.assertIn("local ownerNumber = tonumber(privateServerOwnerId) or 0", script)
+        self.assertIn('local isPrivate = privateServerId ~= "" or ownerNumber > 0', script)
         self.assertNotIn("TeleportToPlaceInstance", script)
         self.assertIn('G.ArgusRejoin = ArgusRejoin', script)
         self.assertNotIn("__ARGUS_", script)
         loader = (Path(__file__).resolve().parents[1] / "lua" / "run_in_executor.lua").read_text(encoding="utf-8")
         self.assertIn("/api/lua/rejoin-helper", loader)
         self.assertIn("local Load = loadstring or load", loader)
+        self.assertIn("queueOnTeleport(source)", loader)
+        self.assertIn('log("helper queued for teleport")', loader)
         self.assertIn("Load(source)", loader)
 
     def test_lua_account_module_is_served_with_safe_api_contract(self):
@@ -1378,6 +1407,15 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("function Account:Send", script)
         self.assertIn("function Account:SetDescription", script)
         self.assertIn("function Account:MarkFinished", script)
+        self.assertIn("universe_id = safeString(game.GameId)", script)
+        self.assertIn("teleport_state = stateText", script)
+        self.assertIn("teleport_place_id = safeString(game.PlaceId)", script)
+        self.assertIn("private_server_id = serverInfo.private_server_id", script)
+        self.assertIn("private_server_owner_id = serverInfo.private_server_owner_id", script)
+        self.assertIn("is_vip_server = serverInfo.is_vip_server", script)
+        self.assertIn("server_type = serverInfo.server_type", script)
+        self.assertIn("local ownerNumber = tonumber(privateServerOwnerId) or 0", script)
+        self.assertIn('local isPrivate = privateServerId ~= "" or ownerNumber > 0', script)
         self.assertIn("/api/lua/rejoin-event", script)
         self.assertIn('["X-Argus-Token"] = self.Token', script)
         self.assertIn('["X-RoboGuard-Token"] = self.Token', script)
@@ -1737,6 +1775,183 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(routed[0][0], account)
         self.assertEqual(routed[0][3]["matched_pid"], 333)
         self.assertEqual(routed[0][3]["lua_pid"], 333)
+
+    def test_lua_loaded_event_records_vip_server_detection(self):
+        controller = FarmController.__new__(FarmController)
+        account = Account("LuaUnit")
+        controller._accounts = [account]
+        controller._workers = {}
+        bumped = []
+        pushed = []
+        routed = []
+
+        class FakeOrchestrator:
+            def handle_runtime_signal(self, acc, signal, reason, payload=None):
+                routed.append((acc, signal, reason, payload or {}))
+                return True
+
+        controller._runtime_orchestrator = FakeOrchestrator()
+        controller._bump_status_revision = lambda: bumped.append(True)
+        controller._push_event = lambda *args, **kwargs: pushed.append((args, kwargs))
+
+        with patch("farm.flog_kv") as flog:
+            result = controller.handle_lua_rejoin_event({
+                "event": "loaded",
+                "account": "LuaUnit",
+                "username": "LuaUnit",
+                "private_server_id": "3659f6a2-private",
+                "private_server_owner_id": "42",
+                "is_vip_server": "true",
+                "server_type": "VIP",
+                "place_id": "123456",
+                "job_id": "job-1",
+                "universe_id": "654321",
+            })
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["observed_server_type"], "VIP")
+        self.assertTrue(result["observed_is_vip"])
+        self.assertEqual(account.observed_server_type, "VIP")
+        self.assertEqual(account.observed_private_server_id, "3659f6a2-private")
+        self.assertEqual(account.observed_private_server_owner_id, "42")
+        self.assertEqual(routed[0][3]["observed_server_type"], "VIP")
+        self.assertTrue(routed[0][3]["observed_is_vip"])
+        self.assertTrue(bumped)
+        self.assertTrue(pushed)
+        flog.assert_any_call(
+            "VIP",
+            "server_detected",
+            account="LuaUnit",
+            is_vip=True,
+            server_type="VIP",
+            private_server_id="3659f6a2",
+            place_id="123456",
+            job_id="job-1",
+        )
+
+    def test_lua_private_server_owner_id_counts_as_vip_detection(self):
+        controller = FarmController.__new__(FarmController)
+        account = Account("LuaUnit")
+        controller._accounts = [account]
+        controller._workers = {}
+        controller._bump_status_revision = lambda: None
+        routed = []
+
+        class FakeOrchestrator:
+            def handle_runtime_signal(self, acc, signal, reason, payload=None):
+                routed.append((acc, signal, reason, payload or {}))
+                return True
+
+        controller._runtime_orchestrator = FakeOrchestrator()
+        controller._push_event = lambda *args, **kwargs: None
+
+        with patch("farm.flog_kv") as flog:
+            result = controller.handle_lua_rejoin_event({
+                "event": "loaded",
+                "account": "LuaUnit",
+                "username": "LuaUnit",
+                "private_server_id": "",
+                "private_server_owner_id": "42",
+                "is_vip_server": "false",
+                "server_type": "PUBLIC",
+                "place_id": "123456",
+            })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["observed_server_type"], "VIP")
+        self.assertTrue(result["observed_is_vip"])
+        self.assertEqual(account.observed_server_type, "VIP")
+        self.assertEqual(account.observed_private_server_owner_id, "42")
+        self.assertEqual(routed[0][3]["observed_server_type"], "VIP")
+        flog.assert_any_call(
+            "VIP",
+            "server_detected",
+            account="LuaUnit",
+            is_vip=True,
+            server_type="VIP",
+            private_server_id="",
+            place_id="123456",
+            job_id="",
+        )
+
+    def test_lua_public_signal_uses_expected_vip_launch(self):
+        controller = FarmController.__new__(FarmController)
+        account = Account("LuaUnit")
+        account.server_type = ServerType.VIP
+        account.active_vip = "https://www.roblox.com/games/123456?privateServerLinkCode=secret"
+        account.launch_intent = {"private_server_intent": True}
+        controller._accounts = [account]
+        controller._workers = {}
+        controller._bump_status_revision = lambda: None
+
+        class FakeOrchestrator:
+            def handle_runtime_signal(self, acc, signal, reason, payload=None):
+                return True
+
+        controller._runtime_orchestrator = FakeOrchestrator()
+        controller._push_event = lambda *args, **kwargs: None
+
+        with patch("farm.flog_kv") as flog:
+            result = controller.handle_lua_rejoin_event({
+                "event": "loaded",
+                "account": "LuaUnit",
+                "username": "LuaUnit",
+                "private_server_id": "",
+                "private_server_owner_id": "0",
+                "is_vip_server": "false",
+                "server_type": "PUBLIC",
+                "place_id": "123456",
+            })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["observed_server_type"], "VIP")
+        self.assertTrue(result["observed_is_vip"])
+        self.assertEqual(account.observed_server_type, "VIP")
+        self.assertEqual(account.observed_private_server_id, "")
+        flog.assert_any_call(
+            "VIP",
+            "server_detected",
+            account="LuaUnit",
+            is_vip=True,
+            server_type="VIP",
+            private_server_id="",
+            place_id="123456",
+            job_id="",
+        )
+
+    def test_lua_vip_detection_logs_once_per_process_and_job(self):
+        controller = FarmController.__new__(FarmController)
+        account = Account("LuaUnit")
+        controller._accounts = [account]
+        controller._workers = {}
+        controller._bump_status_revision = lambda: None
+
+        class FakeOrchestrator:
+            def handle_runtime_signal(self, acc, signal, reason, payload=None):
+                return True
+
+        controller._runtime_orchestrator = FakeOrchestrator()
+        controller._push_event = lambda *args, **kwargs: None
+        payload = {
+            "event": "loaded",
+            "account": "LuaUnit",
+            "username": "LuaUnit",
+            "pid": "555",
+            "private_server_id": "vip-1",
+            "private_server_owner_id": "42",
+            "is_vip_server": "true",
+            "server_type": "VIP",
+            "place_id": "123456",
+            "job_id": "job-1",
+        }
+
+        with patch("farm.flog_kv") as flog:
+            controller.handle_lua_rejoin_event(dict(payload))
+            controller.handle_lua_rejoin_event(dict(payload))
+
+        vip_logs = [call for call in flog.call_args_list if call.args[:2] == ("VIP", "server_detected")]
+        self.assertEqual(len(vip_logs), 1)
 
     def test_lua_description_event_updates_account_note_without_credentials(self):
         controller = FarmController.__new__(FarmController)
@@ -3247,7 +3462,8 @@ class HybridAccountTests(unittest.TestCase):
         self.assertGreaterEqual(visual["overlay_score"], 0.28)
         self.assertGreaterEqual(visual["modal_score"], 1.0)
         self.assertGreaterEqual(visual["button_score"], 0.6)
-        self.assertTrue(result.recovery_allowed)
+        self.assertFalse(result.recovery_allowed)
+        self.assertEqual(result.action, "")
         self.assertEqual(result.evidence_source, "visual_strong")
 
     def test_visual_pipeline_detects_disconnect_popup_at_supported_window_sizes(self):
@@ -3286,7 +3502,8 @@ class HybridAccountTests(unittest.TestCase):
                 self.assertEqual(visual["strength"], "strong")
                 self.assertEqual(visual["visual_stage"], "modal_button")
                 self.assertEqual(visual["button_pattern"], "double")
-                self.assertTrue(result.recovery_allowed)
+                self.assertFalse(result.recovery_allowed)
+                self.assertEqual(result.action, "")
                 self.assertEqual(result.evidence_source, "visual_strong")
 
     def test_visual_pipeline_detects_small_window_disconnect_leave_bar(self):
@@ -3312,7 +3529,8 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(visual["strength"], "strong")
         self.assertEqual(visual["visual_stage"], "small_panel")
         self.assertEqual(visual["button_pattern"], "bar")
-        self.assertTrue(result.recovery_allowed)
+        self.assertFalse(result.recovery_allowed)
+        self.assertEqual(result.action, "")
         self.assertEqual(result.evidence_source, "visual_strong")
 
     def test_modal_shape_without_button_is_visual_weak_and_ignored(self):
@@ -3379,6 +3597,35 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(result["visual_positive_samples"], 2)
         self.assertEqual(result["disconnect_category"], "VISUAL_DISCONNECT")
         self.assertTrue(result["visual_disconnect"])
+
+    def test_popup_observer_ignores_repeated_visual_pipeline_without_text_or_code(self):
+        from runtime.popup_detector.popup_sampler import PopupObserver
+
+        observer = PopupObserver(sample_count=2, sample_interval=0, threshold=1.0, stable_samples=2)
+        observer.sampler.windows_for_pid = lambda pid, include_hidden=True: [{"hwnd": 123}]
+        observer.sampler.read_texts = lambda hwnd: []
+        observer.sampler.capture_window_image = lambda hwnd: object()
+
+        with patch(
+            "runtime.popup_detector.popup_sampler.detect_visual_features",
+            return_value={
+                "matched": True,
+                "score": 1.1,
+                "strength": "strong",
+                "source": "visual_pipeline",
+                "visual_stage": "modal_button",
+                "button_pattern": "bar",
+                "title_rms": 68.16,
+                "reconnect_rms": 69.0,
+            },
+        ):
+            result = observer.inspect_pid(100, sample_count=2, sample_interval=0)
+
+        self.assertFalse(result["matched"])
+        self.assertFalse(result["recovery_allowed"])
+        self.assertEqual(result["positive_samples"], 0)
+        self.assertEqual(result["visual_positive_samples"], 0)
+        self.assertEqual(result["action"], "")
 
     def test_popup_observer_ignores_repeated_visual_weak_panel(self):
         from runtime.popup_detector.popup_sampler import PopupObserver
@@ -4140,7 +4387,7 @@ class HybridAccountTests(unittest.TestCase):
     def test_multi_roblox_guard_lifecycle(self):
         class FakeStdout:
             def readline(self):
-                return "multi_roblox_guard_ready ROBLOX_singletonMutex:err=0,ROBLOX_singletonEvent:err=0 pid=123\n"
+                return "multi_roblox_guard_ready ROBLOX_singletonMutex:err=0 pid=123\n"
 
         class FakeProcess:
             def __init__(self):
@@ -4167,11 +4414,18 @@ class HybridAccountTests(unittest.TestCase):
 
         fake = FakeProcess()
         release_multi_roblox_guard()
-        with patch("roblox_hybrid.subprocess.Popen", return_value=fake):
+        launched = {}
+
+        def fake_popen(cmd, **kwargs):
+            launched["cmd"] = list(cmd)
+            return fake
+
+        with patch("roblox_hybrid.subprocess.Popen", side_effect=fake_popen):
             ok, detail = ensure_multi_roblox_guard()
         self.assertTrue(ok)
         self.assertIn("ROBLOX_singletonMutex", detail)
-        self.assertIn("ROBLOX_singletonEvent", detail)
+        self.assertNotIn("ROBLOX_singletonEvent", detail)
+        self.assertIn("mutex", launched.get("cmd", []))
         status = multi_roblox_guard_status()
         self.assertEqual(status["state"], "ready")
         self.assertEqual(status["pid"], 123)
@@ -4181,7 +4435,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertTrue(fake.terminated)
         self.assertEqual(multi_roblox_guard_status()["state"], "stopped")
 
-    def test_multi_roblox_guard_accepts_partial_external_provider(self):
+    def test_multi_roblox_guard_rejects_event_only_ready(self):
         class FakeStdout:
             def readline(self):
                 return "multi_roblox_guard_ready ROBLOX_singletonEvent:err=0 pid=6380\n"
@@ -4213,14 +4467,12 @@ class HybridAccountTests(unittest.TestCase):
             with patch("roblox_hybrid.subprocess.Popen", return_value=fake):
                 ok, detail = ensure_multi_roblox_guard()
 
-            self.assertTrue(ok)
-            self.assertIn("ROBLOX_singletonEvent", detail)
-            self.assertIn("external_provider=possible", detail)
-            self.assertIn("missing=ROBLOX_singletonMutex", detail)
+            self.assertFalse(ok)
+            self.assertIn("missing Roblox singleton mutex", detail)
             status = multi_roblox_guard_status()
-            self.assertEqual(status["state"], "ready")
-            self.assertEqual(status["pid"], 6380)
-            self.assertEqual(status["handle_names"], ["ROBLOX_singletonEvent:err=0"])
+            self.assertEqual(status["state"], "failed")
+            self.assertEqual(status["pid"], 0)
+            self.assertTrue(fake.terminated)
         finally:
             release_multi_roblox_guard()
 

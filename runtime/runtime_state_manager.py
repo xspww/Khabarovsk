@@ -849,6 +849,13 @@ class RuntimeStateManager:
         acc.process_binding_confidence = 0.0
         acc.process_reject_reason = ""
         acc.process_owner_claim = ""
+        acc.observed_server_type = ""
+        acc.observed_private_server_id = ""
+        acc.observed_private_server_owner_id = ""
+        acc.observed_place_id = ""
+        acc.observed_job_id = ""
+        acc.observed_universe_id = ""
+        acc.observed_server_at = 0.0
         acc.unmanaged_live_process_count = 0
         acc.unmanaged_live_pids = []
         acc.adopt_candidate_pid = None

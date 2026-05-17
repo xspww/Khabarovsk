@@ -17,9 +17,28 @@ _LAST_CAPTCHA_AT: Dict[str, float] = {}
 _DISCONNECT_DEDUP_SECONDS = 3.0
 _CAPTCHA_DEDUP_SECONDS = 3.0
 
-_ICON_OK = "OK"
-_ICON_WARN = "!!"
-_ICON_FAIL = "XX"
+_ICON_OK = "✔"
+_ICON_WARN = "⚠️"
+_ICON_FAIL = "❌"
+_ICON_VIP = "🔐"
+_ICON_ALIASES = {
+    "OK": _ICON_OK,
+    "CHECK": _ICON_OK,
+    "SUCCESS": _ICON_OK,
+    "READY": _ICON_OK,
+    "!!": _ICON_WARN,
+    "WARN": _ICON_WARN,
+    "WARNING": _ICON_WARN,
+    "XX": _ICON_FAIL,
+    "FAIL": _ICON_FAIL,
+    "FAILED": _ICON_FAIL,
+    "ERROR": _ICON_FAIL,
+    "SERVER": _ICON_VIP,
+    "SMART": _ICON_VIP,
+    "VIP": _ICON_VIP,
+    "LOCK": _ICON_VIP,
+    "PRIVATE": _ICON_VIP,
+}
 
 _COLOR_RESET = "\x1b[0m"
 _COLOR_DIM = "\x1b[90m"
@@ -28,6 +47,7 @@ _COLOR_BY_ICON = {
     _ICON_OK: "\x1b[92m",
     _ICON_WARN: "\x1b[93m",
     _ICON_FAIL: "\x1b[91m",
+    _ICON_VIP: "\x1b[93m",
 }
 _COLOR_SUPPORT: Optional[bool] = None
 
@@ -84,6 +104,13 @@ def _text(value: Any, default: str = "") -> str:
     return text if text else default
 
 
+def _normalize_icon(value: Any, default: str = _ICON_OK) -> str:
+    icon = _text(value)
+    if not icon:
+        return default
+    return _ICON_ALIASES.get(icon.upper(), icon)
+
+
 def _int_text(value: Any, default: str = "") -> str:
     try:
         if value in (None, ""):
@@ -91,6 +118,15 @@ def _int_text(value: Any, default: str = "") -> str:
         return str(int(value))
     except Exception:
         return _text(value, default)
+
+
+def _boolish(value: Any, default: bool = False) -> bool:
+    text = _text(value).lower()
+    if text in {"1", "true", "yes", "on", "vip", "private", "private_server"}:
+        return True
+    if text in {"0", "false", "no", "off", "public"}:
+        return False
+    return default
 
 
 def _account(fields: Dict[str, Any]) -> str:
@@ -138,16 +174,18 @@ def _duration_text(value: Any) -> str:
 
 def _line(icon: str, message: str, *, indent: bool = False, stamp_color: str = _COLOR_DIM) -> str:
     stamp = f"[{time.strftime('%H:%M:%S')}]"
-    prefix = f"{icon:<2}"
+    icon_text = _normalize_icon(icon, default="")
     gap = "   " if indent else " "
     if _colors_enabled():
         stamp = _paint(stamp, stamp_color)
-        prefix = _paint(prefix, _COLOR_BY_ICON.get(icon, ""))
-    return f"{stamp}{gap}{prefix} {message}"
+        icon_text = _paint(icon_text, _COLOR_BY_ICON.get(icon_text, "")) if icon_text else ""
+    if icon_text:
+        return f"{stamp}{gap}{icon_text} {message}"
+    return f"{stamp}{gap}{message}"
 
 
 def format_console_line(icon: str, message: str, *, indent: bool = False) -> str:
-    return _line(_text(icon, _ICON_OK).upper(), _text(message), indent=indent)
+    return _line(_normalize_icon(icon), _text(message), indent=indent)
 
 
 def _disconnect_line(account: str, reason: str = "", delay: str = "", action: str = "restart") -> Optional[str]:
@@ -252,10 +290,10 @@ def _format_state(name: str, fields: Dict[str, Any]) -> Optional[str]:
         if _reason(fields) == "captcha_required":
             return _captcha_line(account, pid, _text(fields.get("detail")))
         if new == "IN_GAME":
-            return _line(_ICON_OK, f"{account} {_pid_paren(pid or 'bound')}", indent=True)
+            return _line(_ICON_OK, f"{account} {_pid_paren(pid or 'bound')}")
         return None
     if name == "process_bind_verified" and pid:
-        return _line(_ICON_OK, f"Found Roblox process {_pid_value(pid)} for user {account}", stamp_color=_COLOR_WHITE)
+        return _line("", f"Found Roblox process {_pid_value(pid)} for user {account}", stamp_color=_COLOR_WHITE)
     return None
 
 
@@ -279,7 +317,43 @@ def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]
     if scope == "CAPTCHA" or name == "captcha_dialog_hold" or (name == "account_hold" and _reason(fields) == "captcha_required"):
         return _captcha_line(account, pid, _text(fields.get("detail") or fields.get("captcha_detail")))
     if scope == "WORKER" and name in {"visible_process_adopted", "rebind_refreshed"} and pid:
-        return _line(_ICON_OK, f"Found Roblox process {_pid_value(pid)} for user {account}", stamp_color=_COLOR_WHITE)
+        return _line("", f"Found Roblox process {_pid_value(pid)} for user {account}", stamp_color=_COLOR_WHITE)
+    if scope in {"SERVER", "VIP", "VIP_TRACKER"} and name in {"selected", "server_selected", "smart_selected", "private_server_selected"}:
+        server_id = _text(
+            fields.get("server_id")
+            or fields.get("private_server_id")
+            or fields.get("job_id")
+            or fields.get("id"),
+            "unknown",
+        )
+        players = _text(fields.get("players") or fields.get("player_count"))
+        max_players = _text(fields.get("max_players") or fields.get("capacity"))
+        ping = _text(fields.get("ping_ms") or fields.get("ping"))
+        details = []
+        if players and max_players:
+            details.append(f"players: {players}/{max_players}")
+        elif players:
+            details.append(f"players: {players}")
+        if ping:
+            suffix = "ms" if ping.isdigit() else ""
+            details.append(f"ping: {ping}{suffix}")
+        summary = f"Smart server selected: {server_id}"
+        if details:
+            summary = f"{summary} ({', '.join(details)})"
+        return _line(_ICON_VIP, summary)
+    if scope in {"VIP", "VIP_DETECTOR"} and name in {"server_detected", "detected", "server_status"}:
+        is_vip = _boolish(fields.get("is_vip") or fields.get("is_vip_server") or fields.get("private_server"))
+        server_type = _text(fields.get("server_type"), "VIP" if is_vip else "PUBLIC").upper()
+        private_id = _text(fields.get("private_server_id"))
+        place_id = _text(fields.get("place_id"))
+        detail = "VIP server" if is_vip or server_type in {"VIP", "PRIVATE", "PRIVATE_SERVER"} else "public server"
+        suffix_parts = []
+        if private_id:
+            suffix_parts.append(f"id: {private_id}")
+        if place_id:
+            suffix_parts.append(f"place: {place_id}")
+        suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
+        return _line(_ICON_VIP, f"{account} {detail} detected{suffix}")
     return None
 
 
@@ -322,6 +396,10 @@ def _format_text(message: str, level: str = "info") -> Optional[str]:
     match = re.match(r"^\[WORKER\]\s+(.+?)\s+Not Responding\b", msg)
     if match:
         return _disconnect_line(match.group(1).strip(), "not_responding")
+
+    match = re.match(r"^(?:\[(?:SERVER|VIP|VIP_TRACKER)\]\s+)?Smart server selected:\s*(.+)$", msg, re.IGNORECASE)
+    if match:
+        return _line(_ICON_VIP, f"Smart server selected: {match.group(1).strip()}")
 
     return None
 

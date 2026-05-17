@@ -17,13 +17,11 @@ from runtime.maintenance_performance import (
     _window_arrange_settings_from_config,
     _window_resize_target_from_config,
 )
-from runtime.maintenance_presence import MaintenancePresenceMixin, _account_presence_user_id
 from runtime.maintenance_queue import MaintenanceQueueMixin
 
 
 class SystemMaintenance(
     MaintenanceLivenessMixin,
-    MaintenancePresenceMixin,
     MaintenanceQueueMixin,
     MaintenancePerformanceMixin,
     threading.Thread,

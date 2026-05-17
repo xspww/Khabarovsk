@@ -113,25 +113,8 @@ DEFAULTS: Dict[str, Any] = {
     "roblox_window_arrange_columns": 6,
     "roblox_window_arrange_gap": 2,
     "roblox_window_arrange_margin": 0,
-    "presence_api_enabled":     False,
-    "presence_poll_interval_seconds": 30,
-    "presence_cache_ttl_seconds": 30,
-    "presence_assist_rejoin_enabled": False,
-    "presence_rejoin_cooldown_seconds": 10,
     "multi_roblox_enabled": True,
     "rt_rotation_enabled": False,
-    "use_ram_account_manager":  False,
-    "ram_launch_via_api":       True,
-    "ram_auto_launch":          True,
-    "ram_host":                 "localhost",
-    "ram_port":                 7963,
-    "ram_password":             "",
-    "ram_path":                 os.path.join(
-        os.path.expanduser("~"),
-        "Documents",
-        "acc",
-        "Roblox Account Manager.exe",
-    ),
     "accounts":                 [],
     "runtime_state":            {},
 }
@@ -156,10 +139,6 @@ class ConfigManager:
                 raw["auto_close_minutes"] = int((seconds + 59) // 60) if seconds > 0 else 0
             except Exception:
                 raw["auto_close_minutes"] = 0
-        raw["use_ram_account_manager"] = False
-        raw["ram_launch_via_api"] = False
-        raw["ram_auto_launch"] = False
-
         with self._lock:
             self._cfg = {k: raw.get(k, v) for k, v in DEFAULTS.items()}
             self._cfg["schema_version"] = int(raw.get("schema_version") or CONFIG_SCHEMA_VERSION)
@@ -182,11 +161,7 @@ class ConfigManager:
 
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
-            snap = dict(self._cfg)
-        snap["use_ram_account_manager"] = False
-        snap["ram_launch_via_api"] = False
-        snap["ram_auto_launch"] = False
-        return snap
+            return dict(self._cfg)
 
     def sections(self) -> ArgusConfigSections:
         with self._lock:

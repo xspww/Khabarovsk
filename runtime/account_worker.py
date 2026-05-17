@@ -16,7 +16,6 @@ from core import (
     flog_kv,
 )
 from services.process_service import ProcessManager, ProcessService
-from services.ram_service import RAMManager
 from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
 from services.captcha_guard import (
     CAPTCHA_BLOCK_REASON,
@@ -64,7 +63,7 @@ class AccountWorker(threading.Thread):
         self._not_responding_since: Optional[float] = None
         self._connection_error_since: Optional[float] = None
         self._watchdog: Optional[RobloxWatchdog] = None
-        self._last_ram_hold_log = 0.0
+        self._last_missing_hold_log = 0.0
 
     def wake(self):
         self._wake.set()
@@ -212,9 +211,6 @@ class AccountWorker(threading.Thread):
             )
         return False
 
-    def _presence_assist_missing_bound_process(self) -> Dict[str, object]:
-        return {"status": "disabled", "reason": "presence_assist_disabled"}
-
     def _assess_missing_bound_process(self, source: str) -> Dict[str, object]:
         acc = self.acc
         now = time.time()
@@ -225,33 +221,6 @@ class AccountWorker(threading.Thread):
 
         if self._safe_adopt_visible_process(f"{source}_visible_adopt"):
             return {"status": "rebound", "grace_period": grace_period, "adopted": True}
-
-        ram_online = None
-        ram_detail = ""
-        if self.cfg.get("use_ram_account_manager", False):
-            ram_online, ram_detail, _ = RAMManager.resolve_account_online(
-                acc, self.cfg, force_refresh=True
-            )
-
-        if ram_online is True:
-            return {
-                "status": "hold",
-                "reason": "ram_online",
-                "ram_detail": ram_detail,
-                "grace_period": grace_period,
-            }
-
-        presence_assist = self._presence_assist_missing_bound_process()
-        if presence_assist.get("status") == "hold":
-            return {
-                "status": "hold",
-                "reason": str(presence_assist.get("reason") or "roblox_presence_ingame"),
-                "presence": ProcessManager.summarize_game_presence(launched_after=acc.last_launch_at),
-                "roblox_presence": presence_assist.get("presence") or {},
-                "ram_detail": ram_detail,
-                "missing_for": now - float(acc.pid_missing_since or now),
-                "grace_period": grace_period,
-            }
 
         reconciliation = ProcessManager.staged_orphan_reconcile(
             acc,
@@ -264,7 +233,7 @@ class AccountWorker(threading.Thread):
             acc.last_signal_confidence = float(validation.get("confidence") or 0.0)
             acc.last_reconcile_at = time.time()
         if reconciliation.get("action") == "auto_bind" and self._rebind_live_game_process(f"{source}_presence"):
-            return {"status": "rebound", "presence": presence, "validation": validation, "ram_detail": ram_detail, "grace_period": grace_period}
+            return {"status": "rebound", "presence": presence, "validation": validation, "grace_period": grace_period}
 
         with acc._lock:
             if not acc.pid_missing_since:
@@ -278,7 +247,6 @@ class AccountWorker(threading.Thread):
                 "status": "multi_roblox_guard_failed",
                 "presence": presence,
                 "validation": validation,
-                "ram_detail": ram_detail,
                 "missing_for": missing_for,
                 "grace_period": grace_period,
             }
@@ -289,7 +257,6 @@ class AccountWorker(threading.Thread):
                 "reason": str(reconciliation.get("reason") or "presence_hold"),
                 "presence": presence,
                 "validation": validation,
-                "ram_detail": ram_detail,
                 "missing_for": missing_for,
                 "grace_period": grace_period,
             }
@@ -298,7 +265,6 @@ class AccountWorker(threading.Thread):
             "status": "dead",
             "presence": presence,
             "validation": validation,
-            "ram_detail": ram_detail,
             "missing_for": missing_for,
             "grace_period": grace_period,
         }
@@ -384,7 +350,6 @@ class AccountWorker(threading.Thread):
         if status == "hold":
             now = time.time()
             reason = str(assessment.get("reason") or "")
-            ram_detail = str(assessment.get("ram_detail") or "")
             presence = assessment.get("presence") or {
                 "pids": [],
                 "visible_windows": 0,
@@ -392,20 +357,14 @@ class AccountWorker(threading.Thread):
                 "max_cpu": 0.0,
             }
             missing_for = float(assessment.get("missing_for") or 0.0)
-            if now - self._last_ram_hold_log >= (10.0 if reason == "ram_online" else 5.0):
-                if reason == "ram_online":
-                    flog(
-                        f"[WORKER] {acc.display_name} PID missing but RAM still reports online "
-                        f"({ram_detail}) - holding IN_GAME state"
-                    )
-                else:
-                    flog(
-                        f"[WORKER] {acc.display_name} bound PID missing but game signals remain "
-                        f"(missing={missing_for:.1f}s pids={presence['pids']} "
-                        f"windows={presence['visible_windows']} ram={presence['max_ram_mb']:.1f}MB "
-                        f"cpu={presence['max_cpu']:.2f}%)"
-                    )
-                self._last_ram_hold_log = now
+            if now - self._last_missing_hold_log >= 5.0:
+                flog(
+                    f"[WORKER] {acc.display_name} bound PID missing but game signals remain "
+                    f"(missing={missing_for:.1f}s pids={presence['pids']} "
+                    f"windows={presence['visible_windows']} ram={presence['max_ram_mb']:.1f}MB "
+                    f"cpu={presence['max_cpu']:.2f}%)"
+                )
+                self._last_missing_hold_log = now
             return status
 
         presence = assessment.get("presence") or {
@@ -413,7 +372,6 @@ class AccountWorker(threading.Thread):
             "max_ram_mb": 0.0,
             "max_cpu": 0.0,
         }
-        ram_detail = str(assessment.get("ram_detail") or "")
         grace_period = float(assessment.get("grace_period") or 0.0)
         guard_failed = status == "multi_roblox_guard_failed"
         with acc._lock:
@@ -458,8 +416,6 @@ class AccountWorker(threading.Thread):
             signal_transaction_id = acc.rejoin_transaction_id
 
         extra = f"PID={pid_was}" if pid_was else "PID=<none>"
-        if ram_detail:
-            extra += f" RAM={ram_detail}"
         extra += (
             f" grace={grace_period:.1f}s"
             f" windows={presence['visible_windows']}"
@@ -520,13 +476,6 @@ class AccountWorker(threading.Thread):
                 payload={"reason_msg": reason_msg, "detail": auth_gate.reason},
             )
             return
-
-        if self.cfg.get("use_ram_account_manager", False) and not acc.cookie:
-            ok_sync, sync_detail = RAMManager.sync_account_profile(acc, self.cfg)
-            if ok_sync:
-                flog(f"[WORKER] {acc.display_name} {sync_detail}")
-            else:
-                flog(f"[WORKER] {acc.display_name} RAM sync skipped: {sync_detail}", "warning")
 
         if acc.cookie:
             validate_attempt = 0
@@ -599,20 +548,6 @@ class AccountWorker(threading.Thread):
                 )
                 return
         else:
-            if self.cfg.get("use_ram_account_manager", False):
-                with acc._lock:
-                    acc.session_checked = True
-                flog(
-                    f"[WORKER] {acc.display_name} no cookie from RAM -> block launch to avoid Roblox login screen",
-                    "warning",
-                )
-                self.runtime_owner.handle_runtime_signal(
-                    acc,
-                    "fatal",
-                    "cookie_missing",
-                    payload={"reason_msg": self.REASON_MESSAGES["cookie_missing"]},
-                )
-                return
             with acc._lock:
                 acc.session_valid = True
                 acc.session_checked = True

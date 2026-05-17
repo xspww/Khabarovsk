@@ -70,7 +70,6 @@ def classify_popup_observation(
     visual_features: Dict[str, Any] | None = None,
     *,
     process_idle: bool = False,
-    presence_mismatch: bool = False,
     threshold: float = 1.0,
 ) -> PopupClassification:
     text_features = detect_text_features(texts)
@@ -79,7 +78,6 @@ def classify_popup_observation(
         text_features,
         visual_features,
         process_idle=process_idle,
-        presence_mismatch=presence_mismatch,
     )
     score = float(confidence.get("score") or 0.0)
     code = str(text_features.get("error_code") or "")

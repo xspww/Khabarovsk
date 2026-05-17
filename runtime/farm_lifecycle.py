@@ -115,12 +115,6 @@ class FarmLifecycleService:
                 farm._runtime_orchestrator.request_start_epoch(acc)
                 acc.session_wait_started_at = 0.0
                 acc.rapid_relaunch_count = 0
-                acc.presence_rejoin_pending_clear = False
-                acc.presence_rejoin_suppressed_until = 0.0
-                acc.last_presence_rejoin_at = 0.0
-                acc.presence_mismatch_since = 0.0
-                acc.presence_mismatch_status = ""
-                acc.presence_mismatch_reason = ""
                 if acc.cooldown_until and acc.cooldown_until <= time.time():
                     farm._runtime_state.set_cooldown(acc, 0.0, reason="expired_restored_cooldown")
                 reset_failure_gate = (

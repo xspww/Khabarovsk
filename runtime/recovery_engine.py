@@ -749,9 +749,8 @@ class RecoveryCoordinator:
             self._runtime_state.set_cooldown(acc, 0.0, reason="force_rejoin")
             acc.last_crash_reason = ""
             acc.last_rejoin_trigger = "force_rejoin"
-            if acc.cookie or not self._cfg.get("use_ram_account_manager", False):
-                acc.session_checked = True
-                acc.session_valid = True
+            acc.session_checked = True
+            acc.session_valid = True
             pid = acc.pid
             identity = acc.bound_process_identity
             runtime_generation = acc.runtime_generation

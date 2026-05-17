@@ -19,7 +19,7 @@ from .idempotency import begin_idempotent_request, begin_idempotent_request_sync
 from .settings_state import _int_setting
 
 _COOKIE_RE = re.compile(r'(_\|WARNING:[^\s\'"<>]+|\.ROBLOSECURITY[^\s\'"<>]*)', re.IGNORECASE)
-_KV_SECRET_RE = re.compile(r"(?i)\b(cookie|roblosecurity|ram_password|password)=([^\s]+)")
+_KV_SECRET_RE = re.compile(r"(?i)\b(cookie|roblosecurity|password)=([^\s]+)")
 
 
 def register(app, ctx: ApiContext) -> None:

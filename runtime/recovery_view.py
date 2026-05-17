@@ -38,8 +38,6 @@ def recovery_step_for_account(acc: Any, display_state: AccountState, network_sta
         return "Disconnected", 4, float(acc.last_recovery_at or acc.last_state_change_at or 0.0)
     if "network_drop" in reason_text:
         return "Rejoining", 5, float(acc.recovery_scheduled_at or acc.last_recovery_at or 0.0)
-    if "presence_limited" in reason_text:
-        return "In Game", 8, float(acc.in_game_since or acc.last_state_change_at or 0.0)
     if "connection_error" in reason_text or "visual_disconnect" in reason_text or "rejoin" in reason_text or state_name == "JOINING":
         return "Rejoining", 5, float(acc.recovery_scheduled_at or acc.last_recovery_at or 0.0)
     if state_name in {"LAUNCHING", "STARTING"} or "launch" in reason_text:

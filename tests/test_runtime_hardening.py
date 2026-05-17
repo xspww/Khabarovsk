@@ -923,42 +923,6 @@ class RuntimeHardeningTests(unittest.TestCase):
             stop.set()
             recovery.stop()
 
-    def test_presence_mismatch_is_cleared_without_rejoin_when_local_process_is_healthy(self):
-        farm = object.__new__(SystemMaintenance)
-        farm._cfg = {
-            "presence_api_enabled": True,
-            "presence_assist_rejoin_enabled": True,
-            "connection_error_rejoin": True,
-            "connection_error_hold_time": 1,
-        }
-        farm._supervisor = None
-        farm._presence_disconnect_reason = lambda acc, now, in_game_for, loading_grace: (  # type: ignore[attr-defined]
-            "presence_not_ingame:Online",
-            {"presence_type_name": "Online", "presence_last_location": "Website"},
-        )
-
-        acc = Account(username="healthy_presence_user")
-        acc.state = AccountState.IN_GAME
-        acc.desired_state = AccountState.IN_GAME
-        acc.liveness_state = "alive"
-        now = time.time()
-
-        handled = farm._handle_presence_disconnect_assist(  # type: ignore[attr-defined]
-            acc,
-            worker=None,
-            now=now,
-            pid=1234,
-            in_game_for=120,
-            loading_grace=30,
-            allow_rejoin=False,
-        )
-
-        self.assertFalse(handled)
-        self.assertEqual(acc.presence_mismatch_reason, "")
-        self.assertEqual(acc.presence_mismatch_since, 0.0)
-        self.assertNotEqual(acc.last_watchdog_classification, "presence_mismatch_observed")
-        self.assertNotEqual(acc.liveness_state, "presence_disconnected")
-
     def test_running_invariant_requires_pid(self):
         acc = Account(username="invariant_user")
         acc.state = AccountState.IN_GAME
@@ -1063,7 +1027,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         cfg = {
             "max_retry": 10,
             "runtime_invariant_monitor_enabled": True,
-            "ram_password": "secret",
+            "password": "secret",
             "game_private_server_url": "privateServerLinkCode=config-link",
         }
 
@@ -1086,7 +1050,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertNotIn("active_vip", bundle["accounts"][0])
         self.assertEqual(bundle["accounts"][0]["orphan_pid"], 4321)
         self.assertEqual(bundle["config"]["max_retry"], 10)
-        self.assertNotIn("ram_password", bundle["config"])
+        self.assertNotIn("password", bundle["config"])
         self.assertNotIn("game_private_server_url", bundle["config"])
         serialized = str(bundle)
         self.assertNotIn("secret-cookie", serialized)

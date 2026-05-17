@@ -10,7 +10,6 @@ from services import roblox_windows as _windows
 
 # Compatibility re-exports kept for legacy imports from process_net.
 from services.resource_monitor import RealtimeResourceMonitor, get_rt_monitor
-from services.ram_service import RAMManager
 from services.cookie_service import IsolationManager
 from services.vip_tracker import VipTracker
 from services.network_monitor import (

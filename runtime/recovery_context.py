@@ -12,7 +12,6 @@ AUTH_FAILURE = "AUTH_FAILURE"
 TELEPORT_FAILURE = "TELEPORT_FAILURE"
 SERVER_FULL = "SERVER_FULL"
 PROCESS_CRASH = "PROCESS_CRASH"
-PRESENCE_STALE = "PRESENCE_STALE"
 VISUAL_DISCONNECT = "VISUAL_DISCONNECT"
 
 
@@ -44,8 +43,6 @@ REASON_TO_CATEGORY = {
     "watchdog_timeout": PROCESS_CRASH,
     "loading_freeze": PROCESS_CRASH,
     "visual_disconnect": VISUAL_DISCONNECT,
-    "presence_mismatch": PRESENCE_STALE,
-    "presence_not_ingame": PRESENCE_STALE,
 }
 
 
@@ -56,7 +53,6 @@ CATEGORY_TO_REASON = {
     TELEPORT_FAILURE: "teleport_timeout",
     SERVER_FULL: "server_full",
     PROCESS_CRASH: "process_crash",
-    PRESENCE_STALE: "connection_error",
     VISUAL_DISCONNECT: "connection_error",
 }
 
@@ -68,7 +64,6 @@ CATEGORY_PRIORITY = {
     VISUAL_DISCONNECT: PRIORITY_MEDIUM_HIGH,
     TELEPORT_FAILURE: PRIORITY_MEDIUM_HIGH,
     SERVER_FULL: PRIORITY_MEDIUM_HIGH,
-    PRESENCE_STALE: PRIORITY_LOW,
     AUTH_FAILURE: PRIORITY_CRITICAL,
 }
 
@@ -111,8 +106,6 @@ def priority_for_signal(signal: str = "", category: str = "", popup_code: str = 
         return PRIORITY_MEDIUM_HIGH
     if raw_signal in {"watchdog_timeout", "loading_freeze", "fault", "crash"}:
         return PRIORITY_MEDIUM
-    if "presence" in raw_signal or str(category or "").strip().upper() == PRESENCE_STALE:
-        return PRIORITY_LOW
     return CATEGORY_PRIORITY.get(str(category or "").strip().upper(), PRIORITY_MEDIUM)
 
 
@@ -126,7 +119,6 @@ class RecoveryAttemptContext:
     popup_code: str = ""
     popup_confidence: float = 0.0
     watchdog_reason: str = ""
-    presence_state: str = ""
     cooldown_reason: str = ""
     retry_count: int = 0
     created_at: float = field(default_factory=time.time)
@@ -148,7 +140,6 @@ class RecoveryAttemptContext:
             "popup_code": self.popup_code,
             "popup_confidence": self.popup_confidence,
             "watchdog_reason": self.watchdog_reason,
-            "presence_state": self.presence_state,
             "cooldown_reason": self.cooldown_reason,
             "retry_count": self.retry_count,
             "created_at": self.created_at,
@@ -188,7 +179,6 @@ class RecoveryAttemptContext:
             popup_code=popup_code,
             popup_confidence=float(payload.get("popup_confidence") or payload.get("confidence") or 0.0),
             watchdog_reason=str(payload.get("watchdog_reason") or ""),
-            presence_state=str(payload.get("presence_state") or payload.get("presence_reason") or ""),
             cooldown_reason=str(payload.get("cooldown_reason") or ""),
             retry_count=int(payload.get("retry_count") or getattr(account, "retry_count", 0) or 0),
             priority=priority,

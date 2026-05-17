@@ -56,8 +56,6 @@ def register(app, ctx: ApiContext) -> None:
             "roblox_window_height", "roblox_window_resize_interval_seconds",
             "roblox_window_arrange_enabled", "roblox_window_arrange_columns",
             "roblox_window_arrange_gap", "roblox_window_arrange_margin",
-            "presence_api_enabled", "presence_poll_interval_seconds",
-            "presence_cache_ttl_seconds", "presence_assist_rejoin_enabled",
             "multi_roblox_enabled", "rt_rotation_enabled",
         }
         updates = {k: v for k, v in body.items() if k in allowed}
@@ -141,20 +139,12 @@ def register(app, ctx: ApiContext) -> None:
             updates["roblox_window_arrange_columns"] = normalized_window["arrange_columns"]
             updates["roblox_window_arrange_gap"] = normalized_window["arrange_gap"]
             updates["roblox_window_arrange_margin"] = normalized_window["arrange_margin"]
-        if "presence_api_enabled" in updates:
-            updates["presence_api_enabled"] = False
         if "popup_disconnected_enabled" in updates:
             updates["popup_disconnected_enabled"] = bool(updates["popup_disconnected_enabled"])
         if "popup_scan_interval_seconds" in updates:
             updates["popup_scan_interval_seconds"] = _int_setting(updates["popup_scan_interval_seconds"], 30, 5, 3600)
         if "popup_scan_max_parallel" in updates:
             updates["popup_scan_max_parallel"] = _int_setting(updates["popup_scan_max_parallel"], 2, 1, 32)
-        if "presence_assist_rejoin_enabled" in updates:
-            updates["presence_assist_rejoin_enabled"] = False
-        if "presence_poll_interval_seconds" in updates:
-            updates["presence_poll_interval_seconds"] = _int_setting(updates["presence_poll_interval_seconds"], 30, 10, 300)
-        if "presence_cache_ttl_seconds" in updates:
-            updates["presence_cache_ttl_seconds"] = _int_setting(updates["presence_cache_ttl_seconds"], 30, 10, 300)
         if "multi_roblox_enabled" in updates:
             updates["multi_roblox_enabled"] = bool(updates["multi_roblox_enabled"])
             if not updates["multi_roblox_enabled"]:

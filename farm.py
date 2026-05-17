@@ -28,7 +28,6 @@ from core import (
 from domain.session_identity import build_launch_intent
 from domain.runtime_signals import RuntimeSignal, is_recovery_signal, normalize_runtime_signal
 from services.network_monitor import NetworkMonitor, NET_ONLINE
-from services.ram_service import RAMManager
 from services.vip_tracker import VipTracker
 from services.process_service import ProcessManager, ProcessService
 from services.resource_monitor import get_rt_monitor
@@ -73,7 +72,6 @@ from runtime.runtime_view_model import RuntimeViewModelBuilder
 from runtime.supervisor_runtime import SupervisorRuntime
 from runtime.system_maintenance import (
     SystemMaintenance,
-    _account_presence_user_id,
     _apply_cpu_limiter_for_bound_process,
     _window_arrange_settings_from_config,
     _window_resize_target_from_config,
@@ -563,7 +561,7 @@ class FarmController:
             was_captcha=was_captcha,
         )
         if not self.running:
-            return True, f"Captcha cleared for {username}. Start Argus when ready."
+            return True, f"Captcha cleared for {username}. Start Cronus when ready."
         if not self._recovery or not self._state_mgr:
             return False, "Recovery coordinator unavailable"
         if live_session:
@@ -662,7 +660,7 @@ class FarmController:
                 "signal": "",
                 "matched_pid": resolution.bound_pid,
                 "lua_pid": identity.pid,
-                "msg": "Lua event ignored because PID does not match Argus binding",
+                "msg": "Lua event ignored because PID does not match Cronus binding",
             }
 
         if event_name in {"description", "set_description", "status_note"}:

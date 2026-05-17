@@ -298,7 +298,6 @@ def assess_liveness(
     cpu_threshold: float = 0.9,
     ram_delta_threshold: float = 8.0,
     inspect_ui: bool = False,
-    presence_mismatch: bool = False,
 ) -> Dict[str, Any]:
     validation = cls.validate_game_process(pid, min_ram_mb=0.0)
     if not validation.get("ok"):
@@ -341,7 +340,6 @@ def assess_liveness(
         dialog = cls.inspect_disconnect_dialog(
             pid,
             prepare=bool(inspect_ui),
-            presence_mismatch=bool(presence_mismatch),
             process_idle=score <= 4.0,
             sample_count=6 if inspect_ui else 2,
         )

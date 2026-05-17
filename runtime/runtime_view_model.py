@@ -7,7 +7,6 @@ from account_hybrid import redact_secret
 from core import AccountState, account_launch_block_reason, flog_kv
 from services.network_monitor import NET_ONLINE
 from services.process_service import ProcessManager
-from services.ram_service import RAMManager
 from services.resource_monitor import get_rt_monitor
 from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_LABEL, is_account_captcha_required
 from runtime.account_worker import AccountWorker
@@ -49,15 +48,12 @@ class RuntimeViewModelBuilder:
         m, s = divmod(r, 60)
         mon = get_rt_monitor()
         accounts_data = []
-        cfg = farm.cfg_mgr.snapshot()
         try:
             from roblox_hybrid import multi_roblox_guard_status
 
             multi_guard = multi_roblox_guard_status()
         except Exception as exc:
             multi_guard = {"state": "unknown", "pid": 0, "detail": str(exc), "last_failure": str(exc), "handle_names": []}
-        ram_enabled = bool(cfg.get("use_ram_account_manager", False))
-        ram_records: Dict[str, dict] = {}
         global_command = farm.command_inflight("global")
         try:
             recent_runtime_events = [
@@ -71,17 +67,6 @@ class RuntimeViewModelBuilder:
         events_by_account: Dict[str, List[Dict[str, Any]]] = {}
         for event in recent_runtime_events:
             events_by_account.setdefault(str(event.get("account", "") or ""), []).append(event)
-
-        if ram_enabled:
-            ok, payload = RAMManager.get_accounts(cfg, include_cookies=False, force_refresh=False)
-            if ok and isinstance(payload, list):
-                for item in payload:
-                    if not isinstance(item, dict):
-                        continue
-                    for key in ("Username", "username", "Alias", "alias", "Account"):
-                        value = str(item.get(key, "") or "").strip().lower()
-                        if value:
-                            ram_records[value] = item
 
         any_command_inflight = farm._command_tracker.any_inflight()
         queue_snapshot = farm._queue.snapshot() if farm._queue else {
@@ -116,23 +101,6 @@ class RuntimeViewModelBuilder:
             cpu = mon.get_cpu(snapshot_pid) if (snapshot_pid and pid_alive) else 0.0
             mem = mon.get_ram(snapshot_pid) if (snapshot_pid and pid_alive) else 0.0
             is_nr = bool(snapshot_pid and pid_alive and display_state == AccountState.IN_GAME and ProcessManager.is_not_responding(snapshot_pid))
-            ram_online = None
-            ram_detail = ""
-
-            if ram_enabled:
-                names = [
-                    str(acc.username or "").strip().lower(),
-                    str(acc.display_name or "").strip().lower(),
-                    str(acc.alias or "").strip().lower(),
-                ]
-                record = None
-                for name in names:
-                    if name and name in ram_records:
-                        record = ram_records[name]
-                        break
-                if record:
-                    ram_online, ram_detail = RAMManager.resolve_record_online(record)
-
             vip_tracker_status = []
             if acc._vip_tracker:
                 try:
@@ -176,10 +144,6 @@ class RuntimeViewModelBuilder:
             if not pid_alive:
                 reported_liveness = "unbound" if snapshot_pid else "unknown"
                 reported_liveness_score = 0.0
-            roblox_presence: Dict[str, Any] = {}
-            presence_age = None
-            presence_type_name = ""
-
             account_payload = {
                 "username": acc.username,
                 "account_id": acc._config_username,
@@ -224,8 +188,6 @@ class RuntimeViewModelBuilder:
                 "last_pid_change_at": float(acc.last_pid_change_at or 0.0),
                 "vip_tracker": vip_tracker_status,
                 "not_responding": is_nr,
-                "ram_online": ram_online,
-                "ram_detail": ram_detail,
                 "cooldown_until": cooldown_until,
                 "cooldown_left": cooldown_left,
                 "pid_missing_for": max(0, int(time.time() - acc.pid_missing_since)) if acc.pid_missing_since else 0,
@@ -240,17 +202,6 @@ class RuntimeViewModelBuilder:
                 "watchdog_classification": acc.last_watchdog_classification or "",
                 "liveness_state": reported_liveness,
                 "liveness_score": reported_liveness_score,
-                "presence_type": roblox_presence.get("presence_type"),
-                "presence_type_name": presence_type_name,
-                "presence_place_id": roblox_presence.get("presence_place_id", ""),
-                "presence_root_place_id": roblox_presence.get("presence_root_place_id", ""),
-                "presence_universe_id": roblox_presence.get("presence_universe_id", ""),
-                "presence_game_id_present": bool(roblox_presence.get("presence_game_id_present", False)),
-                "presence_last_location": roblox_presence.get("presence_last_location", ""),
-                "presence_age_seconds": presence_age,
-                "presence_limited": bool(roblox_presence.get("presence_limited", False)),
-                "presence_disconnect_for": 0.0,
-                "presence_disconnect_reason": "",
                 "process_binding_status": acc.process_binding_status or "",
                 "binding_decision": acc.binding_decision or runtime_snapshot.get("binding_decision", ""),
                 "process_binding_confidence": round(float(acc.process_binding_confidence or runtime_snapshot.get("process_binding_confidence", 0.0) or 0.0), 1),
@@ -339,14 +290,6 @@ class RuntimeViewModelBuilder:
             "multi_roblox_guard_detail": multi_guard.get("detail", ""),
             "last_multi_roblox_failure": multi_guard.get("last_failure", ""),
             "multi_roblox_guard_handles": multi_guard.get("handle_names", []),
-            "presence_api": {
-                "enabled": False,
-                "poll_interval_seconds": int(cfg.get("presence_poll_interval_seconds", 30) or 30),
-                "cache_ttl_seconds": int(cfg.get("presence_cache_ttl_seconds", 30) or 30),
-                "assist_rejoin_enabled": False,
-                "ok": False,
-                "msg": "presence_assist_disabled",
-            },
             "queue_snapshot": queue_snapshot,
             "runtime_health": runtime_health,
             "can_start": bool((not farm.running) and not any_command_inflight),

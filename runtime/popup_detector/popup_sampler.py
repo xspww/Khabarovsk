@@ -270,7 +270,6 @@ class PopupObserver:
         *,
         prepare: bool = False,
         process_idle: bool = False,
-        presence_mismatch: bool = False,
         sample_count: Optional[int] = None,
         sample_interval: Optional[float] = None,
     ) -> Dict[str, Any]:
@@ -295,7 +294,6 @@ class PopupObserver:
                     texts,
                     visual,
                     process_idle=process_idle,
-                    presence_mismatch=presence_mismatch,
                     threshold=self.threshold,
                 )
                 samples.append(classification)

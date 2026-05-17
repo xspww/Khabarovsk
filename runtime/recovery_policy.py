@@ -139,7 +139,6 @@ def context_from_signal(account: Any, signal: str, reason_key: str, payload: Dic
         popup_code=context.popup_code,
         popup_confidence=context.popup_confidence,
         watchdog_reason=context.watchdog_reason,
-        presence_state=context.presence_state,
         cooldown_reason=context.cooldown_reason,
         retry_count=context.retry_count,
         created_at=context.created_at,

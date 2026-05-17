@@ -21,7 +21,6 @@ from runtime.runtime_state_manager import RuntimeStateManager
 from runtime.runtime_store import RuntimeStore
 from runtime.supervisor_runtime import SupervisorRuntime
 from services.process_service import ProcessManager, ProcessService
-from services.ram_service import RAMManager
 
 
 def _redact_launch_detail(value: Any) -> str:
@@ -346,8 +345,6 @@ class LaunchController:
                     "launch_nonce": acc.launch_nonce,
                     "transaction_id": acc.rejoin_transaction_id,
                 }
-            use_ram = bool(self._cfg.get("use_ram_account_manager", False))
-            use_ram_launch = use_ram and bool(self._cfg.get("ram_launch_via_api", True))
             multi_roblox = bool(self._cfg.get("multi_roblox_enabled", True))
             ProcessManager.MULTI_ROBLOX_ENABLED = multi_roblox
             ProcessManager.GLOBAL_VIP_LINK = str(self._cfg.get("game_private_server_url", "") or "").strip()
@@ -415,27 +412,19 @@ class LaunchController:
                 from process_net import IsolationManager
                 return IsolationManager.inject_cookie(acc.username, acc.cookie)
 
-            if use_ram:
-                ok_sync, sync_detail = RAMManager.sync_account_profile(acc, self._cfg)
-                if ok_sync:
-                    flog(f"[LAUNCH] {acc.display_name} {sync_detail}")
-                else:
-                    flog(f"[LAUNCH] {acc.display_name} RAM sync skipped: {sync_detail}", "warning")
-
             skip_shared_cookie_inject = bool(multi_roblox and acc.cookie)
-            if not use_ram_launch:
-                prepare_direct_launch()
-                if skip_shared_cookie_inject:
-                    flog(
-                        f"[LAUNCH] Skipping shared cookie injection for {acc.display_name} "
-                        "because Multi Roblox auth-ticket launch is enabled"
-                    )
+            prepare_direct_launch()
+            if skip_shared_cookie_inject:
+                flog(
+                    f"[LAUNCH] Skipping shared cookie injection for {acc.display_name} "
+                    "because Multi Roblox auth-ticket launch is enabled"
+                )
+            else:
+                ok, detail = inject_cookie_for_direct_launch()
+                if not ok:
+                    flog(f"[LAUNCH] Cookie inject warning for {acc.display_name}: {detail}", "warning")
                 else:
-                    ok, detail = inject_cookie_for_direct_launch()
-                    if not ok:
-                        flog(f"[LAUNCH] Cookie inject warning for {acc.display_name}: {detail}", "warning")
-                    else:
-                        flog(f"[LAUNCH] Cookie injected for {acc.display_name}: {detail}")
+                    flog(f"[LAUNCH] Cookie injected for {acc.display_name}: {detail}")
 
             self._limiter.wait(stop)
             if stop.is_set():
@@ -462,41 +451,7 @@ class LaunchController:
                     )
                 time.sleep(1.0)
 
-            if use_ram_launch:
-                ok, detail = RAMManager.launch_account(acc, self._cfg)
-                attempted_vip = acc.active_vip
-                if not ok:
-                    flog(
-                        f"[LAUNCH] RAM launch failed for {acc.display_name} -> fallback to direct launch: {_redact_launch_detail(detail)}",
-                        "warning",
-                    )
-
-                    if not acc.cookie:
-                        ok_sync, sync_detail = RAMManager.sync_account_profile(acc, self._cfg)
-                        if ok_sync:
-                            flog(f"[LAUNCH] {acc.display_name} {sync_detail}")
-                        else:
-                            flog(f"[LAUNCH] {acc.display_name} RAM sync skipped: {sync_detail}", "warning")
-
-                    if acc.cookie:
-                        prepare_direct_launch()
-                        if skip_shared_cookie_inject:
-                            flog(
-                                f"[LAUNCH] Skipping shared cookie injection for {acc.display_name} "
-                                "because Multi Roblox auth-ticket launch is enabled"
-                            )
-                        else:
-                            ok_inject, inject_detail = inject_cookie_for_direct_launch()
-                            if not ok_inject:
-                                flog(f"[LAUNCH] Cookie inject warning for {acc.display_name}: {inject_detail}", "warning")
-                            else:
-                                flog(f"[LAUNCH] Cookie injected for {acc.display_name}: {inject_detail}")
-                        ok, detail, attempted_vip = ProcessManager.launch(acc)
-                    else:
-                        ok = False
-                        detail = f"{detail}; no cookie available for fallback"
-            else:
-                ok, detail, attempted_vip = ProcessManager.launch(acc)
+            ok, detail, attempted_vip = ProcessManager.launch(acc)
             safe_detail = _redact_launch_detail(detail)
             if not ok:
                 flog(f"[LAUNCH] Failed for {acc.display_name}: {safe_detail}", "warning")

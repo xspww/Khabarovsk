@@ -109,7 +109,6 @@ class ArchitectureDisciplineTests(unittest.TestCase):
     def test_service_domain_modules_stay_under_architecture_budget(self):
         service_files = {
             "services/resource_monitor.py",
-            "services/ram_service.py",
             "services/cookie_service.py",
             "services/vip_tracker.py",
             "services/network_monitor.py",
@@ -131,7 +130,6 @@ class ArchitectureDisciplineTests(unittest.TestCase):
     def test_maintenance_domain_modules_stay_under_architecture_budget(self):
         maintenance_files = {
             "runtime/system_maintenance.py": 220,
-            "runtime/maintenance_presence.py": MAINTENANCE_DOMAIN_FILE_LIMIT,
             "runtime/maintenance_liveness.py": MAINTENANCE_DOMAIN_FILE_LIMIT,
             "runtime/maintenance_performance.py": MAINTENANCE_DOMAIN_FILE_LIMIT,
             "runtime/maintenance_queue.py": MAINTENANCE_DOMAIN_FILE_LIMIT,

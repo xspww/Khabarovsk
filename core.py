@@ -312,12 +312,6 @@ class Account:
     liveness_state: str             = "unknown"
     liveness_score: float           = 0.0
     liveness_suspect_since: float   = 0.0
-    presence_mismatch_since: float   = 0.0
-    presence_mismatch_status: str    = ""
-    presence_mismatch_reason: str    = ""
-    presence_rejoin_suppressed_until: float = 0.0
-    last_presence_rejoin_at: float    = 0.0
-    presence_rejoin_pending_clear: bool = False
     process_binding_status: str     = "unbound"
     binding_decision: str           = ""
     process_binding_confidence: float = 0.0

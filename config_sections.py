@@ -59,15 +59,6 @@ class PopupDetectorConfig:
 
 
 @dataclass(frozen=True)
-class PresenceConfig:
-    enabled: bool = False
-    poll_interval_seconds: int = 30
-    cache_ttl_seconds: int = 30
-    assist_rejoin_enabled: bool = False
-    rejoin_cooldown_seconds: int = 10
-
-
-@dataclass(frozen=True)
 class PerformanceConfig:
     fps_limiter_enabled: bool = False
     fps_limit: int = 240
@@ -96,24 +87,12 @@ class WindowConfig:
 
 
 @dataclass(frozen=True)
-class TroubleshootConfig:
-    use_ram_account_manager: bool = False
-    ram_launch_via_api: bool = True
-    ram_auto_launch: bool = True
-    ram_host: str = "localhost"
-    ram_port: int = 7963
-    ram_path: str = ""
-
-
-@dataclass(frozen=True)
 class ArgusConfigSections:
     game: GameConfig
     queue: QueueConfig
     popup_detector: PopupDetectorConfig
-    presence: PresenceConfig
     performance: PerformanceConfig
     window: WindowConfig
-    troubleshoot: TroubleshootConfig
 
 
 def build_config_sections(raw: Dict[str, Any]) -> ArgusConfigSections:
@@ -142,13 +121,6 @@ def build_config_sections(raw: Dict[str, Any]) -> ArgusConfigSections:
             sample_count=_int(data, "popup_sample_count", 6),
             sample_interval_seconds=_float(data, "popup_sample_interval_seconds", 0.25),
         ),
-        presence=PresenceConfig(
-            enabled=False,
-            poll_interval_seconds=_int(data, "presence_poll_interval_seconds", 30),
-            cache_ttl_seconds=_int(data, "presence_cache_ttl_seconds", 30),
-            assist_rejoin_enabled=False,
-            rejoin_cooldown_seconds=_int(data, "presence_rejoin_cooldown_seconds", 10),
-        ),
         performance=PerformanceConfig(
             fps_limiter_enabled=_bool(data, "fps_limiter_enabled", False),
             fps_limit=_int(data, "fps_limit", 240),
@@ -172,13 +144,5 @@ def build_config_sections(raw: Dict[str, Any]) -> ArgusConfigSections:
             arrange_columns=_int(data, "roblox_window_arrange_columns", 6),
             arrange_gap=_int(data, "roblox_window_arrange_gap", 2),
             arrange_margin=_int(data, "roblox_window_arrange_margin", 0),
-        ),
-        troubleshoot=TroubleshootConfig(
-            use_ram_account_manager=_bool(data, "use_ram_account_manager", False),
-            ram_launch_via_api=_bool(data, "ram_launch_via_api", True),
-            ram_auto_launch=_bool(data, "ram_auto_launch", True),
-            ram_host=_str(data, "ram_host", "localhost"),
-            ram_port=_int(data, "ram_port", 7963),
-            ram_path=_str(data, "ram_path"),
         ),
     )

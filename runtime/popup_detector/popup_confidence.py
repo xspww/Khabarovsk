@@ -8,7 +8,6 @@ def popup_confidence_score(
     visual_features: Dict[str, Any] | None = None,
     *,
     process_idle: bool = False,
-    presence_mismatch: bool = False,
 ) -> Dict[str, Any]:
     visual_features = dict(visual_features or {})
     score = 0.0

@@ -303,7 +303,6 @@ class MaintenanceLivenessMixin:
                 loading_grace=loading_grace,
                 cpu_threshold=cpu_low,
                 inspect_ui=inspect_ui,
-                presence_mismatch=False,
             )
             state = str(liveness.get("state") or "unknown")
             score = float(liveness.get("score") or 0.0)
@@ -370,16 +369,6 @@ class MaintenanceLivenessMixin:
                 acc.last_activity_ram_mb = ram
 
                 if state in {"alive", "idle"} and score >= 4.0:
-                    if self._handle_presence_disconnect_assist(
-                        acc,
-                        worker,
-                        now,
-                        int(pid or 0),
-                        in_game_for,
-                        loading_grace,
-                        allow_rejoin=False,
-                    ):
-                        continue
                     if acc.recovery_status in {"checking_disconnect", "disconnect_detected"} and not acc.recovery_inflight:
                         self._set_recovery_status(acc, status="in_game", reason="liveness_alive_clear_disconnect_check", inflight=False)
                     acc.last_activity_at = now
@@ -415,8 +404,6 @@ class MaintenanceLivenessMixin:
                                 "reconnecting_for": reconnecting_for,
                             }
                             acc.liveness_suspect_since = 0.0
-                            acc.presence_rejoin_suppressed_until = 0.0
-                            acc.presence_rejoin_pending_clear = False
                             acc.last_watchdog_classification = "disconnect_dialog_rejoin"
                             acc.liveness_state = "reconnecting"
                         else:
@@ -429,7 +416,6 @@ class MaintenanceLivenessMixin:
                             self._state_mgr.set_binding_status(acc, "verified", reason=f"liveness:{state}")
                             continue
                     else:
-                        self._reset_presence_mismatch(acc, f"liveness:{state}")
                         acc.liveness_suspect_since = 0.0
                         self._state_mgr.set_binding_status(acc, "verified", reason=f"liveness:{state}")
                         continue

@@ -205,7 +205,6 @@ def inspect_disconnect_dialog(
     cls,
     pid: Optional[int],
     prepare: bool = False,
-    presence_mismatch: bool = False,
     process_idle: bool = False,
     sample_count: Optional[int] = None,
 ) -> Dict[str, Any]:
@@ -215,7 +214,6 @@ def inspect_disconnect_dialog(
         return DEFAULT_POPUP_OBSERVER.inspect_pid(
             pid,
             prepare=prepare,
-            presence_mismatch=presence_mismatch,
             process_idle=process_idle,
             sample_count=sample_count,
         )

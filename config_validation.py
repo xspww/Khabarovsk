@@ -34,10 +34,6 @@ _INT_RANGES: Dict[str, Tuple[int, int]] = {
     "roblox_window_height": (240, 1080),
     "roblox_window_arrange_columns": (1, 32),
     "roblox_window_arrange_gap": (0, 80),
-    "presence_poll_interval_seconds": (5, 3600),
-    "presence_cache_ttl_seconds": (5, 3600),
-    "presence_rejoin_cooldown_seconds": (0, 3600),
-    "ram_port": (1, 65535),
 }
 
 _FLOAT_RANGES: Dict[str, Tuple[float, float]] = {

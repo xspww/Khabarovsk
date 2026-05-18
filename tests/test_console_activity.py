@@ -7,10 +7,10 @@ import console_activity as console
 
 class ConsoleActivityFormatTests(unittest.TestCase):
     def setUp(self):
-        self._old_activity = os.environ.get("ARGUS_CONSOLE_ACTIVITY")
-        self._old_color = os.environ.get("ARGUS_CONSOLE_COLOR")
-        os.environ["ARGUS_CONSOLE_ACTIVITY"] = "1"
-        os.environ["ARGUS_CONSOLE_COLOR"] = "0"
+        self._old_activity = os.environ.get("CRONUS_CONSOLE_ACTIVITY")
+        self._old_color = os.environ.get("CRONUS_CONSOLE_COLOR")
+        os.environ["CRONUS_CONSOLE_ACTIVITY"] = "1"
+        os.environ["CRONUS_CONSOLE_COLOR"] = "0"
         console._COLOR_SUPPORT = None
         console._LAST_DISCONNECT_AT.clear()
         console._LAST_CAPTCHA_AT.clear()
@@ -20,13 +20,13 @@ class ConsoleActivityFormatTests(unittest.TestCase):
 
     def tearDown(self):
         if self._old_activity is None:
-            os.environ.pop("ARGUS_CONSOLE_ACTIVITY", None)
+            os.environ.pop("CRONUS_CONSOLE_ACTIVITY", None)
         else:
-            os.environ["ARGUS_CONSOLE_ACTIVITY"] = self._old_activity
+            os.environ["CRONUS_CONSOLE_ACTIVITY"] = self._old_activity
         if self._old_color is None:
-            os.environ.pop("ARGUS_CONSOLE_COLOR", None)
+            os.environ.pop("CRONUS_CONSOLE_COLOR", None)
         else:
-            os.environ["ARGUS_CONSOLE_COLOR"] = self._old_color
+            os.environ["CRONUS_CONSOLE_COLOR"] = self._old_color
         console._COLOR_SUPPORT = None
         console._LAST_DISCONNECT_AT.clear()
         console._LAST_CAPTCHA_AT.clear()
@@ -48,8 +48,8 @@ class ConsoleActivityFormatTests(unittest.TestCase):
             {"account": "IwasTheGuyOni7899", "old": "VERIFY", "new": "IN_GAME", "pid": 6504},
         )
 
-        self.assertConsoleLine(found, "Found Roblox process 6504 for user IwasTheGuyOni7899")
-        self.assertConsoleLine(ready, "✔ IwasTheGuyOni7899 (PID: 6504)")
+        self.assertConsoleLine(found, "Found Roblox process 6504 for user (IwasTheGuyOni7899)")
+        self.assertConsoleLine(ready, "✔ (IwasTheGuyOni7899) (PID: 6504)")
 
     def test_found_process_timestamp_is_white_when_color_is_enabled(self):
         with patch.object(console, "_colors_enabled", return_value=True):
@@ -59,18 +59,20 @@ class ConsoleActivityFormatTests(unittest.TestCase):
             )
 
         self.assertTrue(line.startswith("\x1b[97m["), line)
-        self.assertIn("\x1b[0m Found Roblox process \x1b[90m6504\x1b[0m for user IwasTheGuyOni7899", line)
+        self.assertIn("Found Roblox process \x1b[38;2;128;128;128m6504\x1b[0m for user \x1b[38;2;34;139;34m(IwasTheGuyOni7899)\x1b[0m", line)
 
-    def test_ready_icon_is_green_when_color_is_enabled(self):
+    def test_ready_line_uses_requested_colors_when_color_is_enabled(self):
         with patch.object(console, "_colors_enabled", return_value=True):
             line = console._format_state(
                 "transition",
                 {"account": "IwasTheGuyOni7899", "old": "VERIFY", "new": "IN_GAME", "pid": 6504},
             )
 
-        self.assertIn("\x1b[92m✔\x1b[0m IwasTheGuyOni7899", line)
+        self.assertTrue(line.startswith("\x1b[38;2;128;128;128m["), line)
+        self.assertIn("\x1b[92m✔\x1b[0m \x1b[38;2;34;139;34m(IwasTheGuyOni7899)\x1b[0m", line)
+        self.assertIn("\x1b[38;2;128;128;128m(PID: 6504)\x1b[0m", line)
 
-    def test_smart_server_line_uses_vip_icon(self):
+    def test_smart_server_line_is_hidden(self):
         line = console._format_structured(
             "SERVER",
             "smart_selected",
@@ -78,9 +80,12 @@ class ConsoleActivityFormatTests(unittest.TestCase):
             {"server_id": "3659f6a2", "players": 3, "max_players": 6, "ping_ms": 99},
         )
 
-        self.assertConsoleLine(line, "🔐 Smart server selected: 3659f6a2 (players: 3/6, ping: 99ms)")
+        self.assertIsNone(line)
+        self.assertIsNone(
+            console._format_text("Smart server selected: 3659f6a2 (players: 3/6, ping: 99ms)", "info")
+        )
 
-    def test_vip_detector_line_uses_lock_icon(self):
+    def test_vip_detector_line_uses_crown_icon(self):
         line = console._format_structured(
             "VIP",
             "server_detected",
@@ -88,7 +93,17 @@ class ConsoleActivityFormatTests(unittest.TestCase):
             {"account": "Mincepaetz7297", "is_vip": True, "server_type": "VIP", "private_server_id": "3659f6a2"},
         )
 
-        self.assertConsoleLine(line, "🔐 Mincepaetz7297 VIP server detected (id: 3659f6a2)")
+        self.assertConsoleLine(line, "👑 Mincepaetz7297 VIP server detected (id: 3659f6a2)")
+
+    def test_public_detector_line_uses_vest_icon(self):
+        line = console._format_structured(
+            "VIP",
+            "server_detected",
+            "info",
+            {"account": "Mincepaetz7297", "is_vip": False, "server_type": "PUBLIC"},
+        )
+
+        self.assertConsoleLine(line, "🦺 Mincepaetz7297 public server detected")
 
     def test_launch_wait_and_queue_noise_are_hidden(self):
         self.assertIsNone(
@@ -112,7 +127,7 @@ class ConsoleActivityFormatTests(unittest.TestCase):
             {"account": "IwasTheGuyOni7899", "reason": "process_crash", "delay": "5.0"},
         )
 
-        self.assertConsoleLine(line, "⚠️ IwasTheGuyOni7899 disconnected (process_crash, restart in 5s)")
+        self.assertConsoleLine(line, "⚠️ (IwasTheGuyOni7899) disconnected (process_crash, restart in 5s)")
 
     def test_captcha_warning_matches_dashboard_state(self):
         line = console._format_state(
@@ -120,7 +135,7 @@ class ConsoleActivityFormatTests(unittest.TestCase):
             {"account": "Zuckmu", "old": "IN_GAME", "new": "FAILED", "reason": "captcha_required", "pid": 9108},
         )
 
-        self.assertConsoleLine(line, "⚠️ Zuckmu CAPTCHA required (PID: 9108) - paused, solve manually then Resume")
+        self.assertConsoleLine(line, "🔐 (Zuckmu) CAPTCHA required (PID: 9108) - paused, solve manually then Resume")
 
     def test_captcha_hold_removes_account_from_active_counter(self):
         console._ACTIVE_ACCOUNTS.add("Zuckmu")
@@ -152,7 +167,31 @@ class ConsoleActivityFormatTests(unittest.TestCase):
             {"account": "Zuckmu", "pid": 9108, "detail": "Roblox | Security | Chrome Legacy Window"},
         )
 
-        self.assertConsoleLine(line, "⚠️ Zuckmu CAPTCHA required (PID: 9108) - paused, solve manually then Resume")
+        self.assertConsoleLine(line, "🔐 (Zuckmu) CAPTCHA required (PID: 9108) - paused, solve manually then Resume")
+
+    def test_disconnect_line_uses_requested_colors_when_color_is_enabled(self):
+        with patch.object(console, "_colors_enabled", return_value=True):
+            line = console._format_recovery(
+                "cooldown",
+                {"account": "IwasTheGuyOni7899", "reason": "process_crash", "delay": "5.0"},
+            )
+
+        self.assertTrue(line.startswith("\x1b[38;2;255;127;80m["), line)
+        self.assertIn("\x1b[38;2;255;0;0m(IwasTheGuyOni7899) disconnected\x1b[0m", line)
+
+    def test_vip_detector_line_uses_requested_colors_when_color_is_enabled(self):
+        with patch.object(console, "_colors_enabled", return_value=True):
+            line = console._format_structured(
+                "VIP",
+                "server_detected",
+                "info",
+                {"account": "Mincepaetz7297", "is_vip": True, "server_type": "VIP", "private_server_id": "3659f6a2"},
+            )
+
+        self.assertTrue(line.startswith("\x1b[38;2;128;128;128m["), line)
+        self.assertIn("\x1b[38;2;128;128;128m👑\x1b[0m", line)
+        self.assertIn("\x1b[38;2;128;128;128mMincepaetz7297 VIP server detected\x1b[0m", line)
+        self.assertIn("\x1b[38;2;128;128;128m(id: 3659f6a2)\x1b[0m", line)
 
 
 if __name__ == "__main__":

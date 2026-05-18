@@ -119,13 +119,13 @@ class RobloxInstallManager:
 
     def _start_job(self, action: str, target: Callable[..., None], *args: Any) -> Dict[str, Any]:
         if self.guard_running() or self.roblox_running():
-            return {"ok": False, "accepted": False, "msg": "Stop Cronus and close Roblox first."}
+            return {"ok": False, "accepted": False, "msg": "Stop Cronus and close Roblox first"}
         blockers = self.find_install_blockers()
         if blockers:
             return {"ok": False, "accepted": False, "msg": self._format_blockers(blockers), "blockers": blockers}
         with self._lock:
             if self._job.get("active"):
-                return {"ok": False, "accepted": False, "msg": "Roblox install job already running.", "job": dict(self._job)}
+                return {"ok": False, "accepted": False, "msg": "Roblox install job already running", "job": dict(self._job)}
             self._job = self._new_job("Starting", active=True, action=action, ok=False, started_at=time.time())
             job = dict(self._job)
         thread = threading.Thread(target=self._job_wrapper, args=(target, args), name=f"RobloxInstall-{action}", daemon=True)
@@ -265,7 +265,7 @@ class RobloxInstallManager:
         )
         if len(blockers) > 4:
             shown += f", +{len(blockers) - 4} more"
-        return f"Close Roblox-related apps first: {shown}."
+        return f"Close Roblox-related apps first: {shown}"
 
     def full_wipe(self) -> Dict[str, Any]:
         removed: List[str] = []
@@ -498,7 +498,7 @@ class RobloxInstallManager:
         packages = self._parse_pkg_manifest(manifest_text)
         if not packages:
             raise RuntimeError("No Roblox packages found in manifest")
-        with tempfile.TemporaryDirectory(prefix="argus-roblox-install-") as temp_dir:
+        with tempfile.TemporaryDirectory(prefix="cronus-roblox-install-") as temp_dir:
             temp = Path(temp_dir)
             for package in packages:
                 name = str(package.get("name") or "").strip()
@@ -595,7 +595,7 @@ class RobloxInstallManager:
         return expected in command.lower()
 
     def install_from_installer(self, version: str) -> None:
-        with tempfile.TemporaryDirectory(prefix="argus-roblox-installer-") as temp_dir:
+        with tempfile.TemporaryDirectory(prefix="cronus-roblox-installer-") as temp_dir:
             installer = Path(temp_dir) / f"{version}-RobloxPlayerInstaller.exe"
             self._download_file(f"{SETUP_BASE_URL}/{version}-RobloxPlayerInstaller.exe", installer)
             completed = subprocess.run([str(installer)], cwd=str(installer.parent), timeout=180, check=False)

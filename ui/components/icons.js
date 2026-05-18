@@ -1,4 +1,25 @@
-// Solar Linear icons from SVGRepo, normalized to currentColor for the local UI theme.
+// Local PNG masks use the provided icon shapes while inheriting currentColor.
+const ASSET_ICONS={
+  list:'list.png',
+  home:'list.png',
+  layers:'layers.png',
+  bolt:'bolt.png',
+  settings:'settings.png',
+  play:'play.png',
+  stopCircle:'stop-circle.png',
+  userAdd:'user-add.png',
+  trash:'trash.png',
+  rotateRight:'rotate-right.png',
+  interrogation:'interrogation.png',
+  noticeBell:'interrogation.png',
+  playCircle:'layers.png',
+  presentationGraph:'bolt.png',
+  tuning:'settings.png',
+  userPlus:'user-add.png',
+  exit:'trash.png',
+  restart:'rotate-right.png'
+};
+
 const ICONS={
   home:'<path d="M22 22L2 22" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M2 11L10.1259 4.49931C11.2216 3.62279 12.7784 3.62279 13.8741 4.49931L22 11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M15.5 5.5V3.5C15.5 3.22386 15.7239 3 16 3H18.5C18.7761 3 19 3.22386 19 3.5V8.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M4 22V9.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M20 22V9.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/><path d="M15 22V17C15 15.5858 15 14.8787 14.5607 14.4393C14.1213 14 13.4142 14 12 14C10.5858 14 9.87868 14 9.43934 14.4393C9 14.8787 9 15.5858 9 17V22" stroke="currentColor" stroke-width="1.5"/><path d="M14 9.5C14 10.6046 13.1046 11.5 12 11.5C10.8954 11.5 10 10.6046 10 9.5C10 8.39543 10.8954 7.5 12 7.5C13.1046 7.5 14 8.39543 14 9.5Z" stroke="currentColor" stroke-width="1.5"/>',
   noticeBell:'<circle cx="505" cy="790" r="96" fill="currentColor"/><path d="M162 704C220 669 241 619 260 548L304 380C338 251 462 169 584 188" stroke="currentColor" stroke-width="86" stroke-linecap="round"/><path d="M562 184C602 190 626 204 630 240L636 286C606 318 583 360 574 412C546 404 520 400 493 402C504 319 529 249 562 184Z" fill="currentColor"/><circle cx="752" cy="307" r="104" fill="currentColor"/><path d="M686 509C682 581 683 634 731 687C761 720 762 760 733 789" stroke="currentColor" stroke-width="86" stroke-linecap="round"/><path d="M162 704L763 786" stroke="currentColor" stroke-width="88" stroke-linecap="round"/>',
@@ -18,9 +39,14 @@ const ICON_VIEWBOX={
   noticeBell:'0 0 1024 1024'
 };
 
-export const SOLAR_ICON_SOURCE='SVGRepo Solar Linear Icons';
+export const SOLAR_ICON_SOURCE='Local PNG UI Icons';
 
 export function solarIcon(name,className=''){
+  const asset=ASSET_ICONS[name];
+  if(asset){
+    const cls=['asset-icon',className].filter(Boolean).join(' ');
+    return `<span class="${cls}" data-solar-icon="${name}" aria-hidden="true" style="--icon-url:url('/ui/icons/${asset}')"></span>`;
+  }
   const body=ICONS[name]||ICONS.home;
   const cls=className?` class="${className}"`:'';
   const viewBox=ICON_VIEWBOX[name]||'0 0 24 24';
@@ -33,15 +59,15 @@ function replaceSvg(root,selector,name,className){
 }
 
 export function applySolarStaticIcons(root=document){
-  replaceSvg(root,'#nav button[data-view="accounts"] > svg','home','nav-icon');
+  replaceSvg(root,'#nav button[data-view="accounts"] > svg','list','nav-icon');
   const groups=root.querySelectorAll('#nav .nav-group-head .nav-group-icon svg');
-  if(groups[0])groups[0].outerHTML=solarIcon('playCircle','nav-icon');
-  if(groups[1])groups[1].outerHTML=solarIcon('presentationGraph','nav-icon');
-  if(groups[2])groups[2].outerHTML=solarIcon('tuning','nav-icon');
-  replaceSvg(root,'#close-all-roblox-btn svg','exit','btn-icon');
-  replaceSvg(root,'#add-btn svg','userPlus','btn-icon');
-  replaceSvg(root,'#reload-cookies-btn svg','restart','btn-icon');
+  if(groups[0])groups[0].outerHTML=solarIcon('layers','nav-icon');
+  if(groups[1])groups[1].outerHTML=solarIcon('bolt','nav-icon');
+  if(groups[2])groups[2].outerHTML=solarIcon('settings','nav-icon');
+  replaceSvg(root,'#close-all-roblox-btn svg','trash','btn-icon');
+  replaceSvg(root,'#add-btn svg','userAdd','btn-icon');
+  replaceSvg(root,'#reload-cookies-btn svg','rotateRight','btn-icon');
   replaceSvg(root,'.search-wrap svg','magnifer','search-icon');
-  root.querySelectorAll('.reset-action svg').forEach(el=>{el.outerHTML=solarIcon('restart','btn-icon')});
+  root.querySelectorAll('.reset-action svg').forEach(el=>{el.outerHTML=solarIcon('rotateRight','btn-icon')});
   root.querySelectorAll('.save-action svg').forEach(el=>{el.outerHTML=solarIcon('checkSquare','btn-icon')});
 }

@@ -573,6 +573,47 @@ h1
   stroke-width: 2;
 }
 
+.asset-icon
+{
+  display: inline-block;
+  width: 1em;
+  height: 1em;
+  flex: 0 0 auto;
+  background: currentColor;
+  -webkit-mask: var(--icon-url) center / contain no-repeat;
+  mask: var(--icon-url) center / contain no-repeat;
+}
+
+.nav-icon.asset-icon
+{
+  width: 18px;
+  height: 18px;
+  justify-self: center;
+}
+
+.nav-group-icon .asset-icon,
+.choice-icon .asset-icon
+{
+  width: 18px;
+  height: 18px;
+}
+
+.toast-icon .asset-icon
+{
+  width: 20px;
+  height: 20px;
+}
+
+.guard-icon.start
+{
+  color: #16a964;
+}
+
+.guard-icon.stop
+{
+  color: #e05b6a;
+}
+
 .savebar
 {
   justify-content: flex-end;
@@ -779,6 +820,7 @@ select:focus
 
 .toggle-row span
 {
+  display: none;
   color: #A1A1AA;
   font-weight: 500;
 }
@@ -822,90 +864,22 @@ select:focus
   background: #0A0A0A;
 }
 
+#fps-limit-field,
+#ram-current-field,
 #window-size-controls,
 #window-arrange-controls,
 #graphics-quality-controls,
+#autoclose-controls,
 #priority-controls,
 #cpu-controls
 {
   display: grid;
-  gap: 15px;
+  gap: 10px;
 }
 
 .cpu-table
 {
   margin-top: 4px;
-}
-
-.compact-toggle-row
-{
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 3px;
-  min-height: 24px;
-  color: #A1A1AA;
-  font-weight: 500;
-}
-
-.compact-toggle-row input[type=checkbox]
-{
-  appearance: none;
-  -webkit-appearance: none;
-  width: 34px;
-  height: 16px;
-  border: 1px solid rgba(255,255,255,.22);
-  border-radius: 2px;
-  background: #111111;
-  position: relative;
-  outline: none;
-  box-shadow: none;
-  flex: 0 0 34px;
-}
-
-.compact-toggle-row input[type=checkbox]::after
-{
-  content: "";
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 12px;
-  height: 10px;
-  border-radius: 2px;
-  background: #F4F4F5;
-  transition: left .14s ease;
-}
-
-.compact-toggle-row input[type=checkbox]:checked
-{
-  background: #FFFFFF;
-  border-color: #FFFFFF;
-}
-
-.compact-toggle-row input[type=checkbox]:checked::after
-{
-  left: 18px;
-  background: #0A0A0A;
-}
-
-.compact-inline-controls,
-#fps-limit-field.compact-inline-controls,
-#graphics-quality-controls.compact-inline-controls,
-#autoclose-controls.compact-inline-controls
-{
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.compact-number.input
-{
-  width: 64px;
-  min-height: 28px;
-  height: 28px;
-  padding: 0 8px;
-  text-align: center;
-  font: 600 12px var(--mono);
 }
 
 /* Accounts table and operator status */
@@ -2188,8 +2162,7 @@ select:focus
   color: #75849d;
 }
 
-.toggle-row input[type=checkbox],
-.compact-toggle-row input[type=checkbox]
+.toggle-row input[type=checkbox]
 {
   width: 36px;
   height: 18px;
@@ -2198,8 +2171,7 @@ select:focus
   border-color: #2a3b59;
 }
 
-.toggle-row input[type=checkbox]::after,
-.compact-toggle-row input[type=checkbox]::after
+.toggle-row input[type=checkbox]::after
 {
   top: 2px;
   left: 2px;
@@ -2209,23 +2181,21 @@ select:focus
   background: #73819a;
 }
 
-.toggle-row input[type=checkbox]:checked,
-.compact-toggle-row input[type=checkbox]:checked
+.toggle-row input[type=checkbox]:checked
 {
   background: #1f5f9d;
   border-color: #3783ca;
 }
 
-.toggle-row input[type=checkbox]:checked::after,
-.compact-toggle-row input[type=checkbox]:checked::after
+.toggle-row input[type=checkbox]:checked::after
 {
   left: 20px;
   background: #eaf5ff;
 }
 
-.toggle-row span,
-.compact-toggle-row
+.toggle-row span
 {
+  display: none;
   color: #91a1ba;
 }
 

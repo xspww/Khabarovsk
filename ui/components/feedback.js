@@ -12,6 +12,6 @@ export function createFeedback({$,esc}){
   }
   function modal(title,body,foot){$('modal-title').textContent=title;$('modal-body').innerHTML=body;$('modal-foot').innerHTML=foot;$('modal-backdrop').hidden=false}
   function closeModal(){$('modal-backdrop').hidden=true}
-  function cardIcon(type){const icons={cookie:'userPlus',delete:'trash',close:'exit',install:'downloadSquare'};return`<span class="choice-icon">${solarIcon(icons[type]||icons.cookie)}</span>`}
+  function cardIcon(type){const icons={cookie:'userAdd',delete:'trash',close:'trash',install:'downloadSquare'};return`<span class="choice-icon">${solarIcon(icons[type]||icons.cookie)}</span>`}
   return {toast,modal,closeModal,cardIcon};
 }

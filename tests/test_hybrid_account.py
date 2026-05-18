@@ -1,5 +1,6 @@
 import os
 import atexit
+import base64
 import hashlib
 import json
 import re
@@ -12,14 +13,14 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-_TEST_USER_ROOT = tempfile.mkdtemp(prefix="argus-test-user-root-")
-if "ARGUS_USER_ROOT" not in os.environ:
-    os.environ["ARGUS_USER_ROOT"] = _TEST_USER_ROOT
+_TEST_USER_ROOT = tempfile.mkdtemp(prefix="cronus-test-user-root-")
+if "CRONUS_USER_ROOT" not in os.environ:
+    os.environ["CRONUS_USER_ROOT"] = _TEST_USER_ROOT
     atexit.register(shutil.rmtree, _TEST_USER_ROOT, ignore_errors=True)
 else:
     shutil.rmtree(_TEST_USER_ROOT, ignore_errors=True)
 
-from account_hybrid import AccountDataStore, decrypt_cookie, encrypt_cookie, parse_cookie_line
+from account_hybrid import AccountDataStore, decrypt_cookie, dpapi_protect, encrypt_cookie, parse_cookie_line
 from core import Account, AccountState, ServerType, account_launch_block_reason
 from domain.session_identity import build_launch_intent
 from farm import Dispatcher, FarmController, SystemMaintenance
@@ -61,7 +62,7 @@ from roblox_hybrid import (
 def auth_headers(extra=None):
     import main
 
-    headers = {"X-Argus-Token": main.INSTANCE_TOKEN}
+    headers = {"X-Cronus-Token": main.INSTANCE_TOKEN}
     if extra:
         headers.update(extra)
     return headers
@@ -71,7 +72,7 @@ def auth_post(client, path, **kwargs):
     import main
 
     headers = dict(kwargs.pop("headers", {}) or {})
-    headers.setdefault("X-Argus-Token", main.INSTANCE_TOKEN)
+    headers.setdefault("X-Cronus-Token", main.INSTANCE_TOKEN)
     return client.post(path, headers=headers, **kwargs)
 
 
@@ -81,6 +82,55 @@ class HybridAccountTests(unittest.TestCase):
         encrypted = encrypt_cookie(cookie)
         self.assertTrue(encrypted.startswith("dpapi:v1:"))
         self.assertEqual(decrypt_cookie(encrypted), cookie)
+
+    def test_legacy_roboguard_dpapi_account_file_still_loads(self):
+        payload = json.dumps({
+            "accounts": [
+                {"username": "LegacyUser", "cookie": "_|WARNING:-DO-NOT-SHARE-THIS.--legacy-cookie"}
+            ]
+        }).encode("utf-8")
+        legacy_blob = dpapi_protect(payload, b"RoboGuard Hybrid AccountData v1")
+
+        records = AccountDataStore.decode_account_file_bytes(legacy_blob)
+
+        self.assertEqual(records[0]["username"], "LegacyUser")
+        self.assertEqual(AccountDataStore.get_cookie_from_record(records[0]), "_|WARNING:-DO-NOT-SHARE-THIS.--legacy-cookie")
+
+    def test_legacy_roboguard_dpapi_cookie_value_still_loads(self):
+        cookie = "_|WARNING:-DO-NOT-SHARE-THIS.--legacy-cookie"
+        encrypted_cookie = "dpapi:v1:" + base64.b64encode(
+            dpapi_protect(cookie.encode("utf-8"), b"RoboGuard Hybrid AccountData v1")
+        ).decode("ascii")
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "AccountData.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"accounts": [{"username": "LegacyUser", "encrypted_cookie": encrypted_cookie}]}, handle)
+            store = AccountDataStore(path)
+
+            account = store.to_cronus_accounts()[0]
+
+        self.assertEqual(account["username"], "LegacyUser")
+        self.assertEqual(account["cookie"], cookie)
+
+    def test_legacy_roboguard_config_filename_migrates_to_cronus_name(self):
+        import app_paths
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target_data = os.path.join(tmp, "Cronus Launcher", "data")
+            legacy_data = os.path.join(tmp, "Argus Launcher", "data")
+            os.makedirs(legacy_data, exist_ok=True)
+            with open(os.path.join(legacy_data, "roboguard_rt1_config.json"), "w", encoding="utf-8") as handle:
+                handle.write('{"auto_rejoin": false}')
+
+            with patch.object(app_paths, "APP_DATA_DIR", target_data), \
+                 patch.object(app_paths, "LEGACY_DATA_DIR", legacy_data), \
+                 patch.object(app_paths, "LEGACY_APP_DATA_DIR", os.path.dirname(legacy_data)):
+                app_paths.migrate_legacy_data_files(("cronus_rt1_config.json",))
+
+            migrated = os.path.join(target_data, "cronus_rt1_config.json")
+            self.assertTrue(os.path.exists(migrated))
+            with open(migrated, "r", encoding="utf-8") as handle:
+                self.assertEqual(json.load(handle)["auto_rejoin"], False)
 
     def test_account_data_never_exposes_cookie_by_default(self):
         cookie = "_|WARNING:-DO-NOT-SHARE-THIS.--unit-test-cookie"
@@ -92,7 +142,7 @@ class HybridAccountTests(unittest.TestCase):
             self.assertTrue(api_record["cookie_present"])
             self.assertNotIn("cookie", api_record)
             self.assertNotIn("encrypted_cookie", api_record)
-            self.assertEqual(store.to_roboguard_accounts()[0]["cookie"], cookie)
+            self.assertEqual(store.to_cronus_accounts()[0]["cookie"], cookie)
 
     def test_api_record_redacts_vip_links_and_preserves_on_saveback(self):
         raw_link = "https://www.roblox.com/games/123/?privateServerLinkCode=secret-link"
@@ -103,7 +153,7 @@ class HybridAccountTests(unittest.TestCase):
             self.assertIn("[REDACTED]", api_record["vip_links"][0])
             self.assertNotIn("secret-link", json.dumps(api_record))
             api_record["description"] = "new"
-            store.replace_from_roboguard_payload([api_record])
+            store.replace_from_cronus_payload([api_record])
             saved = store.read_records()[0]
         self.assertEqual(saved["description"], "new")
         self.assertEqual(saved["vip_links"], [raw_link])
@@ -139,11 +189,11 @@ class HybridAccountTests(unittest.TestCase):
         self.assertNotIn("secret-link", json.dumps(api_record))
         self.assertNotIn("secret-access", json.dumps(api_record))
 
-    def test_browser_tracker_persists_into_roboguard_accounts(self):
+    def test_browser_tracker_persists_into_cronus_accounts(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = AccountDataStore(os.path.join(tmp, "AccountData.json"))
             store.write_records([{"username": "UserA", "browser_tracker_id": "112233"}])
-            account = store.to_roboguard_accounts()[0]
+            account = store.to_cronus_accounts()[0]
             self.assertEqual(account["browser_tracker_id"], "112233")
 
     def test_status_step_maps_disconnect_check_to_simple_disconnected_label(self):
@@ -192,6 +242,11 @@ class HybridAccountTests(unittest.TestCase):
         account.liveness_state = "alive"
         account.in_game_since = 456.0
         controller.set_accounts([account])
+        controller._runtime_scheduler = type(
+            "FakeScheduler",
+            (),
+            {"snapshot": lambda _self: {"pending_count": 2, "overdue_count": 0, "last_dispatch_latency_seconds": 0.25}},
+        )()
 
         with patch("runtime.runtime_view_model.ProcessManager.is_bound_game_alive", return_value=True), \
              patch("runtime.runtime_view_model.ProcessManager.get_pid_owner", return_value="UserA"), \
@@ -200,6 +255,9 @@ class HybridAccountTests(unittest.TestCase):
 
         self.assertIn("runtime_health", status)
         self.assertIn("queue_snapshot", status)
+        self.assertIn("scheduler_health", status)
+        self.assertEqual(status["scheduler_health"]["pending_count"], 2)
+        self.assertEqual(status["runtime_health"]["scheduler"]["pending_count"], 2)
         self.assertIn("accounts", status)
         row = status["accounts"][0]
         self.assertEqual(row["state"], "IN_GAME")
@@ -668,15 +726,15 @@ class HybridAccountTests(unittest.TestCase):
             nested_dir = os.path.join(roblox_root, "Versions", "version-abcdef1234567890")
             settings_file = os.path.join(roblox_root, "GlobalBasicSettings_13.xml")
             nested_file = os.path.join(nested_dir, "RobloxPlayerBeta.exe")
-            argus_file = os.path.join(tmp, "Argus Launcher", "data", "keep.txt")
+            cronus_file = os.path.join(tmp, "Cronus Launcher", "data", "keep.txt")
             os.makedirs(nested_dir, exist_ok=True)
-            os.makedirs(os.path.dirname(argus_file), exist_ok=True)
+            os.makedirs(os.path.dirname(cronus_file), exist_ok=True)
             for path in (settings_file, nested_file):
                 with open(path, "w", encoding="utf-8") as f:
                     f.write("roblox")
                 os.chmod(path, stat.S_IREAD)
-            with open(argus_file, "w", encoding="utf-8") as f:
-                f.write("argus")
+            with open(cronus_file, "w", encoding="utf-8") as f:
+                f.write("cronus")
 
             with patch.dict(os.environ, {"LOCALAPPDATA": tmp, "ProgramFiles": "", "ProgramFiles(x86)": ""}, clear=False):
                 manager = RobloxInstallManager(guard_running=lambda: False, roblox_running=lambda: False)
@@ -685,7 +743,7 @@ class HybridAccountTests(unittest.TestCase):
 
             self.assertIn(roblox_root, result["removed"])
             self.assertFalse(os.path.exists(roblox_root))
-            self.assertTrue(os.path.exists(argus_file))
+            self.assertTrue(os.path.exists(cronus_file))
 
     def test_roblox_install_detects_related_process_blockers(self):
         manager = RobloxInstallManager(guard_running=lambda: False, roblox_running=lambda: False)
@@ -839,7 +897,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         self.assertFalse(payload["ok"])
-        self.assertEqual(payload["msg"], "Stop Cronus and close Roblox first.")
+        self.assertEqual(payload["msg"], "Stop Cronus and close Roblox first")
 
     def test_roblox_install_downgrade_endpoint_removed(self):
         from fastapi.testclient import TestClient
@@ -915,7 +973,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(main.app.title, "Cronus Launcher")
         self.assertIn("<title>Cronus Launcher</title>", html)
         self.assertIn('<link rel="icon" type="image/png" href="/ui/cronus-favicon.png">', page)
-        self.assertIn('<meta name="argus-api-token" content="', page)
+        self.assertIn('<meta name="cronus-api-token" content="', page)
         self.assertIn(main.INSTANCE_TOKEN, page)
         self.assertIn('<link rel="stylesheet" href="/ui/dashboard.css">', page)
         self.assertIn('<script type="module" src="/ui/app.js"></script>', page)
@@ -923,6 +981,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("export async function api", js)
         self.assertIn("export function createStatusRuntime", js)
         self.assertIn("export function rowStatusLabel", js)
+        self.assertIn("export function isRuntimeSuspect", js)
         self.assertIn("export function renderAccountRows", js)
         self.assertIn("export function createFeedback", js)
         self.assertIn("export function solarIcon", js)
@@ -938,7 +997,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("from './panels/settingsPanels.js'", js)
         self.assertNotIn("setInterval(manualSnapshot,2500)", js)
         self.assertNotIn("<style>", page)
-        self.assertNotIn("<span>Argus Launcher</span>", html)
+        self.assertNotIn("<span>Cronus Launcher</span>", html)
         self.assertNotIn('<header class="topbar">', html)
         self.assertNotIn('id="stream-state"', html)
         self.assertNotIn('id="sync-btn"', html)
@@ -967,6 +1026,14 @@ class HybridAccountTests(unittest.TestCase):
         self.assertNotIn(">Done<", side_status)
         self.assertNotIn('id="h-ingame"', side_status)
         self.assertNotIn('id="h-running"', side_status)
+        self.assertNotIn('class="ops-bar"', html)
+        for ops_id in ("ops-machine-state", "ops-machine-detail", "ops-scheduler-state", "ops-scheduler-detail", "ops-recovery-state", "ops-recovery-detail", "ops-truth-state", "ops-truth-detail"):
+            self.assertNotIn(f'id="{ops_id}"', html)
+        self.assertNotIn("function renderOpsStatus()", html)
+        self.assertNotIn("setOpsCard('ops-machine'", html)
+        self.assertNotIn("setOpsCard('ops-scheduler'", html)
+        self.assertNotIn("setOpsCard('ops-recovery'", html)
+        self.assertNotIn("setOpsCard('ops-truth'", html)
         self.assertIn('id="close-all-roblox-btn"', html)
         self.assertIn("Close All Roblox", html)
         self.assertIn('id="reload-cookies-btn"', html)
@@ -976,6 +1043,8 @@ class HybridAccountTests(unittest.TestCase):
         self.assertNotIn('id="accounts-stat-queued"', html)
         self.assertNotIn('id="accounts-stat-ingame"', html)
         self.assertNotIn('id="accounts-stat-attention"', html)
+        self.assertNotIn(".ops-bar", compact_css)
+        self.assertNotIn(".ops-item", compact_css)
         assert_css_contains("--panel2:#1A1A1A")
         assert_css_contains("--muted:#71717A")
         spacex_css = compact_css
@@ -983,30 +1052,44 @@ class HybridAccountTests(unittest.TestCase):
         assert_css_contains("background:#111111")
         assert_css_contains(".nav button.active{background:#202020;color:#FFFFFF;box-shadow:inset 2px 0 0 #FFFFFF}")
         assert_css_contains(".side-launch .guard-action{height:32px;border-radius:6px;background:transparent")
-        self.assertIn("SOLAR_ICON_SOURCE='SVGRepo Solar Linear Icons'", html)
+        self.assertIn("SOLAR_ICON_SOURCE='Local PNG UI Icons'", html)
         self.assertIn("data-solar-icon=", html)
+        self.assertIn("asset-icon", html)
+        for icon_file in (
+            "list.png",
+            "layers.png",
+            "bolt.png",
+            "settings.png",
+            "play.png",
+            "stop-circle.png",
+            "user-add.png",
+            "trash.png",
+            "rotate-right.png",
+            "interrogation.png",
+        ):
+            self.assertIn(icon_file, html)
         self.assertIn("applySolarStaticIcons(document);", html)
         self.assertNotIn("solarIcon('exit','guard-icon stop')", html)
-        self.assertIn('class="guard-icon stop"', html)
-        self.assertIn('x="6.2" y="4.5" width="4.9" height="15" rx="1.8"', html)
-        self.assertIn('x="12.9" y="4.5" width="4.9" height="15" rx="1.8"', html)
-        self.assertIn('class="guard-icon start"', html)
-        self.assertIn('d="M7.5 5.4 18 12 7.5 18.6Z"', html)
+        self.assertIn("guard-icon stop", html)
+        self.assertIn("solarIcon('stopCircle','guard-icon stop')", html)
+        self.assertIn("guard-icon start", html)
+        self.assertIn("solarIcon('play','guard-icon start')", html)
         self.assertNotIn('class="guard-icon start-logo"', html)
         self.assertNotIn('src="/ui/cronus-start-icon.png"', sidebar_head)
         self.assertNotIn('class="guard-icon bolt"', html)
         self.assertNotIn('d="M13 2 4 14h7l-1 8 10-13h-7z"', html)
         self.assertNotIn("solarIcon('playCircle','guard-icon bolt')", html)
-        self.assertIn("'home','nav-icon'", html)
-        self.assertIn("solarIcon('presentationGraph','nav-icon')", html)
-        self.assertIn("solarIcon('tuning','nav-icon')", html)
-        self.assertIn("'userPlus','btn-icon'", html)
-        self.assertIn("'restart','btn-icon'", html)
+        self.assertIn("'list','nav-icon'", html)
+        self.assertIn("solarIcon('layers','nav-icon')", html)
+        self.assertIn("solarIcon('bolt','nav-icon')", html)
+        self.assertIn("solarIcon('settings','nav-icon')", html)
+        self.assertIn("'userAdd','btn-icon'", html)
+        self.assertIn("'rotateRight','btn-icon'", html)
         self.assertIn("solarIcon('checkSquare','btn-icon')", html)
         self.assertIn("delete:'trash'", html)
         self.assertIn("install:'downloadSquare'", html)
-        self.assertIn("M9 4.5H8", html)
-        self.assertIn('<circle cx="12" cy="12" r="10"', html)
+        self.assertIn("noticeBell:'interrogation.png'", html)
+        self.assertIn("close:'trash'", html)
         assert_css_contains("rgba(31,157,98,.72)")
         assert_css_contains("rgba(224,91,106,.72)")
         assert_css_contains("drop-shadow(0 0 5px rgba(31,157,98,.72))")
@@ -1014,11 +1097,8 @@ class HybridAccountTests(unittest.TestCase):
         self.assertNotIn('class="guard-icon play"', html)
         self.assertNotIn('d="M10 8.2v7.6l6-3.8-6-3.8z"', html)
         self.assertNotIn('x="7" y="7" width="10" height="10" rx="1.5"', html)
-        self.assertIn('d="M4 11.2 9.8 5.4a3.1 3.1 0 0 1 4.4 0L20 11.2"', html)
-        self.assertIn('d="M6.4 10.4v5.7c0 2.35 1.45 3.9 3.95 3.9h3.3c2.5 0 3.95-1.55 3.95-3.9v-5.7"', html)
-        self.assertIn('d="M17.6 6.4v4.05"', html)
-        self.assertIn('circle cx="12" cy="12.35" r="1.45"', html)
-        self.assertIn('d="M10.1 16.35h3.8"', html)
+        self.assertIn("--icon-url:url('/ui/icons/${asset}')", html)
+        self.assertIn("--icon-url:url('/ui/icons/play.png')", html)
         for stroke_width in ('stroke-width="2.75"', 'stroke-width="2.45"', 'stroke-width="2.65"'):
             self.assertIn(stroke_width, html)
         assert_css_contains(".nav-root,.nav-group-head{font-weight:800!important}")
@@ -1042,7 +1122,8 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("function renderTop(){const c=counts()", html)
         self.assertIn("$('h-captcha').textContent=c.captcha", html)
         self.assertIn("function syncToggleLabels()", html)
-        self.assertIn("input.checked?'Enabled':'Disabled'", html)
+        self.assertNotIn("input.checked?'Enabled':'Disabled'", html)
+        self.assertIn("text.hidden=true", html)
         self.assertIn('.toggle-row input[type="checkbox"]', html)
         self.assertNotIn("accounts-stat-attention", html)
         self.assertIn("/accounts/reload", html)
@@ -1058,18 +1139,20 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("function confirmCloseAllRoblox()", html)
         self.assertIn("cardIcon('close')", html)
         self.assertIn("Close Roblox only", html)
-        self.assertIn("Closes every Roblox window. Cronus stays running.", html)
+        self.assertIn("Closes every Roblox window, Cronus stays running", html)
         self.assertNotIn("Stop Cronus and close Roblox</strong>", html)
         self.assertNotIn("Stops Cronus, then closes every Roblox window.", html)
         self.assertNotIn("STATUS.running=false", html)
         self.assertNotIn("confirm('Close all Roblox", html)
-        for removed in ('id="h-finished"', 'id="h-cpu"', 'id="h-ram"', ">Finished<", ">CPU<", ">RAM<"):
+        for removed in ('id="h-finished"', 'id="h-cpu"', 'id="h-ram"', ">Finished<", ">CPU<"):
             self.assertNotIn(removed, html)
+        self.assertIn('data-view="ram"', html)
+        self.assertIn("RAM Limiter", html)
         assert_css_contains(".nav-separator,.nav-badge{display:none!important}")
         self.assertNotIn(".nav-separator,.nav-badge,.side-status{display:none!important}", html)
         self.assertIn("function syncRunningClock()", html)
         self.assertIn("$('nav-accounts-count').textContent=c.all", html)
-        self.assertNotIn("Argus Log", html)
+        self.assertNotIn("Cronus Log", html)
         self.assertNotIn('data-view="logs"', html)
         self.assertNotIn('id="view-logs"', html)
         self.assertNotIn('id="logs-clear"', html)
@@ -1080,12 +1163,12 @@ class HybridAccountTests(unittest.TestCase):
         self.assertNotIn("/runtime/events?limit=350", html)
         self.assertNotIn("function clearLogs()", html)
         self.assertNotIn("function confirmClearLogs()", html)
-        self.assertNotIn("Clear Argus log", html)
+        self.assertNotIn("Clear Cronus log", html)
         self.assertIn("function confirmDeleteAccount(user)", html)
         self.assertIn("Delete Account", html)
         self.assertIn("cardIcon('delete')", html)
         self.assertIn('class="danger-name"', html)
-        self.assertIn("Removes this account and cookie.", html)
+        self.assertIn("Removes this account and cookie", html)
         self.assertNotIn('<span class="blocked-note">${esc(user)}</span>', html)
         self.assertNotIn("confirm('Delete account", html)
         self.assertIn('data-view="troubleshoot"', html)
@@ -1095,7 +1178,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("/troubleshoot/roblox-install", html)
         self.assertIn("function robloxInstallConfirm(action)", html)
         self.assertIn("cardIcon('install')", html)
-        self.assertIn("Stop Cronus and close Roblox first.", html)
+        self.assertIn("Stop Cronus and close Roblox first", html)
         self.assertIn("TROUBLESHOOT.block_msg", html)
         self.assertNotIn("Downgrade", html)
         self.assertNotIn("roblox-version", html)
@@ -1103,15 +1186,18 @@ class HybridAccountTests(unittest.TestCase):
         self.assertNotIn("/troubleshoot/roblox-install/version", html)
         self.assertNotIn("confirm('Uninstall", html)
         self.assertNotIn("confirm('Download latest", html)
-        self.assertNotIn("RoboGuard RT", html)
+        self.assertNotIn("Cronus RT", html)
         self.assertIn('data-view="graphics"', html)
         self.assertIn('id="view-graphics"', html)
+        self.assertIn('data-view="ram"', html)
+        self.assertIn('id="view-ram"', html)
         self.assertIn('data-view="window-size"', html)
         self.assertIn('id="view-window-size"', html)
         self.assertIn('data-view="cpu-limiter"', html)
         self.assertIn('id="view-cpu-limiter"', html)
         game_section = html.split('id="view-game"', 1)[1].split('id="view-performance"', 1)[0]
-        fps_section = html.split('id="view-performance"', 1)[1].split('id="view-graphics"', 1)[0]
+        fps_section = html.split('id="view-performance"', 1)[1].split('id="view-ram"', 1)[0]
+        ram_section = html.split('id="view-ram"', 1)[1].split('id="view-graphics"', 1)[0]
         graphics_section = html.split('id="view-graphics"', 1)[1].split('id="view-window-size"', 1)[0]
         window_section = html.split('id="view-window-size"', 1)[1].split('id="view-cpu-limiter"', 1)[0]
         cpu_section = html.split('id="view-cpu-limiter"', 1)[1].split('id="view-queue"', 1)[0]
@@ -1121,6 +1207,8 @@ class HybridAccountTests(unittest.TestCase):
             "game-reset",
             "fps-save",
             "fps-reset",
+            "ram-save",
+            "ram-reset",
             "graphics-save",
             "graphics-reset",
             "window-size-save",
@@ -1136,9 +1224,18 @@ class HybridAccountTests(unittest.TestCase):
         assert_css_contains(".savebar .save-action,.btn.good.settings-dirty,.savebar .save-action.settings-dirty{background:transparent;border-color:rgba(255,255,255,.42);color:#FFFFFF;box-shadow:none}")
         self.assertIn(".savebar .reset-action", html)
         self.assertIn(".savebar .save-action.settings-dirty", html)
-        self.assertEqual(html.count('class="btn ghost reset-action"'), 6)
-        self.assertEqual(html.count('class="btn good save-action"'), 6)
-        self.assertEqual(html.count('class="btn-icon" aria-hidden="true"'), 15)
+        self.assertIn('id="ram-enabled"', ram_section)
+        self.assertIn('id="ram-limit-preset"', ram_section)
+        self.assertIn('<option value="8192">8 GB</option>', ram_section)
+        self.assertIn('<option value="16384">16 GB</option>', ram_section)
+        self.assertIn('<option value="32768">32 GB</option>', ram_section)
+        self.assertIn('id="ram-limit-custom"', ram_section)
+        self.assertIn("roblox_memory_guard_mb:readRamLimit($)", html)
+        self.assertIn("toast('RAM Limiter saved')", html)
+        assert_css_contains(".toggle-row span{display:none")
+        self.assertEqual(html.count('class="btn ghost reset-action"'), 7)
+        self.assertEqual(html.count('class="btn good save-action"'), 7)
+        self.assertEqual(html.count('class="btn-icon" aria-hidden="true"'), 17)
         self.assertIn('id="close-all-roblox-btn"><svg class="btn-icon"', html)
         self.assertIn('id="reload-cookies-btn"><svg class="btn-icon"', html)
         self.assertIn('id="add-btn"><svg class="btn-icon"', html)
@@ -1159,56 +1256,61 @@ class HybridAccountTests(unittest.TestCase):
         self.assertNotIn("game-autominimize", html)
         self.assertNotIn("Game Settings", game_section)
         self.assertNotIn("Global defaults for accounts without a target.", game_section)
-        self.assertIn('placeholder="Search..."', html)
-        self.assertIn("Enter Place ID.", game_section)
-        self.assertIn("Place to join.", game_section)
-        self.assertIn("Default VIP link.", game_section)
-        self.assertIn("Free VIP before launch.", game_section)
+        self.assertIn('placeholder="Search"', html)
+        self.assertIn("Enter Place ID", game_section)
+        self.assertIn("Place to join", game_section)
+        self.assertIn("Default VIP link", game_section)
+        self.assertIn("Free VIP before launch", game_section)
         self.assertNotIn("Close Roblox on timer.", game_section)
         self.assertNotIn("Auto Close", game_section)
-        self.assertIn("Close Roblox on timer.", queue_section)
+        self.assertIn("Auto Reload Roblox (Minute)", queue_section)
         self.assertIn('id="queue-autoclose-enabled"', queue_section)
         self.assertIn('id="queue-autoclose-minutes"', queue_section)
         self.assertNotIn("game-autoclose", html)
         self.assertIn("auto_close_enabled:$('queue-autoclose-enabled').checked", html)
-        self.assertIn("Keep other accounts open.", game_section)
+        self.assertIn("Keep other accounts open", game_section)
         for old_copy in (
             "Search accounts...",
             "Enter a Place ID and click Lookup.",
             "Roblox Place ID to join.",
             "Used as the default VIP server for new or blank-target accounts.",
             "Free only / before launch. New VIP servers are named with the Roblox game name.",
-            "Close Roblox clients on a timer, then let Argus Launcher start the queue again.",
-            "Keep other account instances alive; Argus Launcher still closes the duplicate instance for the same account tracker.",
+            "Close Roblox clients on a timer, then let Cronus Launcher start the queue again.",
+            "Keep other account instances alive; Cronus Launcher still closes the duplicate instance for the same account tracker.",
         ):
             self.assertNotIn(old_copy, html)
         self.assertNotIn("Graphics Auto", fps_section)
         self.assertNotIn("Auto Process Priority", fps_section)
         self.assertNotIn("Priority Applied", fps_section)
         self.assertNotIn("Cap Roblox FPS to reduce CPU and GPU usage.", fps_section)
-        self.assertIn("Limit Roblox FPS.", fps_section)
-        self.assertIn("15-1000 FPS.", fps_section)
+        self.assertIn("FPS Limiter", fps_section)
+        self.assertIn("reduce CPU/GPU usage (15-1000)", fps_section)
+        self.assertNotIn("Limit Roblox FPS.", fps_section)
+        self.assertNotIn("15-1000 FPS.", fps_section)
         self.assertNotIn("Limit the framerate of all Roblox instances.", fps_section)
         self.assertNotIn("Frames per second per instance. Allowed range: 15-1000.", fps_section)
         self.assertIn('id="fps-reset"', fps_section)
         self.assertIn("Save Changes", fps_section)
-        self.assertIn("Low Graphics Quality", graphics_section)
+        self.assertIn("Graphics Quality", graphics_section)
+        self.assertNotIn("Low Graphics Quality", graphics_section)
         self.assertIn("Auto Process Priority", graphics_section)
         self.assertNotIn("Priority Applied", graphics_section)
         self.assertNotIn("Force Roblox into manual low-quality graphics.", graphics_section)
-        self.assertIn("Use low Roblox graphics.", graphics_section)
-        self.assertIn("1 low, 10 high.", graphics_section)
-        self.assertIn("Set Roblox process priority.", graphics_section)
+        self.assertIn("Set Roblox graphics quality", graphics_section)
+        self.assertNotIn("Use low Roblox graphics.", graphics_section)
+        self.assertNotIn("1 low, 10 high.", graphics_section)
+        self.assertIn("Set Roblox process priority", graphics_section)
         self.assertNotIn("Set Roblox to manual low graphics and keep the settings file locked while enabled.", graphics_section)
         self.assertNotIn("1 is lowest, 10 is highest. Use 1 for potato mode.", graphics_section)
         self.assertNotIn("Apply Windows process priority to live Roblox clients and keep reapplying during RT maintenance.", graphics_section)
         self.assertIn('id="graphics-reset"', graphics_section)
-        self.assertIn("Enable Window Size", window_section)
+        self.assertIn("Window Size", window_section)
+        self.assertNotIn("Enable Window Size", window_section)
         self.assertIn('id="window-size-controls" hidden', window_section)
         self.assertIn('id="window-size-custom" class="control-line" hidden', window_section)
         self.assertNotIn("Resize Roblox windows smaller to reduce render load.", window_section)
-        self.assertIn("Resize Roblox windows.", window_section)
-        self.assertIn("Choose window size.", window_section)
+        self.assertIn("Resize Roblox windows", window_section)
+        self.assertIn("Choose window size", window_section)
         self.assertIn("Auto Arrange", window_section)
         self.assertIn("Windows per row", window_section)
         self.assertIn('id="window-arrange-controls" hidden', window_section)
@@ -1224,7 +1326,9 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("1920 x 1080", window_section)
         self.assertIn("function saveWindowSize()", html)
         self.assertIn("/performance/window-size", html)
-        self.assertIn("Enable CPU Limiter", cpu_section)
+        self.assertIn("CPU Limiter", cpu_section)
+        self.assertIn("Limits Roblox CPU usage to reduce overheating, and high system load", cpu_section)
+        self.assertNotIn("Enable CPU Limiter", cpu_section)
         self.assertIn("Default CPU Limit", cpu_section)
         self.assertIn("Apply to all accounts", cpu_section)
         self.assertIn("Roblox PID", cpu_section)
@@ -1234,7 +1338,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("/performance/cpu-limiter", html)
         self.assertIn("'cpu-limiter':'cpu-save'", html)
         assert_css_contains("grid-template-columns:minmax(180px,250px) minmax(220px,320px)")
-        assert_css_contains("#window-size-controls,#window-arrange-controls,#graphics-quality-controls,#priority-controls,#cpu-controls{display:grid;gap:15px}")
+        assert_css_contains("#fps-limit-field,#ram-current-field,#window-size-controls,#window-arrange-controls,#graphics-quality-controls,#autoclose-controls,#priority-controls,#cpu-controls{display:grid;gap:10px}")
         for label in ("Settings File", "Current File Cap", "Read-only", "Roblox State"):
             self.assertNotIn(label, fps_section)
             self.assertNotIn(label, graphics_section)
@@ -1249,12 +1353,12 @@ class HybridAccountTests(unittest.TestCase):
         self.assertNotIn("Manual Login", html)
         self.assertNotIn("Login in browser.", html)
         self.assertIn("Import Cookies", html)
-        self.assertIn("One cookie per line.", html)
+        self.assertIn("One cookie per line", html)
         self.assertNotIn("One login.", html)
         self.assertNotIn("One account per line.", html)
         self.assertNotIn("manual-login", html)
         self.assertNotIn("kind:'userpass'", html)
-        self.assertIn("Save changes first.", html)
+        self.assertIn("Save changes first", html)
         for old_copy in (
             "Sign in via a popup browser. 2FA, captcha, and passkey stay with you.",
             "Paste user:pass:cookie or cookie-only lines.",
@@ -1272,17 +1376,15 @@ class HybridAccountTests(unittest.TestCase):
         self.assertNotIn('id="game-private-name-template"', html)
         self.assertIn("auto_create_private_server_enabled", html)
         self.assertNotIn('id="window-autominimize-controls" class="control-line" hidden', html)
-        self.assertIn('class="compact-toggle-row"', html)
-        self.assertIn('id="fps-inline-label">Disabled</span>', html)
-        self.assertIn('id="fps-limit-field" class="compact-inline-controls" hidden', html)
+        self.assertNotIn('class="compact-toggle-row"', html)
+        self.assertNotIn('id="fps-inline-label">Disabled</span>', html)
+        self.assertIn('id="fps-limit-field" hidden', html)
         self.assertIn('id="priority-controls" hidden', html)
-        self.assertIn('id="graphics-quality-label">Disabled</span>', html)
-        self.assertIn('id="graphics-quality-controls" class="compact-inline-controls" hidden', html)
-        self.assertIn('id="autoclose-inline-label">Disabled</span>', html)
-        self.assertIn('id="autoclose-controls" class="compact-inline-controls" hidden', html)
-        self.assertIn("setCompactToggle('queue-autoclose-enabled','autoclose-inline-label','autoclose-controls','Every')", html)
-        self.assertIn("setCompactToggle('fps-enabled','fps-inline-label','fps-limit-field','Limit')", html)
-        self.assertIn("setCompactToggle('graphics-auto-enabled','graphics-quality-label','graphics-quality-controls','Level')", html)
+        self.assertNotIn('id="graphics-quality-label">Disabled</span>', html)
+        self.assertIn('id="graphics-quality-controls" hidden', html)
+        self.assertNotIn('id="autoclose-inline-label">Disabled</span>', html)
+        self.assertIn('id="autoclose-controls" hidden', html)
+        self.assertNotIn("setCompactToggle(", html)
         self.assertNotIn('id="presence-controls"', html)
         self.assertNotIn('id="presence-interval"', html)
         self.assertNotIn('id="presence-ttl"', html)
@@ -1292,10 +1394,10 @@ class HybridAccountTests(unittest.TestCase):
         self.assertNotIn('id="presence-backoff"', html)
         self.assertNotIn('id="presence-status"', html)
         for new_copy in (
-            "Max active accounts.",
-            "Used only for rotation.",
-            "Delay between launches.",
-            "Detect Roblox disconnect popup.",
+            "Max active accounts",
+            "Used only for rotation",
+            "Delay between launches",
+            "Detect Roblox disconnect popup",
         ):
             self.assertIn(new_copy, queue_section)
         for old_copy in (
@@ -1335,37 +1437,41 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn('Version = "1.7.1"', script)
         self.assertIn('RequeueSource = "local Request', script)
         self.assertIn('token = safeString(self.Token)', script)
-        self.assertIn('argus_token = safeString(self.Token)', script)
+        self.assertIn('cronus_token = safeString(self.Token)', script)
         self.assertIn('api_token = safeString(self.Token)', script)
-        self.assertIn('_argus_token = safeString(self.Token)', script)
-        self.assertIn("function ArgusRejoin:QueueOnTeleport", script)
-        self.assertIn("function ArgusRejoin:IsTeleportTransitionActive", script)
-        self.assertIn('function ArgusRejoin:EndpointWithToken', script)
-        self.assertIn('function ArgusRejoin:QueryEndpoint', script)
-        self.assertIn('function ArgusRejoin:GetFallback', script)
-        self.assertIn('["User-Agent"] = "ArgusLuaRejoin/1.7"', script)
+        self.assertIn('_cronus_token = safeString(self.Token)', script)
+        self.assertIn("function CronusRejoin:QueueOnTeleport", script)
+        self.assertIn("function CronusRejoin:IsTeleportTransitionActive", script)
+        self.assertIn('function CronusRejoin:EndpointWithToken', script)
+        self.assertIn('function CronusRejoin:QueryEndpoint', script)
+        self.assertIn('function CronusRejoin:GetFallback', script)
+        self.assertIn('["User-Agent"] = "CronusLuaRejoin/1.7"', script)
         self.assertIn('Headers = requestHeaders', script)
         self.assertIn('headers = requestHeaders', script)
         self.assertIn('body = body', script)
         self.assertIn('Data = body', script)
         self.assertIn('return self:GetFallback(eventName, payload, status)', script)
         self.assertIn('game:HttpGet(url)', script)
-        self.assertIn('["X-RoboGuard-Token"] = self.Token', script)
+        self.assertIn('["X-Cronus-Token"] = self.Token', script)
         self.assertIn("/api/lua/rejoin-event", script)
         self.assertIn('"http://" .. host .. ":" .. port .. "/api/lua/rejoin-event"', script)
         self.assertNotIn('("http://%s:%s/api/lua/rejoin-event"):format', script)
         self.assertIn("GuiService.ErrorMessageChanged", script)
-        self.assertIn("function ArgusRejoin:PostAsync", script)
-        self.assertIn("function ArgusRejoin:ClientRecoveryFallback", script)
+        self.assertIn("function CronusRejoin:PostAsync", script)
+        self.assertIn("function CronusRejoin:ClientRecoveryFallback", script)
         self.assertIn('log("post begin"', script)
         self.assertIn('log("post async"', script)
         self.assertIn('log("post task error"', script)
         self.assertIn('log("json encode failed"', script)
         self.assertIn('log("client fallback start"', script)
         self.assertIn("TeleportService:Teleport(game.PlaceId, LocalPlayer)", script)
-        self.assertIn('LocalPlayer:Kick("Argus recovery fallback")', script)
+        self.assertIn('LocalPlayer:Kick("Cronus recovery fallback")', script)
         self.assertIn("disconnect ignored during teleport", script)
         self.assertIn('reportDisconnect("poll")', script)
+        self.assertIn("local function hasServerEvidence()", script)
+        self.assertIn("local function reportInGame()", script)
+        self.assertIn('CronusRejoin:PostAsync("in_game"', script)
+        self.assertIn('CronusRejoin:PostAsync("heartbeat"', script)
         self.assertIn("task.wait(0.5)", script)
         self.assertIn("shutdown fallback after disconnect", script)
         self.assertIn("TeleportService.TeleportInitFailed", script)
@@ -1379,8 +1485,8 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("local ownerNumber = tonumber(privateServerOwnerId) or 0", script)
         self.assertIn('local isPrivate = privateServerId ~= "" or ownerNumber > 0', script)
         self.assertNotIn("TeleportToPlaceInstance", script)
-        self.assertIn('G.ArgusRejoin = ArgusRejoin', script)
-        self.assertNotIn("__ARGUS_", script)
+        self.assertIn('G.CronusRejoin = CronusRejoin', script)
+        self.assertNotIn("__CRONUS_", script)
         loader = (Path(__file__).resolve().parents[1] / "lua" / "run_in_executor.lua").read_text(encoding="utf-8")
         self.assertIn("/api/lua/rejoin-helper", loader)
         self.assertIn("local Load = loadstring or load", loader)
@@ -1417,11 +1523,10 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("local ownerNumber = tonumber(privateServerOwnerId) or 0", script)
         self.assertIn('local isPrivate = privateServerId ~= "" or ownerNumber > 0', script)
         self.assertIn("/api/lua/rejoin-event", script)
-        self.assertIn('["X-Argus-Token"] = self.Token', script)
-        self.assertIn('["X-RoboGuard-Token"] = self.Token', script)
+        self.assertIn('["X-Cronus-Token"] = self.Token', script)
         self.assertIn('return self:Send("finished"', script)
-        self.assertIn('client:Loaded("ArgusAccount module loaded")', script)
-        self.assertNotIn("__ARGUS_", script)
+        self.assertIn('client:Loaded("CronusAccount module loaded")', script)
+        self.assertNotIn("__CRONUS_", script)
         self.assertNotIn("GetCookie", script)
         self.assertNotIn("GetCSRFToken", script)
         self.assertNotIn("Password", script)
@@ -1473,7 +1578,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertNotIn("token", calls[0])
 
-    def test_lua_rejoin_event_accepts_argus_token_alias(self):
+    def test_lua_rejoin_event_accepts_cronus_token_alias(self):
         from fastapi.testclient import TestClient
         import main
 
@@ -1498,14 +1603,52 @@ class HybridAccountTests(unittest.TestCase):
                     "event": "heartbeat",
                     "account": "LuaUnit",
                     "username": "LuaUnit",
-                    "argus_token": main.INSTANCE_TOKEN,
+                    "cronus_token": main.INSTANCE_TOKEN,
                 },
             )
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["accepted"], True)
         self.assertEqual(len(calls), 1)
+        self.assertNotIn("cronus_token", calls[0])
+
+    def test_lua_rejoin_event_accepts_legacy_argus_token_aliases_during_migration(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        calls = []
+
+        def fake_lua_event(payload):
+            calls.append(dict(payload))
+            return {
+                "ok": True,
+                "accepted": True,
+                "event": payload.get("event", ""),
+                "account": payload.get("account", ""),
+                "signal": "",
+                "msg": "Lua event accepted",
+            }
+
+        with patch.object(main.farm, "handle_lua_rejoin_event", side_effect=fake_lua_event):
+            body_response = client.post(
+                "/api/lua/rejoin-event",
+                json={
+                    "event": "heartbeat",
+                    "account": "LuaUnit",
+                    "username": "LuaUnit",
+                    "argus_token": main.INSTANCE_TOKEN,
+                },
+            )
+            query_response = client.get(
+                f"/api/lua/rejoin-event?argus_token={main.INSTANCE_TOKEN}&event=heartbeat&account=LuaUnit&username=LuaUnit"
+            )
+
+        self.assertEqual(body_response.status_code, 200)
+        self.assertEqual(query_response.status_code, 200)
+        self.assertEqual(len(calls), 2)
         self.assertNotIn("argus_token", calls[0])
+        self.assertNotIn("argus_token", calls[1])
 
     def test_lua_rejoin_event_accepts_query_token_fallback(self):
         from fastapi.testclient import TestClient
@@ -1527,7 +1670,7 @@ class HybridAccountTests(unittest.TestCase):
 
         with patch.object(main.farm, "handle_lua_rejoin_event", side_effect=fake_lua_event):
             response = client.post(
-                f"/api/lua/rejoin-event?argus_token={main.INSTANCE_TOKEN}",
+                f"/api/lua/rejoin-event?cronus_token={main.INSTANCE_TOKEN}",
                 json={"event": "heartbeat", "account": "LuaUnit", "username": "LuaUnit"},
             )
 
@@ -1556,7 +1699,7 @@ class HybridAccountTests(unittest.TestCase):
         with patch.object(main.farm, "handle_lua_rejoin_event", side_effect=fake_lua_event):
             response = client.get(
                 "/api/lua/rejoin-event?"
-                "argus_token=bad-token&event=disconnect&account=LuaUnit&username=LuaUnit&"
+                "cronus_token=bad-token&event=disconnect&account=LuaUnit&username=LuaUnit&"
                 "helper_version=1.7.0&error_code=273&reason_key=lua_disconnect_error"
             )
 
@@ -1564,7 +1707,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertTrue(response.json()["accepted"])
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["event"], "disconnect")
-        self.assertNotIn("argus_token", calls[0])
+        self.assertNotIn("cronus_token", calls[0])
 
     def test_lua_rejoin_event_rejects_unauthenticated_get_without_helper_version(self):
         from fastapi.testclient import TestClient
@@ -1830,6 +1973,74 @@ class HybridAccountTests(unittest.TestCase):
             job_id="job-1",
         )
 
+    def test_lua_loaded_without_job_waits_for_in_game_evidence(self):
+        controller = FarmController.__new__(FarmController)
+        account = Account("LuaUnit")
+        account.state = AccountState.VERIFY
+        controller._accounts = [account]
+        controller._workers = {}
+        controller._bump_status_revision = lambda: None
+        routed = []
+        pushed = []
+
+        class FakeOrchestrator:
+            def handle_runtime_signal(self, acc, signal, reason, payload=None):
+                routed.append((acc, signal, reason, payload or {}))
+                return True
+
+        controller._runtime_orchestrator = FakeOrchestrator()
+        controller._push_event = lambda *args, **kwargs: pushed.append((args, kwargs))
+
+        result = controller.handle_lua_rejoin_event({
+            "event": "loaded",
+            "account": "LuaUnit",
+            "username": "LuaUnit",
+            "server_type": "PUBLIC",
+            "is_vip_server": "false",
+            "place_id": "123456",
+            "job_id": "",
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["signal"], "")
+        self.assertEqual(routed, [])
+        self.assertEqual(account.last_watchdog_classification, "lua_loaded_waiting_server")
+        self.assertTrue(pushed)
+
+    def test_in_game_without_job_is_rejected_as_unverified(self):
+        controller = FarmController.__new__(FarmController)
+        account = Account("LuaUnit")
+        account.state = AccountState.VERIFY
+        controller._accounts = [account]
+        controller._workers = {}
+        controller._bump_status_revision = lambda: None
+        routed = []
+
+        class FakeOrchestrator:
+            def handle_runtime_signal(self, acc, signal, reason, payload=None):
+                routed.append((acc, signal, reason, payload or {}))
+                return True
+
+        controller._runtime_orchestrator = FakeOrchestrator()
+        controller._push_event = lambda *args, **kwargs: None
+
+        result = controller.handle_lua_rejoin_event({
+            "event": "in_game",
+            "account": "LuaUnit",
+            "username": "LuaUnit",
+            "server_type": "PUBLIC",
+            "is_vip_server": "false",
+            "place_id": "123456",
+            "job_id": "",
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["signal"], "")
+        self.assertEqual(routed, [])
+        self.assertEqual(account.last_watchdog_classification, "lua_in_game_missing_server_evidence")
+
     def test_lua_private_server_owner_id_counts_as_vip_detection(self):
         controller = FarmController.__new__(FarmController)
         account = Account("LuaUnit")
@@ -1863,7 +2074,8 @@ class HybridAccountTests(unittest.TestCase):
         self.assertTrue(result["observed_is_vip"])
         self.assertEqual(account.observed_server_type, "VIP")
         self.assertEqual(account.observed_private_server_owner_id, "42")
-        self.assertEqual(routed[0][3]["observed_server_type"], "VIP")
+        self.assertEqual(result["signal"], "")
+        self.assertEqual(routed, [])
         flog.assert_any_call(
             "VIP",
             "server_detected",
@@ -2099,7 +2311,7 @@ class HybridAccountTests(unittest.TestCase):
         import main
 
         with tempfile.TemporaryDirectory() as tmp:
-            path = os.path.join(tmp, "argus.log")
+            path = os.path.join(tmp, "cronus.log")
             with open(path, "w", encoding="utf-8") as f:
                 f.write("line one\nline two\n")
             with patch.object(main, "LOG_FILE", path):
@@ -2205,7 +2417,7 @@ class HybridAccountTests(unittest.TestCase):
             return_value={"ok": True, "imported": 1, "errors": []},
         ) as import_cookie_lines, patch.object(
             accounts_routes.ACCOUNT_STORE,
-            "to_roboguard_accounts",
+            "to_cronus_accounts",
             return_value=[],
         ), patch.object(main.farm, "running", False), patch.object(
             main.farm,
@@ -2269,7 +2481,7 @@ class HybridAccountTests(unittest.TestCase):
             "write_records",
         ) as write_records, patch.object(
             accounts_routes.ACCOUNT_STORE,
-            "to_roboguard_accounts",
+            "to_cronus_accounts",
             return_value=payload,
         ), patch.object(main.farm, "running", False), patch.object(
             main.farm,
@@ -2326,7 +2538,7 @@ class HybridAccountTests(unittest.TestCase):
             "write_records",
         ) as write_records, patch.object(
             accounts_routes.ACCOUNT_STORE,
-            "to_roboguard_accounts",
+            "to_cronus_accounts",
             return_value=[
                 {"username": "ValidUser", "cookie": "_|WARNING:valid"},
                 {"username": "CaptchaUser", "cookie": "_|WARNING:captcha", "manual_status": CAPTCHA_BLOCK_REASON},
@@ -2387,7 +2599,7 @@ class HybridAccountTests(unittest.TestCase):
             "write_records",
         ), patch.object(
             accounts_routes.ACCOUNT_STORE,
-            "to_roboguard_accounts",
+            "to_cronus_accounts",
             return_value=validated_records,
         ), patch.object(main.farm, "running", True), patch.object(
             main.farm,
@@ -2502,6 +2714,51 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.json()["ok"])
 
+    def test_api_token_accepts_legacy_header_aliases_during_migration(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        for header_name in ("X-Argus-Token", "X-RoboGuard-Token"):
+            with self.subTest(header_name=header_name):
+                response = client.post(
+                    "/api/config",
+                    json={},
+                    headers={header_name: main.INSTANCE_TOKEN},
+                )
+                self.assertEqual(response.status_code, 200)
+                self.assertTrue(response.json()["ok"])
+
+    def test_config_api_accepts_runtime_guard_settings(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        response = auth_post(client, "/api/config", json={
+            "roblox_memory_guard_enabled": True,
+            "roblox_memory_guard_mb": 32768,
+            "roblox_memory_guard_hold_seconds": 30,
+            "relaunch_loop_fatal": False,
+            "relaunch_loop_cooldown_seconds": 300,
+        })
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        for key in (
+            "roblox_memory_guard_enabled",
+            "roblox_memory_guard_mb",
+            "roblox_memory_guard_hold_seconds",
+            "relaunch_loop_fatal",
+            "relaunch_loop_cooldown_seconds",
+        ):
+            self.assertIn(key, payload["updated"])
+        config = client.get("/api/config").json()
+        self.assertTrue(config["roblox_memory_guard_enabled"])
+        self.assertEqual(config["roblox_memory_guard_mb"], 32768.0)
+        self.assertEqual(config["roblox_memory_guard_hold_seconds"], 30.0)
+        self.assertFalse(config["relaunch_loop_fatal"])
+        self.assertEqual(config["relaunch_loop_cooldown_seconds"], 300.0)
+
     def test_mutating_api_audit_logs_idempotency_key(self):
         from fastapi.testclient import TestClient
         import api_routes.auth as auth_routes
@@ -2512,7 +2769,7 @@ class HybridAccountTests(unittest.TestCase):
             response = auth_post(
                 client,
                 "/api/config",
-                headers={"X-Argus-Idempotency-Key": "audit-unit-key"},
+                headers={"X-Cronus-Idempotency-Key": "audit-unit-key"},
                 json={},
             )
 
@@ -2597,7 +2854,7 @@ class HybridAccountTests(unittest.TestCase):
         import main
 
         client = TestClient(main.app)
-        headers = auth_headers({"X-Argus-Idempotency-Key": "close-all-idem-unit"})
+        headers = auth_headers({"X-Cronus-Idempotency-Key": "close-all-idem-unit"})
         with patch.object(ProcessService, "kill_all_roblox_clients", return_value=2) as kill_all:
             first = client.post("/api/roblox/close-all", headers=headers, json={})
             second = client.post("/api/roblox/close-all", headers=headers, json={})
@@ -2618,9 +2875,9 @@ class HybridAccountTests(unittest.TestCase):
         import main
 
         client = TestClient(main.app)
-        headers = auth_headers({"X-Argus-Idempotency-Key": "slice3-import-idem"})
+        headers = auth_headers({"X-Cronus-Idempotency-Key": "slice3-import-idem"})
         with patch("api_routes.accounts_routes.ACCOUNT_STORE.import_cookie_lines", return_value={"ok": True, "imported": 1, "count": 1}) as importer, \
-             patch("api_routes.accounts_routes.ACCOUNT_STORE.to_roboguard_accounts", return_value=[]), \
+             patch("api_routes.accounts_routes.ACCOUNT_STORE.to_cronus_accounts", return_value=[]), \
              patch.object(main.farm, "set_accounts") as set_accounts, \
              patch.object(main.cfg_mgr, "save_accounts"):
             first = client.post("/api/accounts/import", headers=headers, json={"kind": "cookies", "lines": ["_|WARNING:unit"]})
@@ -2637,10 +2894,10 @@ class HybridAccountTests(unittest.TestCase):
         import main
 
         client = TestClient(main.app)
-        headers = auth_headers({"X-Argus-Idempotency-Key": "slice3-reload-idem"})
+        headers = auth_headers({"X-Cronus-Idempotency-Key": "slice3-reload-idem"})
         with patch("api_routes.accounts_routes.ACCOUNT_STORE.read_records", return_value=[]) as read_records, \
              patch("api_routes.accounts_routes.ACCOUNT_STORE.write_records") as write_records, \
-             patch("api_routes.accounts_routes.ACCOUNT_STORE.to_roboguard_accounts", return_value=[]), \
+             patch("api_routes.accounts_routes.ACCOUNT_STORE.to_cronus_accounts", return_value=[]), \
              patch.object(main.farm, "set_accounts") as set_accounts, \
              patch.object(main.cfg_mgr, "save_accounts"):
             first = client.post("/api/accounts/reload", headers=headers, json={})
@@ -2658,7 +2915,7 @@ class HybridAccountTests(unittest.TestCase):
         import main
 
         client = TestClient(main.app)
-        headers = auth_headers({"X-Argus-Idempotency-Key": "slice3-launch-idem"})
+        headers = auth_headers({"X-Cronus-Idempotency-Key": "slice3-launch-idem"})
         record = {"username": "LaunchUnit", "cookie": "_|WARNING:unit", "cookie_username": "LaunchUnit"}
         with patch("api_routes.accounts_routes.ACCOUNT_STORE.read_records", return_value=[record]), \
              patch("api_routes.accounts_routes.AccountLaunchService.launch_record", return_value={"ok": False, "msg": "unit blocked"}) as launch_record, \
@@ -2677,7 +2934,7 @@ class HybridAccountTests(unittest.TestCase):
         import main
 
         client = TestClient(main.app)
-        headers = auth_headers({"X-Argus-Idempotency-Key": "slice3-logs-idem"})
+        headers = auth_headers({"X-Cronus-Idempotency-Key": "slice3-logs-idem"})
         with patch.object(system_routes.os, "makedirs", wraps=system_routes.os.makedirs) as makedirs:
             first = client.post("/api/logs/clear", headers=headers, json={})
             second = client.post("/api/logs/clear", headers=headers, json={})
@@ -2715,11 +2972,11 @@ class HybridAccountTests(unittest.TestCase):
         main.NETWORK_FAULT_INJECTOR = fake
         try:
             client = TestClient(main.app)
-            block_headers = auth_headers({"X-Argus-Idempotency-Key": "slice3-net-block-idem"})
+            block_headers = auth_headers({"X-Cronus-Idempotency-Key": "slice3-net-block-idem"})
             body = {"pid": 1234, "account_id": "NetUnit", "duration_seconds": 30}
             first = client.post("/api/test/network-fault/block-roblox", headers=block_headers, json=body)
             second = client.post("/api/test/network-fault/block-roblox", headers=block_headers, json=body)
-            restore_headers = auth_headers({"X-Argus-Idempotency-Key": "slice3-net-restore-idem"})
+            restore_headers = auth_headers({"X-Cronus-Idempotency-Key": "slice3-net-restore-idem"})
             restored = client.post("/api/test/network-fault/restore", headers=restore_headers, json={"account_id": "NetUnit"})
             restored_again = client.post("/api/test/network-fault/restore", headers=restore_headers, json={"account_id": "NetUnit"})
         finally:
@@ -2743,7 +3000,7 @@ class HybridAccountTests(unittest.TestCase):
         with patch.object(auth_routes, "flog_kv") as log:
             response = client.post(
                 "/api/logs/clear",
-                headers=auth_headers({"X-Argus-Idempotency-Key": "slice3-audit-idem"}),
+                headers=auth_headers({"X-Cronus-Idempotency-Key": "slice3-audit-idem"}),
                 json={},
             )
 
@@ -2762,7 +3019,19 @@ class HybridAccountTests(unittest.TestCase):
         import main
 
         self.assertTrue(main._cmdline_targets_this_app(["python.exe", "main.py"], main.BASE_DIR))
+        self.assertTrue(main._cmdline_targets_this_app(["python.exe", "ops\\run_backend.py"], main.BASE_DIR))
+        self.assertTrue(
+            main._cmdline_targets_this_app(
+                ["python.exe", os.path.join(main.BASE_DIR, "ops", "run_backend.py")],
+                tempfile.gettempdir(),
+            )
+        )
+        self.assertTrue(main._cmdline_targets_this_app(["python.exe", "-m", "ops.run_backend"], main.BASE_DIR))
         self.assertFalse(main._cmdline_targets_this_app(["python.exe", "main.py"], tempfile.gettempdir()))
+        self.assertFalse(main._cmdline_targets_this_app(["python.exe", "ops\\run_backend.py"], tempfile.gettempdir()))
+        self.assertFalse(main._cmdline_targets_this_app(["python.exe", "-m", "ops.run_backend"], tempfile.gettempdir()))
+        self.assertFalse(main._cmdline_targets_this_app(["python.exe", "main.py"], ""))
+        self.assertFalse(main._cmdline_targets_this_app(["python.exe", "script.py"], main.BASE_DIR))
 
     def test_auto_close_uses_minutes_not_seconds(self):
         maint = object.__new__(SystemMaintenance)
@@ -2938,6 +3207,120 @@ class HybridAccountTests(unittest.TestCase):
         self.assertTrue(is_account_captcha_required(acc))
         self.assertEqual(acc.recovery_status, CAPTCHA_REASON)
         self.assertIn(acc._config_username, maint._last_popup_scan_at)
+
+    def test_captcha_popup_closes_only_bound_account_process(self):
+        maint = object.__new__(SystemMaintenance)
+        maint._cfg = {
+            "watchdog_enabled": True,
+            "popup_disconnected_enabled": True,
+            "popup_scan_interval_seconds": 1,
+            "popup_scan_max_parallel": 2,
+            "watchdog_hold_time": 60,
+            "watchdog_activity_timeout": 180,
+            "watchdog_loading_grace": 90,
+            "watchdog_cpu_low": 0.9,
+        }
+        maint._accounts = []
+        maint._workers = {}
+        maint._last_popup_scan_at = {}
+
+        class Net:
+            def is_online(self):
+                return True
+
+        class Recovery:
+            _net = Net()
+
+            def __init__(self):
+                self.failed = []
+
+            def fail_account(self, account, reason, reason_msg):
+                self.failed.append((account.username, reason, reason_msg))
+
+        class State:
+            def __init__(self):
+                self.runtime = RuntimeStateManager(logger=lambda *_args, **_kwargs: None)
+                self.cleared = []
+
+            def set_recovery(self, account, status="", reason="", inflight=None):
+                self.runtime.set_recovery(account, status=status, reason=reason, inflight=inflight)
+
+            def set_cooldown(self, account, until_ts, reason=""):
+                self.runtime.set_cooldown(account, until_ts, reason=reason)
+
+            def clear_process_binding(self, account, reason="", increment_generation=False):
+                self.cleared.append((account.username, account.pid, reason, increment_generation))
+                self.runtime.clear_process_binding(account, reason=reason, increment_generation=increment_generation)
+
+        recovery = Recovery()
+        state = State()
+        maint._recovery = recovery
+        maint._state_mgr = state
+        now = time.time()
+        captcha_acc = Account(username="Zuckmu")
+        captcha_acc.state = AccountState.IN_GAME
+        captcha_acc.pid = 3692
+        captcha_acc.in_game_since = now - 120
+        captcha_acc.last_activity_at = now
+        captcha_acc.liveness_state = "alive"
+        captcha_acc.runtime_generation = 11
+        other_acc = Account(username="OtherAccount")
+        other_acc.state = AccountState.IN_GAME
+        other_acc.pid = 6504
+        other_acc.in_game_since = now - 120
+        other_acc.last_activity_at = now
+        other_acc.liveness_state = "alive"
+        maint._accounts = [captcha_acc, other_acc]
+
+        def fake_liveness(pid, **_kwargs):
+            if pid == 3692:
+                return {
+                    "state": "captcha",
+                    "score": 8.0,
+                    "validation": {"cpu": 3.0, "ram_mb": 300.0, "windows": 1},
+                    "reason_key": CAPTCHA_REASON,
+                    "dialog": {
+                        "matched": True,
+                        "action": "hold",
+                        "reason_key": CAPTCHA_REASON,
+                        "detail": "Roblox | Zuckmu | Security challenge",
+                        "popup_confidence": 1.5,
+                        "evidence_source": "text",
+                    },
+                }
+            return {
+                "state": "alive",
+                "score": 8.0,
+                "validation": {"cpu": 3.0, "ram_mb": 300.0, "windows": 1},
+                "reason_key": "",
+                "dialog": {},
+            }
+
+        killed = []
+
+        def fake_kill(account, state_manager, **kwargs):
+            killed.append((account.username, account.pid, kwargs))
+            state_manager.clear_process_binding(
+                account,
+                reason=kwargs.get("reason", ""),
+                increment_generation=kwargs.get("increment_generation", False),
+            )
+            return {"ok": True, "killed": True, "pid": 3692, "reason": "killed"}
+
+        with patch.object(ProcessManager, "assess_liveness", side_effect=fake_liveness), \
+             patch.object(ProcessService, "safe_kill_bound_process", side_effect=fake_kill):
+            SystemMaintenance._scan_liveness_watchdog(maint)
+
+        self.assertEqual(len(killed), 1)
+        self.assertEqual(killed[0][0], "Zuckmu")
+        self.assertEqual(killed[0][1], 3692)
+        self.assertEqual(killed[0][2]["reason"], "captcha_hold")
+        self.assertEqual(killed[0][2]["expected_runtime_generation"], 11)
+        self.assertFalse(killed[0][2]["increment_generation"])
+        self.assertIsNone(captcha_acc.pid)
+        self.assertEqual(other_acc.pid, 6504)
+        self.assertTrue(is_account_captcha_required(captcha_acc))
+        self.assertEqual(recovery.failed, [("Zuckmu", CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)])
 
     def test_popup_scan_max_parallel_limits_periodic_window_scans(self):
         maint = object.__new__(SystemMaintenance)
@@ -3144,6 +3527,202 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(args[2], "session_conflict")
         self.assertEqual(kwargs["expected_runtime_generation"], 7)
         self.assertEqual(kwargs["payload"]["popup_code"], "273")
+
+    def test_home_screen_without_job_evidence_triggers_rejoin_signal(self):
+        maint = object.__new__(SystemMaintenance)
+        maint._cfg = {
+            "watchdog_enabled": True,
+            "popup_disconnected_enabled": False,
+            "watchdog_hold_time": 60,
+            "watchdog_activity_timeout": 180,
+            "watchdog_loading_grace": 90,
+            "watchdog_cpu_low": 0.9,
+            "launch_verify_window": 1,
+            "home_rejoin_enabled": True,
+            "home_rejoin_grace_seconds": 1,
+            "home_rejoin_hold_seconds": 1,
+            "home_rejoin_require_server_evidence": True,
+        }
+        maint._workers = {}
+        maint._runtime_owner = None
+        maint._runtime_state = RuntimeStateManager(logger=lambda *_args, **_kwargs: None)
+
+        class Net:
+            def is_online(self):
+                return True
+
+        class Recovery:
+            _net = Net()
+
+            def __init__(self):
+                self.calls = []
+
+            def handle_runtime_signal(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+                return True
+
+        recovery = Recovery()
+        maint._recovery = recovery
+        acc = Account(username="home_stuck_user")
+        acc.state = AccountState.IN_GAME
+        acc.desired_state = AccountState.IN_GAME
+        acc.pid = 1234
+        now = time.time()
+        acc.in_game_since = now - 120
+        acc.last_launch_at = now - 120
+        acc.last_activity_at = now - 120
+        acc.launch_intent = {"place_id": "123456"}
+        acc.observed_server_at = now - 119
+        acc.observed_place_id = "123456"
+        acc.observed_job_id = ""
+        acc.liveness_state = "alive"
+        acc.last_watchdog_classification = "home_screen_stuck"
+        acc.liveness_suspect_since = now - 5
+        acc.runtime_generation = 7
+        acc.session_id = "sess"
+        acc.launch_nonce = "nonce"
+        acc.rejoin_transaction_id = "tx"
+        maint._accounts = [acc]
+
+        liveness = {
+            "state": "alive",
+            "score": 8.0,
+            "validation": {"cpu": 3.0, "ram_mb": 300.0, "windows": 1},
+            "reason_key": "",
+            "dialog": {},
+        }
+        with patch.object(ProcessManager, "assess_liveness", return_value=liveness):
+            SystemMaintenance._scan_liveness_watchdog(maint)
+
+        self.assertEqual(len(recovery.calls), 1)
+        args, kwargs = recovery.calls[0]
+        self.assertEqual(args[1], "loading_freeze")
+        self.assertEqual(args[2], "home_screen_no_job")
+        self.assertEqual(kwargs["expected_runtime_generation"], 7)
+        self.assertEqual(kwargs["expected_session_id"], "sess")
+        self.assertEqual(kwargs["payload"]["trigger"], "home_screen_guard")
+        self.assertEqual(acc.last_watchdog_classification, "home_screen_stuck")
+
+    def test_home_rejoin_guard_allows_teleported_subplace_with_job(self):
+        from runtime.home_rejoin_guard import detect_home_rejoin_issue
+
+        acc = Account(username="teleport_user")
+        now = time.time()
+        acc.in_game_since = now - 120
+        acc.last_launch_at = now - 120
+        acc.launch_intent = {"place_id": "77747658251236"}
+        acc.observed_server_at = now - 90
+        acc.observed_place_id = "130167267952199"
+        acc.observed_job_id = "a47501ca-e723-4f6b-be91-0937074f8635"
+
+        issue = detect_home_rejoin_issue(
+            acc,
+            {
+                "home_rejoin_enabled": True,
+                "home_rejoin_grace_seconds": 60,
+                "launch_verify_window": 25,
+                "home_rejoin_require_server_evidence": True,
+            },
+            now,
+            120,
+        )
+
+        self.assertIsNone(issue)
+
+    def test_home_rejoin_guard_ignores_missing_server_evidence_alone(self):
+        from runtime.home_rejoin_guard import detect_home_rejoin_issue
+
+        acc = Account(username="no_evidence_user")
+        now = time.time()
+        acc.in_game_since = now - 180
+        acc.last_launch_at = now - 180
+        acc.launch_intent = {"place_id": "77747658251236"}
+        acc.observed_server_at = 0.0
+        acc.observed_place_id = ""
+        acc.observed_job_id = ""
+
+        issue = detect_home_rejoin_issue(
+            acc,
+            {
+                "home_rejoin_enabled": True,
+                "home_rejoin_grace_seconds": 60,
+                "launch_verify_window": 25,
+                "home_rejoin_require_server_evidence": True,
+            },
+            now,
+            180,
+        )
+
+        self.assertIsNone(issue)
+
+    def test_memory_pressure_guard_triggers_targeted_rejoin_signal(self):
+        maint = object.__new__(SystemMaintenance)
+        maint._cfg = {
+            "watchdog_enabled": True,
+            "popup_disconnected_enabled": False,
+            "watchdog_hold_time": 60,
+            "watchdog_activity_timeout": 180,
+            "watchdog_loading_grace": 90,
+            "watchdog_cpu_low": 0.9,
+            "roblox_memory_guard_enabled": True,
+            "roblox_memory_guard_mb": 1024,
+            "roblox_memory_guard_hold_seconds": 1,
+        }
+        maint._workers = {}
+        maint._runtime_owner = None
+        maint._runtime_state = RuntimeStateManager(logger=lambda *_args, **_kwargs: None)
+        maint._state_mgr = maint._runtime_state
+
+        class Net:
+            def is_online(self):
+                return True
+
+        class Recovery:
+            _net = Net()
+
+            def __init__(self):
+                self.calls = []
+
+            def handle_runtime_signal(self, *args, **kwargs):
+                self.calls.append((args, kwargs))
+                return True
+
+        recovery = Recovery()
+        maint._recovery = recovery
+        acc = Account(username="memory_pressure_user")
+        acc.state = AccountState.IN_GAME
+        acc.desired_state = AccountState.IN_GAME
+        acc.pid = 1234
+        now = time.time()
+        acc.in_game_since = now - 300
+        acc.last_activity_at = now
+        acc.resource_pressure_since = now - 5
+        acc.resource_pressure_reason = "process_memory_pressure"
+        acc.runtime_generation = 9
+        acc.session_id = "sess"
+        acc.launch_nonce = "nonce"
+        acc.rejoin_transaction_id = "tx"
+        maint._accounts = [acc]
+
+        liveness = {
+            "state": "alive",
+            "score": 8.0,
+            "validation": {"cpu": 8.0, "ram_mb": 2048.0, "windows": 1},
+            "reason_key": "",
+            "dialog": {},
+        }
+        with patch.object(ProcessManager, "assess_liveness", return_value=liveness):
+            SystemMaintenance._scan_liveness_watchdog(maint)
+
+        self.assertEqual(len(recovery.calls), 1)
+        args, kwargs = recovery.calls[0]
+        self.assertEqual(args[1], "watchdog_timeout")
+        self.assertEqual(args[2], "process_memory_pressure")
+        self.assertEqual(kwargs["expected_runtime_generation"], 9)
+        self.assertEqual(kwargs["expected_session_id"], "sess")
+        self.assertEqual(kwargs["payload"]["trigger"], "memory_guard")
+        self.assertEqual(acc.last_watchdog_classification, "memory_pressure")
+        self.assertEqual(acc.resource_pressure_since, 0.0)
 
     def test_visual_popup_is_enriched_with_recent_log_error_code(self):
         from services.roblox_liveness import assess_liveness
@@ -4362,10 +4941,24 @@ class HybridAccountTests(unittest.TestCase):
 
     def test_multi_roblox_keep_all_open_disables_queue_duration(self):
         maint = object.__new__(SystemMaintenance)
+        maint._accounts = [Account("UserA"), Account("UserB")]
         maint._cfg = {"multi_roblox_enabled": True, "rt_rotation_enabled": False, "queue_duration_seconds": 15}
         self.assertEqual(SystemMaintenance._queue_duration_seconds(maint), 0.0)
         maint._cfg = {"multi_roblox_enabled": True, "rt_rotation_enabled": True, "queue_duration_seconds": 15}
         self.assertEqual(SystemMaintenance._queue_duration_seconds(maint), 15.0)
+
+        maint._accounts = [Account("UserA")]
+        maint._cfg = {"multi_roblox_enabled": False, "rt_rotation_enabled": True, "queue_duration_seconds": 15}
+        self.assertEqual(SystemMaintenance._queue_duration_seconds(maint), 0.0)
+
+        maint._accounts = [Account("UserA"), Account("UserB")]
+        maint._cfg = {
+            "multi_roblox_enabled": False,
+            "rt_rotation_enabled": True,
+            "runtime_account_allowlist": ["UserA"],
+            "queue_duration_seconds": 15,
+        }
+        self.assertEqual(SystemMaintenance._queue_duration_seconds(maint), 0.0)
 
     def test_kill_duplicate_uses_process_manager_signature(self):
         killed = []

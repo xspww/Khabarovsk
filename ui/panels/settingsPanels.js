@@ -1,5 +1,19 @@
+const RAM_LIMIT_PRESETS=[4096,6144,8192,12288,16384,24576,32768,65536];
+
+function normalizeRamLimit(value){
+  const parsed=Number(value);
+  if(!Number.isFinite(parsed))return 8192;
+  return Math.max(512,Math.min(Math.round(parsed),65536));
+}
+
+function readRamLimit($){
+  const preset=$('ram-limit-preset')?.value||'8192';
+  if(preset==='custom')return normalizeRamLimit($('ram-limit-custom')?.value||8192);
+  return normalizeRamLimit(preset);
+}
+
 export function renderSettingsPanel(ctx){
-  const {$,CONFIG,dirty,setCompactToggle,updateSaveState}=ctx;
+  const {$,CONFIG,dirty,updateSaveState}=ctx;
   if(!CONFIG)return;
 
   const active=document.activeElement?.id||'';
@@ -34,14 +48,14 @@ export function renderSettingsPanel(ctx){
   }
 
   const popupOn=!!$('popup-disconnected-enabled').checked;
-  setCompactToggle('queue-autoclose-enabled','autoclose-inline-label','autoclose-controls','Every');
+  $('autoclose-controls').hidden=!$('queue-autoclose-enabled').checked;
   $('popup-disconnected-controls').hidden=!popupOn;
   updateSaveState('game');
   updateSaveState('queue');
 }
 
 export function renderPerformancePanel(ctx){
-  const {$,PERF,dirty,setCompactToggle,updateSaveState}=ctx;
+  const {$,PERF,dirty,updateSaveState}=ctx;
   if(!$('fps-enabled'))return;
 
   const active=document.activeElement?.id||'';
@@ -50,15 +64,47 @@ export function renderPerformancePanel(ctx){
     $('fps-limit').value=PERF.fps_limit??PERF.framerate_cap??240;
   }
 
-  setCompactToggle('fps-enabled','fps-inline-label','fps-limit-field','Limit');
+  $('fps-limit-field').hidden=!$('fps-enabled').checked;
   const notice=$('fps-notice'),msg=PERF.warning||PERF.msg||'';
   notice.textContent=msg;
   notice.classList.toggle('show',!!msg&&msg!=='ok');
   updateSaveState('performance');
 }
 
+export function renderRamPanel(ctx){
+  const {$,CONFIG,dirty,updateSaveState}=ctx;
+  if(!$('ram-enabled'))return;
+
+  const active=document.activeElement?.id||'';
+  const ramIds=['ram-enabled','ram-limit-preset','ram-limit-custom'];
+  const preset=$('ram-limit-preset');
+  const custom=$('ram-limit-custom');
+  const currentField=$('ram-current-field');
+  const customField=$('ram-limit-custom-field');
+  if(!preset||!custom||!currentField||!customField)return updateSaveState('ram');
+  if(!dirty('ram')&&!ramIds.includes(active)){
+    $('ram-enabled').checked=CONFIG.roblox_memory_guard_enabled!==false;
+    const limit=normalizeRamLimit(CONFIG.roblox_memory_guard_mb??8192);
+    if(RAM_LIMIT_PRESETS.includes(limit)){
+      preset.value=String(limit);
+      custom.value=String(limit);
+    }else{
+      preset.value='custom';
+      custom.value=String(limit);
+    }
+  }
+
+  const enabled=!!$('ram-enabled').checked;
+  currentField.hidden=!enabled;
+  customField.hidden=!enabled||preset.value!=='custom';
+  const notice=$('ram-notice');
+  notice.textContent='';
+  notice.classList.remove('show');
+  updateSaveState('ram');
+}
+
 export function renderGraphicsPanel(ctx){
-  const {$,GRAPHICS,dirty,setCompactToggle,updateSaveState}=ctx;
+  const {$,GRAPHICS,dirty,updateSaveState}=ctx;
   if(!$('graphics-auto-enabled'))return;
 
   const active=document.activeElement?.id||'';
@@ -70,7 +116,7 @@ export function renderGraphicsPanel(ctx){
     $('process-priority').value=GRAPHICS.process_priority||'low';
   }
 
-  setCompactToggle('graphics-auto-enabled','graphics-quality-label','graphics-quality-controls','Level');
+  $('graphics-quality-controls').hidden=!$('graphics-auto-enabled').checked;
   $('priority-controls').hidden=!$('priority-enabled').checked;
   const notice=$('graphics-notice'),msg=GRAPHICS.warning||GRAPHICS.msg||'';
   notice.textContent=msg;
@@ -150,7 +196,7 @@ export function renderCpuLimiterPanel(ctx){
     const rowEnabled=applyAll||!!row.enabled;
     const rowLimit=applyAll?defaultLimit:(row.limit_percent??defaultLimit);
     return `<tr><td><div class="name">${esc(row.display||user)}</div><div class="handle">${esc(user)}</div></td><td>${esc(pid)}</td><td><input id="cpu-row-enabled-${esc(user)}" class="cpu-row-enabled" data-user="${esc(user)}" type="checkbox" ${rowEnabled?'checked':''} ${disabled?'disabled':''}></td><td><input id="cpu-row-limit-${esc(user)}" class="input cpu-row-limit" data-user="${esc(user)}" type="number" min="5" max="95" step="0.01" value="${esc(Number(rowLimit).toFixed(2))}" ${disabled?'disabled':''}></td><td><strong>${esc(status)}</strong><div class="handle">${esc(msg)}</div></td></tr>`;
-  }).join('')||'<tr><td colspan="5" style="height:90px;text-align:center;color:var(--muted)">No accounts.</td></tr>';
+  }).join('')||'<tr><td colspan="5" style="height:90px;text-align:center;color:var(--muted)">No accounts</td></tr>';
 
   const notice=$('cpu-notice');
   const failed=rows.filter(r=>r.status==='Failed').length;
@@ -175,7 +221,7 @@ export function renderTroubleshootPanel(ctx){
 
   const notice=$('roblox-install-notice');
   const msg=TROUBLESHOOT.msg||job.error||job.msg||'';
-  notice.textContent=blocked?(TROUBLESHOOT.block_msg||'Stop Cronus and close Roblox first.'):msg;
+  notice.textContent=blocked?(TROUBLESHOOT.block_msg||'Stop Cronus and close Roblox first'):msg;
   notice.classList.toggle('show',blocked||!!(job.error||TROUBLESHOOT.msg));
   ['roblox-uninstall','roblox-latest'].forEach(id=>{if($(id))$(id).disabled=blocked||active});
 }
@@ -193,6 +239,11 @@ export function resetQueuePanel(ctx){
 export function resetPerformancePanel(ctx){
   ctx.clearDirty('performance');
   renderPerformancePanel(ctx);
+}
+
+export function resetRamPanel(ctx){
+  ctx.clearDirty('ram');
+  renderRamPanel(ctx);
 }
 
 export function resetGraphicsPanel(ctx){
@@ -267,6 +318,29 @@ export async function savePerformancePanel(ctx){
     $('fps-notice').classList.add('show');
     toast(e.message);
     return ctx.PERF;
+  }
+}
+
+export async function saveRamPanel(ctx){
+  const {$,api,clearDirty,toast,loadConfig,manualSnapshot,renderRam}=ctx;
+  const body={
+    roblox_memory_guard_enabled:$('ram-enabled').checked,
+    roblox_memory_guard_mb:readRamLimit($)
+  };
+
+  try{
+    await api('/config','POST',body);
+    clearDirty('ram');
+    const next=await loadConfig();
+    renderRam();
+    toast('RAM Limiter saved');
+    await manualSnapshot();
+    return next;
+  }catch(e){
+    $('ram-notice').textContent=e.message;
+    $('ram-notice').classList.add('show');
+    toast(e.message);
+    return ctx.CONFIG;
   }
 }
 

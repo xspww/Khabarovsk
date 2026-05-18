@@ -21,6 +21,8 @@ _ICON_OK = "✔"
 _ICON_WARN = "⚠️"
 _ICON_FAIL = "❌"
 _ICON_VIP = "🔐"
+_ICON_VIP_SERVER = "👑"
+_ICON_PUBLIC_SERVER = "🦺"
 _ICON_ALIASES = {
     "OK": _ICON_OK,
     "CHECK": _ICON_OK,
@@ -43,11 +45,17 @@ _ICON_ALIASES = {
 _COLOR_RESET = "\x1b[0m"
 _COLOR_DIM = "\x1b[90m"
 _COLOR_WHITE = "\x1b[97m"
+_COLOR_GRAY = "\x1b[38;2;128;128;128m"
+_COLOR_USERNAME = "\x1b[38;2;34;139;34m"
+_COLOR_DISCONNECTED = "\x1b[38;2;255;0;0m"
+_COLOR_DISCONNECT_STAMP = "\x1b[38;2;255;127;80m"
 _COLOR_BY_ICON = {
     _ICON_OK: "\x1b[92m",
     _ICON_WARN: "\x1b[93m",
     _ICON_FAIL: "\x1b[91m",
     _ICON_VIP: "\x1b[93m",
+    _ICON_VIP_SERVER: _COLOR_GRAY,
+    _ICON_PUBLIC_SERVER: _COLOR_GRAY,
 }
 _COLOR_SUPPORT: Optional[bool] = None
 
@@ -55,7 +63,7 @@ _KV_LINE_RE = re.compile(r"^\[[A-Z_]+\]\s+[a-z0-9_]+\b.*\b[a-zA-Z_][a-zA-Z0-9_]*
 
 
 def _enabled() -> bool:
-    value = os.environ.get("ARGUS_CONSOLE_ACTIVITY", "").strip().lower()
+    value = os.environ.get("CRONUS_CONSOLE_ACTIVITY", "").strip().lower()
     return value in {"1", "true", "yes", "on"}
 
 
@@ -81,7 +89,7 @@ def _enable_virtual_terminal() -> bool:
 
 def _colors_enabled() -> bool:
     global _COLOR_SUPPORT
-    requested = os.environ.get("ARGUS_CONSOLE_COLOR", "").strip().lower()
+    requested = os.environ.get("CRONUS_CONSOLE_COLOR", "").strip().lower()
     if requested in {"0", "false", "no", "off"}:
         return False
     if requested not in {"1", "true", "yes", "on"}:
@@ -150,11 +158,19 @@ def _pid(fields: Dict[str, Any]) -> str:
 
 
 def _pid_value(value: Any, default: str = "unknown") -> str:
-    return _paint(_text(value, default), _COLOR_DIM)
+    return _paint(_text(value, default), _COLOR_GRAY)
 
 
 def _pid_paren(value: Any, default: str = "unknown") -> str:
-    return _paint(f"(PID: {_text(value, default)})", _COLOR_DIM)
+    return _paint(f"(PID: {_text(value, default)})", _COLOR_GRAY)
+
+
+def _username_paren(value: Any, *, color: str = _COLOR_USERNAME) -> str:
+    return _paint(f"({_text(value, 'Account')})", color)
+
+
+def _gray_text(value: str) -> str:
+    return _paint(value, _COLOR_GRAY)
 
 
 def _duration_text(value: Any) -> str:
@@ -201,7 +217,8 @@ def _disconnect_line(account: str, reason: str = "", delay: str = "", action: st
     if delay:
         details.append(f"{action} in {delay}")
     suffix = f" ({', '.join(details)})" if details else ""
-    return _line(_ICON_WARN, f"{account} disconnected{suffix}")
+    status = _paint(f"({_text(account, 'Account')}) disconnected", _COLOR_DISCONNECTED)
+    return _line(_ICON_WARN, f"{status}{suffix}", stamp_color=_COLOR_DISCONNECT_STAMP)
 
 
 def _captcha_line(account: str, pid: str = "", detail: str = "") -> Optional[str]:
@@ -212,7 +229,7 @@ def _captcha_line(account: str, pid: str = "", detail: str = "") -> Optional[str
         return None
     _LAST_CAPTCHA_AT[key] = now
     pid_text = f" {_pid_paren(pid)}" if pid else ""
-    return _line(_ICON_WARN, f"{account} CAPTCHA required{pid_text} - paused, solve manually then Resume")
+    return _line(_ICON_VIP, f"{_username_paren(account)} CAPTCHA required{pid_text} - paused, solve manually then Resume")
 
 
 def _print_line(line: str) -> None:
@@ -290,10 +307,10 @@ def _format_state(name: str, fields: Dict[str, Any]) -> Optional[str]:
         if _reason(fields) == "captcha_required":
             return _captcha_line(account, pid, _text(fields.get("detail")))
         if new == "IN_GAME":
-            return _line(_ICON_OK, f"{account} {_pid_paren(pid or 'bound')}")
+            return _line(_ICON_OK, f"{_username_paren(account)} {_pid_paren(pid or 'bound')}", stamp_color=_COLOR_GRAY)
         return None
     if name == "process_bind_verified" and pid:
-        return _line("", f"Found Roblox process {_pid_value(pid)} for user {account}", stamp_color=_COLOR_WHITE)
+        return _line("", f"Found Roblox process {_pid_value(pid)} for user {_username_paren(account)}", stamp_color=_COLOR_WHITE)
     return None
 
 
@@ -317,30 +334,9 @@ def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]
     if scope == "CAPTCHA" or name == "captcha_dialog_hold" or (name == "account_hold" and _reason(fields) == "captcha_required"):
         return _captcha_line(account, pid, _text(fields.get("detail") or fields.get("captcha_detail")))
     if scope == "WORKER" and name in {"visible_process_adopted", "rebind_refreshed"} and pid:
-        return _line("", f"Found Roblox process {_pid_value(pid)} for user {account}", stamp_color=_COLOR_WHITE)
+        return _line("", f"Found Roblox process {_pid_value(pid)} for user {_username_paren(account)}", stamp_color=_COLOR_WHITE)
     if scope in {"SERVER", "VIP", "VIP_TRACKER"} and name in {"selected", "server_selected", "smart_selected", "private_server_selected"}:
-        server_id = _text(
-            fields.get("server_id")
-            or fields.get("private_server_id")
-            or fields.get("job_id")
-            or fields.get("id"),
-            "unknown",
-        )
-        players = _text(fields.get("players") or fields.get("player_count"))
-        max_players = _text(fields.get("max_players") or fields.get("capacity"))
-        ping = _text(fields.get("ping_ms") or fields.get("ping"))
-        details = []
-        if players and max_players:
-            details.append(f"players: {players}/{max_players}")
-        elif players:
-            details.append(f"players: {players}")
-        if ping:
-            suffix = "ms" if ping.isdigit() else ""
-            details.append(f"ping: {ping}{suffix}")
-        summary = f"Smart server selected: {server_id}"
-        if details:
-            summary = f"{summary} ({', '.join(details)})"
-        return _line(_ICON_VIP, summary)
+        return None
     if scope in {"VIP", "VIP_DETECTOR"} and name in {"server_detected", "detected", "server_status"}:
         is_vip = _boolish(fields.get("is_vip") or fields.get("is_vip_server") or fields.get("private_server"))
         server_type = _text(fields.get("server_type"), "VIP" if is_vip else "PUBLIC").upper()
@@ -352,8 +348,12 @@ def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]
             suffix_parts.append(f"id: {private_id}")
         if place_id:
             suffix_parts.append(f"place: {place_id}")
-        suffix = f" ({', '.join(suffix_parts)})" if suffix_parts else ""
-        return _line(_ICON_VIP, f"{account} {detail} detected{suffix}")
+        suffix = f"({', '.join(suffix_parts)})" if suffix_parts else ""
+        icon = _ICON_VIP_SERVER if detail == "VIP server" else _ICON_PUBLIC_SERVER
+        message = _gray_text(f"{account} {detail} detected")
+        if suffix:
+            message = f"{message} {_gray_text(suffix)}"
+        return _line(icon, message, stamp_color=_COLOR_GRAY)
     return None
 
 
@@ -399,7 +399,7 @@ def _format_text(message: str, level: str = "info") -> Optional[str]:
 
     match = re.match(r"^(?:\[(?:SERVER|VIP|VIP_TRACKER)\]\s+)?Smart server selected:\s*(.+)$", msg, re.IGNORECASE)
     if match:
-        return _line(_ICON_VIP, f"Smart server selected: {match.group(1).strip()}")
+        return None
 
     return None
 

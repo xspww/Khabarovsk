@@ -40,9 +40,15 @@ from services.captcha_guard import (
     set_account_captcha_hold,
 )
 from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
+from runtime.account_selection import runtime_account_filter_reason
 from runtime.account_runtime_controller import AccountRuntimeController
 from runtime.command_tracker import RuntimeCommandTracker
-from runtime.runtime_health import account_health_flags, build_runtime_health
+from runtime.runtime_health import (
+    account_health_flags,
+    build_detailed_farm_health,
+    build_public_farm_health,
+    build_runtime_health,
+)
 from runtime.recovery_context import (
     RecoveryAttemptContext,
     SESSION_CONFLICT,
@@ -63,6 +69,7 @@ from runtime.runtime_store import RuntimeStore
 from runtime.runtime_state_manager import RuntimeStateManager
 from runtime.runtime_timeline import RuntimeTimeline
 from runtime.runtime_orchestrator import RuntimeOrchestrator
+from runtime.machine_supervisor import MachineSupervisor
 from runtime.lua_identity import lua_event_requires_pid_guard, resolve_lua_account
 from runtime.farm_lifecycle import FarmLifecycleService
 from runtime.lua_server_detection import LuaServerDetection, detect_lua_server
@@ -71,14 +78,8 @@ from runtime.diagnostic_bundle import build_runtime_diagnostic_bundle
 from runtime.telemetry_view import build_runtime_telemetry
 from runtime.runtime_view_model import RuntimeViewModelBuilder
 from runtime.supervisor_runtime import SupervisorRuntime
-from runtime.system_maintenance import (
-    SystemMaintenance,
-    _apply_cpu_limiter_for_bound_process,
-    _window_arrange_settings_from_config,
-    _window_resize_target_from_config,
-)
-from runtime.launch_controller import LaunchController, _redact_launch_detail
-from runtime.roblox_watchdog import RobloxWatchdog
+from runtime.system_maintenance import SystemMaintenance
+from runtime.config_snapshot import apply_runtime_config_snapshot
 from runtime.recovery_support import _set_account_cookie_block, _clear_account_cookie_block
 from runtime.recovery_engine import RecoveryCoordinator, RecoveryEngine
 from runtime.account_worker import AccountWorker
@@ -106,6 +107,7 @@ class FarmController:
         self._state_mgr: Optional[StateManager] = None
         self._runtime_scheduler: Optional[Any] = None
         self._shutting_down = False
+        self._last_control_plane_restart_at = 0.0
 
         self._total_rejoin = 0
         self._total_crash = 0
@@ -114,7 +116,7 @@ class FarmController:
         self._status_lock = threading.Lock()
         self._status_revision = 0
         self._runtime_state = RuntimeStateManager(logger=flog_kv)
-        self._runtime_store = RuntimeStore(os.path.join(APP_DATA_DIR, "roboguard_runtime.db"))
+        self._runtime_store = RuntimeStore(os.path.join(APP_DATA_DIR, "cronus_runtime.db"))
         self._timeline = RuntimeTimeline(
             self._runtime_store,
             self._event_log,
@@ -129,6 +131,7 @@ class FarmController:
         except Exception as e:
             flog_kv("RUNTIME", "open_transaction_rollback_failed", "warning", error=e)
         self._supervisor = SupervisorRuntime(store=self._runtime_store, logger=flog_kv)
+        self._machine_supervisor = MachineSupervisor(cfg_mgr.snapshot(), self._accounts)
         self._runtime_orchestrator = RuntimeOrchestrator(
             self._runtime_state,
             timeline=self._timeline,
@@ -366,6 +369,7 @@ class FarmController:
 
     def set_accounts(self, accounts: List[Account]):
         self._accounts = accounts
+        self._machine_supervisor.set_accounts(self._accounts)
         self._sync_accounts_from_ram(persist=False)
         if self._recovery:
             self._recovery._accounts = self._accounts
@@ -377,27 +381,15 @@ class FarmController:
 
     def apply_config_snapshot(self):
         cfg = self.cfg_mgr.snapshot()
-        if self._recovery:
-            self._recovery._cfg = cfg
-            self._recovery._accounts = self._accounts
-        if self._maintenance:
-            self._maintenance._cfg = cfg
-        for worker in self._workers.values():
-            worker.cfg = cfg
-        if self._dispatcher:
-            self._dispatcher._cfg = cfg
-            launcher = getattr(self._dispatcher, "_launcher", None)
-            if launcher:
-                launcher._cfg = cfg
-                limiter = getattr(launcher, "_limiter", None)
-                if limiter:
-                    try:
-                        limiter.interval = max(
-                            float(cfg.get("queue_delay_seconds", cfg.get("launch_rate_interval", 6)) or 6),
-                            float(cfg.get("account_switch_cooldown", 10) or 10),
-                        )
-                    except Exception:
-                        pass
+        apply_runtime_config_snapshot(
+            cfg=cfg,
+            accounts=self._accounts,
+            machine_supervisor=self._machine_supervisor,
+            recovery=self._recovery,
+            maintenance=self._maintenance,
+            workers=self._workers,
+            dispatcher=self._dispatcher,
+        )
         self._bump_status_revision()
 
     def _sync_accounts_from_ram(self, persist: bool = False):
@@ -677,6 +669,12 @@ class FarmController:
             "observed_server_at": now,
         }
 
+    @staticmethod
+    def _lua_has_server_job(payload: Dict[str, Any]) -> bool:
+        place_id = str(payload.get("observed_place_id") or payload.get("place_id") or "").strip()
+        job_id = str(payload.get("observed_job_id") or payload.get("job_id") or "").strip()
+        return bool(place_id and place_id != "0" and job_id)
+
     def handle_lua_rejoin_event(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         event_name = str(payload.get("event") or "").strip().lower()
         if not event_name:
@@ -727,7 +725,32 @@ class FarmController:
             "identity_match": resolution.match_reason,
         }
 
-        if identity.pid and not resolution.pid_match and lua_event_requires_pid_guard(event_name):
+        requires_pid_guard = lua_event_requires_pid_guard(event_name)
+        if requires_pid_guard and resolution.bound_pid and identity.pid is None:
+            self._push_event(
+                "lua",
+                f"Lua helper ignored missing PID - {acc.display_name}",
+                account=acc,
+                severity="warning",
+                reason="lua_pid_missing",
+                lua_event=event_name,
+                lua_pid="",
+                matched_pid=resolution.bound_pid or "",
+                identity_match=resolution.match_reason,
+                accepted=False,
+            )
+            return {
+                "ok": True,
+                "accepted": False,
+                "event": event_name,
+                "account": acc._config_username,
+                "signal": "",
+                "matched_pid": resolution.bound_pid,
+                "lua_pid": "",
+                "msg": "Lua event ignored because PID is required for the bound Cronus process",
+            }
+
+        if identity.pid and resolution.bound_pid and not resolution.pid_match and requires_pid_guard:
             self._push_event(
                 "lua",
                 f"Lua helper ignored PID mismatch - {acc.display_name}",
@@ -753,6 +776,11 @@ class FarmController:
 
         server_detection = self._apply_lua_server_detection(acc, payload)
         event_payload.update(server_detection)
+        if event_name in {"loaded", "in_game", "heartbeat", "teleport_state"}:
+            with acc._lock:
+                acc.last_activity_at = time.time()
+                acc.last_activity_reason = f"lua:{event_name}"
+                acc.sync_runtime(f"lua:{event_name}")
 
         if event_name in {"description", "set_description", "status_note"}:
             persisted, description = self._set_lua_account_description(
@@ -829,13 +857,39 @@ class FarmController:
         accepted = True
         severity = "info"
         if event_name in {"loaded", "in_game"}:
-            signal = RuntimeSignal.LAUNCH_SUCCESS.value
-            accepted = self._runtime_orchestrator.handle_runtime_signal(
-                acc,
-                signal,
-                reason,
-                payload={**event_payload, "count_rejoin": None},
-            )
+            has_server_job = self._lua_has_server_job(event_payload)
+            if event_name == "loaded" and not has_server_job:
+                signal = ""
+                accepted = True
+                severity = "warning" if acc.state in {AccountState.LAUNCHING, AccountState.VERIFY, AccountState.IN_GAME} else "info"
+                with acc._lock:
+                    acc.last_watchdog_classification = "lua_loaded_waiting_server"
+                    acc.last_activity_reason = "lua:loaded_waiting_server"
+                    acc.sync_runtime("lua_loaded_waiting_server")
+            elif event_name == "in_game" and not has_server_job:
+                signal = ""
+                accepted = False
+                severity = "warning"
+                with acc._lock:
+                    acc.last_watchdog_classification = "lua_in_game_missing_server_evidence"
+                    acc.last_activity_reason = "lua:in_game_missing_server_evidence"
+                    acc.sync_runtime("lua_in_game_missing_server_evidence")
+            else:
+                if identity.pid and resolution.pid_match and resolution.bound_pid:
+                    ProcessService.mark_account_process_proof(
+                        acc,
+                        "strong",
+                        reason=f"lua_{event_name}_pid_session",
+                        confidence=max(float(getattr(acc, "process_binding_confidence", 0.0) or 0.0), 100.0),
+                        status="verified",
+                    )
+                signal = RuntimeSignal.LAUNCH_SUCCESS.value
+                accepted = self._runtime_orchestrator.handle_runtime_signal(
+                    acc,
+                    signal,
+                    reason,
+                    payload={**event_payload, "count_rejoin": None},
+                )
         elif event_name in {"disconnect", "error_code"}:
             signal = RuntimeSignal.DISCONNECT_DETECTED.value
             severity = "critical"
@@ -903,8 +957,143 @@ class FarmController:
     def get_status(self) -> dict:
         return RuntimeViewModelBuilder(self).build_status()
 
+    def _farm_health_account_rows(self, now: float) -> List[Dict[str, Any]]:
+        try:
+            cfg_snapshot = self.cfg_mgr.snapshot()
+        except Exception:
+            cfg_snapshot = {}
+        rows: List[Dict[str, Any]] = []
+        for acc in self._accounts:
+            runtime_snapshot = self._runtime_state.snapshot(acc)
+            state = str(runtime_snapshot.get("public_state") or getattr(getattr(acc, "state", None), "name", "IDLE"))
+            desired_state = str(runtime_snapshot.get("desired_public_state") or getattr(getattr(acc, "desired_state", None), "name", "IN_GAME"))
+            cooldown_until = float(runtime_snapshot.get("cooldown_until", getattr(acc, "cooldown_until", 0.0)) or 0.0)
+            blocked_reason = account_launch_block_reason(acc) or runtime_account_filter_reason(acc, cfg_snapshot)
+            row: Dict[str, Any] = {
+                "account_id": str(getattr(acc, "_config_username", "") or getattr(acc, "username", "") or ""),
+                "state": state,
+                "public_state": state,
+                "desired_state": desired_state,
+                "blocked_reason": blocked_reason or "",
+                "pid_bound": bool(runtime_snapshot.get("pid")),
+                "recovery_active": bool(runtime_snapshot.get("recovery_active", False)),
+                "recovery_inflight": bool(runtime_snapshot.get("recovery_inflight", False)),
+                "recovery_status": str(runtime_snapshot.get("recovery_status") or getattr(acc, "recovery_status", "") or ""),
+                "recovery_reason": str(runtime_snapshot.get("recovery_reason") or getattr(acc, "last_recovery_reason", "") or ""),
+                "cooldown_left": max(0, int(cooldown_until - now)) if cooldown_until else 0,
+                "retry_count": int(runtime_snapshot.get("retry_count", getattr(acc, "retry_count", 0)) or 0),
+                "fail_count": int(runtime_snapshot.get("fail_count", getattr(acc, "fail_count", 0)) or 0),
+                "last_heartbeat": float(runtime_snapshot.get("last_heartbeat", 0.0) or 0.0),
+                "last_transition_at": float(runtime_snapshot.get("last_transition_at", getattr(acc, "last_state_change_at", 0.0)) or 0.0),
+                "last_transition_reason": str(runtime_snapshot.get("last_transition_reason") or getattr(acc, "last_state_reason", "") or ""),
+                "current_command": str(runtime_snapshot.get("current_command") or getattr(acc, "current_command", "") or ""),
+                "command_inflight": runtime_snapshot.get("command_inflight"),
+                "process_binding_status": str(runtime_snapshot.get("binding_status") or runtime_snapshot.get("bind_status") or getattr(acc, "process_binding_status", "") or ""),
+                "process_proof_level": str(runtime_snapshot.get("process_proof_level") or getattr(acc, "process_proof_level", "untrusted") or "untrusted"),
+                "process_reject_reason": str(runtime_snapshot.get("process_reject_reason") or getattr(acc, "process_reject_reason", "") or ""),
+                "liveness_state": str(runtime_snapshot.get("liveness_state") or getattr(acc, "liveness_state", "") or ""),
+                "liveness_score": float(runtime_snapshot.get("liveness_score", getattr(acc, "liveness_score", 0.0)) or 0.0),
+                "watchdog_classification": str(getattr(acc, "last_watchdog_classification", "") or ""),
+            }
+            row["health_flags"] = account_health_flags({
+                **row,
+                "process_alive": bool(row["pid_bound"]),
+            }, now=now)
+            rows.append(row)
+        return rows
+
+    def _thread_health(self, thread_obj: Any, now: float) -> Dict[str, Any]:
+        configured = thread_obj is not None
+        alive = bool(configured and thread_obj.is_alive())
+        dead_for = max(0.0, now - float(self.start_ts or now)) if self.running and configured and not alive else 0.0
+        return {
+            "configured": configured,
+            "alive": alive,
+            "dead_for_seconds": round(dead_for, 1),
+            "name": str(getattr(thread_obj, "name", "") or "") if configured else "",
+        }
+
+    def _worker_health(self, now: float) -> Dict[str, Any]:
+        items = []
+        for account_id, worker in sorted(self._workers.items()):
+            acc = getattr(worker, "acc", None)
+            state = getattr(getattr(acc, "state", None), "name", "") if acc is not None else ""
+            heartbeat = float(getattr(acc, "last_activity_at", 0.0) or 0.0) if acc is not None else 0.0
+            items.append({
+                "account_id": str(account_id or ""),
+                "alive": bool(worker.is_alive()),
+                "state": state,
+                "last_heartbeat_age_seconds": round(max(0.0, now - heartbeat), 1) if heartbeat else 0.0,
+            })
+        return {
+            "total": len(items),
+            "alive": sum(1 for item in items if item["alive"]),
+            "dead": sum(1 for item in items if not item["alive"]),
+            "items": items,
+        }
+
+    def _farm_health_snapshot(self) -> Dict[str, Any]:
+        now = time.time()
+        queue_snapshot = self._queue.snapshot() if self._queue else {
+            "size": 0,
+            "pending": 0,
+            "busy": False,
+            "closed": not self.running,
+            "stale_rejections": 0,
+            "oldest_age_seconds": 0.0,
+            "entries": [],
+        }
+        scheduler_snapshot = self._runtime_scheduler.snapshot(now=now) if self._runtime_scheduler else {}
+        with self._event_lock:
+            recent_events = list(self._event_log)[-100:]
+        accounts = self._farm_health_account_rows(now)
+        runtime_health = build_runtime_health(
+            accounts,
+            queue_snapshot,
+            recent_events,
+            scheduler_snapshot=scheduler_snapshot,
+            now=now,
+        )
+        recovery_storm = {}
+        if getattr(getattr(self, "_recovery", None), "_storm", None):
+            recovery_storm = self._recovery._storm.snapshot()
+        with self._status_lock:
+            status_revision = int(self._status_revision)
+        event_ages = []
+        for event in recent_events:
+            if not isinstance(event, dict):
+                continue
+            try:
+                ts = float(event.get("ts") or 0.0)
+            except Exception:
+                ts = 0.0
+            if ts > 0.0:
+                event_ages.append(max(0.0, now - ts))
+        return {
+            "running": bool(self.running),
+            "status_revision": status_revision,
+            "status_updated_at": now,
+            "accounts": accounts,
+            "queue_snapshot": queue_snapshot,
+            "scheduler_health": scheduler_snapshot,
+            "runtime_health": runtime_health,
+            "recovery_storm": recovery_storm,
+            "recent_runtime_events": recent_events,
+            "last_runtime_event_age_seconds": round(min(event_ages), 1) if event_ages else 0.0,
+            "workers": self._worker_health(now),
+            "dispatcher": self._thread_health(self._dispatcher, now),
+            "maintenance": self._thread_health(self._maintenance, now),
+            "last_control_plane_restart_at": float(self._last_control_plane_restart_at or 0.0),
+        }
+
+    def get_public_farm_health(self) -> dict:
+        return build_public_farm_health(self._farm_health_snapshot())
+
+    def get_detailed_farm_health(self) -> dict:
+        return build_detailed_farm_health(self._farm_health_snapshot())
+
     def get_runtime_health(self) -> dict:
-        status = self.get_status()
+        status = self._farm_health_snapshot()
         return {
             "ok": True,
             "runtime_health": status.get("runtime_health", {}),

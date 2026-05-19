@@ -24,7 +24,7 @@ $env
 
 # Runtime data, account state, and local Roblox instance storage
 data/
-roboguard_rt1_instances/
+cronus_rt1_instances/
 
 # Logs and local databases
 *.log

@@ -21,6 +21,7 @@ class AccountRuntime:
     binding_status: str = "unbound"
     binding_decision: str = ""
     process_binding_confidence: float = 0.0
+    process_proof_level: str = "untrusted"
     process_reject_reason: str = ""
     process_owner_claim: str = ""
     unmanaged_live_process_count: int = 0
@@ -90,6 +91,7 @@ class AccountRuntime:
             "binding_status": self.binding_status,
             "binding_decision": self.binding_decision,
             "process_binding_confidence": self.process_binding_confidence,
+            "process_proof_level": self.process_proof_level,
             "process_reject_reason": self.process_reject_reason,
             "process_owner_claim": self.process_owner_claim,
             "unmanaged_live_process_count": self.unmanaged_live_process_count,

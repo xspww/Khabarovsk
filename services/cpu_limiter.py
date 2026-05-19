@@ -257,7 +257,7 @@ class CpuLimiter:
                 self._set_job_cpu_rate(job, limit_percent, enabled=True)
                 self._verify_job_cpu_rate(job, limit_percent)
             else:
-                job = kernel32.CreateJobObjectW(None, f"ArgusCpuLimiter_{os.getpid()}_{pid}")
+                job = kernel32.CreateJobObjectW(None, f"CronusCpuLimiter_{os.getpid()}_{pid}")
                 if not job:
                     raise ctypes.WinError(ctypes.get_last_error())
                 self._set_job_cpu_rate(job, limit_percent, enabled=True)

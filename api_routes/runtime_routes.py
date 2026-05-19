@@ -8,7 +8,9 @@ from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from core import account_launch_block_reason, flog_kv
+from runtime.account_selection import runtime_account_filter_reason
 from runtime.popup_detector.popup_sampler import PopupWindowSampler
+from .auth import require_api_token
 from .context import ApiContext
 from .settings_state import _apply_game_defaults
 
@@ -23,7 +25,7 @@ def register(app, ctx: ApiContext) -> None:
             action,
             account=account,
             ttl=ttl,
-            idempotency_key=str(request.headers.get("X-Argus-Idempotency-Key") or ""),
+            idempotency_key=str(request.headers.get("X-Cronus-Idempotency-Key") or ""),
             request_fingerprint=fingerprint,
         )
 
@@ -57,12 +59,22 @@ def register(app, ctx: ApiContext) -> None:
     def api_runtime_health():
         return farm.get_runtime_health()
 
+    @app.get("/api/farm/health")
+    def api_farm_health():
+        return farm.get_public_farm_health()
+
+    @app.get("/api/farm/health/detail")
+    def api_farm_health_detail(request: Request):
+        require_api_token(request, ctx)
+        return farm.get_detailed_farm_health()
+
     @app.get("/api/runtime/telemetry")
     def api_runtime_telemetry():
         return farm.get_runtime_telemetry()
 
     @app.get("/api/runtime/events")
-    def api_runtime_events(account_id: str = "", limit: int = 100, event_type: str = "", severity: str = ""):
+    def api_runtime_events(request: Request, account_id: str = "", limit: int = 100, event_type: str = "", severity: str = ""):
+        require_api_token(request, ctx)
         return farm.get_runtime_events(
             account_id=account_id,
             limit=limit,
@@ -71,7 +83,8 @@ def register(app, ctx: ApiContext) -> None:
         )
 
     @app.get("/api/runtime/diagnostics")
-    def api_runtime_diagnostics(account_id: str = "", limit: int = 200, event_type: str = "", severity: str = ""):
+    def api_runtime_diagnostics(request: Request, account_id: str = "", limit: int = 200, event_type: str = "", severity: str = ""):
+        require_api_token(request, ctx)
         return farm.get_runtime_diagnostics(
             account_id=account_id,
             limit=limit,
@@ -133,11 +146,12 @@ def register(app, ctx: ApiContext) -> None:
                 result = {"ok": False, "accepted": False, "command_id": command["command_id"], "msg": "Already running"}
                 return result
             _apply_game_defaults(ctx, farm._accounts, persist=True)
-            blocked = [
-                {"username": a.username, "reason": account_launch_block_reason(a)}
-                for a in farm._accounts
-                if account_launch_block_reason(a)
-            ]
+            cfg = ctx.cfg_mgr.snapshot()
+            blocked = []
+            for account in farm._accounts:
+                reason = account_launch_block_reason(account) or runtime_account_filter_reason(account, cfg)
+                if reason:
+                    blocked.append({"username": account.username, "reason": reason})
             blocked_names = {str(item["username"]).strip().lower() for item in blocked}
             launchable_accounts = [
                 a for a in farm._accounts
@@ -148,7 +162,9 @@ def register(app, ctx: ApiContext) -> None:
                     "ok": False,
                     "accepted": False,
                     "command_id": command["command_id"],
+                    "error_code": "no_launchable_accounts",
                     "msg": "No launchable accounts. Reimport the correct cookie for blocked accounts.",
+                    "required_action": "Resolve blocked account gates, then retry /api/start.",
                     "launchable_count": 0,
                     "blocked_count": len(blocked),
                     "blocked": blocked,
@@ -161,7 +177,16 @@ def register(app, ctx: ApiContext) -> None:
             if missing_targets:
                 shown = ", ".join(missing_targets[:3])
                 suffix = "" if len(missing_targets) <= 3 else " ..."
-                result = {"ok": False, "accepted": False, "command_id": command["command_id"], "msg": f"Missing Place ID or VIP link for: {shown}{suffix}"}
+                result = {
+                    "ok": False,
+                    "accepted": False,
+                    "command_id": command["command_id"],
+                    "error_code": "missing_launch_target",
+                    "msg": f"Missing Place ID or VIP link for: {shown}{suffix}",
+                    "required_action": "Set game_place_id, game_private_server_url, per-account place_id, or a VIP link before /api/start.",
+                    "missing_target_count": len(missing_targets),
+                    "missing_targets": missing_targets[:10],
+                }
                 return result
             farm.start()
             ok = True
@@ -230,7 +255,7 @@ def register(app, ctx: ApiContext) -> None:
             closed = farm.close_all_roblox(
                 wait_seconds=4.0,
                 reason="api_close_all_roblox",
-                idempotency_key=str(request.headers.get("X-Argus-Idempotency-Key") or ""),
+                idempotency_key=str(request.headers.get("X-Cronus-Idempotency-Key") or ""),
                 command_id=command["command_id"],
             )
             ok = True

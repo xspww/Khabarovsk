@@ -12,6 +12,15 @@ from .settings_state import (
     _int_setting,
     _normalize_window_size_settings,
 )
+from runtime.account_selection import runtime_account_allowlist
+
+
+def _float_setting(value, default: float, min_value: float, max_value: float) -> float:
+    try:
+        parsed = float(value)
+    except Exception:
+        parsed = float(default)
+    return max(min_value, min(parsed, max_value))
 
 
 def register(app, ctx: ApiContext) -> None:
@@ -41,12 +50,19 @@ def register(app, ctx: ApiContext) -> None:
             "not_responding_timeout",
             "network_check_interval", "network_debounce",
             "queue_timeout", "cooldown_after_crash", "relaunch_loop_limit",
+            "relaunch_loop_fatal", "relaunch_loop_cooldown_seconds",
             "connection_error_rejoin", "popup_disconnected_enabled",
+            "machine_supervisor_enabled", "machine_supervisor_max_launching_accounts",
+            "machine_supervisor_cpu_high_percent", "machine_supervisor_memory_high_percent",
+            "roblox_memory_guard_enabled", "roblox_memory_guard_mb", "roblox_memory_guard_hold_seconds",
             "popup_scan_interval_seconds", "popup_scan_max_parallel",
             "connection_error_hold_time",
             "watchdog_enabled", "watchdog_cpu_low",
             "watchdog_ram_low", "watchdog_hold_time",
             "watchdog_activity_timeout", "watchdog_loading_grace",
+            "recovery_storm_enabled", "recovery_storm_max_active",
+            "recovery_storm_min_spacing_seconds", "recovery_storm_jitter_seconds",
+            "recovery_storm_outage_backoff_seconds",
             "recovery_restore_window", "event_bus_workers", "event_bus_max_pending",
             "fps_limiter_enabled", "fps_limit", "graphics_auto_enabled", "graphics_low_enabled", "graphics_quality_level",
             "auto_process_priority_enabled", "process_priority",
@@ -57,6 +73,7 @@ def register(app, ctx: ApiContext) -> None:
             "roblox_window_arrange_enabled", "roblox_window_arrange_columns",
             "roblox_window_arrange_gap", "roblox_window_arrange_margin",
             "multi_roblox_enabled", "rt_rotation_enabled",
+            "runtime_account_allowlist",
         }
         updates = {k: v for k, v in body.items() if k in allowed}
         if "queue_delay_seconds" in updates:
@@ -149,8 +166,26 @@ def register(app, ctx: ApiContext) -> None:
             updates["multi_roblox_enabled"] = bool(updates["multi_roblox_enabled"])
             if not updates["multi_roblox_enabled"]:
                 release_multi_roblox_guard()
+        if "relaunch_loop_fatal" in updates:
+            updates["relaunch_loop_fatal"] = bool(updates["relaunch_loop_fatal"])
+        if "relaunch_loop_cooldown_seconds" in updates:
+            updates["relaunch_loop_cooldown_seconds"] = _float_setting(
+                updates["relaunch_loop_cooldown_seconds"], 300.0, 10.0, 86400.0
+            )
+        if "roblox_memory_guard_enabled" in updates:
+            updates["roblox_memory_guard_enabled"] = bool(updates["roblox_memory_guard_enabled"])
+        if "roblox_memory_guard_mb" in updates:
+            updates["roblox_memory_guard_mb"] = _float_setting(
+                updates["roblox_memory_guard_mb"], 6144.0, 512.0, 65536.0
+            )
+        if "roblox_memory_guard_hold_seconds" in updates:
+            updates["roblox_memory_guard_hold_seconds"] = _float_setting(
+                updates["roblox_memory_guard_hold_seconds"], 30.0, 5.0, 3600.0
+            )
         if "rt_rotation_enabled" in updates:
             updates["rt_rotation_enabled"] = bool(updates["rt_rotation_enabled"])
+        if "runtime_account_allowlist" in updates:
+            updates["runtime_account_allowlist"] = runtime_account_allowlist(updates)
         if "game_place_id" in updates:
             updates["game_place_id"] = str(updates["game_place_id"] or "").strip()
         if "game_private_server_url" in updates:

@@ -15,7 +15,24 @@ from core import flog_kv
 from services.browser_tracker import tracker_matches
 from process_net import ProcessManager as _LegacyProcessManager
 from services.process_ownership import validate_process_ownership
+from services.process_proof_policy import (
+    PROOF_STRONG,
+    PROOF_UNTRUSTED,
+    classify_process_proof,
+    normalize_process_proof_level,
+    process_proof_allowed_for_state,
+    required_process_proof_for_state,
+)
+from services.process_window_ops import (
+    arrange_roblox_windows as _arrange_roblox_windows,
+    resize_roblox_windows as _resize_roblox_windows,
+    restore_roblox_window_styles as _restore_roblox_window_styles,
+)
 from services.resource_monitor import get_rt_monitor
+from runtime.runtime_state_manager import RuntimeStateManager
+
+
+_RUNTIME_STATE = RuntimeStateManager(logger=flog_kv)
 
 
 def _account_key(acc: Any) -> str:
@@ -59,6 +76,8 @@ def _set_process_diagnostics(
     confidence: float = 0.0,
     reject_reason: str = "",
     owner_claim: str = "",
+    proof_level: str = "",
+    proof_reason: str = "",
     reason: str = "",
 ) -> None:
     lock = getattr(account, "_lock", None)
@@ -68,8 +87,34 @@ def _set_process_diagnostics(
         account.process_binding_confidence = float(confidence or 0.0)
         account.process_reject_reason = str(reject_reason or "")
         account.process_owner_claim = str(owner_claim or "")
+        if proof_level:
+            account.process_proof_level = normalize_process_proof_level(proof_level)
+        if proof_reason and reject_reason:
+            account.process_reject_reason = str(reject_reason or proof_reason)
         try:
             account.sync_runtime(reason or decision or "process_diagnostics")
+        except Exception:
+            pass
+
+    if lock:
+        with lock:
+            _write()
+    else:
+        _write()
+
+
+def _quarantine_process_match(account: Any, reason: str, validation: Dict[str, Any], proof: Dict[str, Any]) -> None:
+    lock = getattr(account, "_lock", None)
+
+    def _write() -> None:
+        _RUNTIME_STATE.set_binding_status(account, "process_proof_quarantine", reason=reason or "process_proof_quarantine")
+        account.binding_decision = "quarantined"
+        account.process_binding_confidence = float(validation.get("confidence") or 0.0)
+        account.process_proof_level = str(proof.get("process_proof_level") or PROOF_UNTRUSTED)
+        account.process_reject_reason = "process_proof_insufficient"
+        account.process_owner_claim = str(validation.get("owner") or "")
+        try:
+            account.sync_runtime(reason or "process_proof_quarantine")
         except Exception:
             pass
 
@@ -184,11 +229,27 @@ class ProcessService:
                 current_runtime_generation=int(getattr(account, "runtime_generation", 0) or 0),
             )
 
-        confidence = float(validation.get("confidence") or 0.0)
-        if validation.get("ok") and confidence < float(getattr(_LegacyProcessManager, "MEDIUM_CONFIDENCE", 45.0)):
+        proof = classify_process_proof(
+            validation,
+            owner_key=owner_key,
+            expected_identity=str(expected_identity or ""),
+            expected_browser_tracker_id=expected_browser_tracker_id,
+            launched_after=launched_after,
+            current_process_proof_level=str(getattr(account, "process_proof_level", "") or ""),
+        )
+        validation.update(proof)
+        required_proof = required_process_proof_for_state(getattr(account, "state", ""), destructive=False)
+        validation["required_process_proof"] = required_proof
+        if validation.get("ok") and not process_proof_allowed_for_state(
+            validation.get("process_proof_level"),
+            getattr(account, "state", ""),
+            destructive=False,
+        ):
             validation = dict(validation)
             validation["ok"] = False
-            validation["reason"] = "low_confidence"
+            validation["reason"] = "process_proof_insufficient"
+            validation["process_reject_reason"] = "process_proof_insufficient"
+            _quarantine_process_match(account, reason or "validate_binding", validation, proof)
 
         validation["binding_decision"] = "verified" if validation.get("ok") else "rejected"
         validation["binding_confidence"] = float(validation.get("confidence") or 0.0)
@@ -200,6 +261,8 @@ class ProcessService:
             validation["binding_confidence"],
             validation["process_reject_reason"],
             validation["process_owner_claim"],
+            proof_level=validation.get("process_proof_level", ""),
+            proof_reason=validation.get("process_proof_reason", ""),
             reason=reason or "validate_binding",
         )
 
@@ -221,6 +284,8 @@ class ProcessService:
                 owner=validation.get("owner", ""),
                 owner_key=owner_key,
                 confidence=validation.get("confidence", 0.0),
+                process_proof_level=validation.get("process_proof_level", ""),
+                required_process_proof=validation.get("required_process_proof", ""),
                 binding_decision=validation.get("binding_decision", ""),
                 process_reject_reason=validation.get("process_reject_reason", ""),
                 process_owner_claim=validation.get("process_owner_claim", ""),
@@ -295,6 +360,7 @@ class ProcessService:
         identity = str(validation.get("identity") or _LegacyProcessManager.get_process_identity(pid))
         name = process_name or str(validation.get("name") or "RobloxPlayerBeta.exe")
         confidence = float(validation.get("confidence") or 100.0)
+        proof_level = str(validation.get("process_proof_level") or PROOF_UNTRUSTED)
 
         if old_pid and int(old_pid) != int(pid):
             _LegacyProcessManager.evict_pid_cache(old_pid)
@@ -306,6 +372,7 @@ class ProcessService:
             status="verified",
             process_name=name,
             confidence=confidence,
+            process_proof_level=proof_level,
             reason=reason or "bind_account_process",
             increment_generation=increment_generation,
         )
@@ -317,6 +384,8 @@ class ProcessService:
             confidence,
             "",
             _account_key(account),
+            proof_level=proof_level,
+            proof_reason=str(validation.get("process_proof_reason") or ""),
             reason=reason or "bind_account_process",
         )
 
@@ -330,6 +399,7 @@ class ProcessService:
             process_action="bind_account_process",
             identity=identity,
             confidence=confidence,
+            process_proof_level=proof_level,
             binding_decision="verified",
             process_owner_claim=_account_key(account),
             runtime_generation=getattr(account, "runtime_generation", 0),
@@ -473,7 +543,16 @@ class ProcessService:
 
         if hasattr(state_manager, "set_binding_status"):
             state_manager.set_binding_status(account, "adopted_visible_singleton", reason=reason or "safe_adopt_visible_process")
-        _set_process_diagnostics(account, "adopted_visible_singleton", float(validation.get("confidence") or 0.0), "", account_key, reason=reason or "safe_adopt_visible_process")
+        _set_process_diagnostics(
+            account,
+            "adopted_visible_singleton",
+            float(validation.get("confidence") or 0.0),
+            "",
+            account_key,
+            proof_level=str(validation.get("process_proof_level") or ""),
+            proof_reason=str(validation.get("process_proof_reason") or ""),
+            reason=reason or "safe_adopt_visible_process",
+        )
         _set_adopt_diagnostics(account, [], candidate_pid=pid, reject_reason="")
         flog_kv(
             "PROC",
@@ -491,6 +570,49 @@ class ProcessService:
             thread=threading.current_thread().name,
         )
         return {"ok": True, "pid": pid, "reason": "adopted_visible_singleton", "validation": validation, "live": visible}
+
+    @staticmethod
+    def mark_account_process_proof(
+        account: Any,
+        proof_level: str,
+        reason: str = "",
+        confidence: Optional[float] = None,
+        status: str = "",
+    ) -> None:
+        proof = normalize_process_proof_level(proof_level)
+        lock = getattr(account, "_lock", None)
+
+        def _write() -> None:
+            account.process_proof_level = proof
+            if confidence is not None:
+                account.process_binding_confidence = float(confidence or 0.0)
+                account.ownership_confidence = float(confidence or 0.0)
+                account.last_signal_confidence = float(confidence or 0.0)
+            if status:
+                _RUNTIME_STATE.set_binding_status(account, str(status), reason=reason or "process_proof")
+            if proof == PROOF_STRONG:
+                account.binding_decision = "verified"
+                account.process_reject_reason = ""
+            try:
+                account.sync_runtime(reason or "process_proof")
+            except Exception:
+                pass
+
+        if lock:
+            with lock:
+                _write()
+        else:
+            _write()
+        flog_kv(
+            "PROC",
+            "process_proof_marked",
+            account=_account_name(account),
+            pid=getattr(account, "pid", None) or "",
+            reason=reason,
+            process_proof_level=proof,
+            confidence=getattr(account, "process_binding_confidence", 0.0),
+            status=getattr(account, "process_binding_status", ""),
+        )
 
     @staticmethod
     def release_account_process(account: Any, pid: Optional[int] = None, reason: str = "") -> None:
@@ -545,6 +667,12 @@ class ProcessService:
             log_failure=False,
         )
         confidence = float(validation.get("confidence") or 0.0)
+        proof_level = str(validation.get("process_proof_level") or PROOF_UNTRUSTED)
+        if validation.get("ok") and not process_proof_allowed_for_state(proof_level, getattr(account, "state", ""), destructive=True):
+            validation = dict(validation)
+            validation["ok"] = False
+            validation["reason"] = "process_proof_insufficient"
+            validation["required_process_proof"] = required_process_proof_for_state(getattr(account, "state", ""), destructive=True)
         if not validation.get("ok") or confidence < float(min_confidence or 45.0):
             reject = str(validation.get("reason") or "low_confidence")
             flog_kv(
@@ -636,8 +764,20 @@ class ProcessService:
             log_failure=False,
         )
         if not validation.get("ok"):
-            ProcessService.release_account_process(account, pid, reason=f"{reason}:validation_failed")
-            if state_manager is not None:
+            reject_reason = str(validation.get("reason") or "")
+            if reject_reason != "process_proof_insufficient":
+                ProcessService.release_account_process(account, pid, reason=f"{reason}:validation_failed")
+            else:
+                _quarantine_process_match(
+                    account,
+                    reason or "safe_kill_bound_process",
+                    validation,
+                    {
+                        "process_proof_level": validation.get("process_proof_level", PROOF_UNTRUSTED),
+                        "process_proof_reason": validation.get("process_proof_reason", ""),
+                    },
+                )
+            if state_manager is not None and reject_reason != "process_proof_insufficient":
                 try:
                     state_manager.clear_process_binding(
                         account,
@@ -666,7 +806,39 @@ class ProcessService:
                 session_id=getattr(account, "session_id", ""),
                 transaction_id=getattr(account, "rejoin_transaction_id", ""),
             )
-            return {"ok": False, "killed": False, "pid": pid, "reason": validation.get("reason", ""), "validation": validation}
+            return {"ok": False, "killed": False, "pid": pid, "reason": reject_reason, "validation": validation}
+
+        proof_level = str(validation.get("process_proof_level") or PROOF_UNTRUSTED)
+        if not process_proof_allowed_for_state(proof_level, getattr(account, "state", ""), destructive=True):
+            validation = dict(validation)
+            validation["ok"] = False
+            validation["reason"] = "process_proof_insufficient"
+            validation["required_process_proof"] = required_process_proof_for_state(getattr(account, "state", ""), destructive=True)
+            _set_process_diagnostics(
+                account,
+                "rejected",
+                float(validation.get("confidence") or 0.0),
+                "process_proof_insufficient",
+                str(validation.get("owner") or ""),
+                proof_level=proof_level,
+                proof_reason=str(validation.get("process_proof_reason") or ""),
+                reason=reason or "safe_kill_bound_process",
+            )
+            flog_kv(
+                "PROC",
+                "process_kill_rejected",
+                "warning",
+                account=_account_name(account),
+                pid=pid,
+                reason=reason,
+                process_action="safe_kill_bound_process",
+                reject="process_proof_insufficient",
+                process_proof_level=proof_level,
+                required_process_proof=validation["required_process_proof"],
+                identity=identity,
+                owner=validation.get("owner", ""),
+            )
+            return {"ok": False, "killed": False, "pid": pid, "reason": "process_proof_insufficient", "validation": validation}
 
         killed = _LegacyProcessManager.kill_pid(pid)
         if state_manager is not None:
@@ -763,85 +935,9 @@ class ProcessService:
         )
         return int(killed or 0)
 
-    @staticmethod
-    def resize_roblox_windows(
-        width: int,
-        height: int,
-        exclude_pids: Optional[List[int]] = None,
-        reason: str = "",
-        account: Any = None,
-        idempotency_key: str = "",
-    ) -> Dict[str, Any]:
-        result = _LegacyProcessManager.resize_roblox_windows(width, height, exclude_pids=exclude_pids)
-        flog_kv(
-            "WINDOW",
-            "process_window_resize",
-            account=_account_name(account) if account is not None else "",
-            width=width,
-            height=height,
-            resized=result.get("resized", 0),
-            count=result.get("count", 0),
-            reason=reason,
-            process_action="resize_roblox_windows",
-            idempotency_key=idempotency_key,
-        )
-        return result
-
-    @staticmethod
-    def arrange_roblox_windows(
-        width: int,
-        height: int,
-        columns: int = 6,
-        gap: int = 2,
-        margin: int = 0,
-        exclude_pids: Optional[List[int]] = None,
-        reason: str = "",
-        account: Any = None,
-        idempotency_key: str = "",
-    ) -> Dict[str, Any]:
-        result = _LegacyProcessManager.arrange_roblox_windows(
-            width,
-            height,
-            columns=columns,
-            gap=gap,
-            margin=margin,
-            exclude_pids=exclude_pids,
-        )
-        flog_kv(
-            "WINDOW",
-            "process_window_arrange",
-            account=_account_name(account) if account is not None else "",
-            width=width,
-            height=height,
-            columns=columns,
-            gap=gap,
-            margin=margin,
-            arranged=result.get("arranged", 0),
-            count=result.get("count", 0),
-            reason=reason,
-            process_action="arrange_roblox_windows",
-            idempotency_key=idempotency_key,
-        )
-        return result
-
-    @staticmethod
-    def restore_roblox_window_styles(
-        reason: str = "",
-        account: Any = None,
-        idempotency_key: str = "",
-    ) -> Dict[str, Any]:
-        result = _LegacyProcessManager.restore_roblox_window_styles()
-        flog_kv(
-            "WINDOW",
-            "process_window_restore",
-            account=_account_name(account) if account is not None else "",
-            restored=result.get("restored", 0),
-            count=result.get("count", 0),
-            reason=reason,
-            process_action="restore_roblox_window_styles",
-            idempotency_key=idempotency_key,
-        )
-        return result
+    resize_roblox_windows = staticmethod(_resize_roblox_windows)
+    arrange_roblox_windows = staticmethod(_arrange_roblox_windows)
+    restore_roblox_window_styles = staticmethod(_restore_roblox_window_styles)
 
 
 class ProcessManager(_LegacyProcessManager):
@@ -853,6 +949,7 @@ class ProcessManager(_LegacyProcessManager):
     release_account_process = staticmethod(ProcessService.release_account_process)
     safe_kill_owned_orphan = staticmethod(ProcessService.safe_kill_owned_orphan)
     safe_kill_bound_process = staticmethod(ProcessService.safe_kill_bound_process)
+    mark_account_process_proof = staticmethod(ProcessService.mark_account_process_proof)
 
     @classmethod
     def staged_orphan_reconcile(cls, *args, **kwargs):

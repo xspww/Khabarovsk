@@ -28,12 +28,16 @@ PORT = 7777
 _APP_MUTEX = None
 _INSTANCE_SOCKET = None
 _INSTANCE_TOKEN = __import__("secrets").token_urlsafe(32)
-_INSTANCE_STATE_FILE = os.path.join(APP_DATA_DIR, "roboguard_rt_instance.json")
+_INSTANCE_STATE_FILE = os.path.join(APP_DATA_DIR, "cronus_rt_instance.json")
 _SHUTDOWN_REQUESTED = threading.Event()
 _BACKEND_THREAD_ERROR = ""
 _app = None
 _farm = None
 _CONSOLE_ICON_HANDLES: List[int] = []
+_PYTHON_ENTRYPOINTS: Tuple[Tuple[str, ...], ...] = (
+    ("main.py",),
+    ("ops", "run_backend.py"),
+)
 
 
 def _destroy_console_icon_handles() -> None:
@@ -53,8 +57,7 @@ atexit.register(_destroy_console_icon_handles)
 def _ensure_console_icon_file() -> str:
     source_path = resource_path("assets", APP_ICON_FILE)
     if not os.path.exists(source_path):
-        fallback = resource_path("assets", "argus_launcher.ico")
-        return fallback if os.path.exists(fallback) else ""
+        return ""
     icon_path = os.path.join(APP_DATA_DIR, "cronus_console_icon.ico")
     try:
         if (
@@ -77,8 +80,7 @@ def _ensure_console_icon_file() -> str:
         return icon_path
     except Exception as exc:
         flog_kv("MAIN", "console_icon_create_failed", "warning", source=source_path, error=str(exc))
-        fallback = resource_path("assets", "argus_launcher.ico")
-        return fallback if os.path.exists(fallback) else ""
+        return ""
 
 
 def _set_console_window_icon() -> bool:
@@ -170,8 +172,8 @@ def _console_status(label: str, detail: str) -> None:
 
 
 def _console_header(mode: str) -> None:
-    os.environ.setdefault("ARGUS_CONSOLE_ACTIVITY", "1")
-    os.environ.setdefault("ARGUS_CONSOLE_COLOR", "1")
+    os.environ.setdefault("CRONUS_CONSOLE_ACTIVITY", "1")
+    os.environ.setdefault("CRONUS_CONSOLE_COLOR", "1")
     try:
         if os.name == "nt":
             ctypes.windll.kernel32.SetConsoleTitleW(f"{APP_NAME} Console")
@@ -216,27 +218,47 @@ def _find_existing_dashboard(start: int = 7777) -> Optional[int]:
             continue
     return None
 
+def _normalize_path(path: str, cwd: str = "") -> str:
+    text = str(path or "").strip().strip('"')
+    if not text:
+        return ""
+    if not os.path.isabs(text) and cwd:
+        text = os.path.join(cwd, text)
+    elif not os.path.isabs(text):
+        return ""
+    return os.path.normcase(os.path.abspath(text))
+
+def _entrypoint_path(parts: Tuple[str, ...]) -> str:
+    return os.path.normcase(os.path.abspath(os.path.join(BASE_DIR, *parts)))
+
+def _cmdline_part_matches_entrypoint(part: str, cwd: str, entrypoint: str) -> bool:
+    candidate = _normalize_path(part, cwd)
+    return bool(candidate and candidate == entrypoint)
+
+def _module_targets_this_app(module_name: str, cwd: str) -> bool:
+    if not cwd or os.path.normcase(os.path.abspath(cwd)) != os.path.normcase(os.path.abspath(BASE_DIR)):
+        return False
+    return str(module_name or "").strip() == "ops.run_backend"
+
 def _cmdline_targets_this_app(cmdline: List[str], cwd: str = "") -> bool:
     try:
-        base = os.path.normcase(os.path.abspath(BASE_DIR))
         cwd_norm = os.path.normcase(os.path.abspath(cwd or "")) if cwd else ""
     except Exception:
         cwd_norm = ""
-        base = os.path.normcase(os.path.abspath(BASE_DIR))
-    has_python = False
-    has_main = False
-    main_path = os.path.normcase(os.path.join(os.path.abspath(BASE_DIR), "main.py"))
-    for part in cmdline or []:
+    parts = [str(part or "").strip() for part in (cmdline or []) if str(part or "").strip()]
+    has_python = any("python" in os.path.basename(part).lower() for part in parts)
+    if not has_python:
+        return False
+    entrypoints = tuple(_entrypoint_path(item) for item in _PYTHON_ENTRYPOINTS)
+    for index, part in enumerate(parts):
         text = str(part or "")
-        low = text.lower()
-        if "python" in os.path.basename(low):
-            has_python = True
-        if os.path.basename(low) == "main.py":
-            candidate = os.path.normcase(os.path.abspath(os.path.join(cwd or BASE_DIR, text)))
-            has_main = candidate == main_path or cwd_norm == base
-    return bool(has_python and has_main)
+        if any(_cmdline_part_matches_entrypoint(text, cwd_norm, entrypoint) for entrypoint in entrypoints):
+            return True
+        if text == "-m" and index + 1 < len(parts) and _module_targets_this_app(parts[index + 1], cwd_norm):
+            return True
+    return False
 
-def _is_same_roboguard_process(pid: int) -> bool:
+def _is_same_cronus_process(pid: int) -> bool:
     if not pid or int(pid) == os.getpid():
         return False
     try:
@@ -318,7 +340,7 @@ def _request_instance_shutdown(port: int, token: str) -> bool:
             f"http://{HOST}:{int(port)}/api/app/shutdown",
             data=body,
             method="POST",
-            headers={"Content-Type": "application/json", "X-RoboGuard-Token": token},
+            headers={"Content-Type": "application/json", "X-Cronus-Token": token},
         )
         with urllib.request.urlopen(req, timeout=2.0) as resp:
             return 200 <= int(resp.status) < 300
@@ -326,7 +348,7 @@ def _request_instance_shutdown(port: int, token: str) -> bool:
         return False
 
 def _terminate_instance_tree(pid: int) -> bool:
-    if not _is_same_roboguard_process(pid):
+    if not _is_same_cronus_process(pid):
         return False
     try:
         import psutil
@@ -360,7 +382,7 @@ def _stop_previous_instance(wait_seconds: float = 8.0) -> bool:
     pid = int(state.get("pid") or 0)
     port = int(state.get("port") or 0)
     token = str(state.get("token") or "")
-    if not pid or not _is_pid_alive(pid) or not _is_same_roboguard_process(pid):
+    if not pid or not _is_pid_alive(pid) or not _is_same_cronus_process(pid):
         return False
     flog_kv("MAIN", "previous_instance_detected", pid=pid, port=port)
     if port and token:
@@ -382,7 +404,7 @@ def _stop_same_app_processes() -> int:
             pid = int(proc.info.get("pid") or 0)
             if pid == os.getpid() or pid in current_ancestors:
                 continue
-            if _is_same_roboguard_process(pid) and _terminate_instance_tree(pid):
+            if _is_same_cronus_process(pid) and _terminate_instance_tree(pid):
                 stopped += 1
     except Exception as exc:
         flog_kv("MAIN", "stop_same_app_processes_failed", "warning", error=str(exc))
@@ -390,11 +412,52 @@ def _stop_same_app_processes() -> int:
 
 atexit.register(_clear_instance_state)
 
+def _find_same_app_process() -> Optional[int]:
+    try:
+        import psutil
+
+        current_ancestors = {int(parent.pid) for parent in psutil.Process(os.getpid()).parents()}
+        for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+            pid = int(proc.info.get("pid") or 0)
+            if pid == os.getpid() or pid in current_ancestors:
+                continue
+            if _is_same_cronus_process(pid):
+                return pid
+    except Exception as exc:
+        flog_kv("MAIN", "find_same_app_process_failed", "warning", error=str(exc))
+    return None
+
+def prepare_backend_single_instance(port: int) -> bool:
+    state = _read_instance_state()
+    pid = int(state.get("pid") or 0)
+    if pid and _is_pid_alive(pid) and _is_same_cronus_process(pid):
+        flog_kv("MAIN", "backend_duplicate_blocked", "warning", pid=pid, port=state.get("port") or "")
+        return False
+
+    same_pid = _find_same_app_process()
+    if same_pid:
+        flog_kv("MAIN", "backend_duplicate_blocked", "warning", pid=same_pid)
+        return False
+
+    existing_port = _find_existing_dashboard(7777)
+    if existing_port is not None:
+        flog_kv("MAIN", "backend_duplicate_blocked", "warning", existing_port=existing_port)
+        return False
+
+    mutex_ok = _acquire_single_instance_mutex()
+    socket_ok = _acquire_instance_socket()
+    if (not mutex_ok) or (not socket_ok):
+        flog_kv("MAIN", "backend_duplicate_blocked", "warning", mutex_ok=mutex_ok, socket_ok=socket_ok)
+        return False
+
+    _write_instance_state(int(port))
+    return True
+
 def _acquire_single_instance_mutex() -> bool:
     global _APP_MUTEX
     try:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        mutex = kernel32.CreateMutexW(None, False, "Local\\RoboGuard_RT_1_0")
+        mutex = kernel32.CreateMutexW(None, False, "Local\\Cronus_RT_1_0")
         if not mutex:
             return True
         _APP_MUTEX = mutex

@@ -1,5 +1,5 @@
--- ArgusAccount.lua
--- Safe drop-in client for Argus Launcher local Lua API.
+-- CronusAccount.lua
+-- Safe drop-in client for Cronus Launcher local Lua API.
 -- It sends account/runtime signals only. It never exposes Roblox cookies or CSRF tokens.
 
 local G = getgenv and getgenv() or _G
@@ -25,10 +25,12 @@ local Account = {}
 Account.__index = Account
 
 Account.Config = {
-    Host = __ARGUS_HOST__,
-    Port = __ARGUS_PORT__,
-    Token = __ARGUS_TOKEN__,
-    Account = __ARGUS_ACCOUNT__,
+    Host = __CRONUS_HOST__,
+    Port = __CRONUS_PORT__,
+    Token = __CRONUS_TOKEN__,
+    Account = __CRONUS_ACCOUNT__,
+    SessionId = __CRONUS_SESSION_ID__,
+    LaunchNonce = __CRONUS_LAUNCH_NONCE__,
     Version = "account-1.0.0",
 }
 
@@ -104,6 +106,11 @@ function Account.SetKey(key)
     Account.Config.Token = safeString(key)
 end
 
+function Account.SetSession(sessionId, launchNonce)
+    Account.Config.SessionId = safeString(sessionId)
+    Account.Config.LaunchNonce = safeString(launchNonce)
+end
+
 function Account.SetEndpoint(host, port)
     Account.Config.Host = safeString(host)
     Account.Config.Port = tonumber(port) or Account.Config.Port
@@ -116,13 +123,16 @@ function Account.new(username, options)
     self.Host = safeString(options.host or Account.Config.Host)
     self.Port = tonumber(options.port or Account.Config.Port) or 7777
     self.Token = safeString(options.token or Account.Config.Token)
+    self.SessionId = safeString(options.session_id or Account.Config.SessionId)
+    self.LaunchNonce = safeString(options.launch_nonce or Account.Config.LaunchNonce)
+    self.EventCounter = 0
     self.Timeout = tonumber(options.timeout or 5) or 5
     return self
 end
 
 function Account:_requireToken()
     if safeString(self.Token) == "" then
-        return nil, "ArgusAccount token missing; load this module from /api/lua/account-module"
+        return nil, "CronusAccount token missing; load this module from /api/lua/account-module"
     end
     return true, nil
 end
@@ -137,7 +147,19 @@ function Account:Endpoint()
 end
 
 function Account:EndpointWithToken()
-    return self:Endpoint() .. "?argus_token=" .. urlEncode(self.Token)
+    return self:Endpoint() .. "?cronus_token=" .. urlEncode(self.Token)
+end
+
+function Account:NextEventId(eventName)
+    self.EventCounter = (tonumber(self.EventCounter) or 0) + 1
+    return table.concat({
+        safeString(self.SessionId),
+        safeString(self.LaunchNonce),
+        safeString(eventName),
+        safeString(os.time()),
+        safeString(self.EventCounter),
+        safeString(math.random(100000, 999999)),
+    }, ":")
 end
 
 function Account:Payload(eventName, fields)
@@ -151,6 +173,9 @@ function Account:Payload(eventName, fields)
         username = playerName ~= "" and playerName or configured,
         configured_account = configured,
         account_hint = configured,
+        session_id = safeString(self.SessionId),
+        launch_nonce = safeString(self.LaunchNonce),
+        event_id = self:NextEventId(eventName),
         user_id = safeString(LocalPlayer and LocalPlayer.UserId or ""),
         pid = getProcessId(),
         place_id = safeString(game.PlaceId),
@@ -163,9 +188,9 @@ function Account:Payload(eventName, fields)
         executor = identifyexecutor and safeString(identifyexecutor()) or "",
         helper_version = safeString(Account.Config.Version),
         token = safeString(self.Token),
-        argus_token = safeString(self.Token),
+        cronus_token = safeString(self.Token),
         api_token = safeString(self.Token),
-        _argus_token = safeString(self.Token),
+        _cronus_token = safeString(self.Token),
         ts = safeString(os.time()),
     }
 
@@ -184,6 +209,9 @@ function Account:QueryEndpoint(payload)
         "username",
         "configured_account",
         "account_hint",
+        "session_id",
+        "launch_nonce",
+        "event_id",
         "user_id",
         "pid",
         "place_id",
@@ -226,9 +254,8 @@ function Account:_request(method, url, body)
 
     local headers = {
         ["Content-Type"] = "application/json",
-        ["X-Argus-Token"] = self.Token,
-        ["X-RoboGuard-Token"] = self.Token,
-        ["User-Agent"] = "ArgusAccountLua/1.0",
+        ["X-Cronus-Token"] = self.Token,
+        ["User-Agent"] = "CronusAccountLua/1.0",
     }
 
     if Request then
@@ -299,7 +326,7 @@ end
 function Account:Loaded(detail)
     return self:Send("loaded", {
         reason_key = "lua_account_loaded",
-        detail = detail or "ArgusAccount module loaded",
+        detail = detail or "CronusAccount module loaded",
     })
 end
 
@@ -323,7 +350,7 @@ function Account:Disconnected(errorCode, message)
         message = safeString(message),
         detail = "Lua reported disconnect",
         visual_disconnect = "true",
-        evidence_source = "argus_account_module",
+        evidence_source = "cronus_account_module",
     })
 end
 
@@ -333,7 +360,7 @@ function Account:TeleportError(message, placeId)
         message = safeString(message),
         place_id = safeString(placeId or game.PlaceId),
         teleport_state = "failed",
-        evidence_source = "argus_account_module",
+        evidence_source = "cronus_account_module",
         detail = "Lua reported teleport error",
     })
 end
@@ -345,7 +372,7 @@ function Account:TeleportState(state)
         detail = stateText,
         teleport_state = stateText,
         teleport_place_id = safeString(game.PlaceId),
-        evidence_source = "argus_account_module",
+        evidence_source = "cronus_account_module",
     })
 end
 
@@ -374,14 +401,14 @@ function Account:MarkFinished(description)
     })
 end
 
-G.ArgusAccount = Account
+G.CronusAccount = Account
 task.spawn(function()
     local ok, err = pcall(function()
         local client = Account.new(Account.Config.Account)
-        client:Loaded("ArgusAccount module loaded")
+        client:Loaded("CronusAccount module loaded")
     end)
     if not ok and print then
-        pcall(print, "[ArgusAccount] loaded event failed: " .. safeString(err))
+        pcall(print, "[CronusAccount] loaded event failed: " .. safeString(err))
     end
 end)
 return Account

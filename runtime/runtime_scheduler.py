@@ -50,6 +50,14 @@ class RuntimeScheduler:
         self._lock = threading.RLock()
         self._cond = threading.Condition(self._lock)
         self._closed = False
+        self._started_at = time.time()
+        self._last_loop_at = 0.0
+        self._last_dispatch_started_at = 0.0
+        self._last_dispatch_finished_at = 0.0
+        self._last_dispatch_latency_seconds = 0.0
+        self._dispatch_count = 0
+        self._callback_failure_count = 0
+        self._stale_rejection_count = 0
         self._thread = threading.Thread(target=self._loop, daemon=True, name=name)
         if autostart:
             self._thread.start()
@@ -179,6 +187,37 @@ class RuntimeScheduler:
             self._dispatch(job, callback, current)
         return len(due_items)
 
+    def snapshot(self, now: Optional[float] = None) -> Dict[str, Any]:
+        current = time.time() if now is None else float(now)
+        with self._lock:
+            jobs = [item[0] for item in self._jobs.values()]
+            next_due_at = min((job.due_at for job in jobs), default=0.0)
+            overdue = [max(0.0, current - job.due_at) for job in jobs if job.due_at <= current]
+            last_loop_at = float(self._last_loop_at or 0.0)
+            last_dispatch_finished_at = float(self._last_dispatch_finished_at or 0.0)
+            return {
+                "name": self._name,
+                "closed": bool(self._closed),
+                "thread_alive": bool(self._thread.is_alive()),
+                "external_stop": bool(self._external_stop.is_set()),
+                "started_at": round(float(self._started_at or 0.0), 3),
+                "pending_count": len(jobs),
+                "periodic_count": sum(1 for job in jobs if job.periodic),
+                "next_due_at": round(float(next_due_at or 0.0), 3),
+                "next_delay_seconds": round(max(0.0, next_due_at - current), 3) if next_due_at else 0.0,
+                "overdue_count": len(overdue),
+                "max_overdue_seconds": round(max(overdue), 3) if overdue else 0.0,
+                "last_loop_at": round(last_loop_at, 3),
+                "last_loop_age_seconds": round(max(0.0, current - last_loop_at), 3) if last_loop_at else 0.0,
+                "last_dispatch_started_at": round(float(self._last_dispatch_started_at or 0.0), 3),
+                "last_dispatch_finished_at": round(last_dispatch_finished_at, 3),
+                "last_dispatch_age_seconds": round(max(0.0, current - last_dispatch_finished_at), 3) if last_dispatch_finished_at else 0.0,
+                "last_dispatch_latency_seconds": round(float(self._last_dispatch_latency_seconds or 0.0), 3),
+                "dispatch_count": int(self._dispatch_count),
+                "callback_failure_count": int(self._callback_failure_count),
+                "stale_rejection_count": int(self._stale_rejection_count),
+            }
+
     def _set_job(self, job: RuntimeScheduledJob, callback: ScheduleCallback) -> None:
         with self._cond:
             if self._closed:
@@ -190,6 +229,7 @@ class RuntimeScheduler:
     def _loop(self) -> None:
         while not self._external_stop.is_set():
             with self._cond:
+                self._last_loop_at = time.time()
                 if self._closed:
                     break
                 if not self._jobs:
@@ -206,14 +246,25 @@ class RuntimeScheduler:
         if self._closed or self._external_stop.is_set():
             return
         if not self._generation_matches(job):
+            with self._lock:
+                self._stale_rejection_count += 1
             self._emit("runtime_schedule_stale_rejected", job, level="warning")
             return
+        started = time.time()
+        with self._lock:
+            self._last_dispatch_started_at = started
+            self._last_dispatch_latency_seconds = max(0.0, float(now) - float(job.due_at or now))
+            self._dispatch_count += 1
         self._emit("runtime_schedule_due", job)
         try:
             callback(job)
         except Exception as exc:
+            with self._lock:
+                self._callback_failure_count += 1
             self._emit("runtime_schedule_callback_failed", job, level="error", error=str(exc))
         finally:
+            with self._lock:
+                self._last_dispatch_finished_at = time.time()
             if job.periodic and not self._closed and not self._external_stop.is_set():
                 next_job = RuntimeScheduledJob(
                     job_key=job.job_key,

@@ -48,6 +48,14 @@ class QueueConfig:
 
 
 @dataclass(frozen=True)
+class MachineSupervisorConfig:
+    enabled: bool = True
+    max_launching_accounts: int = 1
+    cpu_high_percent: float = 96.0
+    memory_high_percent: float = 96.0
+
+
+@dataclass(frozen=True)
 class PopupDetectorConfig:
     enabled: bool = True
     scan_interval_seconds: int = 30
@@ -87,17 +95,18 @@ class WindowConfig:
 
 
 @dataclass(frozen=True)
-class ArgusConfigSections:
+class CronusConfigSections:
     game: GameConfig
     queue: QueueConfig
+    machine_supervisor: MachineSupervisorConfig
     popup_detector: PopupDetectorConfig
     performance: PerformanceConfig
     window: WindowConfig
 
 
-def build_config_sections(raw: Dict[str, Any]) -> ArgusConfigSections:
+def build_config_sections(raw: Dict[str, Any]) -> CronusConfigSections:
     data = dict(raw or {})
-    return ArgusConfigSections(
+    return CronusConfigSections(
         game=GameConfig(
             place_id=_str(data, "game_place_id"),
             private_server_url=_str(data, "game_private_server_url"),
@@ -111,6 +120,12 @@ def build_config_sections(raw: Dict[str, Any]) -> ArgusConfigSections:
             duration_seconds=_int(data, "queue_duration_seconds", 15),
             auto_close_enabled=_bool(data, "auto_close_enabled", False),
             auto_close_minutes=_int(data, "auto_close_minutes", 0),
+        ),
+        machine_supervisor=MachineSupervisorConfig(
+            enabled=_bool(data, "machine_supervisor_enabled", True),
+            max_launching_accounts=_int(data, "machine_supervisor_max_launching_accounts", 1),
+            cpu_high_percent=_float(data, "machine_supervisor_cpu_high_percent", 96.0),
+            memory_high_percent=_float(data, "machine_supervisor_memory_high_percent", 96.0),
         ),
         popup_detector=PopupDetectorConfig(
             enabled=_bool(data, "popup_disconnected_enabled", True),

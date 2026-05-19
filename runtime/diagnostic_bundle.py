@@ -21,10 +21,19 @@ SAFE_CONFIG_KEYS = (
     "queue_duration_seconds",
     "queue_timeout",
     "max_concurrent_accounts",
+    "machine_supervisor_enabled",
+    "machine_supervisor_max_launching_accounts",
+    "machine_supervisor_cpu_high_percent",
+    "machine_supervisor_memory_high_percent",
     "periodic_reconcile_interval",
     "recovery_budget_enabled",
     "recovery_budget_max_attempts",
     "recovery_budget_window_seconds",
+    "recovery_storm_enabled",
+    "recovery_storm_max_active",
+    "recovery_storm_min_spacing_seconds",
+    "recovery_storm_jitter_seconds",
+    "recovery_storm_outage_backoff_seconds",
     "recovery_confidence_threshold",
     "runtime_invariant_monitor_enabled",
     "runtime_invariant_suppress_seconds",
@@ -56,6 +65,7 @@ ACCOUNT_KEYS = (
     "process_binding_status",
     "binding_decision",
     "process_binding_confidence",
+    "process_proof_level",
     "process_reject_reason",
     "process_owner_claim",
     "unmanaged_live_process_count",
@@ -142,6 +152,15 @@ def _recommendations(status: Mapping[str, Any], accounts: Iterable[Mapping[str, 
     warnings = [str(item) for item in health.get("warnings", [])] if isinstance(health, Mapping) else []
     if warnings:
         output.append(f"Investigate runtime health warnings: {', '.join(warnings[:5])}")
+    scheduler = status.get("scheduler_health") if isinstance(status.get("scheduler_health"), Mapping) else {}
+    scheduler_warnings = [item for item in warnings if item.startswith("scheduler_")]
+    if scheduler_warnings:
+        output.append(
+            "Check runtime scheduler health: "
+            f"{int(scheduler.get('pending_count') or 0)} pending, "
+            f"{int(scheduler.get('overdue_count') or 0)} overdue, "
+            f"{int(scheduler.get('callback_failure_count') or 0)} callback failure(s)"
+        )
     blocked = [row for row in accounts if row.get("blocked_reason")]
     if blocked:
         output.append(f"Resolve blocked account gates before launch: {len(blocked)} account(s)")
@@ -194,6 +213,7 @@ def build_runtime_diagnostic_bundle(
         },
         "summary": summary,
         "runtime_health": _redact_value("runtime_health", status.get("runtime_health", {})),
+        "scheduler_health": _redact_value("scheduler_health", status.get("scheduler_health", {})),
         "queue_snapshot": _redact_value("queue_snapshot", status.get("queue_snapshot", {})),
         "command_inflight": _redact_value("command_inflight", status.get("command_inflight")),
         "supervisor": _redact_value("supervisor", status.get("supervisor", {})),

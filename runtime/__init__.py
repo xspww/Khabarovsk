@@ -1,2 +1,2 @@
-"""Runtime control-plane helpers for RoboGuard RT."""
+"""Runtime control-plane helpers for Cronus RT."""
 

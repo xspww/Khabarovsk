@@ -24,7 +24,6 @@ from services.captcha_guard import (
     is_captcha_text,
     set_account_captcha_hold,
 )
-from runtime.roblox_watchdog import RobloxWatchdog
 from runtime.supervisor_runtime import SupervisorRuntime
 from runtime.system_maintenance import _apply_cpu_limiter_for_bound_process
 from runtime.recovery_support import RECOVERY_REASON_MESSAGES, _set_account_cookie_block, compute_backoff
@@ -62,11 +61,13 @@ class AccountWorker(threading.Thread):
         self._wake = threading.Event()
         self._not_responding_since: Optional[float] = None
         self._connection_error_since: Optional[float] = None
-        self._watchdog: Optional[RobloxWatchdog] = None
         self._last_missing_hold_log = 0.0
 
     def wake(self):
         self._wake.set()
+
+    def update_config(self, cfg: dict) -> None:
+        self.cfg = cfg
 
     def connection_recovery_active(self) -> bool:
         return self._connection_error_since is not None

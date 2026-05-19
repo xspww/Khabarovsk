@@ -10,10 +10,12 @@ import time
 from ctypes import wintypes
 from typing import Tuple
 
+from app_paths import USER_DATA_ROOT
 from core import flog
+from services.cookie_artifact_ledger import CookieArtifactLedger
 
 class IsolationManager:
-    BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "roboguard_rt1_instances")
+    BASE_DIR = os.path.join(USER_DATA_ROOT, "instances")
     STORE_PACKAGE_FOLDERS = (
         "ROBLOXCORPORATION.ROBLOX_55nm5eh3cm0pr",
     )
@@ -108,6 +110,7 @@ class IsolationManager:
 
         cookie = cookie.strip()
         written = []
+        ledger = CookieArtifactLedger()
 
         # ── 1. Per-instance LocalStorage JSON ─────────────────────────────
         instance = cls.setup(username)
@@ -127,6 +130,7 @@ class IsolationManager:
                 data[".ROBLOSECURITY"] = cookie
                 with open(path, "w") as f:
                     json.dump(data, f, indent=2)
+                ledger.record_json_cookie(username, path, cookie)
                 written.append(f"json:{path}")
             except Exception as e:
                 flog(f"[ISO] json inject error: {e}", "warning")
@@ -149,6 +153,7 @@ class IsolationManager:
                 data[".ROBLOSECURITY"] = cookie
                 with open(default_path, "w") as f:
                     json.dump(data, f, indent=2)
+                ledger.record_json_cookie(username, default_path, cookie)
                 written.append(f"localappdata:{default_path}")
             except Exception as e:
                 flog(f"[ISO] localappdata inject error: {e}", "warning")
@@ -176,6 +181,7 @@ class IsolationManager:
                     data[".ROBLOSECURITY"] = cookie
                     with open(store_path, "w", encoding="utf-8") as f:
                         json.dump(data, f, indent=2)
+                    ledger.record_json_cookie(username, store_path, cookie)
                     written.append(f"store:{store_path}")
                 except Exception as e:
                     flog(f"[ISO] store localstorage inject error: {e}", "warning")
@@ -253,6 +259,7 @@ class IsolationManager:
                     conn.commit()
                 finally:
                     conn.close()
+                ledger.record_artifact(username, "webview2", webview_cookie_db, cookie)
                 written.append(f"webview2:{webview_cookie_db}")
             except Exception as e:
                 flog(f"[ISO] webview2 cookie inject error: {e}", "warning")
@@ -268,6 +275,7 @@ class IsolationManager:
                 key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
             with key:
                 winreg.SetValueEx(key, ".ROBLOSECURITY", 0, winreg.REG_SZ, cookie)
+            ledger.record_artifact(username, "registry", "HKCU\\Software\\ROBLOX Corporation\\Environments\\www.roblox.com\\Global", cookie)
             written.append("registry:HKCU\\...\\www.roblox.com\\Global")
         except ImportError:
             flog("[ISO] winreg not available — skip registry inject", "warning")
@@ -278,6 +286,10 @@ class IsolationManager:
             flog(f"[ISO] Cookie injected for {username}: {len(written)} targets")
             return True, f"Injected to {len(written)} targets"
         return False, "ไม่สามารถ inject cookie ได้"
+
+    @classmethod
+    def scrub_cookie_artifacts(cls, username: str = "") -> dict:
+        return CookieArtifactLedger().scrub_json_cookie_artifacts(username or None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────

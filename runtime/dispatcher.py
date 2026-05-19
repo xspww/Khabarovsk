@@ -32,6 +32,7 @@ class Dispatcher(threading.Thread):
         runtime_state: Optional[RuntimeStateManager] = None,
         runtime_store: Optional[RuntimeStore] = None,
         supervisor: Optional[SupervisorRuntime] = None,
+        accounts: Optional[list] = None, machine_supervisor: Optional[Any] = None,
     ):
         super().__init__(daemon=True, name="Dispatcher")
         self._queue = queue
@@ -47,6 +48,13 @@ class Dispatcher(threading.Thread):
         self._runtime_state = runtime_state or RuntimeStateManager(logger=flog_kv)
         self._runtime_store = runtime_store
         self._supervisor = supervisor
+        self._accounts = accounts or []
+        self._machine_supervisor = machine_supervisor
+
+    def update_config(self, cfg: dict) -> None:
+        self._cfg = cfg or {}
+        if self._launcher:
+            self._launcher.update_config(self._cfg)
 
     def _apply_window_resize_after_launch(self, acc: Account) -> None:
         target = _window_resize_target_from_config(self._cfg)
@@ -299,6 +307,23 @@ class Dispatcher(threading.Thread):
             if acc.state != AccountState.QUEUED:
                 flog(f"[DISPATCHER] skip {acc.display_name} (state={acc.state.name})")
                 continue
+
+            if self._machine_supervisor:
+                self._machine_supervisor.set_accounts(self._accounts)
+                decision = self._machine_supervisor.launch_decision(acc)
+                if not decision.allowed:
+                    self._machine_supervisor.log_decision(acc, decision)
+                    with acc._lock:
+                        runtime_generation = acc.runtime_generation
+                        recovery_generation = acc.recovery_generation
+                    self._queue.push(
+                        acc,
+                        reason=f"machine_hold:{decision.reason}",
+                        runtime_generation=runtime_generation,
+                        recovery_generation=recovery_generation,
+                        delay_seconds=max(1.0, float(decision.retry_after_seconds or 1.0)),
+                    )
+                    continue
 
             self._queue.mark_busy()
             launch_intent = build_launch_intent(acc, reason="dispatcher_launch")

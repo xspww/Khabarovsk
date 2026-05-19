@@ -160,6 +160,8 @@ def lua_event_requires_pid_guard(event_name: str) -> bool:
     return str(event_name or "").strip().lower() in {
         "disconnect",
         "error_code",
+        "loaded",
+        "in_game",
         "teleport_error",
         "rejoin_requested",
         "finished",

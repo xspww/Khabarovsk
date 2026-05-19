@@ -1,13 +1,11 @@
 export function apiToken(){
-  return document.querySelector('meta[name="argus-api-token"]')?.content||'';
+  return document.querySelector('meta[name="cronus-api-token"]')?.content||'';
 }
 
 export async function api(path,method='GET',body){
   const opt={method,headers:{}};
-  if(method&&String(method).toUpperCase()!=='GET'){
-    const token=apiToken();
-    if(token)opt.headers['X-Argus-Token']=token;
-  }
+  const token=apiToken();
+  if(token)opt.headers['X-Cronus-Token']=token;
   if(body!==undefined){
     opt.headers['Content-Type']='application/json';
     opt.body=JSON.stringify(body);

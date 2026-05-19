@@ -7,12 +7,12 @@ from core import Account
 from runtime.runtime_state_manager import RuntimeStateManager
 from core import flog_kv
 from services.captcha_guard import CAPTCHA_REASON
-from services.roblox_log_evidence import collect_recent_log_evidence
+from services.roblox_log_evidence import CachedLogEvidenceCollector, collect_recent_log_evidence
 
 _RUNTIME_STATE = RuntimeStateManager(logger=flog_kv)
 _POPUP_LOG_EVIDENCE_WINDOW_SECONDS = 120.0
-_POPUP_LOG_EVIDENCE_RETRY_COUNT = 10
-_POPUP_LOG_EVIDENCE_RETRY_INTERVAL = 0.5
+_POPUP_LOG_EVIDENCE_CACHE_SECONDS = 2.0
+_LOG_EVIDENCE_CACHE = CachedLogEvidenceCollector(ttl_seconds=_POPUP_LOG_EVIDENCE_CACHE_SECONDS)
 
 
 def _text_hint_from_log_evidence(evidence: Dict[str, Any]) -> list[str]:
@@ -66,19 +66,15 @@ def _merge_log_evidence_into_dialog(cls, dialog: Dict[str, Any], evidence: Dict[
     return merged
 
 
-def _collect_popup_log_evidence() -> Dict[str, Any]:
-    attempts = max(1, int(_POPUP_LOG_EVIDENCE_RETRY_COUNT or 1))
-    for index in range(attempts):
-        evidence = collect_recent_log_evidence(
-            since_seconds=_POPUP_LOG_EVIDENCE_WINDOW_SECONDS,
-            max_files=8,
-            max_lines=1200,
-        )
-        if evidence.get("matched"):
-            return evidence
-        if index < attempts - 1:
-            time.sleep(max(0.0, float(_POPUP_LOG_EVIDENCE_RETRY_INTERVAL or 0.0)))
-    return evidence
+def _collect_popup_log_evidence(now: Optional[float] = None, force_refresh: bool = False) -> Dict[str, Any]:
+    return _LOG_EVIDENCE_CACHE.collect(
+        collector=collect_recent_log_evidence,
+        since_seconds=_POPUP_LOG_EVIDENCE_WINDOW_SECONDS,
+        max_files=8,
+        max_lines=1200,
+        now=now,
+        force_refresh=force_refresh,
+    )
 
 def multi_signal_validate(
     cls,

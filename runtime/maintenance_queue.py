@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import time
 
-from core import Account, AccountState, flog_kv
+from core import Account, AccountState, account_launch_block_reason, flog_kv
+from runtime.account_selection import is_runtime_account_selected
 from services.process_service import ProcessService
 
 
@@ -15,6 +16,12 @@ class MaintenanceQueueMixin:
 
     def _queue_duration_seconds(self) -> float:
         if bool(self._cfg.get("multi_roblox_enabled", True)) and not bool(self._cfg.get("rt_rotation_enabled", False)):
+            return 0.0
+        launchable = [
+            acc for acc in self._accounts
+            if is_runtime_account_selected(acc, self._cfg) and not account_launch_block_reason(acc)
+        ]
+        if len(launchable) <= 1:
             return 0.0
         try:
             return max(0.0, float(self._cfg.get("queue_duration_seconds", 0) or 0))

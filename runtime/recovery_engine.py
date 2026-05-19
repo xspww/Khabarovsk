@@ -16,9 +16,12 @@ from runtime.recovery_context import RecoveryAttemptContext, reason_for_category
 from runtime.recovery_budget import record_recovery_budget_attempt
 from runtime.recovery_evaluator import RecoveryEvaluator
 from runtime.recovery_owner import RecoveryOwnerRegistry
+from runtime.recovery_queue_slots import active_slot_count, max_concurrent_accounts, queue_delay_seconds, queue_slot_available
+from runtime.recovery_storm import RecoveryStormController
 from runtime.recovery_network import handle_network_restored
 from runtime.recovery_policy import RecoveryDedupeTracker, SessionConflictTracker, adaptive_recovery_delay, build_recovery_log_payload, canonical_reason, kill_local_duplicate_for_session_conflict, policy_for
 from runtime.recovery_relaunch import detect_relaunch_loop
+from runtime.recovery_retry_limits import retry_bucket_exceeded
 from runtime.recovery_signal_router import RecoverySignalRouter
 from runtime.recovery_support import RECOVERY_REASON_MESSAGES, compute_backoff
 
@@ -80,6 +83,16 @@ class RecoveryCoordinator:
             name="RecoveryScheduler",
         )
         self._evaluator = RecoveryEvaluator(self)
+        self._storm = RecoveryStormController(cfg, self._accounts)
+
+    def update_config(self, cfg: dict, accounts: Optional[List[Account]] = None) -> None:
+        with self._lock:
+            self._cfg = cfg
+            if accounts is not None:
+                self._accounts = accounts
+        self._storm.update_config(cfg)
+        if accounts is not None:
+            self._storm.set_accounts(accounts)
 
     @property
     def runtime_orchestrator(self) -> RuntimeOrchestrator:
@@ -147,30 +160,16 @@ class RecoveryCoordinator:
         flog_kv("RECOVERY", event, **build_recovery_log_payload(event, acc, reason, fields))
 
     def _max_concurrent_accounts(self) -> int:
-        try:
-            return max(1, int(float(self._cfg.get("max_concurrent_accounts", 40) or 40)))
-        except Exception:
-            return 40
+        return max_concurrent_accounts(self._cfg)
 
     def _queue_delay_seconds(self) -> float:
-        try:
-            return max(1.0, float(self._cfg.get("queue_delay_seconds", self._cfg.get("launch_rate_interval", 15)) or 15))
-        except Exception:
-            return 15.0
+        return queue_delay_seconds(self._cfg)
 
     def _active_slot_count(self, excluding: Optional[Account] = None) -> int:
-        active_states = {AccountState.QUEUED, AccountState.LAUNCHING, AccountState.VERIFY, AccountState.IN_GAME}
-        count = 0
-        for item in self._accounts:
-            if item is excluding:
-                continue
-            with item._lock:
-                if item.desired_state == AccountState.IN_GAME and item.state in active_states:
-                    count += 1
-        return count
+        return active_slot_count(self._accounts, excluding=excluding)
 
     def _queue_slot_available(self, acc: Account) -> bool:
-        return self._active_slot_count(excluding=acc) < self._max_concurrent_accounts()
+        return queue_slot_available(self._accounts, self._cfg, acc)
 
     def handle_runtime_signal(
         self,
@@ -407,17 +406,7 @@ class RecoveryCoordinator:
         return self._runtime_orchestrator.request_rejoin(acc, reason=reason, bump_runtime_generation=True)
 
     def _retry_bucket_exceeded(self, acc: Account) -> Optional[str]:
-        max_retry = max(1, int(self._cfg.get("max_retry", 10) or 10))
-        buckets = {
-            "crash_retry": acc.crash_retry_count,
-            "launch_retry": acc.launch_fail_count,
-            "network_retry": acc.network_retry_count,
-            "session_retry": acc.session_retry_count,
-        }
-        for label, count in buckets.items():
-            if count >= max_retry:
-                return f"{label} reached max retry ({max_retry})"
-        return None
+        return retry_bucket_exceeded(self._cfg, acc)
 
     def _adaptive_recovery_delay(self, acc: Account, reason_key: str, cooldown: Optional[float] = None) -> float:
         attempts = self._session_conflicts.count(
@@ -529,7 +518,23 @@ class RecoveryCoordinator:
             self.fail_account(acc, canonical, reason_msg)
             return
         if loop_reason:
-            self.fail_account(acc, "relaunch_loop", loop_reason)
+            if bool(self._cfg.get("relaunch_loop_fatal", False)):
+                self.fail_account(acc, "relaunch_loop", loop_reason)
+                return
+            try:
+                loop_cooldown = max(10.0, float(self._cfg.get("relaunch_loop_cooldown_seconds", 300.0) or 300.0))
+            except Exception:
+                loop_cooldown = 300.0
+            with acc._lock:
+                acc.rapid_relaunch_count = 0
+            self._log_recovery_decision(
+                "relaunch_loop_cooldown",
+                acc,
+                "relaunch_loop",
+                reason_msg=loop_reason,
+                delay=f"{loop_cooldown:.1f}",
+            )
+            self._schedule_cooldown(acc, loop_cooldown, "relaunch_loop", "recover:relaunch_loop")
             return
         if fail_count >= max_fail:
             self.fail_account(acc, "max_fail", RECOVERY_REASON_MESSAGES["max_fail"])
@@ -792,11 +797,14 @@ class RecoveryCoordinator:
             acc.recovery_scheduled_at = 0.0
             runtime_generation = int(acc.runtime_generation or 0)
             recovery_generation = int(acc.recovery_generation or 0)
+        storm = self._storm.reserve_delay(acc, 0.0, reason, net_online=self._net.is_online())
+        if storm.delayed: self._log_recovery_decision("recovery_storm_delayed", acc, reason, **storm.to_log_fields())
         self._queue.push(
             acc,
             reason=reason,
             runtime_generation=runtime_generation,
             recovery_generation=recovery_generation,
+            delay_seconds=storm.delay_seconds,
         )
         self._release_recovery_owner(acc._config_username, runtime_generation, recovery_generation, f"queued:{reason}")
         self._log_recovery_decision("queued", acc, reason, generation=acc.recovery_generation)
@@ -805,6 +813,9 @@ class RecoveryCoordinator:
 
     def _schedule(self, acc: Account, delay: float, reason: str):
         key = f"recovery:{acc._config_username}"
+        storm = self._storm.reserve_delay(acc, delay, reason, net_online=self._net.is_online())
+        if storm.delayed: self._log_recovery_decision("recovery_storm_delayed", acc, reason, **storm.to_log_fields())
+        delay = storm.delay_seconds
         due = time.time() + max(0.0, delay)
         with acc._lock:
             if self._closed or self._stop.is_set():
@@ -888,12 +899,5 @@ class RecoveryCoordinator:
             acc.recovery_scheduled_at = 0.0
             acc.scheduler_slot = ""
         self._persist_runtime()
-        self.evaluate(
-            acc,
-            trigger=reason,
-            expected_runtime_generation=runtime_generation,
-            expected_recovery_generation=generation,
-        )
-
-
+        self.evaluate(acc, trigger=reason, expected_runtime_generation=runtime_generation, expected_recovery_generation=generation)
 RecoveryEngine = RecoveryCoordinator

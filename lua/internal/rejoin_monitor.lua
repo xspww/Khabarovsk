@@ -1,19 +1,21 @@
 local G = getgenv and getgenv() or _G
 
-if G.ArgusRejoin and G.ArgusRejoin.Stop then
+if G.CronusRejoin and G.CronusRejoin.Stop then
     pcall(function()
-        G.ArgusRejoin:Stop()
+        G.CronusRejoin:Stop()
     end)
 end
 
-local ArgusRejoin = {
-    Host = __ARGUS_HOST__,
-    Port = __ARGUS_PORT__,
-    Token = __ARGUS_TOKEN__,
-    Account = __ARGUS_ACCOUNT__,
+local CronusRejoin = {
+    Host = __CRONUS_HOST__,
+    Port = __CRONUS_PORT__,
+    Token = __CRONUS_TOKEN__,
+    Account = __CRONUS_ACCOUNT__,
+    SessionId = __CRONUS_SESSION_ID__,
+    LaunchNonce = __CRONUS_LAUNCH_NONCE__,
     Version = "1.7.1",
-    ShutdownDelay = __ARGUS_SHUTDOWN_DELAY__,
-    RequeueSource = __ARGUS_REQUEUE_SOURCE__,
+    ShutdownDelay = __CRONUS_SHUTDOWN_DELAY__,
+    RequeueSource = __CRONUS_REQUEUE_SOURCE__,
     Running = true,
     Connections = {},
     LastSent = {},
@@ -21,6 +23,11 @@ local ArgusRejoin = {
     LastDisconnectAt = 0,
     LastPostOk = {},
     FallbackScheduled = {},
+    EventCounter = 0,
+    FallbackEvents = {
+        heartbeat = true,
+        teleport_state = true,
+    },
     TeleportQueueInstalled = false,
     TeleportStartedAt = 0,
     TeleportState = "",
@@ -50,7 +57,7 @@ local function log(...)
     for _, value in ipairs({ ... }) do
         table.insert(parts, tostring(value))
     end
-    local line = "[ArgusRejoin] " .. table.concat(parts, " ")
+    local line = "[CronusRejoin] " .. table.concat(parts, " ")
     if rconsoleprint then
         pcall(rconsoleprint, line .. "\n")
     end
@@ -156,13 +163,13 @@ local function getQueueOnTeleport()
     return nil
 end
 
-function ArgusRejoin:Endpoint()
-    local host = safeString(self and self.Host or ArgusRejoin.Host)
+function CronusRejoin:Endpoint()
+    local host = safeString(self and self.Host or CronusRejoin.Host)
     if host == "" then
         host = "127.0.0.1"
     end
 
-    local port = safeString(self and self.Port or ArgusRejoin.Port)
+    local port = safeString(self and self.Port or CronusRejoin.Port)
     if port == "" then
         port = "7777"
     end
@@ -170,17 +177,20 @@ function ArgusRejoin:Endpoint()
     return "http://" .. host .. ":" .. port .. "/api/lua/rejoin-event"
 end
 
-function ArgusRejoin:EndpointWithToken()
-    return self:Endpoint() .. "?argus_token=" .. urlEncode(self.Token)
+function CronusRejoin:EndpointWithToken()
+    return self:Endpoint() .. "?cronus_token=" .. urlEncode(self.Token)
 end
 
-function ArgusRejoin:QueryEndpoint(payload)
+function CronusRejoin:QueryEndpoint(payload)
     local url = self:EndpointWithToken()
     local keys = {
         "event",
         "account",
         "username",
         "configured_account",
+        "session_id",
+        "launch_nonce",
+        "event_id",
         "user_id",
         "pid",
         "place_id",
@@ -217,7 +227,20 @@ function ArgusRejoin:QueryEndpoint(payload)
     return url
 end
 
-function ArgusRejoin:Payload(eventName, extra)
+function CronusRejoin:NextEventId(eventName)
+    self.EventCounter = (tonumber(self.EventCounter) or 0) + 1
+    return table.concat({
+        safeString(self.SessionId),
+        safeString(self.LaunchNonce),
+        safeString(eventName),
+        safeString(os.time()),
+        safeString(math.floor(now() * 1000)),
+        safeString(self.EventCounter),
+        safeString(math.random(100000, 999999)),
+    }, ":")
+end
+
+function CronusRejoin:Payload(eventName, extra)
     extra = extra or {}
     local serverInfo = getServerInfo()
     local payload = {
@@ -225,6 +248,9 @@ function ArgusRejoin:Payload(eventName, extra)
         account = safeString(LocalPlayer.Name),
         username = safeString(LocalPlayer.Name),
         configured_account = safeString(self.Account),
+        session_id = safeString(self.SessionId),
+        launch_nonce = safeString(self.LaunchNonce),
+        event_id = self:NextEventId(eventName),
         user_id = safeString(LocalPlayer.UserId),
         pid = getProcessId(),
         place_id = safeString(game.PlaceId),
@@ -241,9 +267,9 @@ function ArgusRejoin:Payload(eventName, extra)
         executor = identifyexecutor and safeString(identifyexecutor()) or "",
         helper_version = safeString(self.Version),
         token = safeString(self.Token),
-        argus_token = safeString(self.Token),
+        cronus_token = safeString(self.Token),
         api_token = safeString(self.Token),
-        _argus_token = safeString(self.Token),
+        _cronus_token = safeString(self.Token),
         ts = safeString(os.time()),
     }
 
@@ -256,7 +282,21 @@ function ArgusRejoin:Payload(eventName, extra)
     return payload
 end
 
-function ArgusRejoin:Post(eventName, extra)
+function CronusRejoin:CanUseGetFallback(eventName)
+    local key = safeString(eventName):lower()
+    return self.FallbackEvents[key] == true
+end
+
+function CronusRejoin:FallbackOrFail(eventName, payload, previousStatus)
+    if self:CanUseGetFallback(eventName) then
+        return self:GetFallback(eventName, payload, previousStatus)
+    end
+    log("get fallback skipped", eventName, "state_changing_requires_post")
+    self.LastPostOk[eventName] = false
+    return false, false
+end
+
+function CronusRejoin:Post(eventName, extra)
     if not self.Running then
         return false
     end
@@ -286,14 +326,13 @@ function ArgusRejoin:Post(eventName, extra)
     local publicEndpoint = self:Endpoint()
     local requestHeaders = {
         ["Content-Type"] = "application/json",
-        ["X-Argus-Token"] = self.Token,
-        ["X-RoboGuard-Token"] = self.Token,
-        ["x-argus-token"] = self.Token,
-        ["User-Agent"] = "ArgusLuaRejoin/1.7",
+        ["X-Cronus-Token"] = self.Token,
+        ["x-cronus-token"] = self.Token,
+        ["User-Agent"] = "CronusLuaRejoin/1.7",
     }
 
     if not Request then
-        return self:GetFallback(eventName, payload, "no_request")
+        return self:FallbackOrFail(eventName, payload, "no_request")
     end
 
     log("post begin", eventName, publicEndpoint)
@@ -311,7 +350,7 @@ function ArgusRejoin:Post(eventName, extra)
 
     if not ok then
         log("post failed", eventName, response)
-        return self:GetFallback(eventName, payload, "request_error")
+        return self:FallbackOrFail(eventName, payload, "request_error")
     end
 
     local status = tonumber(response and (response.StatusCode or response.Status)) or 0
@@ -328,16 +367,16 @@ function ArgusRejoin:Post(eventName, extra)
     end
     log("post", eventName, success and "ok" or "failed", "status=" .. tostring(status), "accepted=" .. tostring(accepted))
     if not success then
-        return self:GetFallback(eventName, payload, status)
+        return self:FallbackOrFail(eventName, payload, status)
     end
     self.LastPostOk[eventName] = success and accepted
     return success, accepted
 end
 
-function ArgusRejoin:GetFallback(eventName, payload, previousStatus)
+function CronusRejoin:GetFallback(eventName, payload, previousStatus)
     local url = self:QueryEndpoint(payload)
     local requestHeaders = {
-        ["User-Agent"] = "ArgusLuaRejoin/1.7",
+        ["User-Agent"] = "CronusLuaRejoin/1.7",
     }
     log("get fallback begin", eventName, "after_status=" .. safeString(previousStatus))
 
@@ -385,7 +424,7 @@ function ArgusRejoin:GetFallback(eventName, payload, previousStatus)
     return success, accepted
 end
 
-function ArgusRejoin:QueueOnTeleport(reason)
+function CronusRejoin:QueueOnTeleport(reason)
     if self.TeleportQueueInstalled then
         return true
     end
@@ -411,14 +450,14 @@ function ArgusRejoin:QueueOnTeleport(reason)
     return false
 end
 
-function ArgusRejoin:IsTeleportTransitionActive()
+function CronusRejoin:IsTeleportTransitionActive()
     if not self.TeleportStartedAt or self.TeleportStartedAt <= 0 then
         return false
     end
     return (now() - self.TeleportStartedAt) <= 45.0
 end
 
-function ArgusRejoin:PostAsync(eventName, extra)
+function CronusRejoin:PostAsync(eventName, extra)
     log("post async", eventName)
     task.spawn(function()
         local ok, err = pcall(function()
@@ -431,7 +470,7 @@ function ArgusRejoin:PostAsync(eventName, extra)
     return true
 end
 
-function ArgusRejoin:ClientRecoveryFallback(codeText)
+function CronusRejoin:ClientRecoveryFallback(codeText)
     local key = safeString(codeText)
     if self.FallbackScheduled[key] then
         return
@@ -442,7 +481,7 @@ function ArgusRejoin:ClientRecoveryFallback(codeText)
             return
         end
         if self.LastPostOk.disconnect == true then
-            log("client fallback skipped", "Argus accepted disconnect")
+            log("client fallback skipped", "Cronus accepted disconnect")
             return
         end
         log("client fallback start", "error_code=" .. key)
@@ -450,11 +489,11 @@ function ArgusRejoin:ClientRecoveryFallback(codeText)
             TeleportService:Teleport(game.PlaceId, LocalPlayer)
         end)
         task.delay(1.0, function()
-            if not ArgusRejoin.Running then
+            if not CronusRejoin.Running then
                 return
             end
             pcall(function()
-                LocalPlayer:Kick("Argus recovery fallback")
+                LocalPlayer:Kick("Cronus recovery fallback")
             end)
             pcall(game.Shutdown, game)
             log("client fallback close requested", "error_code=" .. key)
@@ -462,7 +501,7 @@ function ArgusRejoin:ClientRecoveryFallback(codeText)
     end)
 end
 
-function ArgusRejoin:Stop()
+function CronusRejoin:Stop()
     self.Running = false
     for _, connection in ipairs(self.Connections) do
         pcall(function()
@@ -472,7 +511,7 @@ function ArgusRejoin:Stop()
     table.clear(self.Connections)
 end
 
-function ArgusRejoin:Rejoin()
+function CronusRejoin:Rejoin()
     self:PostAsync("rejoin_requested", {
         reason_key = "lua_manual_rejoin",
         detail = "Manual Lua rejoin requested",
@@ -485,12 +524,42 @@ local function reportLoaded()
         safeString(LocalPlayer.Name),
         "place=" .. safeString(game.PlaceId),
         "job=" .. safeString(game.JobId),
-        "version=" .. safeString(ArgusRejoin.Version)
+        "version=" .. safeString(CronusRejoin.Version)
     )
-    ArgusRejoin:PostAsync("loaded", {
+    CronusRejoin:PostAsync("loaded", {
         reason_key = "lua_loaded",
         detail = "Lua helper loaded in Roblox client",
     })
+end
+
+local function hasServerEvidence()
+    local placeId = tonumber(game.PlaceId) or 0
+    local jobId = safeString(game.JobId)
+    return placeId > 0 and jobId ~= ""
+end
+
+local function reportInGame()
+    if not hasServerEvidence() then
+        log(
+            "in_game skipped",
+            "missing_server_evidence",
+            "place=" .. safeString(game.PlaceId),
+            "job=" .. safeString(game.JobId)
+        )
+        return false
+    end
+    log(
+        "in_game",
+        safeString(LocalPlayer.Name),
+        "place=" .. safeString(game.PlaceId),
+        "job=" .. safeString(game.JobId)
+    )
+    CronusRejoin:PostAsync("in_game", {
+        reason_key = "lua_in_game_verified",
+        detail = "Lua verified Roblox server session",
+        evidence_source = "lua_server_job",
+    })
+    return true
 end
 
 local function reportDisconnect(source)
@@ -509,25 +578,25 @@ local function reportDisconnect(source)
 
     local codeText = safeString(code)
     local t = now()
-    if ArgusRejoin.LastErrorCode == codeText and (t - ArgusRejoin.LastDisconnectAt) < 3 then
+    if CronusRejoin.LastErrorCode == codeText and (t - CronusRejoin.LastDisconnectAt) < 3 then
         return
     end
-    ArgusRejoin.LastErrorCode = codeText
-    ArgusRejoin.LastDisconnectAt = t
+    CronusRejoin.LastErrorCode = codeText
+    CronusRejoin.LastDisconnectAt = t
 
-    if ArgusRejoin:IsTeleportTransitionActive() then
-        local elapsed = t - ArgusRejoin.TeleportStartedAt
+    if CronusRejoin:IsTeleportTransitionActive() then
+        local elapsed = t - CronusRejoin.TeleportStartedAt
         log(
             "disconnect ignored during teleport",
             "source=" .. safeString(source or "event"),
-            "state=" .. safeString(ArgusRejoin.TeleportState),
+            "state=" .. safeString(CronusRejoin.TeleportState),
             "error_code=" .. codeText
         )
-        ArgusRejoin:PostAsync("teleport_state", {
+        CronusRejoin:PostAsync("teleport_state", {
             reason_key = "lua_teleport_transition",
             error_code = codeText,
             detail = "Disconnect signal ignored during active Roblox teleport",
-            teleport_state = safeString(ArgusRejoin.TeleportState),
+            teleport_state = safeString(CronusRejoin.TeleportState),
             teleport_place_id = safeString(game.PlaceId),
             teleport_elapsed = safeString(string.format("%.2f", elapsed)),
             evidence_source = "lua_guiservice_teleport_guard",
@@ -537,7 +606,7 @@ local function reportDisconnect(source)
     end
 
     log("disconnect detected", "source=" .. safeString(source or "event"), "error_code=" .. codeText)
-    ArgusRejoin:PostAsync("disconnect", {
+    CronusRejoin:PostAsync("disconnect", {
         reason_key = "lua_disconnect_error",
         error_code = codeText,
         message = getErrorMessage(),
@@ -546,12 +615,12 @@ local function reportDisconnect(source)
         evidence_source = "lua_guiservice",
         detection_source = safeString(source or "event"),
     })
-    ArgusRejoin:ClientRecoveryFallback(codeText)
+    CronusRejoin:ClientRecoveryFallback(codeText)
 
-    local shutdownDelay = tonumber(ArgusRejoin.ShutdownDelay) or 0
+    local shutdownDelay = tonumber(CronusRejoin.ShutdownDelay) or 0
     if shutdownDelay > 0 then
         task.delay(shutdownDelay, function()
-            if ArgusRejoin.Running then
+            if CronusRejoin.Running then
                 log("shutdown fallback after disconnect", "error_code=" .. codeText)
                 pcall(game.Shutdown, game)
             end
@@ -559,19 +628,19 @@ local function reportDisconnect(source)
     end
 end
 
-table.insert(ArgusRejoin.Connections, GuiService.ErrorMessageChanged:Connect(function()
+table.insert(CronusRejoin.Connections, GuiService.ErrorMessageChanged:Connect(function()
     reportDisconnect("GuiService.ErrorMessageChanged")
 end))
 
 pcall(function()
-    table.insert(ArgusRejoin.Connections, TeleportService.TeleportInitFailed:Connect(function(player, result, message, placeId)
+    table.insert(CronusRejoin.Connections, TeleportService.TeleportInitFailed:Connect(function(player, result, message, placeId)
         if player and player ~= LocalPlayer then
             return
         end
-        ArgusRejoin.TeleportStartedAt = 0
-        ArgusRejoin.TeleportState = "failed"
+        CronusRejoin.TeleportStartedAt = 0
+        CronusRejoin.TeleportState = "failed"
         log("teleport failed", safeString(result), safeString(message))
-        ArgusRejoin:PostAsync("teleport_error", {
+        CronusRejoin:PostAsync("teleport_error", {
             reason_key = "lua_teleport_error",
             message = safeString(message),
             detail = ("Teleport failed: %s"):format(safeString(result)),
@@ -583,38 +652,54 @@ pcall(function()
 end)
 
 pcall(function()
-    table.insert(ArgusRejoin.Connections, LocalPlayer.OnTeleport:Connect(function(state)
+    table.insert(CronusRejoin.Connections, LocalPlayer.OnTeleport:Connect(function(state)
         local stateText = safeString(state)
-        ArgusRejoin.TeleportStartedAt = now()
-        ArgusRejoin.TeleportState = stateText
-        ArgusRejoin:QueueOnTeleport("teleport_state")
-        ArgusRejoin:PostAsync("teleport_state", {
+        CronusRejoin.TeleportStartedAt = now()
+        CronusRejoin.TeleportState = stateText
+        CronusRejoin:QueueOnTeleport("teleport_state")
+        CronusRejoin:PostAsync("teleport_state", {
             reason_key = "lua_teleport_state",
             detail = stateText,
             teleport_state = stateText,
             teleport_place_id = safeString(game.PlaceId),
-            requeue = ArgusRejoin.TeleportQueueInstalled and "true" or "false",
+            requeue = CronusRejoin.TeleportQueueInstalled and "true" or "false",
             evidence_source = "lua_on_teleport",
         })
     end))
 end)
 
-ArgusRejoin:QueueOnTeleport("startup")
+CronusRejoin:QueueOnTeleport("startup")
 
 task.spawn(function()
     if not game:IsLoaded() then
         game.Loaded:Wait()
     end
     reportLoaded()
+    for _ = 1, 8 do
+        if reportInGame() then
+            break
+        end
+        task.wait(2)
+    end
 end)
 
 task.spawn(function()
-    while ArgusRejoin.Running do
+    local lastHeartbeatAt = 0
+    while CronusRejoin.Running do
         reportDisconnect("poll")
+        local t = now()
+        if (t - lastHeartbeatAt) >= 15 and hasServerEvidence() then
+            lastHeartbeatAt = t
+            CronusRejoin:PostAsync("heartbeat", {
+                reason_key = "lua_server_heartbeat",
+                detail = "Lua heartbeat in Roblox server session",
+                evidence_source = "lua_server_job",
+            })
+        end
         task.wait(0.5)
     end
 end)
 
-G.ArgusRejoin = ArgusRejoin
-log("ready", "version=" .. safeString(ArgusRejoin.Version), "manual command: ArgusRejoin:Rejoin()")
-return ArgusRejoin
+G.CronusRejoin = CronusRejoin
+log("ready", "version=" .. safeString(CronusRejoin.Version), "manual command: CronusRejoin:Rejoin()")
+return CronusRejoin

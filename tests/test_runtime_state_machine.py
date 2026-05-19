@@ -1,5 +1,9 @@
 import unittest
 
+from env_bootstrap import ensure_test_user_root
+
+ensure_test_user_root()
+
 from core import Account
 from domain.account_state import AccountState, RuntimeState
 from domain.runtime_lifecycle import (

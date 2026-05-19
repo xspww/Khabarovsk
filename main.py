@@ -56,7 +56,7 @@ cfg_mgr = ConfigManager()
 legacy_accounts = cfg_mgr.get_accounts()
 try:
     ACCOUNT_STORE.ensure_from_legacy([account.to_dict() for account in legacy_accounts])
-    accounts = [Account.from_dict(item) for item in ACCOUNT_STORE.to_roboguard_accounts()]
+    accounts = [Account.from_dict(item) for item in ACCOUNT_STORE.to_cronus_accounts()]
 except Exception as e:
     flog_kv("ACCOUNT_DATA", "load_failed_fallback_legacy", "warning", error=e)
     accounts = legacy_accounts

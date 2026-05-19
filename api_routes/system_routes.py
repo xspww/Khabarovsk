@@ -14,6 +14,7 @@ from account_hybrid import audit_event
 from core import flog_kv
 from roblox_hybrid import release_multi_roblox_guard
 
+from .auth import require_api_token
 from .context import ApiContext
 from .idempotency import begin_idempotent_request, begin_idempotent_request_sync, finish_idempotent_request
 from .settings_state import _int_setting
@@ -165,7 +166,8 @@ def register(app, ctx: ApiContext) -> None:
         return result
 
     @app.get("/api/logs")
-    def api_logs(limit: int = 300):
+    def api_logs(request: Request, limit: int = 300):
+        require_api_token(request, ctx)
         return {
             "ok": True,
             "path": _log_file(),
@@ -230,7 +232,7 @@ def register(app, ctx: ApiContext) -> None:
 
     @app.get("/", response_class=HTMLResponse)
     def serve_ui():
-        html_ui = str(ctx.html_ui or "").replace("__ARGUS_API_TOKEN__", str(ctx.instance_token or ""))
+        html_ui = str(ctx.html_ui or "").replace("__CRONUS_API_TOKEN__", str(ctx.instance_token or ""))
         return HTMLResponse(
             html_ui,
             headers={
@@ -251,7 +253,12 @@ def register(app, ctx: ApiContext) -> None:
         token = ""
         if isinstance(body, dict):
             token = str(body.get("token") or "")
-        token = token or str(request.headers.get("X-RoboGuard-Token") or "")
+        token = token or str(
+            request.headers.get("X-Cronus-Token")
+            or request.headers.get("X-Argus-Token")
+            or request.headers.get("X-RoboGuard-Token")
+            or ""
+        )
         if not token or not secrets.compare_digest(token, ctx.instance_token):
             raise HTTPException(403, "Invalid shutdown token")
 
@@ -270,5 +277,5 @@ def register(app, ctx: ApiContext) -> None:
             time.sleep(0.3)
             os._exit(0)
 
-        threading.Thread(target=_shutdown, daemon=True, name="RoboGuardShutdown").start()
+        threading.Thread(target=_shutdown, daemon=True, name="CronusShutdown").start()
         return {"ok": True, "msg": "shutdown requested"}

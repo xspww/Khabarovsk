@@ -46,8 +46,15 @@ def _hash_body(raw: bytes) -> str:
 
 
 def _begin(request: Request, action: str, account: str, body_hash: str) -> IdempotencyContext:
-    key = str(request.headers.get("X-Argus-Idempotency-Key") or "").strip()
+    key = str(
+        request.headers.get("X-Cronus-Idempotency-Key")
+        or request.headers.get("X-Argus-Idempotency-Key")
+        or ""
+    ).strip()
     try:
+        request.state.cronus_idempotency_body_hash = body_hash
+        request.state.cronus_idempotency_action = action
+        request.state.cronus_idempotency_account = account
         request.state.argus_idempotency_body_hash = body_hash
         request.state.argus_idempotency_action = action
         request.state.argus_idempotency_account = account

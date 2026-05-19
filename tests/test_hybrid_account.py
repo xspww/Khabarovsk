@@ -76,6 +76,14 @@ def auth_post(client, path, **kwargs):
     return client.post(path, headers=headers, **kwargs)
 
 
+def auth_get(client, path, **kwargs):
+    import main
+
+    headers = dict(kwargs.pop("headers", {}) or {})
+    headers.setdefault("X-Cronus-Token", main.INSTANCE_TOKEN)
+    return client.get(path, headers=headers, **kwargs)
+
+
 class HybridAccountTests(unittest.TestCase):
     def test_dpapi_cookie_roundtrip(self):
         cookie = "_|WARNING:-DO-NOT-SHARE-THIS.--unit-test-cookie"
@@ -1417,18 +1425,29 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("MacMaxButton", title_source)
         self.assertNotIn("TitleButton", title_source)
 
-    def test_lua_rejoin_helper_is_served_with_token_and_local_endpoint(self):
+    def test_lua_rejoin_helper_is_served_with_scoped_token_and_local_endpoint(self):
         from fastapi.testclient import TestClient
         import main
 
+        account = Account("LuaUnit")
+        account.session_id = "session-unit"
+        account.launch_nonce = "nonce-unit"
+        old_accounts = main.farm._accounts
+        main.farm._accounts = [account]
         client = TestClient(main.app)
-        response = client.get("/api/lua/rejoin-helper?account=LuaUnit&port=7777&shutdown_delay=2.5")
+        try:
+            response = auth_get(client, "/api/lua/rejoin-helper?account=LuaUnit&port=7777&shutdown_delay=2.5")
+        finally:
+            main.farm._accounts = old_accounts
 
         self.assertEqual(response.status_code, 200)
         script = response.text
         self.assertIn('Host = "127.0.0.1"', script)
         self.assertIn("Port = 7777", script)
-        self.assertIn(f'Token = "{main.INSTANCE_TOKEN}"', script)
+        self.assertNotIn(main.INSTANCE_TOKEN, script)
+        self.assertIn('Token = "lua1.', script)
+        self.assertIn('SessionId = "session-unit"', script)
+        self.assertIn('LaunchNonce = "nonce-unit"', script)
         self.assertIn('Account = "LuaUnit"', script)
         self.assertIn('account = safeString(LocalPlayer.Name)', script)
         self.assertIn('configured_account = safeString(self.Account)', script)
@@ -1445,12 +1464,15 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn('function CronusRejoin:EndpointWithToken', script)
         self.assertIn('function CronusRejoin:QueryEndpoint', script)
         self.assertIn('function CronusRejoin:GetFallback', script)
+        self.assertIn('FallbackEvents = {', script)
+        self.assertIn('function CronusRejoin:CanUseGetFallback', script)
+        self.assertIn('if self:CanUseGetFallback(eventName) then', script)
         self.assertIn('["User-Agent"] = "CronusLuaRejoin/1.7"', script)
         self.assertIn('Headers = requestHeaders', script)
         self.assertIn('headers = requestHeaders', script)
         self.assertIn('body = body', script)
         self.assertIn('Data = body', script)
-        self.assertIn('return self:GetFallback(eventName, payload, status)', script)
+        self.assertIn('return self:FallbackOrFail(eventName, payload, status)', script)
         self.assertIn('game:HttpGet(url)', script)
         self.assertIn('["X-Cronus-Token"] = self.Token', script)
         self.assertIn("/api/lua/rejoin-event", script)
@@ -1494,18 +1516,77 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn('log("helper queued for teleport")', loader)
         self.assertIn("Load(source)", loader)
 
-    def test_lua_account_module_is_served_with_safe_api_contract(self):
+    def test_lua_rejoin_helper_rejects_unauthenticated_token_mint(self):
         from fastapi.testclient import TestClient
         import main
 
+        account = Account("LuaUnit")
+        account.session_id = "session-unit"
+        account.launch_nonce = "nonce-unit"
+        old_accounts = main.farm._accounts
+        main.farm._accounts = [account]
         client = TestClient(main.app)
-        response = client.get("/api/lua/account-module?account=LuaUnit&port=7777")
+        try:
+            response = client.get("/api/lua/rejoin-helper?account=LuaUnit&port=7777&shutdown_delay=2.5")
+        finally:
+            main.farm._accounts = old_accounts
+
+        self.assertEqual(response.status_code, 403)
+        self.assertNotIn('Token = "lua1.', response.text)
+
+    def test_lua_rejoin_helper_reuses_existing_scoped_token_without_renewal(self):
+        from fastapi.testclient import TestClient
+        import main
+        from services.lua_session_tokens import issue_lua_session_token
+
+        account = Account("LuaUnit")
+        account.session_id = "session-unit"
+        account.launch_nonce = "nonce-unit"
+        token = issue_lua_session_token(
+            main.INSTANCE_TOKEN,
+            account="LuaUnit",
+            session_id="session-unit",
+            launch_nonce="nonce-unit",
+            ttl_seconds=900,
+        )
+        old_accounts = main.farm._accounts
+        main.farm._accounts = [account]
+        client = TestClient(main.app)
+        try:
+            response = client.get(
+                f"/api/lua/rejoin-helper?account=LuaUnit&port=7777&shutdown_delay=2.5&cronus_token={token}"
+            )
+        finally:
+            main.farm._accounts = old_accounts
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text
+        self.assertIn(f'Token = "{token}"', script)
+        self.assertEqual(script.count("Token = \"lua1."), 1)
+
+    def test_lua_account_module_is_served_with_scoped_token_and_safe_api_contract(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        account = Account("LuaUnit")
+        account.session_id = "session-unit"
+        account.launch_nonce = "nonce-unit"
+        old_accounts = main.farm._accounts
+        main.farm._accounts = [account]
+        client = TestClient(main.app)
+        try:
+            response = auth_get(client, "/api/lua/account-module?account=LuaUnit&port=7777")
+        finally:
+            main.farm._accounts = old_accounts
 
         self.assertEqual(response.status_code, 200)
         script = response.text
         self.assertIn('Host = "127.0.0.1"', script)
         self.assertIn("Port = 7777", script)
-        self.assertIn(f'Token = "{main.INSTANCE_TOKEN}"', script)
+        self.assertNotIn(main.INSTANCE_TOKEN, script)
+        self.assertIn('Token = "lua1.', script)
+        self.assertIn('SessionId = "session-unit"', script)
+        self.assertIn('LaunchNonce = "nonce-unit"', script)
         self.assertIn('Account = "LuaUnit"', script)
         self.assertIn('Version = "account-1.0.0"', script)
         self.assertIn("function Account.new", script)
@@ -1534,6 +1615,24 @@ class HybridAccountTests(unittest.TestCase):
         self.assertIn("/api/lua/account-module", loader)
         self.assertIn("local Load = loadstring or load", loader)
         self.assertIn("Load(source)", loader)
+
+    def test_lua_account_module_rejects_unauthenticated_token_mint(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        account = Account("LuaUnit")
+        account.session_id = "session-unit"
+        account.launch_nonce = "nonce-unit"
+        old_accounts = main.farm._accounts
+        main.farm._accounts = [account]
+        client = TestClient(main.app)
+        try:
+            response = client.get("/api/lua/account-module?account=LuaUnit&port=7777")
+        finally:
+            main.farm._accounts = old_accounts
+
+        self.assertEqual(response.status_code, 403)
+        self.assertNotIn('Token = "lua1.', response.text)
 
     def test_lua_rejoin_event_requires_api_token(self):
         from fastapi.testclient import TestClient
@@ -1577,6 +1676,111 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(response.json()["accepted"], True)
         self.assertEqual(len(calls), 1)
         self.assertNotIn("token", calls[0])
+
+    def test_lua_rejoin_event_accepts_scoped_lua_session_token_once(self):
+        from fastapi.testclient import TestClient
+        import main
+        from services.lua_session_tokens import issue_lua_session_token
+
+        account = Account("LuaUnit")
+        account.session_id = "session-unit"
+        account.launch_nonce = "nonce-unit"
+        old_accounts = main.farm._accounts
+        main.farm._accounts = [account]
+        client = TestClient(main.app)
+        calls = []
+        token = issue_lua_session_token(
+            main.INSTANCE_TOKEN,
+            account="LuaUnit",
+            session_id="session-unit",
+            launch_nonce="nonce-unit",
+            ttl_seconds=900,
+        )
+
+        def fake_lua_event(payload):
+            calls.append(dict(payload))
+            return {
+                "ok": True,
+                "accepted": True,
+                "event": payload.get("event", ""),
+                "account": payload.get("account", ""),
+                "signal": "",
+                "msg": "Lua event accepted",
+            }
+
+        try:
+            with patch.object(main.farm, "handle_lua_rejoin_event", side_effect=fake_lua_event):
+                first = client.post(
+                    "/api/lua/rejoin-event",
+                    json={
+                        "event": "heartbeat",
+                        "account": "LuaUnit",
+                        "username": "LuaUnit",
+                        "session_id": "session-unit",
+                        "launch_nonce": "nonce-unit",
+                        "event_id": "unit-event-1",
+                        "ts": str(int(time.time())),
+                        "token": token,
+                    },
+                )
+                replay = client.post(
+                    "/api/lua/rejoin-event",
+                    json={
+                        "event": "heartbeat",
+                        "account": "LuaUnit",
+                        "username": "LuaUnit",
+                        "session_id": "session-unit",
+                        "launch_nonce": "nonce-unit",
+                        "event_id": "unit-event-1",
+                        "ts": str(int(time.time())),
+                        "token": token,
+                    },
+                )
+        finally:
+            main.farm._accounts = old_accounts
+
+        self.assertEqual(first.status_code, 200)
+        self.assertEqual(replay.status_code, 409)
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn("token", calls[0])
+
+    def test_lua_rejoin_event_rejects_scoped_token_for_wrong_launch_nonce(self):
+        from fastapi.testclient import TestClient
+        import main
+        from services.lua_session_tokens import issue_lua_session_token
+
+        account = Account("LuaUnit")
+        account.session_id = "session-unit"
+        account.launch_nonce = "nonce-unit"
+        old_accounts = main.farm._accounts
+        main.farm._accounts = [account]
+        client = TestClient(main.app)
+        token = issue_lua_session_token(
+            main.INSTANCE_TOKEN,
+            account="LuaUnit",
+            session_id="session-unit",
+            launch_nonce="other-nonce",
+            ttl_seconds=900,
+        )
+
+        try:
+            response = client.post(
+                "/api/lua/rejoin-event",
+                json={
+                    "event": "heartbeat",
+                    "account": "LuaUnit",
+                    "username": "LuaUnit",
+                    "session_id": "session-unit",
+                    "launch_nonce": "nonce-unit",
+                    "event_id": "unit-event-wrong-nonce",
+                    "ts": str(int(time.time())),
+                    "token": token,
+                },
+            )
+        finally:
+            main.farm._accounts = old_accounts
+
+        self.assertEqual(response.status_code, 403)
 
     def test_lua_rejoin_event_accepts_cronus_token_alias(self):
         from fastapi.testclient import TestClient
@@ -1678,7 +1882,7 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(response.json()["accepted"], True)
         self.assertEqual(len(calls), 1)
 
-    def test_lua_rejoin_event_accepts_local_get_fallback_when_executor_token_is_mangled(self):
+    def test_lua_rejoin_event_rejects_state_changing_get_fallback_when_executor_token_is_mangled(self):
         from fastapi.testclient import TestClient
         import main
 
@@ -1703,11 +1907,8 @@ class HybridAccountTests(unittest.TestCase):
                 "helper_version=1.7.0&error_code=273&reason_key=lua_disconnect_error"
             )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertTrue(response.json()["accepted"])
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0]["event"], "disconnect")
-        self.assertNotIn("cronus_token", calls[0])
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(calls, [])
 
     def test_lua_rejoin_event_rejects_unauthenticated_get_without_helper_version(self):
         from fastapi.testclient import TestClient
@@ -1887,6 +2088,37 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(result["lua_pid"], 222)
         self.assertEqual(routed, [])
         self.assertEqual(pushed[0][1]["reason"], "lua_pid_mismatch")
+
+    def test_lua_disconnect_without_pid_is_not_routed_when_account_has_bound_pid(self):
+        controller = FarmController.__new__(FarmController)
+        account = Account("LuaUnit")
+        account.pid = 111
+        controller._accounts = [account]
+        controller._workers = {}
+        pushed = []
+        routed = []
+
+        class FakeOrchestrator:
+            def handle_runtime_signal(self, acc, signal, reason, payload=None):
+                routed.append((acc, signal, reason, payload or {}))
+                return True
+
+        controller._runtime_orchestrator = FakeOrchestrator()
+        controller._push_event = lambda *args, **kwargs: pushed.append((args, kwargs))
+
+        result = controller.handle_lua_rejoin_event({
+            "event": "disconnect",
+            "account": "LuaUnit",
+            "username": "LuaUnit",
+            "error_code": "277",
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["matched_pid"], 111)
+        self.assertEqual(result["lua_pid"], "")
+        self.assertEqual(routed, [])
+        self.assertEqual(pushed[0][1]["reason"], "lua_pid_missing")
 
     def test_lua_disconnect_with_matching_pid_routes_targeted_rejoin(self):
         controller = FarmController.__new__(FarmController)
@@ -2321,7 +2553,8 @@ class HybridAccountTests(unittest.TestCase):
                 self.assertEqual(response.json()["lines"], [])
                 with open(path, encoding="utf-8") as f:
                     self.assertEqual(f.read(), "")
-                self.assertEqual(client.get("/api/logs").json()["lines"], [])
+                self.assertEqual(client.get("/api/logs").status_code, 403)
+                self.assertEqual(client.get("/api/logs", headers=auth_headers()).json()["lines"], [])
 
     def test_avatar_endpoint_batches_user_ids(self):
         from fastapi.testclient import TestClient
@@ -2796,6 +3029,108 @@ class HybridAccountTests(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertIn("recovery_rate", payload)
         self.assertIn("memory_usage_mb", payload)
+
+    def test_public_farm_health_endpoint_is_snapshot_only_and_redacted(self):
+        from fastapi.testclient import TestClient
+        import main
+        from services.process_service import ProcessManager
+
+        client = TestClient(main.app)
+        with (
+            patch.object(ProcessManager, "is_bound_game_alive", side_effect=AssertionError("live process scan")),
+            patch.object(ProcessManager, "validate_game_process", side_effect=AssertionError("live process scan")),
+            patch.object(ProcessManager, "list_live_game_processes", side_effect=AssertionError("live process scan")),
+        ):
+            response = client.get("/api/farm/health")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertIn("account_count", payload)
+        self.assertIn("queue", payload)
+        self.assertNotIn("accounts", payload)
+        serialized = str(payload).lower()
+        self.assertNotIn("cookie", serialized)
+        self.assertNotIn("session_id", serialized)
+        self.assertNotIn("launch_nonce", serialized)
+
+    def test_detailed_farm_health_endpoint_requires_token(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+
+        rejected = client.get("/api/farm/health/detail")
+        self.assertEqual(rejected.status_code, 403)
+
+        accepted = client.get("/api/farm/health/detail", headers={"X-Cronus-Token": main.INSTANCE_TOKEN})
+        self.assertEqual(accepted.status_code, 200)
+        payload = accepted.json()
+        self.assertIn("workers", payload)
+        self.assertIn("dispatcher", payload)
+        self.assertIn("maintenance", payload)
+        self.assertIn("queue", payload)
+        self.assertIn("stuck_states", payload)
+        self.assertIn("watchdog_decision", payload)
+        serialized = str(payload).lower()
+        self.assertNotIn("cookie", serialized)
+        self.assertNotIn("launch_nonce", serialized)
+
+    def test_runtime_diagnostics_endpoint_requires_token(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+
+        rejected = client.get("/api/runtime/diagnostics")
+        self.assertEqual(rejected.status_code, 403)
+
+        accepted = client.get("/api/runtime/diagnostics", headers={"X-Cronus-Token": main.INSTANCE_TOKEN})
+        self.assertEqual(accepted.status_code, 200)
+        payload = accepted.json()
+        self.assertTrue(payload["ok"])
+        serialized = str(payload).lower()
+        self.assertNotIn(".roblosecurity", serialized)
+        self.assertNotIn("_|warning:", serialized)
+
+    def test_runtime_events_endpoint_requires_token(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+
+        rejected = client.get("/api/runtime/events")
+        self.assertEqual(rejected.status_code, 403)
+
+        accepted = client.get("/api/runtime/events", headers={"X-Cronus-Token": main.INSTANCE_TOKEN})
+        self.assertEqual(accepted.status_code, 200)
+        self.assertTrue(accepted.json()["ok"])
+
+    def test_start_rejects_missing_target_with_actionable_payload(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        account = Account(username="NoTargetUser")
+        account.cookie = "_|WARNING:-DO-NOT-SHARE-THIS.--unit"
+        command = {"command_id": "cmd-start-missing-target"}
+        client = TestClient(main.app)
+
+        with patch.object(main.farm, "begin_command", return_value=(True, command)), \
+             patch.object(main.farm, "finish_command") as finish_command, \
+             patch.object(main.farm, "running", False), \
+             patch.object(main.farm, "_accounts", [account]), \
+             patch.object(main.farm, "start") as start:
+            response = auth_post(client, "/api/start")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["accepted"])
+        self.assertEqual(payload["error_code"], "missing_launch_target")
+        self.assertEqual(payload["missing_target_count"], 1)
+        self.assertEqual(payload["missing_targets"], ["NoTargetUser"])
+        self.assertIn("Set game_place_id", payload["required_action"])
+        start.assert_not_called()
+        finish_command.assert_called_once()
 
     def test_app_shutdown_accepts_legacy_header_token(self):
         from fastapi.testclient import TestClient
@@ -4205,6 +4540,41 @@ class HybridAccountTests(unittest.TestCase):
         self.assertEqual(result["positive_samples"], 0)
         self.assertEqual(result["visual_positive_samples"], 0)
         self.assertEqual(result["action"], "")
+
+    def test_popup_observer_confirms_repeated_visual_pipeline_single_button_popup(self):
+        from runtime.popup_detector.popup_sampler import PopupObserver
+
+        observer = PopupObserver(sample_count=2, sample_interval=0, threshold=1.0, stable_samples=2)
+        observer.sampler.windows_for_pid = lambda pid, include_hidden=True: [{"hwnd": 123}]
+        observer.sampler.read_texts = lambda hwnd: []
+        observer.sampler.capture_window_image = lambda hwnd: object()
+
+        with patch(
+            "runtime.popup_detector.popup_sampler.detect_visual_features",
+            return_value={
+                "matched": True,
+                "score": 1.1,
+                "strength": "strong",
+                "source": "visual_pipeline",
+                "visual_stage": "modal_button",
+                "button_pattern": "single",
+                "overlay_score": 0.6,
+                "modal_score": 1.08,
+                "button_score": 0.48,
+                "template_score": 0.0,
+                "title_rms": 91.59,
+                "reconnect_rms": 110.9,
+            },
+        ):
+            result = observer.inspect_pid(100, sample_count=2, sample_interval=0)
+
+        self.assertTrue(result["matched"])
+        self.assertTrue(result["recovery_allowed"])
+        self.assertEqual(result["action"], "rejoin")
+        self.assertEqual(result["reason_key"], "connection_error")
+        self.assertEqual(result["positive_samples"], 2)
+        self.assertEqual(result["visual_positive_samples"], 2)
+        self.assertEqual(result["disconnect_category"], "VISUAL_DISCONNECT")
 
     def test_popup_observer_ignores_repeated_visual_weak_panel(self):
         from runtime.popup_detector.popup_sampler import PopupObserver

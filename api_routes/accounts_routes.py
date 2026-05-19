@@ -437,7 +437,7 @@ def register(app, ctx: ApiContext) -> None:
         if not isinstance(body, list):
             raise HTTPException(400, "Expected array")
         try:
-            ACCOUNT_STORE.replace_from_roboguard_payload([dict(item) for item in body])
+            ACCOUNT_STORE.replace_from_cronus_payload([dict(item) for item in body])
             count = _replace_farm_accounts_from_store()
         except Exception as e:
             raise HTTPException(400, f"Bad account payload: {e}")

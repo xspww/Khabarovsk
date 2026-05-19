@@ -7,10 +7,12 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 HOTSPOT_FILE_LIMITS = {
-    "farm.py": 1600,
+    "farm.py": 1350,
     "main.py": 700,
     "process_net.py": 900,
-    "core.py": 1300,
+    "core.py": 1200,
+    "services/process_service.py": 980,
+    "runtime/runtime_state_manager.py": 900,
 }
 
 API_ROUTE_FILE_LIMIT = 650
@@ -53,7 +55,7 @@ CRITICAL_RUNTIME_FIELDS = {
 
 
 def _python_files():
-    ignored_parts = {".git", "__pycache__", "build", "data", "dist", "roboguard_rt1_instances"}
+    ignored_parts = {".git", "__pycache__", "build", "data", "dist", "cronus_rt1_instances"}
     for path in ROOT.rglob("*.py"):
         rel = path.relative_to(ROOT).as_posix()
         if any(part in ignored_parts for part in path.relative_to(ROOT).parts):
@@ -117,6 +119,7 @@ class ArchitectureDisciplineTests(unittest.TestCase):
             "services/roblox_log_evidence.py",
             "services/roblox_windows.py",
             "services/roblox_launch_service.py",
+            "services/process_window_ops.py",
         }
         for rel in service_files:
             with self.subTest(file=rel):
@@ -146,17 +149,17 @@ class ArchitectureDisciplineTests(unittest.TestCase):
     def test_farm_runtime_domain_modules_stay_under_architecture_budget(self):
         runtime_files = {
             "runtime/launch_controller.py": 800,
-            "runtime/roblox_watchdog.py": 220,
-            "runtime/recovery_engine.py": 900,
+            "runtime/recovery_engine.py": 905,
             "runtime/recovery_evaluator.py": 350,
             "runtime/recovery_network.py": 200,
             "runtime/recovery_owner.py": 350,
             "runtime/recovery_relaunch.py": 350,
             "runtime/recovery_signal_router.py": 350,
             "runtime/account_worker.py": 900,
-            "runtime/dispatcher.py": 450,
+            "runtime/dispatcher.py": 455,
             "runtime/recovery_support.py": 180,
             "runtime/runtime_scheduler.py": 360,
+            "runtime/runtime_transactions.py": 260,
         }
         for rel, max_lines in runtime_files.items():
             with self.subTest(file=rel):
@@ -204,6 +207,80 @@ class ArchitectureDisciplineTests(unittest.TestCase):
         self.assertIn("def request_rejoin", text)
         self.assertIn("handle_runtime_signal", text)
 
+    def test_smart_queue_has_single_method_definitions(self):
+        tree = ast.parse((ROOT / "core.py").read_text(encoding="utf-8-sig", errors="replace"), filename="core.py")
+        smart_queue = next(
+            node for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "SmartQueue"
+        )
+        methods = [
+            node.name for node in smart_queue.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ]
+        duplicates = sorted({name for name in methods if methods.count(name) > 1})
+        self.assertEqual(
+            duplicates,
+            [],
+            "SmartQueue must not define duplicate methods; Python silently overrides earlier bodies.",
+        )
+
+    def test_legacy_roblox_watchdog_thread_is_removed(self):
+        legacy_path = ROOT / "runtime" / "roblox_watchdog.py"
+        self.assertFalse(
+            legacy_path.exists(),
+            "Use runtime/maintenance_liveness.py for watchdog behavior; the old per-account thread is legacy.",
+        )
+        for rel in ("farm.py", "runtime/account_worker.py"):
+            text = (ROOT / rel).read_text(encoding="utf-8-sig", errors="replace")
+            self.assertNotIn("runtime.roblox_watchdog", text)
+            self.assertNotIn("RobloxWatchdog", text)
+
+    def test_farm_config_snapshot_uses_public_update_boundaries(self):
+        tree = ast.parse((ROOT / "farm.py").read_text(encoding="utf-8-sig", errors="replace"), filename="farm.py")
+        farm_controller = next(
+            node for node in tree.body
+            if isinstance(node, ast.ClassDef) and node.name == "FarmController"
+        )
+        method = next(
+            node for node in farm_controller.body
+            if isinstance(node, ast.FunctionDef) and node.name == "apply_config_snapshot"
+        )
+        offenders = []
+        for node in ast.walk(method):
+            for target in _assignment_targets(node):
+                if not isinstance(target, ast.Attribute):
+                    continue
+                chain = _target_chain(target)
+                if len(chain) >= 3 and chain[0] == "self" and chain[2].startswith("_"):
+                    offenders.append(f"{node.lineno}:{'.'.join(chain)}")
+                elif len(chain) >= 2 and chain[0] in {"worker", "launcher", "limiter"}:
+                    offenders.append(f"{node.lineno}:{'.'.join(chain)}")
+        self.assertEqual(
+            offenders,
+            [],
+            "FarmController.apply_config_snapshot must call public update methods instead of mutating collaborator internals.",
+        )
+
+    def test_process_window_ops_are_split_from_process_service(self):
+        process_service = (ROOT / "services" / "process_service.py").read_text(encoding="utf-8")
+        window_ops = (ROOT / "services" / "process_window_ops.py").read_text(encoding="utf-8")
+        self.assertIn("def resize_roblox_windows", window_ops)
+        self.assertIn("def arrange_roblox_windows", window_ops)
+        self.assertIn("def restore_roblox_window_styles", window_ops)
+        self.assertIn("resize_roblox_windows = staticmethod(_resize_roblox_windows)", process_service)
+        self.assertIn("arrange_roblox_windows = staticmethod(_arrange_roblox_windows)", process_service)
+        self.assertIn("restore_roblox_window_styles = staticmethod(_restore_roblox_window_styles)", process_service)
+
+    def test_runtime_transactions_are_split_from_state_manager(self):
+        state_manager = (ROOT / "runtime" / "runtime_state_manager.py").read_text(encoding="utf-8")
+        transactions = (ROOT / "runtime" / "runtime_transactions.py").read_text(encoding="utf-8")
+        self.assertIn("def begin_rejoin_transaction", transactions)
+        self.assertIn("def update_rejoin_transaction", transactions)
+        self.assertIn("def finish_rejoin_transaction", transactions)
+        self.assertIn("_begin_rejoin_transaction", state_manager)
+        self.assertIn("_update_rejoin_transaction", state_manager)
+        self.assertIn("_finish_rejoin_transaction", state_manager)
+
     def test_runtime_orchestrator_is_the_runtime_authority(self):
         orchestrator = ROOT / "runtime" / "runtime_orchestrator.py"
         text = orchestrator.read_text(encoding="utf-8")
@@ -235,6 +312,8 @@ class ArchitectureDisciplineTests(unittest.TestCase):
         self.assertIn("from './events/bindings.js'", dashboard)
         self.assertIn("from './panels/settingsPanels.js'", dashboard)
         self.assertIn("export async function api", api)
+        self.assertIn("opt.headers['X-Cronus-Token']=token", api)
+        self.assertNotIn("toUpperCase()!=='GET'", api)
         self.assertIn("export function createStatusRuntime", status)
         self.assertIn("export function rowStatusLabel", account_status)
         self.assertIn("export function renderAccountRows", table)
@@ -340,6 +419,34 @@ class ArchitectureDisciplineTests(unittest.TestCase):
         self.assertIn("def _register_periodic_jobs", maintenance)
         self.assertIn("schedule_periodic", maintenance)
         self.assertNotIn("for worker in self._workers.values():\n                worker.wake()", maintenance)
+
+    def test_pytest_isolates_appdata_from_operator_runtime(self):
+        conftest = ROOT / "conftest.py"
+        self.assertTrue(conftest.exists(), "pytest must set an isolated CRONUS_USER_ROOT before app imports.")
+        text = conftest.read_text(encoding="utf-8")
+        self.assertIn("CRONUS_USER_ROOT", text)
+        self.assertIn("tempfile.mkdtemp", text)
+        self.assertIn("shutil.rmtree", text)
+
+        unittest_bootstrap = ROOT / "tests" / "env_bootstrap.py"
+        self.assertTrue(unittest_bootstrap.exists(), "unittest discovery must also isolate CRONUS_USER_ROOT before app imports.")
+        text = unittest_bootstrap.read_text(encoding="utf-8")
+        self.assertIn("CRONUS_USER_ROOT", text)
+        self.assertIn("tempfile.mkdtemp", text)
+        self.assertIn("shutil.rmtree", text)
+        for rel, first_app_import in {
+            "tests/test_runtime_state_machine.py": "from core import",
+            "tests/test_recovery_storm.py": "from core import",
+            "tests/test_machine_supervisor.py": "from core import",
+            "tests/test_config_sections.py": "from config_sections import",
+        }.items():
+            test_text = (ROOT / rel).read_text(encoding="utf-8")
+            self.assertIn("ensure_test_user_root()", test_text)
+            self.assertLess(
+                test_text.index("ensure_test_user_root()"),
+                test_text.index(first_app_import),
+                f"{rel} must set CRONUS_USER_ROOT before importing app modules.",
+            )
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 import os
@@ -7,10 +7,8 @@ import re
 import threading
 import time
 import logging
-from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from logging.handlers import RotatingFileHandler
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from app_paths import APP_DATA_DIR, migrate_legacy_data_files
@@ -28,6 +26,7 @@ from domain.runtime_models import AccountRuntime
 from domain.runtime_lifecycle import lifecycle_for_public
 from domain.state_transitions import LIFECYCLE_ALLOWED_TRANSITIONS
 from runtime.runtime_state_manager import RuntimeStateManager
+from services.safe_rotating_log import ProcessSafeRotatingFileHandler
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  FILE LOGGER
@@ -36,32 +35,34 @@ for _filename in (
     "AccountData.json",
     "account_tools_audit.jsonl",
     "account_import_pending.json",
-    "roboguard_rt1.log",
-    "roboguard_rt1_events.jsonl",
-    "roboguard_rt1_config.json",
-    "roboguard_rt1_cookies.json",
-    "roboguard_rt12_accounts.txt",
-    "roboguard_rt12_runtime.txt",
-    "roboguard_runtime.db",
-    "roboguard_runtime.db-shm",
-    "roboguard_runtime.db-wal",
+    "cronus_rt1.log",
+    "cronus_rt1_events.jsonl",
+    "cronus_rt1_config.json",
+    "cronus_rt1_cookies.json",
+    "cronus_rt12_accounts.txt",
+    "cronus_rt12_runtime.txt",
+    "cronus_runtime.db",
+    "cronus_runtime.db-shm",
+    "cronus_runtime.db-wal",
 ):
     migrate_legacy_data_files((_filename,))
 
-LOG_FILE = os.path.join(APP_DATA_DIR, "roboguard_rt1.log")
-STRUCTURED_LOG_FILE = os.path.join(APP_DATA_DIR, "roboguard_rt1_events.jsonl")
-_logger = logging.getLogger("roboguard_rt1")
+LOG_FILE = os.path.join(APP_DATA_DIR, "cronus_rt1.log")
+STRUCTURED_LOG_FILE = os.path.join(APP_DATA_DIR, "cronus_rt1_events.jsonl")
+
+
+_logger = logging.getLogger("cronus_rt1")
 _logger.setLevel(logging.DEBUG)
 if not _logger.handlers:
-    _fh = RotatingFileHandler(LOG_FILE, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
+    _fh = ProcessSafeRotatingFileHandler(LOG_FILE, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
     _fh.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
     _logger.addHandler(_fh)
 
-_structured_logger = logging.getLogger("roboguard_rt1.structured")
+_structured_logger = logging.getLogger("cronus_rt1.structured")
 _structured_logger.setLevel(logging.INFO)
 _structured_logger.propagate = False
 if not _structured_logger.handlers:
-    _json_fh = RotatingFileHandler(STRUCTURED_LOG_FILE, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
+    _json_fh = ProcessSafeRotatingFileHandler(STRUCTURED_LOG_FILE, maxBytes=5_000_000, backupCount=3, encoding="utf-8")
     _json_fh.setFormatter(logging.Formatter("%(message)s"))
     _structured_logger.addHandler(_json_fh)
 
@@ -312,9 +313,12 @@ class Account:
     liveness_state: str             = "unknown"
     liveness_score: float           = 0.0
     liveness_suspect_since: float   = 0.0
+    resource_pressure_since: float  = 0.0
+    resource_pressure_reason: str   = ""
     process_binding_status: str     = "unbound"
     binding_decision: str           = ""
     process_binding_confidence: float = 0.0
+    process_proof_level: str        = "untrusted"
     process_reject_reason: str      = ""
     process_owner_claim: str        = ""
     unmanaged_live_process_count: int = 0
@@ -383,6 +387,7 @@ class Account:
         self.runtime.binding_status = self.process_binding_status or "unbound"
         self.runtime.binding_decision = self.binding_decision or ""
         self.runtime.process_binding_confidence = float(self.process_binding_confidence or self.ownership_confidence or 0.0)
+        self.runtime.process_proof_level = self.process_proof_level or "untrusted"
         self.runtime.process_reject_reason = self.process_reject_reason or ""
         self.runtime.process_owner_claim = self.process_owner_claim or ""
         self.runtime.unmanaged_live_process_count = int(self.unmanaged_live_process_count or 0)
@@ -843,6 +848,7 @@ class StateManager:
         status: str = "verified",
         process_name: str = "RobloxPlayerBeta.exe",
         confidence: float = 100.0,
+        process_proof_level: str = "strong",
         reason: str = "",
         increment_generation: bool = True,
     ):
@@ -855,6 +861,7 @@ class StateManager:
                 str(identity or ""),
                 reason or "bind_process",
                 confidence=float(confidence or 0.0),
+                process_proof_level=process_proof_level,
                 increment_generation=increment_generation,
             )
             if status and acc.process_binding_status != status:
@@ -880,61 +887,21 @@ class StateManager:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  SIMPLE FIFO QUEUE  (Smart Queue ถูกลบออกตาม spec)
+#  GENERATION-AWARE RECOVERY QUEUE
 # ─────────────────────────────────────────────────────────────────────────────
 class SmartQueue:
     """
-    Simple FIFO queue — ลบ Smart Queue / priority scoring ออกแล้ว
-    คง interface เดิม (push/pop/mark_busy/mark_free) เพื่อ backward compat
+    Deduplicates recovery work by account and rejects stale runtime generations.
+    Lower account priority values run first; boosted recovery reasons jump ahead.
     """
+
     def __init__(self):
-        self._lock     = threading.Lock()
-        self._cond     = threading.Condition(self._lock)
-        self._queue: deque = deque()
-        self._busy     = threading.Event()
-
-    def push(self, acc: Account, reason: str = ""):
-        with self._cond:
-            # ป้องกัน duplicate
-            if acc not in self._queue:
-                self._queue.append(acc)
-                flog(f"[QUEUE] push {acc.display_name} ({reason}) — size={len(self._queue)}")
-                self._cond.notify_all()
-
-    def push(self, acc: Account, reason: str = ""):
-        with self._cond:
-            if acc in self._queue:
-                return
-
-            boosted = any(flag in reason for flag in ("force_rejoin", "network_restored", "session_restored"))
-            insert_at = len(self._queue)
-            new_pri = int(getattr(acc, "priority", 50) or 50)
-
-            if boosted:
-                insert_at = 0
-            else:
-                for idx, queued in enumerate(self._queue):
-                    queued_pri = int(getattr(queued, "priority", 50) or 50)
-                    if new_pri < queued_pri:
-                        insert_at = idx
-                        break
-
-            self._queue.insert(insert_at, acc)
-            flog(
-                f"[QUEUE] push {acc.display_name} ({reason}) - size={len(self._queue)} "
-                f"priority={new_pri} idx={insert_at}"
-            )
-            self._cond.notify_all()
-
-    def pop(self, timeout: float = 1.0) -> Optional[Account]:
-        deadline = time.time() + timeout
-        with self._cond:
-            while not self._queue:
-                remaining = deadline - time.time()
-                if remaining <= 0:
-                    return None
-                self._cond.wait(timeout=min(0.5, remaining))
-            return self._queue.popleft()
+        self._lock = threading.Lock()
+        self._cond = threading.Condition(self._lock)
+        self._entries: Dict[str, Dict[str, Any]] = {}
+        self._busy = threading.Event()
+        self._closed = False
+        self._stale_rejections = 0
 
     def is_busy(self) -> bool:
         return self._busy.is_set()
@@ -952,18 +919,6 @@ class SmartQueue:
                 break
             time.sleep(0.5)
 
-    def size(self) -> int:
-        with self._lock:
-            return len(self._queue)
-
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._cond = threading.Condition(self._lock)
-        self._entries: Dict[str, Dict[str, Any]] = {}
-        self._busy = threading.Event()
-        self._closed = False
-        self._stale_rejections = 0
-
     @staticmethod
     def _is_boosted(reason: str) -> bool:
         return any(flag in str(reason or "") for flag in ("force_rejoin", "network_restored", "session_restored"))
@@ -974,6 +929,7 @@ class SmartQueue:
         reason: str = "",
         runtime_generation: Optional[int] = None,
         recovery_generation: Optional[int] = None,
+        delay_seconds: float = 0.0,
     ):
         key = acc._config_username
         with self._cond:
@@ -990,7 +946,8 @@ class SmartQueue:
                 )
                 return
             now = time.time()
-            due_at = max(now, float(getattr(acc, "cooldown_until", 0.0) or 0.0))
+            delay_until = now + max(0.0, float(delay_seconds or 0.0))
+            due_at = max(now, delay_until, float(getattr(acc, "cooldown_until", 0.0) or 0.0))
             generation = int(
                 recovery_generation
                 if recovery_generation is not None

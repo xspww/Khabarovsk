@@ -74,6 +74,9 @@ class SystemMaintenance(
             record_event=record_runtime_event,
         )
 
+    def update_config(self, cfg: dict) -> None:
+        self._cfg = cfg
+
     def run(self):
         flog("[MAINT] started")
         self._register_periodic_jobs()

@@ -1,11 +1,19 @@
 from __future__ import annotations
 
 import time
+from typing import Dict, List, Optional
 
 from core import AccountState, flog, flog_kv
 from services.process_service import ProcessManager, ProcessService
-from services.captcha_guard import CAPTCHA_REASON, is_account_captcha_required, set_account_captcha_hold
+from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_account_captcha_required, set_account_captcha_hold
+from runtime.home_rejoin_guard import detect_home_rejoin_issue
 from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
+from runtime.maintenance_watchdog_actions import (
+    handle_disconnect_dialog_rejoin,
+    handle_frozen_recovery_signal,
+    handle_memory_pressure_rejoin,
+    log_memory_pressure_hold,
+)
 
 
 class MaintenanceLivenessMixin:
@@ -242,6 +250,15 @@ class MaintenanceLivenessMixin:
         except Exception:
             popup_scan_max_parallel = 2
         popup_enabled = bool(self._cfg.get("popup_disconnected_enabled", True))
+        memory_guard_enabled = bool(self._cfg.get("roblox_memory_guard_enabled", True))
+        try:
+            memory_guard_mb = max(512.0, float(self._cfg.get("roblox_memory_guard_mb", 6144.0) or 6144.0))
+        except Exception:
+            memory_guard_mb = 6144.0
+        try:
+            memory_guard_hold = max(5.0, float(self._cfg.get("roblox_memory_guard_hold_seconds", 30.0) or 30.0))
+        except Exception:
+            memory_guard_hold = 30.0
         net_online = self._recovery._net.is_online()
         popup_scan_at = getattr(self, "_last_popup_scan_at", None)
         if popup_scan_at is None:
@@ -326,6 +343,9 @@ class MaintenanceLivenessMixin:
 
             if state == "captcha" or str(dialog.get("reason_key") or "") == CAPTCHA_REASON:
                 detail = str(dialog.get("detail") or "").strip() or "Roblox Security verification CAPTCHA visible"
+                with acc._lock:
+                    captcha_pid = acc.pid
+                    captcha_runtime_generation = acc.runtime_generation
                 if not is_account_captcha_required(acc):
                     flog_kv(
                         "WATCHDOG",
@@ -338,7 +358,34 @@ class MaintenanceLivenessMixin:
                         detail=detail,
                     )
                 set_account_captcha_hold(acc, detail, source="watchdog_popup", runtime_writer=self._state_mgr)
-                self._state_mgr.set_binding_status(acc, "verified", reason="captcha_hold")
+                if captcha_pid and hasattr(self._state_mgr, "clear_process_binding"):
+                    kill_result = ProcessService.safe_kill_bound_process(
+                        acc,
+                        self._state_mgr,
+                        reason="captcha_hold",
+                        expected_runtime_generation=captcha_runtime_generation,
+                        increment_generation=False,
+                    )
+                    flog_kv(
+                        "CAPTCHA",
+                        "account_process_closed",
+                        "warning",
+                        account=acc.display_name,
+                        pid=captcha_pid,
+                        killed=bool(kill_result.get("killed")),
+                        kill_reason=kill_result.get("reason", ""),
+                    )
+                else:
+                    flog_kv(
+                        "CAPTCHA",
+                        "account_process_close_skipped",
+                        "warning",
+                        account=acc.display_name,
+                        pid=captcha_pid or "",
+                        reason="missing_bound_pid" if not captcha_pid else "state_manager_unavailable",
+                    )
+                if hasattr(self._recovery, "fail_account"):
+                    self._recovery.fail_account(acc, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
                 continue
 
             if state == "missing":
@@ -346,8 +393,81 @@ class MaintenanceLivenessMixin:
                     worker.handle_missing_bound_process("maintenance_pid_missing")
                 continue
 
+            home_issue = detect_home_rejoin_issue(acc, self._cfg, now, in_game_for)
+            if home_issue and not recovery_inflight:
+                reason_key = str(home_issue.get("reason_key") or "home_screen_stuck")
+                try:
+                    home_hold_sec = max(1.0, float(self._cfg.get("home_rejoin_hold_seconds", 5) or 5))
+                except Exception:
+                    home_hold_sec = 5.0
+                with acc._lock:
+                    if acc.last_watchdog_classification != "home_screen_stuck" or not acc.liveness_suspect_since:
+                        acc.liveness_suspect_since = now
+                        home_suspect_for = 0.0
+                    else:
+                        home_suspect_for = max(0.0, now - acc.liveness_suspect_since)
+                    runtime_generation = acc.runtime_generation
+                    session_id = acc.session_id
+                    launch_nonce = acc.launch_nonce
+                    transaction_id = acc.rejoin_transaction_id
+                    acc.liveness_state = "home_screen_stuck"
+                    acc.last_watchdog_classification = "home_screen_stuck"
+                    acc.last_activity_reason = f"home_guard:{reason_key}"
+                    acc.sync_runtime("home_screen_stuck")
+                self._set_recovery_status(acc, status="home_screen_stuck", reason=reason_key, inflight=False)
+                if home_suspect_for < home_hold_sec:
+                    flog_kv(
+                        "WATCHDOG",
+                        "home_screen_suspect",
+                        "warning",
+                        account=acc.display_name,
+                        pid=pid,
+                        reason=reason_key,
+                        suspect=f"{home_suspect_for:.1f}",
+                        hold=f"{home_hold_sec:.1f}",
+                        detail=home_issue.get("detail", ""),
+                        observed_place_id=home_issue.get("observed_place_id", ""),
+                        observed_job_id=home_issue.get("observed_job_id", ""),
+                    )
+                    continue
+                flog_kv(
+                    "WATCHDOG",
+                    "home_screen_rejoin_signal",
+                    "warning",
+                    account=acc.display_name,
+                    pid=pid,
+                    reason=reason_key,
+                    suspect=f"{home_suspect_for:.1f}",
+                    detail=home_issue.get("detail", ""),
+                    launch_age=f"{float(home_issue.get('launch_age') or 0.0):.1f}",
+                    observed_place_id=home_issue.get("observed_place_id", ""),
+                    observed_job_id=home_issue.get("observed_job_id", ""),
+                    runtime_generation=runtime_generation,
+                    session_id=session_id,
+                    transaction_id=transaction_id,
+                )
+                with acc._lock:
+                    acc.liveness_suspect_since = 0.0
+                self._runtime_signal(
+                    acc,
+                    "loading_freeze",
+                    reason_key,
+                    payload={
+                        "trigger": "home_screen_guard",
+                        "detail": f"PID={pid} {home_issue.get('detail', '')}",
+                        "reason_msg": f"PID={pid} {home_issue.get('detail', '')}",
+                    },
+                    expected_runtime_generation=runtime_generation,
+                    expected_session_id=session_id,
+                    expected_launch_nonce=launch_nonce,
+                    expected_transaction_id=transaction_id,
+                )
+                continue
+
             inactive_for = max(0.0, now - last_activity)
             dialog_rejoin: Optional[Dict[str, Any]] = None
+            memory_pressure_hold: Optional[Dict[str, Any]] = None
+            memory_pressure_rejoin: Optional[Dict[str, Any]] = None
             with acc._lock:
                 if state != acc.liveness_state:
                     flog_kv(
@@ -368,7 +488,37 @@ class MaintenanceLivenessMixin:
                 acc.last_activity_cpu = cpu
                 acc.last_activity_ram_mb = ram
 
-                if state in {"alive", "idle"} and score >= 4.0:
+                if memory_guard_enabled and ram >= memory_guard_mb and not recovery_inflight:
+                    if acc.resource_pressure_reason != "process_memory_pressure" or not acc.resource_pressure_since:
+                        acc.resource_pressure_since = now
+                        memory_high_for = 0.0
+                    else:
+                        memory_high_for = max(0.0, now - acc.resource_pressure_since)
+                    acc.resource_pressure_reason = "process_memory_pressure"
+                    acc.liveness_state = "memory_pressure"
+                    acc.last_watchdog_classification = "memory_pressure"
+                    acc.last_activity_reason = f"resource:memory_pressure:{ram:.1f}MB"
+                    pressure_payload = {
+                        "runtime_generation": acc.runtime_generation,
+                        "session_id": acc.session_id,
+                        "launch_nonce": acc.launch_nonce,
+                        "transaction_id": acc.rejoin_transaction_id,
+                        "ram_mb": ram,
+                        "limit_mb": memory_guard_mb,
+                        "high_for": memory_high_for,
+                    }
+                    if memory_high_for >= memory_guard_hold:
+                        acc.resource_pressure_since = 0.0
+                        memory_pressure_rejoin = pressure_payload
+                    else:
+                        memory_pressure_hold = pressure_payload
+                elif not memory_guard_enabled or ram < memory_guard_mb:
+                    acc.resource_pressure_since = 0.0
+                    acc.resource_pressure_reason = ""
+
+                if memory_pressure_hold or memory_pressure_rejoin:
+                    pass
+                elif state in {"alive", "idle"} and score >= 4.0:
                     if acc.recovery_status in {"checking_disconnect", "disconnect_detected"} and not acc.recovery_inflight:
                         self._set_recovery_status(acc, status="in_game", reason="liveness_alive_clear_disconnect_check", inflight=False)
                     acc.last_activity_at = now
@@ -429,113 +579,32 @@ class MaintenanceLivenessMixin:
                 else:
                     suspect_for = now - acc.liveness_suspect_since
 
+            if memory_pressure_rejoin:
+                handle_memory_pressure_rejoin(self, acc, pid, memory_pressure_rejoin)
+                continue
+
+            if memory_pressure_hold:
+                log_memory_pressure_hold(acc, pid, memory_pressure_hold, memory_guard_hold)
+                continue
+
             if dialog_rejoin:
-                pid_was = pid
-                reason_key = str(dialog_rejoin.get("reason_key") or "connection_error")
-                detail = str(dialog_rejoin.get("detail") or "")
-                error_code = str(dialog_rejoin.get("error_code") or "")
-                flog_kv(
-                    "WATCHDOG",
-                    "disconnect_dialog_rejoin_signal",
-                    "warning",
-                    account=acc.display_name,
-                    pid=pid_was,
-                    reason=reason_key,
-                    error_code=error_code,
-                    confidence=f"{float(dialog_rejoin.get('popup_confidence') or 0.0):.2f}",
-                    source=dialog_rejoin.get("evidence_source", ""),
-                    visual_source=dialog_rejoin.get("visual_evidence_source", ""),
-                    detail=detail,
-                    reconnecting_for=f"{float(dialog_rejoin.get('reconnecting_for') or 0.0):.1f}",
-                    runtime_generation=dialog_rejoin.get("runtime_generation"),
-                    session_id=dialog_rejoin.get("session_id"),
-                    transaction_id=dialog_rejoin.get("transaction_id"),
-                )
-                self._runtime_signal(
-                    acc,
-                    "disconnect_detected",
-                    reason_key,
-                    payload={
-                        "trigger": "watchdog_popup",
-                        "detail": f"PID={pid_was} UI={detail}",
-                        "reason_msg": f"PID={pid_was} UI={detail}",
-                        "popup_code": error_code,
-                        "popup_confidence": dialog_rejoin.get("popup_confidence", 0.0),
-                        "disconnect_category": dialog_rejoin.get("disconnect_category", ""),
-                        "visual_disconnect": bool(dialog_rejoin.get("visual_disconnect", False)),
-                        "evidence_source": dialog_rejoin.get("evidence_source", ""),
-                        "visual_evidence_source": dialog_rejoin.get("visual_evidence_source", ""),
-                    },
-                    expected_runtime_generation=int(dialog_rejoin.get("runtime_generation") or 0),
-                    expected_session_id=str(dialog_rejoin.get("session_id") or ""),
-                    expected_launch_nonce=str(dialog_rejoin.get("launch_nonce") or ""),
-                    expected_transaction_id=str(dialog_rejoin.get("transaction_id") or ""),
-                )
+                handle_disconnect_dialog_rejoin(self, acc, pid, dialog_rejoin)
                 continue
 
             if inactive_for < activity_timeout or suspect_for < hold_sec:
                 continue
 
-            pid_was = pid
-            with acc._lock:
-                runtime_generation = acc.runtime_generation
-                session_id = acc.session_id
-                launch_nonce = acc.launch_nonce
-                transaction_id = acc.rejoin_transaction_id
-            flog_kv(
-                "WATCHDOG",
-                "frozen_recovery_signal",
-                "warning",
-                account=acc.display_name,
-                pid=pid_was,
-                reason=reason_key,
-                state=state,
-                score=f"{score:.1f}",
-                inactive=f"{inactive_for:.1f}",
-                suspect=f"{suspect_for:.1f}",
-                cpu=f"{cpu:.2f}",
-                ram=f"{ram:.1f}",
-                windows=windows,
+            handle_frozen_recovery_signal(
+                self,
+                acc,
+                worker,
+                pid,
+                reason_key,
+                state,
+                score,
+                inactive_for,
+                suspect_for,
+                cpu,
+                ram,
+                windows,
             )
-            if self._supervisor:
-                self._supervisor.emit(
-                    "WatchdogSupervisor",
-                    "WATCHDOG_TIMEOUT",
-                    account=acc,
-                    severity="warning",
-                    reason=reason_key,
-                    payload={
-                        "state": state,
-                        "score": score,
-                        "inactive_for": inactive_for,
-                        "suspect_for": suspect_for,
-                        "cpu": cpu,
-                        "ram_mb": ram,
-                        "windows": windows,
-                    },
-                )
-            with acc._lock:
-                acc.liveness_state = "frozen"
-                acc.last_watchdog_classification = "frozen"
-                acc.liveness_suspect_since = 0.0
-                acc.last_activity_reason = f"watchdog:{reason_key}"
-            flog_kv(
-                "WATCHDOG",
-                "verified_kill_deferred",
-                "warning",
-                account=acc.display_name,
-                pid=pid_was,
-                reason=reason_key,
-                runtime_generation=runtime_generation,
-                session_id=session_id,
-                transaction_id=transaction_id,
-            )
-            if worker:
-                worker.report_fault(
-                    reason_key,
-                    f"PID={pid_was} state={state} score={score:.1f} inactive={inactive_for:.1f}s",
-                    expected_runtime_generation=runtime_generation,
-                    expected_session_id=session_id,
-                    expected_launch_nonce=launch_nonce,
-                    expected_transaction_id=transaction_id,
-                )

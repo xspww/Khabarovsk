@@ -25,6 +25,7 @@ COOKIE_RE = re.compile(
 )
 LINK_CODE_RE = re.compile(r"((?:privateServerLinkCode|linkCode|accessCode)=)[^&\s]+", re.I)
 
+CRONUS_ENTROPY = b"Cronus Hybrid AccountData v1"
 ROBOGUARD_ENTROPY = b"RoboGuard Hybrid AccountData v1"
 RAM_ENTROPY = bytes(
     [
@@ -86,6 +87,7 @@ RAM_ENTROPY = bytes(
         0x66,
     ]
 )
+DPAPI_COMPAT_ENTROPIES = (CRONUS_ENTROPY, ROBOGUARD_ENTROPY, RAM_ENTROPY, b"")
 
 
 class DATA_BLOB(ctypes.Structure):
@@ -97,7 +99,7 @@ def _make_blob(data: bytes) -> Tuple[DATA_BLOB, Any]:
     return DATA_BLOB(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char))), buffer
 
 
-def dpapi_protect(data: bytes, entropy: bytes = ROBOGUARD_ENTROPY) -> bytes:
+def dpapi_protect(data: bytes, entropy: bytes = CRONUS_ENTROPY) -> bytes:
     if os.name != "nt":
         raise RuntimeError("DPAPI is only available on Windows")
     crypt32 = ctypes.windll.crypt32
@@ -124,7 +126,7 @@ def dpapi_protect(data: bytes, entropy: bytes = ROBOGUARD_ENTROPY) -> bytes:
         _ = keepalive
 
 
-def dpapi_unprotect(data: bytes, entropy: bytes = ROBOGUARD_ENTROPY) -> bytes:
+def dpapi_unprotect(data: bytes, entropy: bytes = CRONUS_ENTROPY) -> bytes:
     if os.name != "nt":
         raise RuntimeError("DPAPI is only available on Windows")
     crypt32 = ctypes.windll.crypt32
@@ -151,11 +153,21 @@ def dpapi_unprotect(data: bytes, entropy: bytes = ROBOGUARD_ENTROPY) -> bytes:
         _ = keepalive
 
 
+def dpapi_unprotect_compatible(data: bytes) -> bytes:
+    last_error: Optional[Exception] = None
+    for entropy in DPAPI_COMPAT_ENTROPIES:
+        try:
+            return dpapi_unprotect(data, entropy)
+        except Exception as exc:
+            last_error = exc
+    raise ValueError(f"Unsupported DPAPI payload: {last_error}")
+
+
 def encrypt_cookie(cookie: str) -> str:
     cookie = str(cookie or "").strip()
     if not cookie:
         return ""
-    protected = dpapi_protect(cookie.encode("utf-8"), ROBOGUARD_ENTROPY)
+    protected = dpapi_protect(cookie.encode("utf-8"), CRONUS_ENTROPY)
     return "dpapi:v1:" + base64.b64encode(protected).decode("ascii")
 
 
@@ -165,7 +177,7 @@ def decrypt_cookie(value: str) -> str:
         return ""
     if value.startswith("dpapi:v1:"):
         raw = base64.b64decode(value.split(":", 2)[2].encode("ascii"))
-        return dpapi_unprotect(raw, ROBOGUARD_ENTROPY).decode("utf-8", errors="replace")
+        return dpapi_unprotect_compatible(raw).decode("utf-8", errors="replace")
     if value.startswith("_|WARNING:"):
         return value
     return ""
@@ -345,7 +357,7 @@ class AccountDataStore:
         else:
             last_error: Optional[Exception] = None
             raw = None
-            for entropy in (ROBOGUARD_ENTROPY, RAM_ENTROPY, b""):
+            for entropy in DPAPI_COMPAT_ENTROPIES:
                 try:
                     raw = cls._json_from_bytes(dpapi_unprotect(data, entropy))
                     break
@@ -371,7 +383,7 @@ class AccountDataStore:
     def write_records(self, records: Iterable[Dict[str, Any]]) -> None:
         clean = [self.normalize_record(item) for item in records if isinstance(item, dict)]
         payload = {
-            "schema": "roboguard.accountdata.v1",
+            "schema": "cronus.accountdata.v1",
             "updated_at": time.time(),
             "accounts": clean,
         }
@@ -484,7 +496,7 @@ class AccountDataStore:
         return out
 
     @classmethod
-    def to_roboguard_account(cls, record: Dict[str, Any]) -> Dict[str, Any]:
+    def to_cronus_account(cls, record: Dict[str, Any]) -> Dict[str, Any]:
         normalized = cls.normalize_record(record)
         return {
             "username": normalized["username"],
@@ -504,8 +516,8 @@ class AccountDataStore:
             "finished_at": normalized["finished_at"],
         }
 
-    def to_roboguard_accounts(self) -> List[Dict[str, Any]]:
-        return [self.to_roboguard_account(record) for record in self.read_records(include_cookies=True)]
+    def to_cronus_accounts(self) -> List[Dict[str, Any]]:
+        return [self.to_cronus_account(record) for record in self.read_records(include_cookies=True)]
 
     def ensure_from_legacy(self, legacy_accounts: Iterable[Dict[str, Any]]) -> None:
         if os.path.exists(self.path) and self.read_records():
@@ -514,7 +526,7 @@ class AccountDataStore:
         if records:
             self.write_records(records)
 
-    def replace_from_roboguard_payload(self, payload: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def replace_from_cronus_payload(self, payload: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         existing = {
             str(record.get("username") or "").strip().lower(): record
             for record in self.read_records(include_cookies=False)

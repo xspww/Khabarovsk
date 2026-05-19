@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 
 from app_paths import APP_DATA_DIR
 from config_validation import CONFIG_SCHEMA_VERSION, validate_config_payload
-from config_sections import ArgusConfigSections, build_config_sections
+from config_sections import CronusConfigSections, build_config_sections
 from domain.account_state import RuntimeState
 
 
@@ -25,10 +25,10 @@ def _flog_kv(scope: str, name: str, level: str = "info", **fields: Any) -> None:
     flog_kv(scope, name, level, **fields)
 
 
-CONFIG_FILE = os.path.join(APP_DATA_DIR, "roboguard_rt1_config.json")
-COOKIE_STORE_FILE = os.path.join(APP_DATA_DIR, "roboguard_rt1_cookies.json")
-ACCOUNTS_TEXT_FILE = os.path.join(APP_DATA_DIR, "roboguard_rt12_accounts.txt")
-RUNTIME_TEXT_FILE = os.path.join(APP_DATA_DIR, "roboguard_rt12_runtime.txt")
+CONFIG_FILE = os.path.join(APP_DATA_DIR, "cronus_rt1_config.json")
+COOKIE_STORE_FILE = os.path.join(APP_DATA_DIR, "cronus_rt1_cookies.json")
+ACCOUNTS_TEXT_FILE = os.path.join(APP_DATA_DIR, "cronus_rt12_accounts.txt")
+RUNTIME_TEXT_FILE = os.path.join(APP_DATA_DIR, "cronus_rt12_runtime.txt")
 
 DEFAULTS: Dict[str, Any] = {
     "auto_rejoin":              True,
@@ -45,6 +45,10 @@ DEFAULTS: Dict[str, Any] = {
     "queue_delay_seconds":      15,
     "queue_duration_seconds":   15,
     "max_concurrent_accounts":  40,
+    "machine_supervisor_enabled": True,
+    "machine_supervisor_max_launching_accounts": 1,
+    "machine_supervisor_cpu_high_percent": 96.0,
+    "machine_supervisor_memory_high_percent": 96.0,
     "game_private_server_url":  "",
     "game_place_id":            "",
     "auto_create_private_server_enabled": False,
@@ -61,6 +65,8 @@ DEFAULTS: Dict[str, Any] = {
     "cooldown_after_crash":     5,
     "relaunch_loop_window":     45,
     "relaunch_loop_limit":      3,
+    "relaunch_loop_fatal":      False,
+    "relaunch_loop_cooldown_seconds": 300.0,
     "launch_public_fallback_threshold": 2,
     "recovery_confidence_threshold": 45.0,
     "connection_error_rejoin":  True,
@@ -73,6 +79,11 @@ DEFAULTS: Dict[str, Any] = {
     "popup_sample_count": 6,
     "popup_sample_interval_seconds": 0.25,
     "recovery_dedupe_window_seconds": 3,
+    "recovery_storm_enabled": True,
+    "recovery_storm_max_active": 3,
+    "recovery_storm_min_spacing_seconds": 5,
+    "recovery_storm_jitter_seconds": 3,
+    "recovery_storm_outage_backoff_seconds": 30,
     "recovery_budget_enabled": True,
     "recovery_budget_max_attempts": 8,
     "recovery_budget_window_seconds": 300,
@@ -85,6 +96,10 @@ DEFAULTS: Dict[str, Any] = {
     "recovery_restore_window":  3600,
     "watchdog_activity_timeout": 180,
     "watchdog_loading_grace":   90,
+    "home_rejoin_enabled":      True,
+    "home_rejoin_grace_seconds": 60,
+    "home_rejoin_hold_seconds": 5.0,
+    "home_rejoin_require_server_evidence": True,
     "event_bus_workers":        4,
     "event_bus_max_pending":    128,
     # ── Roblox Watchdog (ใหม่ RT.1.0) ──
@@ -92,6 +107,9 @@ DEFAULTS: Dict[str, Any] = {
     "watchdog_cpu_low":         0.9,   # % CPU ต่ำกว่านี้ = ผิดปกติ
     "watchdog_ram_low":         90.0,  # MB RAM ต่ำกว่านี้ = ผิดปกติ
     "watchdog_hold_time":       60,    # วิ รอยืนยันก่อน kill+rejoin
+    "roblox_memory_guard_enabled": True,
+    "roblox_memory_guard_mb":    6144.0,
+    "roblox_memory_guard_hold_seconds": 30.0,
     "fps_limiter_enabled":      False,
     "fps_limit":                240,
     "graphics_auto_enabled":    False,
@@ -115,6 +133,7 @@ DEFAULTS: Dict[str, Any] = {
     "roblox_window_arrange_margin": 0,
     "multi_roblox_enabled": True,
     "rt_rotation_enabled": False,
+    "runtime_account_allowlist": [],
     "accounts":                 [],
     "runtime_state":            {},
 }
@@ -163,7 +182,7 @@ class ConfigManager:
         with self._lock:
             return dict(self._cfg)
 
-    def sections(self) -> ArgusConfigSections:
+    def sections(self) -> CronusConfigSections:
         with self._lock:
             return build_config_sections(dict(self._cfg))
 
@@ -233,16 +252,98 @@ class ConfigManager:
             }
         return {}
 
+    def _legacy_cookie_quarantine_path(self) -> str:
+        base = f"{COOKIE_STORE_FILE}.migrated.bak"
+        if not os.path.exists(base):
+            return base
+        return f"{base}.{int(time.time())}.{os.getpid()}"
+
+    def _quarantine_legacy_cookie_store(self) -> str:
+        if not os.path.exists(COOKIE_STORE_FILE):
+            return ""
+        target = self._legacy_cookie_quarantine_path()
+        with self._io_lock:
+            os.replace(COOKIE_STORE_FILE, target)
+        return target
+
+    def _migrate_legacy_cookie_store(self, accounts: List["Account"], cookie_store: Dict[str, str]) -> bool:
+        if not cookie_store or not os.path.exists(COOKIE_STORE_FILE):
+            return False
+
+        records: List[Dict[str, Any]] = []
+        seen = set()
+        for acc in accounts:
+            username = str(getattr(acc, "username", "") or "").strip()
+            key = username.lower()
+            cookie = cookie_store.get(key, "")
+            if not username or not cookie:
+                continue
+            if not str(getattr(acc, "cookie", "") or "").strip():
+                acc.cookie = cookie
+            item = acc.to_dict()
+            item["cookie"] = cookie
+            records.append(item)
+            seen.add(key)
+
+        for username, cookie in cookie_store.items():
+            if username in seen or not cookie:
+                continue
+            records.append({"username": username, "cookie": cookie})
+
+        if not records:
+            return False
+
+        try:
+            from account_hybrid import ACCOUNT_STORE
+
+            ACCOUNT_STORE.upsert_records(records)
+            migrated = {
+                str(record.get("username") or "").strip().lower(): str(record.get("cookie") or "").strip()
+                for record in ACCOUNT_STORE.read_records(include_cookies=True)
+            }
+            missing = [
+                str(record.get("username") or "").strip()
+                for record in records
+                if migrated.get(str(record.get("username") or "").strip().lower())
+                != str(record.get("cookie") or "").strip()
+            ]
+            if missing:
+                raise RuntimeError(f"AccountData migration verification failed for {len(missing)} account(s)")
+            quarantine_path = self._quarantine_legacy_cookie_store()
+            _flog_kv(
+                "CONFIG",
+                "legacy_cookie_store_migrated",
+                "info",
+                accounts=len(records),
+                quarantine_path=quarantine_path,
+            )
+            return True
+        except Exception as exc:
+            _flog_kv("CONFIG", "legacy_cookie_store_migration_failed", "warning", error=exc)
+            return False
+
     def save_cookies(self, accounts: List[Account]):
         if self._use_ram_cookie_source():
             return
-        cookie_map: Dict[str, str] = {}
+        records: List[Dict[str, Any]] = []
         for acc in accounts:
             username = str(acc.username or "").strip().lower()
             cookie = str(acc.cookie or "").strip()
             if username and cookie:
-                cookie_map[username] = cookie
-        self._write_text_json(COOKIE_STORE_FILE, cookie_map)
+                item = acc.to_dict()
+                item["cookie"] = cookie
+                records.append(item)
+        if not records:
+            return
+        try:
+            from account_hybrid import ACCOUNT_STORE
+
+            ACCOUNT_STORE.upsert_records(records)
+            if os.path.exists(COOKIE_STORE_FILE):
+                self._quarantine_legacy_cookie_store()
+            _flog_kv("CONFIG", "cookies_saved_to_account_data", "info", accounts=len(records))
+        except Exception as exc:
+            _flog_kv("CONFIG", "cookies_save_to_account_data_failed", "warning", error=exc)
 
     def get_accounts(self) -> List["Account"]:
         from core import Account
@@ -265,6 +366,8 @@ class ConfigManager:
                 accounts.append(acc)
             except Exception as e:
                 _flog(f"Account parse error: {e}", "warning")
+        if cookie_store:
+            self._migrate_legacy_cookie_store(accounts, cookie_store)
         return accounts
 
     def save_accounts(self, accounts: List[Account]):

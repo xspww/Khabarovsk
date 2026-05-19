@@ -8,6 +8,8 @@ Cronus Launcher is a Windows-only desktop app for launching Roblox accounts, wat
 
 Cronus Launcher is currently a beta project. It is suitable for local testing and controlled use, but it should not be treated as a polished public release yet.
 
+Product release validation is documented in `docs/product-runbook.md`. The release gate requires compile/tests, JavaScript syntax checks, product preflight, backend smoke, and a single-account live soak against the real target game.
+
 ## Scope
 
 Cronus is designed for:
@@ -66,6 +68,40 @@ python main.py
 
 The backend binds to `127.0.0.1` and uses a per-process local API token for mutating API requests. The dashboard receives that token from the local HTML page and sends it automatically.
 
+## 24/7 Watchdog
+
+Cronus includes an external Windows Task Scheduler watchdog for unattended overnight runs. It checks `http://127.0.0.1:7777/api/status` and starts the backend-only runner if the local API stops responding. The task runs as the current Windows user, not `SYSTEM`, so DPAPI-protected cookies remain readable.
+
+Install or update the watchdog task:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\install_watchdog_task.ps1
+```
+
+Start the task immediately:
+
+```powershell
+Start-ScheduledTask -TaskName "Cronus Launcher Watchdog"
+```
+
+Check watchdog state and recent logs:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\watchdog_status.ps1
+```
+
+Remove the watchdog task:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\uninstall_watchdog_task.ps1
+```
+
+Watchdog logs are written to:
+
+```text
+%LOCALAPPDATA%\Cronus Launcher\data\cronus_watchdog.log
+```
+
 ## Lua Executor Script
 
 For normal auto-rejoin, run this single file in your Roblox executor:
@@ -83,7 +119,7 @@ The Lua contract wraps `/api/lua/rejoin-event` and supports safe runtime signals
 Runtime data currently stays under the existing compatibility folder:
 
 ```text
-%LOCALAPPDATA%\Argus Launcher\data
+%LOCALAPPDATA%\Cronus Launcher\data
 ```
 
 Cookies are encrypted with Windows DPAPI before being written to disk. Local runtime data, logs, databases, and caches are intentionally ignored by Git.

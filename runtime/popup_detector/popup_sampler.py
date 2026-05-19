@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from runtime.popup_detector.popup_classifier import PopupClassification, classify_popup_observation
 from runtime.popup_detector.popup_visual_detector import detect_visual_features
+from runtime.recovery_context import VISUAL_DISCONNECT
 
 
 _HOLD_LOCK = threading.RLock()
@@ -264,6 +265,25 @@ class PopupObserver:
         self.stable_samples = max(1, int(stable_samples or 2))
         self.sampler = PopupWindowSampler()
 
+    def _is_recoverable_visual_candidate(self, item: PopupClassification) -> bool:
+        if not (
+            item.matched
+            and item.visual_disconnect
+            and item.evidence_source == "visual_strong"
+            and item.visual_strength == "strong"
+            and item.confidence >= self.threshold
+        ):
+            return False
+        if item.visual_stage != "modal_button":
+            return False
+        if item.button_pattern not in {"single", "double"}:
+            return False
+        return bool(
+            item.overlay_score >= 0.25
+            and item.modal_score >= 1.0
+            and item.button_score >= 0.38
+        )
+
     def inspect_pid(
         self,
         pid: Optional[int],
@@ -302,9 +322,20 @@ class PopupObserver:
                         break
                     time.sleep(interval)
 
+            visual_recovery_candidates = [
+                item for item in samples
+                if self._is_recoverable_visual_candidate(item)
+            ]
             positive = [
                 item for item in samples
-                if item.matched and item.recovery_allowed and (item.confidence >= self.threshold or item.visual_disconnect)
+                if item.matched
+                and (
+                    (
+                        item.recovery_allowed
+                        and (item.confidence >= self.threshold or item.visual_disconnect)
+                    )
+                    or item in visual_recovery_candidates
+                )
             ]
             coded = [item for item in samples if item.error_code]
             text_confirmed = [
@@ -320,16 +351,28 @@ class PopupObserver:
                 if item.reason_key == "captcha_required"
             ]
             best = max(samples, key=lambda item: item.confidence, default=PopupClassification(False))
+            visual_recovery_confirmed = len(visual_recovery_candidates) >= self.stable_samples
             confirmed = bool(
                 coded
                 or len(text_confirmed) >= self.stable_samples
                 or len(visual_positive) >= self.stable_samples
                 or len(captcha_confirmed) >= self.stable_samples
+                or visual_recovery_confirmed
             )
             result = best.to_dict()
+            if visual_recovery_confirmed and not result.get("recovery_allowed"):
+                visual_best = max(visual_recovery_candidates, key=lambda item: item.confidence)
+                result = visual_best.to_dict()
+                result.update({
+                    "action": "rejoin",
+                    "reason_key": "connection_error",
+                    "disconnect_category": VISUAL_DISCONNECT,
+                    "recovery_allowed": True,
+                })
+            recovery_allowed = bool(result.get("recovery_allowed"))
             result.update({
                 "matched": bool(confirmed),
-                "recovery_allowed": bool(confirmed and best.recovery_allowed),
+                "recovery_allowed": bool(confirmed and recovery_allowed),
                 "sample_count": len(samples),
                 "positive_samples": len(positive),
                 "samples_confirmed": len(coded) or len(text_confirmed) or len(visual_positive) or len(captcha_confirmed),

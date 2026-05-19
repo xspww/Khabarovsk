@@ -1,5 +1,8 @@
 import os
 import atexit
+import contextlib
+import io
+import logging
 import shutil
 import tempfile
 import threading
@@ -7,9 +10,9 @@ import time
 import unittest
 from unittest.mock import patch
 
-_TEST_USER_ROOT = tempfile.mkdtemp(prefix="argus-test-user-root-")
-if "ARGUS_USER_ROOT" not in os.environ:
-    os.environ["ARGUS_USER_ROOT"] = _TEST_USER_ROOT
+_TEST_USER_ROOT = tempfile.mkdtemp(prefix="cronus-test-user-root-")
+if "CRONUS_USER_ROOT" not in os.environ:
+    os.environ["CRONUS_USER_ROOT"] = _TEST_USER_ROOT
     atexit.register(shutil.rmtree, _TEST_USER_ROOT, ignore_errors=True)
 else:
     shutil.rmtree(_TEST_USER_ROOT, ignore_errors=True)
@@ -24,7 +27,7 @@ from runtime.runtime_invariants import check_runtime_invariants
 from runtime.invariant_monitor import RuntimeInvariantMonitor
 from runtime.orphan_sweeper import RuntimeOrphanSweeper
 from runtime.diagnostic_bundle import build_runtime_diagnostic_bundle
-from runtime.runtime_health import build_runtime_health
+from runtime.runtime_health import build_public_farm_health, build_runtime_health, decide_farm_watchdog_action
 from runtime.runtime_store import RuntimeStore
 from runtime.runtime_timeline import RuntimeTimeline
 from runtime.telemetry_view import build_runtime_telemetry
@@ -35,6 +38,7 @@ from runtime.runtime_state_manager import RuntimeStateManager
 from services.network_fault_injector import CommandResult, NetworkFaultInjector, RULE_PREFIX
 from services.process_service import ProcessService
 from services.roblox_log_evidence import classify_log_line, collect_recent_log_evidence
+from services.safe_rotating_log import ProcessSafeRotatingFileHandler
 from process_net import ProcessManager
 
 
@@ -42,7 +46,7 @@ def auth_post(client, path, **kwargs):
     import main
 
     headers = dict(kwargs.pop("headers", {}) or {})
-    headers.setdefault("X-Argus-Token", main.INSTANCE_TOKEN)
+    headers.setdefault("X-Cronus-Token", main.INSTANCE_TOKEN)
     return client.post(path, headers=headers, **kwargs)
 
 
@@ -50,6 +54,33 @@ class RuntimeHardeningTests(unittest.TestCase):
     class _AlwaysOnlineNet:
         def is_online(self):
             return True
+
+    def test_process_safe_rotating_handler_writes_when_rollover_is_locked(self):
+        temp_dir = tempfile.mkdtemp(prefix="cronus-log-handler-")
+        path = os.path.join(temp_dir, "events.jsonl")
+
+        class LockedRolloverHandler(ProcessSafeRotatingFileHandler):
+            def doRollover(self):
+                raise PermissionError(32, "file is locked")
+
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write("x" * 32)
+            handler = LockedRolloverHandler(path, maxBytes=1, backupCount=1, encoding="utf-8")
+            handler.setFormatter(logging.Formatter("%(message)s"))
+            record = logging.LogRecord("unit.locked", logging.INFO, __file__, 1, "survived", (), None)
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                handler.emit(record)
+
+            handler.close()
+            self.assertIsNone(handler.stream)
+            with open(path, "r", encoding="utf-8") as f:
+                self.assertIn("survived", f.read())
+            self.assertNotIn("--- Logging error ---", stderr.getvalue())
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
 
     def test_event_bus_slow_handler_log_keeps_worker_alive(self):
         bus = EventBus(workers=1, max_pending=8)
@@ -584,6 +615,78 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertTrue(evidence["matched"])
         self.assertEqual(evidence["error_code"], "273")
 
+    def test_cached_log_evidence_reuses_recent_snapshot(self):
+        from services.roblox_log_evidence import CachedLogEvidenceCollector
+
+        calls = []
+
+        def collector(**_kwargs):
+            calls.append(time.time())
+            return {"matched": False, "source": "unit", "reason": f"call_{len(calls)}"}
+
+        cache = CachedLogEvidenceCollector(ttl_seconds=30.0)
+
+        first = cache.collect(collector=collector, since_seconds=60, now=100.0)
+        second = cache.collect(collector=collector, since_seconds=60, now=101.0)
+        third = cache.collect(collector=collector, since_seconds=60, now=131.0)
+
+        self.assertEqual(len(calls), 2)
+        self.assertFalse(first["cached"])
+        self.assertTrue(second["cached"])
+        self.assertEqual(second["reason"], "call_1")
+        self.assertFalse(third["cached"])
+        self.assertEqual(third["reason"], "call_2")
+
+    def test_popup_log_evidence_hot_path_does_not_sleep_or_retry(self):
+        import services.roblox_liveness as roblox_liveness
+
+        calls = []
+        original_collect = roblox_liveness.collect_recent_log_evidence
+        original_sleep = roblox_liveness.time.sleep
+        try:
+            roblox_liveness._LOG_EVIDENCE_CACHE.clear()
+            roblox_liveness.collect_recent_log_evidence = lambda **kwargs: calls.append(kwargs) or {  # type: ignore[assignment]
+                "matched": False,
+                "source": "roblox_log",
+                "reason": "unit_no_match",
+            }
+            roblox_liveness.time.sleep = lambda _seconds: (_ for _ in ()).throw(AssertionError("hot liveness path slept"))  # type: ignore[assignment]
+
+            first = roblox_liveness._collect_popup_log_evidence(now=200.0)
+            second = roblox_liveness._collect_popup_log_evidence(now=201.0)
+
+            self.assertFalse(first["matched"])
+            self.assertTrue(second["cached"])
+            self.assertEqual(len(calls), 1)
+        finally:
+            roblox_liveness.collect_recent_log_evidence = original_collect  # type: ignore[assignment]
+            roblox_liveness.time.sleep = original_sleep  # type: ignore[assignment]
+            if hasattr(roblox_liveness, "_LOG_EVIDENCE_CACHE"):
+                roblox_liveness._LOG_EVIDENCE_CACHE.clear()
+
+    def test_memory_pressure_hold_log_is_rate_limited(self):
+        import runtime.maintenance_watchdog_actions as watchdog_actions
+
+        class AccountStub:
+            display_name = "RateLimitUser"
+
+        calls = []
+        original_log = watchdog_actions.flog_kv
+        try:
+            watchdog_actions.WATCHDOG_LOG_RATE_LIMITER.clear()
+            watchdog_actions.flog_kv = lambda *args, **kwargs: calls.append((args, kwargs))  # type: ignore[assignment]
+            pressure = {"ram_mb": 7000, "limit_mb": 6144, "high_for": 1.0}
+
+            watchdog_actions.log_memory_pressure_hold(AccountStub(), 1234, pressure, 30.0)
+            watchdog_actions.log_memory_pressure_hold(AccountStub(), 1234, pressure, 30.0)
+
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][0][1], "memory_pressure_hold")
+        finally:
+            watchdog_actions.flog_kv = original_log  # type: ignore[assignment]
+            if hasattr(watchdog_actions, "WATCHDOG_LOG_RATE_LIMITER"):
+                watchdog_actions.WATCHDOG_LOG_RATE_LIMITER.clear()
+
     def test_recovery_evaluate_rejects_stale_runtime_generation(self):
         recovery, queue, stop = self._make_recovery()
         acc = Account(username="stale_eval_user")
@@ -737,6 +840,38 @@ class RuntimeHardeningTests(unittest.TestCase):
             stop.set()
             recovery.stop()
 
+    def test_relaunch_loop_enters_cooldown_instead_of_failed_by_default(self):
+        recovery, _queue, stop = self._make_recovery()
+        recovery._cfg["relaunch_loop_limit"] = 3
+        recovery._cfg["relaunch_loop_window"] = 45
+        recovery._cfg["relaunch_loop_cooldown_seconds"] = 30
+        acc = Account(username="rapid_crash_user")
+        acc.state = AccountState.IN_GAME
+        acc.desired_state = AccountState.IN_GAME
+        acc.session_checked = True
+        acc.session_valid = True
+        acc.in_game_since = time.time()
+        acc.rapid_relaunch_count = 2
+        acc.pid = 4321
+        acc.bound_process_identity = "robloxplayerbeta.exe|1|c:\\roblox\\robloxplayerbeta.exe"
+        original_kill = ProcessService.safe_kill_bound_process
+        ProcessService.safe_kill_bound_process = staticmethod(
+            lambda *args, **kwargs: {"ok": True, "killed": True, "pid": 4321, "reason": "killed"}
+        )
+        try:
+            recovery.report_crash(acc, "process_crash", "rapid crash")
+
+            self.assertEqual(acc.state, AccountState.COOLDOWN)
+            self.assertEqual(acc.recovery_status, "scheduled")
+            self.assertEqual(acc.last_recovery_reason, "relaunch_loop")
+            self.assertEqual(acc.rapid_relaunch_count, 0)
+            self.assertGreater(acc.recovery_scheduled_at, time.time())
+            self.assertNotEqual(acc.state, AccountState.FAILED)
+        finally:
+            ProcessService.safe_kill_bound_process = original_kill
+            stop.set()
+            recovery.stop()
+
     def test_connection_error_recovery_does_not_increment_crash_or_fail_counts(self):
         recovery, _queue, stop = self._make_recovery()
         acc = Account(username="disconnect_recovery_user")
@@ -764,6 +899,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         acc.session_valid = True
         acc.pid = 1234
         acc.process_binding_status = "verified"
+        acc.process_proof_level = "strong"
         acc.last_watchdog_classification = "disconnect_dialog_rejoin"
         acc.liveness_state = "reconnecting"
         acc.liveness_suspect_since = time.time()
@@ -993,7 +1129,8 @@ class RuntimeHardeningTests(unittest.TestCase):
             "crash": 0,
             "queued": 0,
             "failed": 1,
-            "runtime_health": {"warnings": ["runtime_invariant_violations"]},
+            "runtime_health": {"warnings": ["runtime_invariant_violations", "scheduler_overdue"]},
+            "scheduler_health": {"pending_count": 3, "overdue_count": 1, "callback_failure_count": 1},
             "queue_snapshot": {"size": 0},
             "supervisor": {"ok": True},
             "accounts": [
@@ -1049,6 +1186,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertNotIn("cookie", bundle["accounts"][0])
         self.assertNotIn("active_vip", bundle["accounts"][0])
         self.assertEqual(bundle["accounts"][0]["orphan_pid"], 4321)
+        self.assertEqual(bundle["scheduler_health"]["overdue_count"], 1)
         self.assertEqual(bundle["config"]["max_retry"], 10)
         self.assertNotIn("password", bundle["config"])
         self.assertNotIn("game_private_server_url", bundle["config"])
@@ -1057,6 +1195,7 @@ class RuntimeHardeningTests(unittest.TestCase):
         self.assertNotIn("event-cookie", serialized)
         self.assertNotIn("event-link", serialized)
         self.assertIn("Resolve blocked account gates", " ".join(bundle["recommendations"]))
+        self.assertIn("Check runtime scheduler health", " ".join(bundle["recommendations"]))
 
     def test_runtime_health_does_not_count_normal_start_as_relaunch_pressure(self):
         accounts = [{"state": "IN_GAME", "process_alive": True, "last_heartbeat": 100.0} for _ in range(6)]
@@ -1086,6 +1225,156 @@ class RuntimeHardeningTests(unittest.TestCase):
 
         self.assertIn("relaunch_pressure", health["warnings"])
         self.assertEqual(health["relaunch_event_count"], 3)
+
+    def test_runtime_health_ignores_old_relaunch_pressure_events(self):
+        accounts = [{"state": "IDLE", "process_alive": False, "last_heartbeat": 0.0}]
+        events = [
+            {"event_type": "process_lost", "reason": "pid_dead", "severity": "info", "ts": 100.0},
+            {"event_type": "error", "reason": "relaunch_loop", "severity": "critical", "ts": 101.0},
+            {"event_type": "launch_failed", "reason": "launch_fail_retry", "severity": "warning", "ts": 102.0},
+        ]
+
+        health = build_runtime_health(accounts, {"size": 0}, events, now=1000.0)
+
+        self.assertTrue(health["ok"])
+        self.assertNotIn("relaunch_pressure", health["warnings"])
+        self.assertEqual(health["relaunch_event_count"], 0)
+
+    def test_runtime_health_warns_when_scheduler_is_lagging(self):
+        health = build_runtime_health(
+            [],
+            {"size": 0},
+            [],
+            scheduler_snapshot={
+                "overdue_count": 1,
+                "max_overdue_seconds": 15.25,
+                "last_dispatch_latency_seconds": 4.0,
+                "callback_failure_count": 1,
+            },
+            now=200.0,
+        )
+
+        self.assertFalse(health["ok"])
+        self.assertIn("scheduler_overdue", health["warnings"])
+        self.assertIn("scheduler_callback_failures", health["warnings"])
+        self.assertEqual(health["watchdog_latency_seconds"], 15.2)
+        self.assertEqual(health["scheduler"]["overdue_count"], 1)
+
+    def test_public_farm_health_is_aggregate_and_redacted(self):
+        health = build_public_farm_health(
+            {
+                "running": True,
+                "status_revision": 7,
+                "status_updated_at": 80.0,
+                "accounts": [
+                    {
+                        "account_id": "SecretUser",
+                        "username": "SecretUser",
+                        "state": "IN_GAME",
+                        "pid_bound": True,
+                        "pid": 4242,
+                        "health_flags": [],
+                    },
+                    {
+                        "account_id": "BlockedUser",
+                        "username": "BlockedUser",
+                        "state": "FAILED",
+                        "blocked_reason": "cookie mismatch",
+                        "pid": 5252,
+                        "health_flags": ["blocked"],
+                    },
+                ],
+                "queue_snapshot": {"size": 2, "busy": True, "oldest_age_seconds": 44.2},
+                "runtime_health": {"ok": False, "warnings": ["relaunch_pressure"]},
+                "last_runtime_event_age_seconds": 12.5,
+            },
+            now=100.0,
+        )
+
+        self.assertFalse(health["ok"])
+        self.assertEqual(health["state"], "degraded")
+        self.assertEqual(health["account_count"], 2)
+        self.assertEqual(health["in_game"], 1)
+        self.assertEqual(health["blocked"], 1)
+        self.assertEqual(health["queue"]["oldest_age_seconds"], 44.2)
+        serialized = str(health)
+        self.assertNotIn("SecretUser", serialized)
+        self.assertNotIn("4242", serialized)
+        self.assertNotIn("accounts", health)
+
+    def test_watchdog_action_logs_degraded_without_restarting_control_plane(self):
+        action = decide_farm_watchdog_action(
+            {
+                "running": True,
+                "runtime_health": {"warnings": ["relaunch_pressure"]},
+                "stuck_states": [],
+                "control_plane": {"stuck_reasons": [], "max_stuck_age_seconds": 0.0},
+            },
+            now=1000.0,
+        )
+
+        self.assertEqual(action["action"], "log_degraded")
+        self.assertEqual(action["scope"], "farm")
+        self.assertNotIn("restart", action["action"])
+
+    def test_watchdog_action_targets_accounts_before_control_plane_restart(self):
+        action = decide_farm_watchdog_action(
+            {
+                "running": True,
+                "runtime_health": {"warnings": []},
+                "stuck_states": [
+                    {"account_id": "UserA", "state": "VERIFY", "age_seconds": 301.0, "reason": "verify_timeout"}
+                ],
+                "control_plane": {"stuck_reasons": [], "max_stuck_age_seconds": 0.0},
+            },
+            now=1000.0,
+        )
+
+        self.assertEqual(action["action"], "targeted_recovery")
+        self.assertEqual(action["scope"], "account")
+        self.assertEqual(action["account_count"], 1)
+
+    def test_watchdog_action_restarts_stuck_control_plane_after_threshold_and_backoff(self):
+        action = decide_farm_watchdog_action(
+            {
+                "running": True,
+                "runtime_health": {"warnings": []},
+                "stuck_states": [],
+                "control_plane": {
+                    "stuck_reasons": ["dispatcher_dead"],
+                    "max_stuck_age_seconds": 301.0,
+                    "last_restart_at": 500.0,
+                },
+            },
+            now=1000.0,
+            control_plane_restart_threshold_seconds=180.0,
+            control_plane_restart_backoff_seconds=300.0,
+        )
+
+        self.assertEqual(action["action"], "restart_control_plane")
+        self.assertEqual(action["scope"], "control_plane")
+        self.assertIn("dispatcher_dead", action["reasons"])
+
+    def test_watchdog_action_backoff_suppresses_control_plane_restart(self):
+        action = decide_farm_watchdog_action(
+            {
+                "running": True,
+                "runtime_health": {"warnings": []},
+                "stuck_states": [],
+                "control_plane": {
+                    "stuck_reasons": ["maintenance_dead"],
+                    "max_stuck_age_seconds": 301.0,
+                    "last_restart_at": 900.0,
+                },
+            },
+            now=1000.0,
+            control_plane_restart_threshold_seconds=180.0,
+            control_plane_restart_backoff_seconds=300.0,
+        )
+
+        self.assertEqual(action["action"], "log_degraded")
+        self.assertEqual(action["scope"], "control_plane")
+        self.assertTrue(action["backoff_active"])
 
     def test_runtime_telemetry_summarizes_recovery_and_stale_workers(self):
         status = {
@@ -1311,7 +1600,36 @@ class RuntimeHardeningTests(unittest.TestCase):
 
         self.assertIsNone(scheduler.get("pending"))
 
-    def test_network_fault_scripts_are_scoped_to_argus_rules(self):
+    def test_runtime_scheduler_snapshot_exposes_operational_lag(self):
+        scheduler = RuntimeScheduler(
+            stop=threading.Event(),
+            state_manager=RuntimeStateManager(),
+            logger=lambda *args, **kwargs: None,
+            autostart=False,
+        )
+        events = []
+        scheduler.schedule_once("late", lambda job: events.append(job.job_key), delay=1.0, now=100.0)
+
+        before = scheduler.snapshot(now=112.0)
+        scheduler.run_due(now=112.0)
+        after = scheduler.snapshot(now=112.5)
+
+        self.assertEqual(before["pending_count"], 1)
+        self.assertEqual(before["overdue_count"], 1)
+        self.assertEqual(before["max_overdue_seconds"], 11.0)
+        self.assertEqual(events, ["late"])
+        self.assertEqual(after["dispatch_count"], 1)
+        self.assertEqual(after["last_dispatch_latency_seconds"], 11.0)
+
+        def fail(_job):
+            raise RuntimeError("unit scheduler failure")
+
+        scheduler.schedule_once("bad", fail, delay=0.0, now=120.0)
+        scheduler.run_due(now=120.0)
+
+        self.assertEqual(scheduler.snapshot(now=121.0)["callback_failure_count"], 1)
+
+    def test_network_fault_scripts_are_scoped_to_cronus_rules(self):
         block = NetworkFaultInjector.build_block_script(r"C:\Roblox\RobloxPlayerBeta.exe", f"{RULE_PREFIX}_unit")
         restore = NetworkFaultInjector.build_restore_script()
 

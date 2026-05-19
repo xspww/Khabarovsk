@@ -21,7 +21,7 @@ class AccountReconciliationError(ValueError):
 
 
 def load_accounts_from_store(account_store: Any) -> List[Account]:
-    return [Account.from_dict(item) for item in account_store.to_roboguard_accounts()]
+    return [Account.from_dict(item) for item in account_store.to_cronus_accounts()]
 
 
 def _runtime_account_key(account: Account) -> str:

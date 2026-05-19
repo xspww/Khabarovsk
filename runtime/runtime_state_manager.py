@@ -9,9 +9,20 @@ from typing import Any, Callable, Dict, Optional
 from domain.account_state import AccountState, RuntimeState
 from domain.public_state_mapper import runtime_state_for_public
 from domain.runtime_lifecycle import lifecycle_for_public, lifecycle_for_legacy_runtime
-from domain.session_identity import create_rejoin_transaction, create_session_identity
 from domain.state_transitions import is_valid_runtime_transition
 from runtime.runtime_invariants import check_runtime_invariants, invariant_snapshot
+from runtime.runtime_transactions import (
+    begin_rejoin_transaction as _begin_rejoin_transaction,
+    finish_rejoin_transaction as _finish_rejoin_transaction,
+    update_rejoin_transaction as _update_rejoin_transaction,
+)
+from services.process_proof_policy import (
+    PROOF_STRONG,
+    PROOF_UNTRUSTED,
+    normalize_process_proof_level,
+    process_proof_allowed_for_state,
+    required_process_proof_for_state,
+)
 
 
 Logger = Callable[..., None]
@@ -111,6 +122,7 @@ class RuntimeStateManager:
         hard_codes = {
             "running_without_pid",
             "running_without_verified_binding",
+            "running_without_strong_process_proof",
             "running_pid_not_live",
             "recovering_without_recovery_owner",
             "backoff_without_cooldown",
@@ -252,134 +264,18 @@ class RuntimeStateManager:
         return int(acc.runtime_generation)
 
     def begin_rejoin_transaction(self, acc: Any, reason: str, launch_intent: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        account_id = str(getattr(acc, "_config_username", "") or getattr(acc, "username", "") or "")
-        identity = create_session_identity(
-            account_id=account_id,
-            runtime_generation=int(getattr(acc, "runtime_generation", 0) or 0),
-            account_runtime_id="",
-            reason=reason,
-            launch_intent=launch_intent or {},
-        )
-        tx = create_rejoin_transaction(
-            identity,
-            recovery_generation=int(getattr(acc, "recovery_generation", 0) or 0),
-            command_generation=int(getattr(acc, "command_generation", 0) or 0),
-            reason=reason,
-        )
-        acc.account_runtime_id = identity.account_runtime_id
-        acc.session_id = identity.session_id
-        acc.launch_nonce = identity.launch_nonce
-        acc.rejoin_transaction_id = tx.transaction_id
-        acc.launch_intent = dict(launch_intent or {})
-        acc.server_validation = "intent_recorded"
-        acc.scheduler_slot = "reserved"
-        acc.supervisor_state = "transaction_pending"
-        acc.last_transaction_status = tx.status
-        acc.last_transaction_step = tx.step
-        acc.last_transaction_reason = reason
-        acc.last_transaction_started_at = tx.created_at
-        acc.last_transaction_completed_at = 0.0
-        acc.last_transaction_failure_reason = ""
-        acc.session_started_at = identity.created_at
-        acc.last_transaction_at = tx.created_at
-        acc.sync_runtime(reason or "begin_rejoin_transaction")
-        snapshot = tx.snapshot()
-        snapshot["session"] = identity.snapshot()
-        self._emit(
-            "RUNTIME",
-            "rejoin_transaction_begin",
-            account=getattr(acc, "display_name", getattr(acc, "username", "")),
-            transaction_id=tx.transaction_id,
-            session_id=identity.session_id,
-            launch_nonce=identity.launch_nonce,
-            account_runtime_id=identity.account_runtime_id,
-            runtime_generation=getattr(acc, "runtime_generation", 0),
-            recovery_generation=getattr(acc, "recovery_generation", 0),
-            command_generation=getattr(acc, "command_generation", 0),
-            reason=reason,
-        )
-        self._emit(
-            "RUNTIME",
-            "transaction_begin",
-            account=getattr(acc, "display_name", getattr(acc, "username", "")),
-            transaction_id=tx.transaction_id,
-            session_id=identity.session_id,
-            runtime_generation=getattr(acc, "runtime_generation", 0),
-            recovery_generation=getattr(acc, "recovery_generation", 0),
-            command_generation=getattr(acc, "command_generation", 0),
-            reason=reason,
-            thread=threading.current_thread().name,
-        )
-        return snapshot
+        return _begin_rejoin_transaction(acc, reason, launch_intent, emit=self._emit)
 
     def update_rejoin_transaction(self, acc: Any, status: str = "", step: str = "", reason: str = "", server_validation: str = "", scheduler_slot: str = "") -> Dict[str, Any]:
-        if status:
-            acc.last_transaction_status = status
-        if step:
-            acc.last_transaction_step = step
-        if reason:
-            acc.last_transaction_reason = reason
-        if server_validation:
-            acc.server_validation = server_validation
-            acc.destination_validation = server_validation
-        if scheduler_slot:
-            acc.scheduler_slot = scheduler_slot
-        if step:
-            acc.supervisor_state = step
-        acc.last_transaction_at = time.time()
-        if status in {"committed", "rolled_back", "failed"}:
-            acc.last_transaction_completed_at = acc.last_transaction_at
-        if status in {"rolled_back", "failed"} and reason:
-            acc.last_transaction_failure_reason = reason
-        acc.sync_runtime(reason or step or status or "transaction_update")
-        snapshot = {
-            "transaction_id": getattr(acc, "rejoin_transaction_id", ""),
-            "account_id": getattr(acc, "_config_username", getattr(acc, "username", "")),
-            "runtime_generation": getattr(acc, "runtime_generation", 0),
-            "recovery_generation": getattr(acc, "recovery_generation", 0),
-            "command_generation": getattr(acc, "command_generation", 0),
-            "account_runtime_id": getattr(acc, "account_runtime_id", ""),
-            "session_id": getattr(acc, "session_id", ""),
-            "launch_nonce": getattr(acc, "launch_nonce", ""),
-            "status": status or getattr(acc, "last_transaction_status", ""),
-            "step": step or getattr(acc, "last_transaction_step", "") or getattr(acc, "supervisor_state", ""),
-            "reason": reason or getattr(acc, "last_transaction_reason", ""),
-            "failure_reason": getattr(acc, "last_transaction_failure_reason", "") if (status in {"rolled_back", "failed"} or getattr(acc, "last_transaction_status", "") in {"rolled_back", "failed"}) else "",
-            "launch_intent": getattr(acc, "launch_intent", {}) or {},
-            "destination_evidence": {},
-            "created_at": getattr(acc, "session_started_at", 0.0) or time.time(),
-            "updated_at": getattr(acc, "last_transaction_at", 0.0) or time.time(),
-            "completed_at": getattr(acc, "last_transaction_at", 0.0) if status in {"committed", "rolled_back", "failed"} else 0.0,
-        }
-        self._emit(
-            "RUNTIME",
-            "rejoin_transaction_update",
-            account=getattr(acc, "display_name", getattr(acc, "username", "")),
-            transaction_id=snapshot["transaction_id"],
-            session_id=snapshot["session_id"],
-            status=snapshot["status"],
-            step=snapshot["step"],
-            reason=snapshot["reason"],
-            runtime_generation=snapshot["runtime_generation"],
-            recovery_generation=snapshot["recovery_generation"],
-            command_generation=snapshot["command_generation"],
+        return _update_rejoin_transaction(
+            acc,
+            status=status,
+            step=step,
+            reason=reason,
+            server_validation=server_validation,
+            scheduler_slot=scheduler_slot,
+            emit=self._emit,
         )
-        self._emit(
-            "RUNTIME",
-            "transaction_step",
-            account=getattr(acc, "display_name", getattr(acc, "username", "")),
-            transaction_id=snapshot["transaction_id"],
-            session_id=snapshot["session_id"],
-            status=snapshot["status"],
-            step=snapshot["step"],
-            reason=snapshot["reason"],
-            server_validation=getattr(acc, "server_validation", ""),
-            runtime_generation=snapshot["runtime_generation"],
-            recovery_generation=snapshot["recovery_generation"],
-            command_generation=snapshot["command_generation"],
-            thread=threading.current_thread().name,
-        )
-        return snapshot
 
     def finish_rejoin_transaction(
         self,
@@ -389,82 +285,14 @@ class RuntimeStateManager:
         destination_evidence: Optional[Dict[str, Any]] = None,
         server_validation: str = "",
     ) -> Dict[str, Any]:
-        final_status = status or "failed"
-        acc.last_transaction_status = final_status
-        acc.last_transaction_reason = reason
-        acc.last_transaction_at = time.time()
-        acc.last_transaction_completed_at = acc.last_transaction_at
-        if final_status == "committed":
-            acc.scheduler_slot = ""
-            acc.supervisor_state = "running"
-            acc.last_transaction_step = "committed"
-            acc.last_transaction_failure_reason = ""
-            acc.server_validation = server_validation or "intent_verified_no_destination_signal"
-            acc.destination_validation = acc.server_validation
-        elif final_status == "rolled_back":
-            acc.scheduler_slot = ""
-            acc.supervisor_state = "rolled_back"
-            acc.last_transaction_step = "rolled_back"
-            acc.last_transaction_failure_reason = reason
-            acc.server_validation = server_validation or "unverified_rollback"
-            acc.destination_validation = acc.server_validation
-        else:
-            acc.scheduler_slot = ""
-            acc.supervisor_state = "failed"
-            acc.last_transaction_step = "failed"
-            acc.last_transaction_failure_reason = reason
-            acc.server_validation = server_validation or "failed"
-            acc.destination_validation = acc.server_validation
-        acc.sync_runtime(reason or final_status)
-        snapshot = {
-            "transaction_id": getattr(acc, "rejoin_transaction_id", ""),
-            "account_id": getattr(acc, "_config_username", getattr(acc, "username", "")),
-            "runtime_generation": getattr(acc, "runtime_generation", 0),
-            "recovery_generation": getattr(acc, "recovery_generation", 0),
-            "command_generation": getattr(acc, "command_generation", 0),
-            "account_runtime_id": getattr(acc, "account_runtime_id", ""),
-            "session_id": getattr(acc, "session_id", ""),
-            "launch_nonce": getattr(acc, "launch_nonce", ""),
-            "status": final_status,
-            "step": acc.last_transaction_step,
-            "reason": reason,
-            "failure_reason": acc.last_transaction_failure_reason,
-            "launch_intent": getattr(acc, "launch_intent", {}) or {},
-            "destination_evidence": dict(destination_evidence or {}),
-            "created_at": getattr(acc, "session_started_at", 0.0) or time.time(),
-            "updated_at": acc.last_transaction_at,
-            "completed_at": acc.last_transaction_at,
-        }
-        self._emit(
-            "RUNTIME",
-            "rejoin_transaction_finish",
-            account=getattr(acc, "display_name", getattr(acc, "username", "")),
-            transaction_id=snapshot["transaction_id"],
-            session_id=snapshot["session_id"],
-            status=final_status,
-            reason=reason,
-            server_validation=acc.server_validation,
-            runtime_generation=snapshot["runtime_generation"],
-            recovery_generation=snapshot["recovery_generation"],
-            command_generation=snapshot["command_generation"],
+        return _finish_rejoin_transaction(
+            acc,
+            status,
+            reason,
+            destination_evidence=destination_evidence,
+            server_validation=server_validation,
+            emit=self._emit,
         )
-        self._emit(
-            "RUNTIME",
-            "transaction_commit" if final_status == "committed" else "transaction_rollback",
-            account=getattr(acc, "display_name", getattr(acc, "username", "")),
-            transaction_id=snapshot["transaction_id"],
-            session_id=snapshot["session_id"],
-            status=final_status,
-            step=snapshot["step"],
-            reason=reason,
-            failure_reason=snapshot["failure_reason"],
-            server_validation=acc.server_validation,
-            runtime_generation=snapshot["runtime_generation"],
-            recovery_generation=snapshot["recovery_generation"],
-            command_generation=snapshot["command_generation"],
-            thread=threading.current_thread().name,
-        )
-        return snapshot
 
     def transition_public(
         self,
@@ -480,6 +308,30 @@ class RuntimeStateManager:
         old_state = acc.state
         old_runtime = runtime_state_for_public(old_state)
         new_runtime = runtime_state_for_public(new_state)
+        if new_runtime == RuntimeState.RUNNING:
+            proof_level = normalize_process_proof_level(getattr(acc, "process_proof_level", PROOF_UNTRUSTED))
+            if not process_proof_allowed_for_state(proof_level, new_state):
+                acc.process_reject_reason = "process_proof_insufficient"
+                acc.binding_decision = "rejected"
+                acc.sync_runtime(reason or "process_proof_insufficient")
+                self._emit(
+                    "STATE",
+                    "state_write_rejected",
+                    "warning",
+                    **self._runtime_log_fields(
+                        acc,
+                        reason=reason or "process_proof_insufficient",
+                        old=getattr(old_state, "name", old_state),
+                        new=new_state.name,
+                        old_runtime=old_runtime.value,
+                        new_runtime=new_runtime.value,
+                        reject="process_proof_insufficient",
+                        process_proof_level=proof_level,
+                        required_process_proof=required_process_proof_for_state(new_state),
+                        caller=self._caller(),
+                    ),
+                )
+                return False
         blockers = [] if (force and new_runtime not in {RuntimeState.RUNNING, RuntimeState.BACKOFF, RuntimeState.RECOVERING}) else self._transition_invariant_blockers(acc, new_runtime, reason or "transition")
         if blockers:
             self._emit(
@@ -592,6 +444,7 @@ class RuntimeStateManager:
                 acc.binding_decision = "quarantined"
             elif text in {"unbound", "released"}:
                 acc.binding_decision = "released"
+                acc.process_proof_level = PROOF_UNTRUSTED
             else:
                 acc.binding_decision = text
         acc.sync_runtime(reason or "binding_status")
@@ -847,6 +700,7 @@ class RuntimeStateManager:
         acc.process_binding_status = "unbound"
         acc.binding_decision = "released"
         acc.process_binding_confidence = 0.0
+        acc.process_proof_level = PROOF_UNTRUSTED
         acc.process_reject_reason = ""
         acc.process_owner_claim = ""
         acc.observed_server_type = ""
@@ -899,6 +753,7 @@ class RuntimeStateManager:
         process_identity: str,
         reason: str = "",
         confidence: float = 100.0,
+        process_proof_level: str = PROOF_STRONG,
         increment_generation: bool = True,
     ) -> None:
         old_pid = getattr(acc, "pid", None)
@@ -912,6 +767,7 @@ class RuntimeStateManager:
         acc.process_binding_status = "verified"
         acc.binding_decision = "verified"
         acc.process_binding_confidence = float(confidence or 0.0)
+        acc.process_proof_level = normalize_process_proof_level(process_proof_level) or PROOF_UNTRUSTED
         acc.process_reject_reason = ""
         acc.unmanaged_live_process_count = 0
         acc.unmanaged_live_pids = []
@@ -933,6 +789,37 @@ class RuntimeStateManager:
                 old_pid=old_pid or "",
                 session_id=getattr(acc, "session_id", ""),
                 transaction_id=getattr(acc, "rejoin_transaction_id", ""),
+            ),
+        )
+
+    def set_process_proof(
+        self,
+        acc: Any,
+        level: str,
+        reason: str = "",
+        confidence: Optional[float] = None,
+        status: str = "",
+    ) -> None:
+        acc.process_proof_level = normalize_process_proof_level(level)
+        if confidence is not None:
+            acc.process_binding_confidence = float(confidence or 0.0)
+            acc.ownership_confidence = float(confidence or 0.0)
+            acc.last_signal_confidence = float(confidence or 0.0)
+        if status:
+            acc.process_binding_status = str(status)
+            acc.binding_decision = "verified" if acc.process_proof_level == PROOF_STRONG else str(status)
+        if acc.process_proof_level == PROOF_STRONG:
+            acc.process_reject_reason = ""
+        acc.sync_runtime(reason or "process_proof")
+        self._emit(
+            "STATE",
+            "process_proof_updated",
+            **self._runtime_log_fields(
+                acc,
+                reason=reason or "process_proof",
+                process_proof_level=acc.process_proof_level,
+                process_binding_confidence=acc.process_binding_confidence,
+                status=acc.process_binding_status,
             ),
         )
 

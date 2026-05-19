@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 from domain.account_state import AccountState, RuntimeState
 from domain.public_state_mapper import runtime_state_for_public
+from services.process_proof_policy import PROOF_STRONG, is_at_least_process_proof
 
 
 PidValidator = Callable[[Any, int], bool]
@@ -71,6 +72,12 @@ def check_runtime_invariants(
             violations.append({"code": "running_without_pid", "severity": "critical"})
         elif binding_status in {"", "unbound", "released"}:
             violations.append({"code": "running_without_verified_binding", "severity": "critical", "binding_status": binding_status})
+        elif not is_at_least_process_proof(getattr(acc, "process_proof_level", ""), PROOF_STRONG):
+            violations.append({
+                "code": "running_without_strong_process_proof",
+                "severity": "critical",
+                "process_proof_level": getattr(acc, "process_proof_level", ""),
+            })
         elif pid_validator is not None:
             try:
                 if not pid_validator(acc, int(pid)):
@@ -98,4 +105,3 @@ def check_runtime_invariants(
         violations.append({"code": "command_name_without_owner", "severity": "warning", "command": command_name})
 
     return violations
-

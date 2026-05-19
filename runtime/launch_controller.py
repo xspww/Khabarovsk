@@ -57,6 +57,17 @@ class LaunchController:
         self._runtime_store = runtime_store
         self._supervisor = supervisor
 
+    def update_config(self, cfg: dict) -> None:
+        with self._lock:
+            self._cfg = cfg
+            try:
+                self._limiter.interval = max(
+                    float(cfg.get("queue_delay_seconds", cfg.get("launch_rate_interval", 6)) or 6),
+                    float(cfg.get("account_switch_cooldown", 10) or 10),
+                )
+            except Exception:
+                pass
+
     def _record_transaction(self, acc: Account, snapshot: Dict[str, Any]):
         if self._runtime_store and snapshot.get("transaction_id"):
             try:

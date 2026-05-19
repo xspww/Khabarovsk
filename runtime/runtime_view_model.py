@@ -10,7 +10,9 @@ from services.process_service import ProcessManager
 from services.resource_monitor import get_rt_monitor
 from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_LABEL, is_account_captcha_required
 from runtime.account_worker import AccountWorker
+from runtime.account_selection import runtime_account_filter_reason
 from runtime.runtime_health import account_health_flags, build_runtime_health
+from runtime.runtime_truth import build_account_truth
 
 
 IMPORTANT_RUNTIME_EVENTS = {
@@ -69,6 +71,7 @@ class RuntimeViewModelBuilder:
             events_by_account.setdefault(str(event.get("account", "") or ""), []).append(event)
 
         any_command_inflight = farm._command_tracker.any_inflight()
+        cfg_snapshot = farm.cfg_mgr.snapshot()
         queue_snapshot = farm._queue.snapshot() if farm._queue else {
             "size": 0,
             "pending": 0,
@@ -93,7 +96,19 @@ class RuntimeViewModelBuilder:
                 snapshot_pid,
                 owner_key=acc._config_username,
                 expected_identity=snapshot_identity,
+                expected_browser_tracker_id=acc.browser_tracker_id,
             ))
+            try:
+                process_validation = ProcessManager.validate_game_process(
+                    snapshot_pid,
+                    owner_key=acc._config_username,
+                    expected_identity=snapshot_identity,
+                    expected_browser_tracker_id=acc.browser_tracker_id,
+                    min_ram_mb=0.0,
+                ) if pid_alive else {}
+            except Exception:
+                process_validation = {}
+            window_count = int(process_validation.get("windows") or 0)
             if display_state == AccountState.IN_GAME and snapshot_pid and not pid_alive:
                 display_state = AccountState.CRASH
 
@@ -131,7 +146,7 @@ class RuntimeViewModelBuilder:
             if captcha_required:
                 state_label = CAPTCHA_LABEL
                 state_color = "#f0c76f"
-            blocked_reason = account_launch_block_reason(acc)
+            blocked_reason = account_launch_block_reason(acc) or runtime_account_filter_reason(acc, cfg_snapshot)
             if captcha_required:
                 blocked_reason = CAPTCHA_BLOCK_REASON
             if not blocked_reason and acc.last_crash_reason == "cookie_mismatch":
@@ -213,6 +228,7 @@ class RuntimeViewModelBuilder:
                 "process_binding_status": acc.process_binding_status or "",
                 "binding_decision": acc.binding_decision or runtime_snapshot.get("binding_decision", ""),
                 "process_binding_confidence": round(float(acc.process_binding_confidence or runtime_snapshot.get("process_binding_confidence", 0.0) or 0.0), 1),
+                "process_proof_level": acc.process_proof_level or runtime_snapshot.get("process_proof_level", "untrusted"),
                 "process_reject_reason": acc.process_reject_reason or runtime_snapshot.get("process_reject_reason", ""),
                 "process_owner_claim": acc.process_owner_claim or runtime_snapshot.get("process_owner_claim", ""),
                 "unmanaged_live_process_count": int(acc.unmanaged_live_process_count or runtime_snapshot.get("unmanaged_live_process_count", 0) or 0),
@@ -259,6 +275,11 @@ class RuntimeViewModelBuilder:
                 "can_rejoin": bool(farm.running and not any_command_inflight and display_state != AccountState.FAILED and not blocked_reason),
                 "can_kill": bool(pid_alive and snapshot_pid and not any_command_inflight),
             }
+            account_payload["runtime_truth"] = build_account_truth(
+                acc,
+                process_alive=pid_alive,
+                window_count=window_count,
+            ).to_dict()
             account_payload["health_flags"] = account_health_flags(account_payload)
             accounts_data.append(account_payload)
 
@@ -272,7 +293,21 @@ class RuntimeViewModelBuilder:
             event_log = list(farm._event_log)
         with farm._status_lock:
             status_revision = int(farm._status_revision)
-        runtime_health = build_runtime_health(accounts_data, queue_snapshot, recent_runtime_events)
+        scheduler_snapshot = {}
+        if getattr(farm, "_runtime_scheduler", None):
+            scheduler_snapshot = farm._runtime_scheduler.snapshot()
+        runtime_health = build_runtime_health(
+            accounts_data,
+            queue_snapshot,
+            recent_runtime_events,
+            scheduler_snapshot=scheduler_snapshot,
+        )
+        machine_supervisor = {}
+        if getattr(farm, "_machine_supervisor", None):
+            machine_supervisor = farm._machine_supervisor.snapshot().to_dict()
+        recovery_storm = {}
+        if getattr(getattr(farm, "_recovery", None), "_storm", None):
+            recovery_storm = farm._recovery._storm.snapshot()
         return {
             "running": farm.running,
             "status_revision": status_revision,
@@ -299,6 +334,9 @@ class RuntimeViewModelBuilder:
             "last_multi_roblox_failure": multi_guard.get("last_failure", ""),
             "multi_roblox_guard_handles": multi_guard.get("handle_names", []),
             "queue_snapshot": queue_snapshot,
+            "scheduler_health": scheduler_snapshot,
+            "machine_supervisor": machine_supervisor,
+            "recovery_storm": recovery_storm,
             "runtime_health": runtime_health,
             "can_start": bool((not farm.running) and not any_command_inflight),
             "can_stop": bool(farm.running and not any_command_inflight),

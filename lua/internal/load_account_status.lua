@@ -84,7 +84,7 @@ assert(type(Load) == "function", "executor does not expose loadstring/load")
 if source:sub(1, 1) == "{" then
     failDownload("Cronus returned JSON instead of Lua. Restart Cronus Launcher or check the port.", statusCode, source)
 end
-if not source:find("ArgusAccount", 1, true) then
+if not source:find("CronusAccount", 1, true) then
     failDownload("Downloaded text is not the Cronus account-status module", statusCode, source)
 end
 

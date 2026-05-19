@@ -1,2 +1,2 @@
-"""Domain primitives for RoboGuard RT runtime state."""
+"""Domain primitives for Cronus RT runtime state."""
 

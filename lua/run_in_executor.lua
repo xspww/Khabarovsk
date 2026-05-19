@@ -53,6 +53,17 @@ local function encode(value)
     return value
 end
 
+local function selectedAccount()
+    if tostring(CRONUS_ACCOUNT or "") ~= "" then
+        return CRONUS_ACCOUNT
+    end
+    local ok, players = pcall(function()
+        return game:GetService("Players")
+    end)
+    local player = ok and players and players.LocalPlayer or nil
+    return player and tostring(player.Name or "") or ""
+end
+
 local function queueOnTeleport(sourceCode)
     local providers = {
         rawget(_G, "queue_on_teleport"),
@@ -82,7 +93,7 @@ end
 local url = ("http://%s:%s/api/lua/rejoin-helper?account=%s"):format(
     CRONUS_HOST,
     tostring(CRONUS_PORT),
-    encode(CRONUS_ACCOUNT)
+    encode(selectedAccount())
 )
 
 local source = nil
@@ -110,11 +121,11 @@ assert(type(Load) == "function", "executor does not expose loadstring/load")
 if source:sub(1, 1) == "{" then
     failDownload("Cronus returned JSON instead of Lua. Restart Cronus Launcher or check the port.", statusCode, source)
 end
-if not source:find("ArgusRejoin", 1, true) then
+if not source:find("CronusRejoin", 1, true) then
     failDownload("Downloaded text is not the Cronus rejoin monitor", statusCode, source)
 end
 
-if not source:find("ArgusRejoin:QueueOnTeleport", 1, true) then
+if not source:find("CronusRejoin:QueueOnTeleport", 1, true) then
     queueOnTeleport(source)
 end
 

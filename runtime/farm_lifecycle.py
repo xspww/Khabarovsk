@@ -10,6 +10,7 @@ from services.process_service import ProcessManager, ProcessService
 from services.resource_monitor import get_rt_monitor
 from services.vip_tracker import VipTracker
 from runtime.account_worker import AccountWorker
+from runtime.account_selection import is_runtime_account_selected, runtime_account_filter_blocked_keys
 from runtime.dispatcher import Dispatcher
 from runtime.launch_controller import LaunchController
 from runtime.recovery_engine import RecoveryEngine
@@ -67,15 +68,23 @@ class FarmLifecycleService:
         farm._bump_status_revision()
         get_rt_monitor().start()
 
+        runtime_filter_active = bool(cfg.get("runtime_account_allowlist"))
         for acc in farm._accounts:
             with acc._lock:
-                farm._runtime_state.set_desired(
-                    acc,
-                    AccountState.IN_GAME,
-                    reason="farm_start_desired",
-                    increment_generation=False,
-                )
-                farm._runtime_state.set_cooldown(acc, 0.0, reason="farm_start_clear_cooldown")
+                if is_runtime_account_selected(acc, cfg):
+                    farm._runtime_state.set_desired(
+                        acc,
+                        AccountState.IN_GAME,
+                        reason="farm_start_desired",
+                        increment_generation=False,
+                    )
+                    farm._runtime_state.set_cooldown(acc, 0.0, reason="farm_start_clear_cooldown")
+                else:
+                    farm._runtime_state.forced_reset(
+                        acc,
+                        desired=AccountState.IDLE,
+                        reason="runtime_account_allowlist_excluded",
+                    )
             if acc.vip_links:
                 acc._vip_tracker = VipTracker(acc.vip_links)
                 flog(f"[FARM] VipTracker initialized for {acc.display_name}")
@@ -85,6 +94,14 @@ class FarmLifecycleService:
 
         reset_failure_gate = False
         for acc in farm._accounts:
+            if not is_runtime_account_selected(acc, cfg):
+                with acc._lock:
+                    farm._runtime_state.forced_reset(
+                        acc,
+                        desired=AccountState.IDLE,
+                        reason="runtime_account_allowlist_excluded",
+                    )
+                continue
             restored_pid = acc.pid
             restored_identity = acc.bound_process_identity
             if restored_pid and (
@@ -175,7 +192,20 @@ class FarmLifecycleService:
             runtime_orchestrator=farm._runtime_orchestrator,
             scheduler=farm._runtime_scheduler,
         )
-        blocked_accounts = farm._preflight_cookie_blocks()
+        blocked_accounts = set(farm._preflight_cookie_blocks())
+        blocked_accounts.update(runtime_account_filter_blocked_keys(farm._accounts, cfg))
+        if runtime_filter_active:
+            selected = [
+                acc.display_name
+                for acc in farm._accounts
+                if is_runtime_account_selected(acc, cfg)
+            ]
+            flog_kv(
+                "FARM",
+                "runtime_account_allowlist_applied",
+                selected=",".join(selected),
+                blocked=len(blocked_accounts),
+            )
 
         farm._workers = {}
         for acc in farm._accounts:
@@ -204,6 +234,8 @@ class FarmLifecycleService:
             runtime_state=farm._runtime_state,
             runtime_store=farm._runtime_store,
             supervisor=farm._supervisor,
+            accounts=farm._accounts,
+            machine_supervisor=farm._machine_supervisor,
         )
         farm._dispatcher.start()
         farm._maintenance = SystemMaintenance(

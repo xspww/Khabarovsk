@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import inspect
 import sys
 import threading
 import time
@@ -8,9 +7,16 @@ from typing import Any, Callable, Dict, Optional
 
 from domain.account_state import AccountState, RuntimeState
 from domain.public_state_mapper import runtime_state_for_public
-from domain.runtime_lifecycle import lifecycle_for_public, lifecycle_for_legacy_runtime
 from domain.state_transitions import is_valid_runtime_transition
-from runtime.runtime_invariants import check_runtime_invariants, invariant_snapshot
+from runtime.runtime_invariants import invariant_snapshot
+from runtime.runtime_state_observability import (
+    account_name as _account_name,
+    caller as _caller,
+    emit_invariant_violations as _emit_invariant_violations,
+    runtime_log_fields as _runtime_log_fields,
+    snapshot_account_runtime as _snapshot_account_runtime,
+    transition_invariant_blockers as _transition_invariant_blockers,
+)
 from runtime.runtime_transactions import (
     begin_rejoin_transaction as _begin_rejoin_transaction,
     finish_rejoin_transaction as _finish_rejoin_transaction,
@@ -55,109 +61,19 @@ class RuntimeStateManager:
             print(f"[RUNTIME] logger_failed event={event} error={exc}", file=sys.stderr)
 
     def _caller(self) -> str:
-        frame = inspect.stack()[2]
-        return f"{frame.function}:{frame.lineno}"
+        return _caller()
 
     def _account_name(self, acc: Any) -> str:
-        return str(
-            getattr(acc, "_config_username", "")
-            or getattr(acc, "display_name", "")
-            or getattr(acc, "username", "")
-            or ""
-        )
+        return _account_name(acc)
 
     def _runtime_log_fields(self, acc: Any, reason: str = "", **fields: Any) -> Dict[str, Any]:
-        state = getattr(acc, "state", None)
-        runtime_state = ""
-        public_state = ""
-        if isinstance(state, AccountState):
-            runtime_state = runtime_state_for_public(state).value
-            public_state = state.name
-            canonical_runtime_state = lifecycle_for_public(state).value
-        else:
-            public_state = str(getattr(state, "name", state or ""))
-            try:
-                canonical_runtime_state = lifecycle_for_legacy_runtime(RuntimeState(str(state))).value
-            except Exception:
-                canonical_runtime_state = ""
-        payload = {
-            "account": getattr(acc, "display_name", getattr(acc, "username", "")),
-            "account_id": self._account_name(acc),
-            "runtime_generation": getattr(acc, "runtime_generation", 0),
-            "recovery_generation": getattr(acc, "recovery_generation", 0),
-            "command_generation": getattr(acc, "command_generation", 0),
-            "runtime_state": runtime_state,
-            "canonical_runtime_state": canonical_runtime_state,
-            "public_state": public_state,
-            "PID": getattr(acc, "pid", None),
-            "pid": getattr(acc, "pid", None),
-            "reason": reason,
-        }
-        payload.update(fields)
-        return payload
+        return _runtime_log_fields(acc, reason=reason, **fields)
 
     def _emit_invariant_violations(self, acc: Any, reason: str, runtime_state: Optional[RuntimeState] = None) -> bool:
-        violations = check_runtime_invariants(acc, runtime_state=runtime_state)
-        if not violations:
-            return True
-        snapshot = invariant_snapshot(acc, runtime_state=runtime_state)
-        for violation in violations:
-            self._emit(
-                "RUNTIME",
-                "invariant_violation",
-                "warning" if violation.get("severity") != "critical" else "error",
-                **self._runtime_log_fields(
-                    acc,
-                    reason=reason,
-                    lifecycle_owner="runtime_state_manager",
-                    violation=violation.get("code", ""),
-                    violation_detail=violation,
-                    snapshot=snapshot,
-                ),
-            )
-        return False
-
-    def _transition_invariant_blockers(self, acc: Any, new_runtime: RuntimeState, reason: str) -> list:
-        violations = check_runtime_invariants(acc, runtime_state=new_runtime)
-        hard_codes = {
-            "running_without_pid",
-            "running_without_verified_binding",
-            "running_without_strong_process_proof",
-            "running_pid_not_live",
-            "recovering_without_recovery_owner",
-            "backoff_without_cooldown",
-            "command_owner_incomplete",
-            "command_name_without_owner",
-        }
-        blockers = [item for item in violations if item.get("code") in hard_codes]
-        if blockers:
-            self._emit_invariant_violations(acc, reason or "transition_invariant_rejected", runtime_state=new_runtime)
-        return blockers
+        return _emit_invariant_violations(self._log, acc, reason, runtime_state=runtime_state)
 
     def snapshot(self, acc: Any) -> Dict[str, Any]:
-        lock = getattr(acc, "_lock", None)
-        try:
-            if lock is not None:
-                with lock:
-                    return dict(acc.runtime_snapshot())
-            return dict(acc.runtime_snapshot())
-        except Exception as exc:
-            self._emit(
-                "RUNTIME",
-                "snapshot_failed",
-                "warning",
-                account=getattr(acc, "display_name", getattr(acc, "username", "")),
-                account_id=self._account_name(acc),
-                error=str(exc),
-            )
-            return {
-                "account_id": getattr(acc, "_config_username", getattr(acc, "username", "")),
-                "state": getattr(getattr(acc, "state", None), "name", getattr(acc, "state", "")),
-                "pid": getattr(acc, "pid", None),
-                "runtime_generation": getattr(acc, "runtime_generation", 0),
-                "recovery_generation": getattr(acc, "recovery_generation", 0),
-                "command_generation": getattr(acc, "command_generation", 0),
-            }
+        return _snapshot_account_runtime(self._log, acc)
 
     def guard_runtime_generation(self, acc: Any, expected_generation: Optional[int], reason: str = "") -> bool:
         if expected_generation is None:
@@ -332,7 +248,7 @@ class RuntimeStateManager:
                     ),
                 )
                 return False
-        blockers = [] if (force and new_runtime not in {RuntimeState.RUNNING, RuntimeState.BACKOFF, RuntimeState.RECOVERING}) else self._transition_invariant_blockers(acc, new_runtime, reason or "transition")
+        blockers = [] if (force and new_runtime not in {RuntimeState.RUNNING, RuntimeState.BACKOFF, RuntimeState.RECOVERING}) else _transition_invariant_blockers(self._log, acc, new_runtime, reason or "transition")
         if blockers:
             self._emit(
                 "STATE",

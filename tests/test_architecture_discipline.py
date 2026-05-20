@@ -14,7 +14,7 @@ HOTSPOT_FILE_LIMITS = {
     "roblox_hybrid.py": 1150,
     "desktop_host.py": 820,
     "services/process_service.py": 900,
-    "runtime/runtime_state_manager.py": 900,
+    "runtime/runtime_state_manager.py": 800,
 }
 
 HYBRID_ACCOUNT_TEST_FILE_LIMIT = 1100
@@ -283,6 +283,7 @@ class ArchitectureDisciplineTests(unittest.TestCase):
             "runtime/dispatcher.py": 455,
             "runtime/recovery_support.py": 180,
             "runtime/runtime_scheduler.py": 360,
+            "runtime/runtime_state_observability.py": 260,
             "runtime/runtime_transactions.py": 260,
             "runtime/smart_queue.py": 320,
             "runtime/farm_health.py": 320,
@@ -419,6 +420,17 @@ class ArchitectureDisciplineTests(unittest.TestCase):
         self.assertIn("_begin_rejoin_transaction", state_manager)
         self.assertIn("_update_rejoin_transaction", state_manager)
         self.assertIn("_finish_rejoin_transaction", state_manager)
+
+    def test_runtime_state_observability_is_split_from_mutation_owner(self):
+        state_manager = (ROOT / "runtime" / "runtime_state_manager.py").read_text(encoding="utf-8")
+        observability = (ROOT / "runtime" / "runtime_state_observability.py").read_text(encoding="utf-8")
+
+        self.assertIn("from runtime.runtime_state_observability import", state_manager)
+        self.assertIn("def runtime_log_fields", observability)
+        self.assertIn("def emit_invariant_violations", observability)
+        self.assertIn("def snapshot_account_runtime", observability)
+        self.assertNotIn("hard_codes = {", state_manager)
+        self.assertNotIn("def _transition_invariant_blockers", state_manager)
 
     def test_runtime_orchestrator_is_the_runtime_authority(self):
         orchestrator = ROOT / "runtime" / "runtime_orchestrator.py"

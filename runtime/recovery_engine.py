@@ -22,6 +22,12 @@ from runtime.recovery_network import handle_network_restored
 from runtime.recovery_policy import RecoveryDedupeTracker, SessionConflictTracker, adaptive_recovery_delay, build_recovery_log_payload, canonical_reason, kill_local_duplicate_for_session_conflict, policy_for
 from runtime.recovery_relaunch import detect_relaunch_loop
 from runtime.recovery_retry_limits import retry_bucket_exceeded
+from runtime.recovery_scheduling import (
+    queue_account as _queue_account,
+    run_scheduled_recovery as _run_scheduled_recovery,
+    schedule_cooldown as _schedule_cooldown,
+    schedule_recovery as _schedule_recovery,
+)
 from runtime.recovery_signal_router import RecoverySignalRouter
 from runtime.recovery_support import RECOVERY_REASON_MESSAGES, compute_backoff
 
@@ -376,18 +382,7 @@ class RecoveryCoordinator:
         )
 
     def _schedule_cooldown(self, acc: Account, delay: float, reason: str, transition_reason: str):
-        until = time.time() + max(0.0, float(delay or 0.0))
-        self._state_mgr.set_cooldown(acc, until, reason=transition_reason)
-        self._state_mgr.set_recovery(acc, status="cooldown", reason=reason, inflight=True)
-        self._state_mgr.transition(acc, AccountState.COOLDOWN, reason=transition_reason)
-        self._log_recovery_decision(
-            "cooldown",
-            acc,
-            reason,
-            delay=f"{max(0.0, float(delay or 0.0)):.1f}",
-            until=f"{until:.3f}",
-        )
-        self._schedule(acc, delay, transition_reason)
+        return _schedule_cooldown(self, acc, delay, reason, transition_reason)
 
     def _detect_relaunch_loop(self, acc: Account, reason_key: str) -> Optional[str]:
         return detect_relaunch_loop(acc, reason_key, self._cfg, self._net, flog)
@@ -785,119 +780,11 @@ class RecoveryCoordinator:
         self._persist_runtime(force=True)
 
     def _queue_account(self, acc: Account, reason: str):
-        if self._closed or self._stop.is_set():
-            self._log_recovery_decision("queue_rejected", acc, reason, reject="coordinator_closed")
-            return
-        if acc.state != AccountState.READY:
-            self._state_mgr.transition(acc, AccountState.READY, reason=reason, force=True)
-        self._state_mgr.transition(acc, AccountState.QUEUED, reason=reason)
-        with acc._lock:
-            self._runtime_state.set_recovery(acc, status="queued", reason=reason, inflight=True)
-            acc.last_rejoin_trigger = reason
-            acc.recovery_scheduled_at = 0.0
-            runtime_generation = int(acc.runtime_generation or 0)
-            recovery_generation = int(acc.recovery_generation or 0)
-        storm = self._storm.reserve_delay(acc, 0.0, reason, net_online=self._net.is_online())
-        if storm.delayed: self._log_recovery_decision("recovery_storm_delayed", acc, reason, **storm.to_log_fields())
-        self._queue.push(
-            acc,
-            reason=reason,
-            runtime_generation=runtime_generation,
-            recovery_generation=recovery_generation,
-            delay_seconds=storm.delay_seconds,
-        )
-        self._release_recovery_owner(acc._config_username, runtime_generation, recovery_generation, f"queued:{reason}")
-        self._log_recovery_decision("queued", acc, reason, generation=acc.recovery_generation)
-        self._bus.emit(EventName.RECOVERY_REQUESTED, account=acc, reason=reason)
-        self._persist_runtime()
+        return _queue_account(self, acc, reason)
 
     def _schedule(self, acc: Account, delay: float, reason: str):
-        key = f"recovery:{acc._config_username}"
-        storm = self._storm.reserve_delay(acc, delay, reason, net_online=self._net.is_online())
-        if storm.delayed: self._log_recovery_decision("recovery_storm_delayed", acc, reason, **storm.to_log_fields())
-        delay = storm.delay_seconds
-        due = time.time() + max(0.0, delay)
-        with acc._lock:
-            if self._closed or self._stop.is_set():
-                self._log_recovery_decision("schedule_rejected", acc, reason, reject="coordinator_closed")
-                return
-            generation = acc.recovery_generation
-            runtime_generation = acc.runtime_generation
-            command_generation = acc.command_generation
-            acc.recovery_scheduled_at = due
-            acc.scheduler_slot = key
-            if acc.recovery_status not in {"manual", "network_lost"}:
-                self._runtime_state.set_recovery(acc, status="scheduled", reason="", inflight=True)
-            else:
-                self._runtime_state.set_recovery(acc, reason="", inflight=True)
-        current = self._scheduler.get(key)
-        if (
-            current
-            and current.due_at <= due
-            and current.recovery_generation == generation
-            and current.runtime_generation == runtime_generation
-            and current.command_generation == command_generation
-        ):
-            self._log_recovery_decision(
-                "schedule_suppressed",
-                acc,
-                reason,
-                existing_due=f"{current.due_at:.3f}",
-                new_due=f"{due:.3f}",
-                generation=generation,
-                runtime_generation=runtime_generation,
-            )
-            return
-        self._scheduler.schedule_once(
-            key,
-            self._run_scheduled_recovery,
-            due_at=due,
-            reason=reason,
-            account=acc,
-            runtime_generation=runtime_generation,
-            recovery_generation=generation,
-            command_generation=command_generation,
-            payload={"scheduler_slot": "recovery", "allow_runtime_generation_drift": True},
-        )
-        flog_kv(
-            "RECOVERY",
-            "schedule_timer",
-            account=acc.display_name,
-            reason=reason,
-            delay=f"{max(0.0, delay):.1f}",
-            generation=generation,
-            runtime_generation=runtime_generation,
-            command_generation=command_generation,
-        )
-        self._persist_runtime()
+        return _schedule_recovery(self, acc, delay, reason)
 
     def _run_scheduled_recovery(self, job: RuntimeScheduledJob) -> None:
-        acc = job.account
-        if acc is None:
-            return
-        reason = job.reason
-        generation = int(job.recovery_generation or 0)
-        runtime_generation = int(job.runtime_generation or 0)
-        with acc._lock:
-            if generation != acc.recovery_generation:
-                flog_kv(
-                    "RUNTIME",
-                    "stale_work_rejected",
-                    "warning",
-                    account=acc.display_name,
-                    expected_generation=generation,
-                    current_generation=acc.recovery_generation,
-                    runtime_generation=acc.runtime_generation,
-                    command_generation=acc.command_generation,
-                    reason=f"scheduler:{reason}",
-                )
-                return
-            runtime_generation = self._scheduler.effective_runtime_generation(job)
-            if runtime_generation is None or not self._runtime_state.guard_runtime_generation(acc, runtime_generation, reason=f"scheduler:{reason}"):
-                return
-            self._runtime_state.set_recovery(acc, status="due", reason="", inflight=True)
-            acc.recovery_scheduled_at = 0.0
-            acc.scheduler_slot = ""
-        self._persist_runtime()
-        self.evaluate(acc, trigger=reason, expected_runtime_generation=runtime_generation, expected_recovery_generation=generation)
+        return _run_scheduled_recovery(self, job)
 RecoveryEngine = RecoveryCoordinator

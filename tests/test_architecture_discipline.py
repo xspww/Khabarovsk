@@ -7,17 +7,26 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 HOTSPOT_FILE_LIMITS = {
-    "farm.py": 1350,
+    "farm.py": 1150,
     "main.py": 700,
     "process_net.py": 900,
-    "core.py": 1200,
-    "services/process_service.py": 980,
-    "runtime/runtime_state_manager.py": 900,
+    "core.py": 1000,
+    "roblox_hybrid.py": 1150,
+    "desktop_host.py": 820,
+    "services/process_service.py": 900,
+    "runtime/runtime_state_manager.py": 800,
 }
+
+HYBRID_ACCOUNT_TEST_FILE_LIMIT = 800
+HYBRID_ACCOUNT_TEST_FACADE_LIMIT = 120
+RUNTIME_HARDENING_TEST_FILE_LIMIT = 650
+RUNTIME_HARDENING_TEST_FACADE_LIMIT = 90
+DASHBOARD_STYLE_MODULE_LIMIT = 800
 
 API_ROUTE_FILE_LIMIT = 650
 SERVICE_DOMAIN_FILE_LIMIT = 650
 SERVICE_DOMAIN_FILE_LIMITS = {
+    "services/process_account_runtime.py": 320,
     "services/roblox_processes.py": 700,
 }
 MAINTENANCE_DOMAIN_FILE_LIMIT = 650
@@ -95,6 +104,145 @@ class ArchitectureDisciplineTests(unittest.TestCase):
                     f"{rel} is over budget. Move new logic into a domain module instead of appending.",
                 )
 
+    def test_hybrid_account_regression_suite_stays_split(self):
+        facade = ROOT / "tests" / "test_hybrid_account.py"
+        facade_lines = facade.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+        self.assertLessEqual(
+            len(facade_lines),
+            HYBRID_ACCOUNT_TEST_FACADE_LIMIT,
+            "tests/test_hybrid_account.py should stay a small compatibility facade.",
+        )
+        self.assertIn("class HybridAccountTests", facade.read_text(encoding="utf-8"))
+
+        case_files = sorted((ROOT / "tests").glob("hybrid_account_*_cases.py"))
+        self.assertGreaterEqual(len(case_files), 5)
+        for path in case_files:
+            rel = path.relative_to(ROOT).as_posix()
+            with self.subTest(file=rel):
+                lines = path.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+                self.assertLessEqual(
+                    len(lines),
+                    HYBRID_ACCOUNT_TEST_FILE_LIMIT,
+                    f"{rel} is over budget. Split by behavior domain instead of appending.",
+                )
+
+    def test_runtime_hardening_regression_suite_stays_split(self):
+        facade = ROOT / "tests" / "test_runtime_hardening.py"
+        facade_text = facade.read_text(encoding="utf-8-sig", errors="replace")
+        facade_lines = facade_text.splitlines()
+        self.assertLessEqual(
+            len(facade_lines),
+            RUNTIME_HARDENING_TEST_FACADE_LIMIT,
+            "tests/test_runtime_hardening.py should stay a small compatibility facade.",
+        )
+        self.assertIn("class RuntimeHardeningTests", facade_text)
+
+        case_files = sorted((ROOT / "tests").glob("runtime_hardening_*_cases.py"))
+        self.assertGreaterEqual(len(case_files), 4)
+        for path in case_files:
+            rel = path.relative_to(ROOT).as_posix()
+            with self.subTest(file=rel):
+                lines = path.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+                self.assertLessEqual(
+                    len(lines),
+                    RUNTIME_HARDENING_TEST_FILE_LIMIT,
+                    f"{rel} is over budget. Split by runtime hardening domain instead of appending.",
+                )
+
+    def test_dashboard_stylesheet_stays_split(self):
+        manifest = ROOT / "ui" / "dashboard.css"
+        manifest_text = manifest.read_text(encoding="utf-8-sig", errors="replace")
+        manifest_lines = manifest_text.splitlines()
+        imports = re.findall(r'@import\s+url\("\./styles/([^"?]+)\?v=main-view-animation"\);', manifest_text)
+        self.assertEqual(len(manifest_lines), len(imports))
+        self.assertGreaterEqual(len(imports), 5)
+
+        for name in imports:
+            path = ROOT / "ui" / "styles" / name
+            self.assertTrue(path.exists(), f"Missing imported stylesheet: {name}")
+
+        for path in sorted((ROOT / "ui" / "styles").glob("*.css")):
+            rel = path.relative_to(ROOT).as_posix()
+            with self.subTest(file=rel):
+                lines = path.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+                self.assertLessEqual(
+                    len(lines),
+                    DASHBOARD_STYLE_MODULE_LIMIT,
+                    f"{rel} is over budget. Split styles by UI surface instead of appending.",
+                )
+
+    def test_roblox_private_server_helpers_are_split_from_launcher_facade(self):
+        hybrid = (ROOT / "roblox_hybrid.py").read_text(encoding="utf-8-sig", errors="replace")
+        helpers = (ROOT / "domain" / "roblox_private_servers.py").read_text(encoding="utf-8-sig", errors="replace")
+
+        self.assertIn("ensure_owned_private_server as _ensure_owned_private_server", hybrid)
+        self.assertIn("def ensure_owned_private_server", hybrid)
+        self.assertIn("class HybridLauncher", hybrid)
+        for helper_name in (
+            "parse_vip_link",
+            "parse_vip_components",
+            "build_place_launcher_url",
+            "build_roblox_player_uri",
+            "parse_launch_destination_from_cmdline",
+        ):
+            self.assertIn(f"def {helper_name}", helpers)
+            self.assertNotIn(f"def {helper_name}", hybrid)
+
+    def test_desktop_single_instance_helpers_are_split_from_host_facade(self):
+        host = (ROOT / "desktop_host.py").read_text(encoding="utf-8-sig", errors="replace")
+        guard = (ROOT / "desktop" / "instance_guard.py").read_text(encoding="utf-8-sig", errors="replace")
+
+        self.assertIn("from desktop.instance_guard import", host)
+        self.assertIn("def _run_desktop_window", host)
+        for helper_name in (
+            "_cmdline_targets_this_app",
+            "_stop_previous_instance",
+            "_stop_same_app_processes",
+            "prepare_backend_single_instance",
+        ):
+            self.assertIn(f"def {helper_name}", guard)
+            self.assertNotIn(f"def {helper_name}", host)
+
+    def test_desktop_console_icon_helpers_are_split_from_host_facade(self):
+        host = (ROOT / "desktop_host.py").read_text(encoding="utf-8-sig", errors="replace")
+        icon = (ROOT / "desktop" / "console_icon.py").read_text(encoding="utf-8-sig", errors="replace")
+
+        self.assertIn("from desktop.console_icon import", host)
+        self.assertIn("def ensure_console_icon_file", icon)
+        self.assertIn("def set_console_window_icon", icon)
+        self.assertIn("WM_SETICON", icon)
+        self.assertNotIn("def _ensure_console_icon_file", host)
+        self.assertNotIn("def _set_console_window_icon", host)
+
+    def test_core_logging_is_split_from_runtime_model_facade(self):
+        core = (ROOT / "core.py").read_text(encoding="utf-8-sig", errors="replace")
+        logging_module = (ROOT / "core_logging.py").read_text(encoding="utf-8-sig", errors="replace")
+
+        self.assertIn("from core_logging import", core)
+        self.assertIn("class Account", core)
+        self.assertIn("class StateManager", core)
+        for helper_name in ("_redact_value", "flog_struct", "flog", "_kv_value", "flog_kv"):
+            self.assertIn(f"def {helper_name}", logging_module)
+            self.assertNotIn(f"def {helper_name}", core)
+
+    def test_smart_queue_is_split_from_core_model_facade(self):
+        core = (ROOT / "core.py").read_text(encoding="utf-8-sig", errors="replace")
+        smart_queue = (ROOT / "runtime" / "smart_queue.py").read_text(encoding="utf-8-sig", errors="replace")
+
+        self.assertIn("from runtime.smart_queue import SmartQueue", core)
+        self.assertIn("class SmartQueue", smart_queue)
+        self.assertNotIn("class SmartQueue", core)
+
+    def test_farm_health_surface_is_split_from_controller_facade(self):
+        farm = (ROOT / "farm.py").read_text(encoding="utf-8-sig", errors="replace")
+        health = (ROOT / "runtime" / "farm_health.py").read_text(encoding="utf-8-sig", errors="replace")
+
+        self.assertIn("from runtime.farm_health import", farm)
+        self.assertIn("def build_farm_health_snapshot", health)
+        self.assertIn("def get_runtime_diagnostics", health)
+        self.assertNotIn("def _farm_health_snapshot", farm)
+        self.assertNotIn("def _farm_health_account_rows", farm)
+
     def test_api_route_modules_stay_under_architecture_budget(self):
         route_dir = ROOT / "api_routes"
         for path in route_dir.glob("*.py"):
@@ -149,17 +297,21 @@ class ArchitectureDisciplineTests(unittest.TestCase):
     def test_farm_runtime_domain_modules_stay_under_architecture_budget(self):
         runtime_files = {
             "runtime/launch_controller.py": 800,
-            "runtime/recovery_engine.py": 905,
+            "runtime/recovery_engine.py": 820,
             "runtime/recovery_evaluator.py": 350,
             "runtime/recovery_network.py": 200,
             "runtime/recovery_owner.py": 350,
             "runtime/recovery_relaunch.py": 350,
+            "runtime/recovery_scheduling.py": 260,
             "runtime/recovery_signal_router.py": 350,
             "runtime/account_worker.py": 900,
             "runtime/dispatcher.py": 455,
             "runtime/recovery_support.py": 180,
             "runtime/runtime_scheduler.py": 360,
+            "runtime/runtime_state_observability.py": 260,
             "runtime/runtime_transactions.py": 260,
+            "runtime/smart_queue.py": 320,
+            "runtime/farm_health.py": 320,
         }
         for rel, max_lines in runtime_files.items():
             with self.subTest(file=rel):
@@ -208,7 +360,8 @@ class ArchitectureDisciplineTests(unittest.TestCase):
         self.assertIn("handle_runtime_signal", text)
 
     def test_smart_queue_has_single_method_definitions(self):
-        tree = ast.parse((ROOT / "core.py").read_text(encoding="utf-8-sig", errors="replace"), filename="core.py")
+        path = ROOT / "runtime" / "smart_queue.py"
+        tree = ast.parse(path.read_text(encoding="utf-8-sig", errors="replace"), filename=path.as_posix())
         smart_queue = next(
             node for node in tree.body
             if isinstance(node, ast.ClassDef) and node.name == "SmartQueue"
@@ -271,6 +424,18 @@ class ArchitectureDisciplineTests(unittest.TestCase):
         self.assertIn("arrange_roblox_windows = staticmethod(_arrange_roblox_windows)", process_service)
         self.assertIn("restore_roblox_window_styles = staticmethod(_restore_roblox_window_styles)", process_service)
 
+    def test_process_account_runtime_helpers_are_split_from_process_service(self):
+        process_service = (ROOT / "services" / "process_service.py").read_text(encoding="utf-8")
+        account_runtime = (ROOT / "services" / "process_account_runtime.py").read_text(encoding="utf-8")
+
+        self.assertIn("from services.process_account_runtime import", process_service)
+        self.assertIn("def runtime_generation_matches", account_runtime)
+        self.assertIn("def set_process_diagnostics", account_runtime)
+        self.assertIn("def set_adopt_diagnostics", account_runtime)
+        self.assertNotIn("def _runtime_generation_matches", process_service)
+        self.assertNotIn("def _set_process_diagnostics", process_service)
+        self.assertNotIn("def _set_adopt_diagnostics", process_service)
+
     def test_runtime_transactions_are_split_from_state_manager(self):
         state_manager = (ROOT / "runtime" / "runtime_state_manager.py").read_text(encoding="utf-8")
         transactions = (ROOT / "runtime" / "runtime_transactions.py").read_text(encoding="utf-8")
@@ -280,6 +445,17 @@ class ArchitectureDisciplineTests(unittest.TestCase):
         self.assertIn("_begin_rejoin_transaction", state_manager)
         self.assertIn("_update_rejoin_transaction", state_manager)
         self.assertIn("_finish_rejoin_transaction", state_manager)
+
+    def test_runtime_state_observability_is_split_from_mutation_owner(self):
+        state_manager = (ROOT / "runtime" / "runtime_state_manager.py").read_text(encoding="utf-8")
+        observability = (ROOT / "runtime" / "runtime_state_observability.py").read_text(encoding="utf-8")
+
+        self.assertIn("from runtime.runtime_state_observability import", state_manager)
+        self.assertIn("def runtime_log_fields", observability)
+        self.assertIn("def emit_invariant_violations", observability)
+        self.assertIn("def snapshot_account_runtime", observability)
+        self.assertNotIn("hard_codes = {", state_manager)
+        self.assertNotIn("def _transition_invariant_blockers", state_manager)
 
     def test_runtime_orchestrator_is_the_runtime_authority(self):
         orchestrator = ROOT / "runtime" / "runtime_orchestrator.py"
@@ -324,8 +500,10 @@ class ArchitectureDisciplineTests(unittest.TestCase):
 
     def test_status_payload_is_built_by_runtime_view_model(self):
         farm = (ROOT / "farm.py").read_text(encoding="utf-8")
+        health = (ROOT / "runtime" / "farm_health.py").read_text(encoding="utf-8")
         view_model = (ROOT / "runtime" / "runtime_view_model.py").read_text(encoding="utf-8")
-        self.assertIn("return RuntimeViewModelBuilder(self).build_status()", farm)
+        self.assertIn("return build_farm_status(self)", farm)
+        self.assertIn("return RuntimeViewModelBuilder(farm).build_status()", health)
         self.assertIn("class RuntimeViewModelBuilder", view_model)
         self.assertIn("queue_snapshot", view_model)
         self.assertIn("runtime_health", view_model)
@@ -395,6 +573,17 @@ class ArchitectureDisciplineTests(unittest.TestCase):
         self.assertNotIn("self._pending", recovery)
         self.assertIn("RuntimeScheduler", recovery)
         self.assertIn("RuntimeScheduler", maintenance)
+
+    def test_recovery_scheduling_is_split_from_engine(self):
+        recovery = (ROOT / "runtime" / "recovery_engine.py").read_text(encoding="utf-8")
+        scheduling = (ROOT / "runtime" / "recovery_scheduling.py").read_text(encoding="utf-8")
+
+        self.assertIn("from runtime.recovery_scheduling import", recovery)
+        self.assertIn("def schedule_cooldown", scheduling)
+        self.assertIn("def queue_account", scheduling)
+        self.assertIn("def run_scheduled_recovery", scheduling)
+        self.assertNotIn("self._scheduler.schedule_once(", recovery)
+        self.assertNotIn("self._queue.push(", recovery)
 
     def test_recovery_owner_and_signal_routing_are_split_from_engine(self):
         recovery = (ROOT / "runtime" / "recovery_engine.py").read_text(encoding="utf-8")

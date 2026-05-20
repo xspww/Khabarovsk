@@ -12,6 +12,7 @@ HOTSPOT_FILE_LIMITS = {
     "process_net.py": 900,
     "core.py": 1200,
     "roblox_hybrid.py": 1150,
+    "desktop_host.py": 900,
     "services/process_service.py": 980,
     "runtime/runtime_state_manager.py": 900,
 }
@@ -160,6 +161,21 @@ class ArchitectureDisciplineTests(unittest.TestCase):
         ):
             self.assertIn(f"def {helper_name}", helpers)
             self.assertNotIn(f"def {helper_name}", hybrid)
+
+    def test_desktop_single_instance_helpers_are_split_from_host_facade(self):
+        host = (ROOT / "desktop_host.py").read_text(encoding="utf-8-sig", errors="replace")
+        guard = (ROOT / "desktop" / "instance_guard.py").read_text(encoding="utf-8-sig", errors="replace")
+
+        self.assertIn("from desktop.instance_guard import", host)
+        self.assertIn("def _run_desktop_window", host)
+        for helper_name in (
+            "_cmdline_targets_this_app",
+            "_stop_previous_instance",
+            "_stop_same_app_processes",
+            "prepare_backend_single_instance",
+        ):
+            self.assertIn(f"def {helper_name}", guard)
+            self.assertNotIn(f"def {helper_name}", host)
 
     def test_api_route_modules_stay_under_architecture_budget(self):
         route_dir = ROOT / "api_routes"

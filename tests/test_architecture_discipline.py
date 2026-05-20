@@ -11,9 +11,14 @@ HOTSPOT_FILE_LIMITS = {
     "main.py": 700,
     "process_net.py": 900,
     "core.py": 1200,
+    "roblox_hybrid.py": 1150,
     "services/process_service.py": 980,
     "runtime/runtime_state_manager.py": 900,
 }
+
+HYBRID_ACCOUNT_TEST_FILE_LIMIT = 1100
+HYBRID_ACCOUNT_TEST_FACADE_LIMIT = 120
+DASHBOARD_STYLE_MODULE_LIMIT = 800
 
 API_ROUTE_FILE_LIMIT = 650
 SERVICE_DOMAIN_FILE_LIMIT = 650
@@ -94,6 +99,67 @@ class ArchitectureDisciplineTests(unittest.TestCase):
                     max_lines,
                     f"{rel} is over budget. Move new logic into a domain module instead of appending.",
                 )
+
+    def test_hybrid_account_regression_suite_stays_split(self):
+        facade = ROOT / "tests" / "test_hybrid_account.py"
+        facade_lines = facade.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+        self.assertLessEqual(
+            len(facade_lines),
+            HYBRID_ACCOUNT_TEST_FACADE_LIMIT,
+            "tests/test_hybrid_account.py should stay a small compatibility facade.",
+        )
+        self.assertIn("class HybridAccountTests", facade.read_text(encoding="utf-8"))
+
+        case_files = sorted((ROOT / "tests").glob("hybrid_account_*_cases.py"))
+        self.assertGreaterEqual(len(case_files), 5)
+        for path in case_files:
+            rel = path.relative_to(ROOT).as_posix()
+            with self.subTest(file=rel):
+                lines = path.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+                self.assertLessEqual(
+                    len(lines),
+                    HYBRID_ACCOUNT_TEST_FILE_LIMIT,
+                    f"{rel} is over budget. Split by behavior domain instead of appending.",
+                )
+
+    def test_dashboard_stylesheet_stays_split(self):
+        manifest = ROOT / "ui" / "dashboard.css"
+        manifest_text = manifest.read_text(encoding="utf-8-sig", errors="replace")
+        manifest_lines = manifest_text.splitlines()
+        imports = re.findall(r'@import\s+url\("\./styles/([^"?]+)\?v=main-view-animation"\);', manifest_text)
+        self.assertEqual(len(manifest_lines), len(imports))
+        self.assertGreaterEqual(len(imports), 5)
+
+        for name in imports:
+            path = ROOT / "ui" / "styles" / name
+            self.assertTrue(path.exists(), f"Missing imported stylesheet: {name}")
+
+        for path in sorted((ROOT / "ui" / "styles").glob("*.css")):
+            rel = path.relative_to(ROOT).as_posix()
+            with self.subTest(file=rel):
+                lines = path.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+                self.assertLessEqual(
+                    len(lines),
+                    DASHBOARD_STYLE_MODULE_LIMIT,
+                    f"{rel} is over budget. Split styles by UI surface instead of appending.",
+                )
+
+    def test_roblox_private_server_helpers_are_split_from_launcher_facade(self):
+        hybrid = (ROOT / "roblox_hybrid.py").read_text(encoding="utf-8-sig", errors="replace")
+        helpers = (ROOT / "domain" / "roblox_private_servers.py").read_text(encoding="utf-8-sig", errors="replace")
+
+        self.assertIn("ensure_owned_private_server as _ensure_owned_private_server", hybrid)
+        self.assertIn("def ensure_owned_private_server", hybrid)
+        self.assertIn("class HybridLauncher", hybrid)
+        for helper_name in (
+            "parse_vip_link",
+            "parse_vip_components",
+            "build_place_launcher_url",
+            "build_roblox_player_uri",
+            "parse_launch_destination_from_cmdline",
+        ):
+            self.assertIn(f"def {helper_name}", helpers)
+            self.assertNotIn(f"def {helper_name}", hybrid)
 
     def test_api_route_modules_stay_under_architecture_budget(self):
         route_dir = ROOT / "api_routes"

@@ -4,6 +4,7 @@ import atexit
 import ctypes
 import json
 import os
+import re
 import socket
 import sys
 import threading
@@ -34,6 +35,21 @@ _BACKEND_THREAD_ERROR = ""
 _app = None
 _farm = None
 _CONSOLE_ICON_HANDLES: List[int] = []
+_STARTUP_PROGRESS_WIDTH = 44
+_STARTUP_PROGRESS_TOTAL_STEPS = 6
+_STARTUP_PROGRESS_FRAME_DELAY = 0.012
+_STARTUP_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
+_STARTUP_PROGRESS_ACTIVE = False
+_STARTUP_PROGRESS_LAST_LEN = 0
+_STARTUP_PROGRESS_PERCENT = 0
+_STARTUP_SPINNER_INDEX = 0
+_STARTUP_CLEAR_AFTER_WINDOW_SHOW = False
+_STARTUP_COLOR_SUPPORT: Optional[bool] = None
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+_COLOR_RESET = "\x1b[0m"
+_COLOR_DIM = "\x1b[90m"
+_COLOR_NAVY_BLUE = "\x1b[38;2;30;64;175m"
+_COLOR_NAVY_TEXT = "\x1b[38;2;96;165;250m"
 _PYTHON_ENTRYPOINTS: Tuple[Tuple[str, ...], ...] = (
     ("main.py",),
     ("ops", "run_backend.py"),
@@ -145,6 +161,161 @@ def _console_write(message: str = "") -> None:
         pass
 
 
+def _console_write_inline(message: str = "") -> None:
+    try:
+        sys.stdout.write(str(message))
+        sys.stdout.flush()
+    except UnicodeEncodeError:
+        try:
+            safe_message = (
+                str(message)
+                .replace("→", "->")
+                .replace("█", "#")
+                .replace("░", ".")
+            )
+            for frame in _STARTUP_SPINNER_FRAMES:
+                safe_message = safe_message.replace(frame, "*")
+            sys.stdout.write(safe_message.encode("ascii", "replace").decode("ascii"))
+            sys.stdout.flush()
+        except Exception:
+            pass
+    except Exception:
+        pass
+
+
+def _startup_enable_virtual_terminal() -> bool:
+    if not getattr(sys.stdout, "isatty", lambda: False)():
+        return False
+    if os.name != "nt":
+        return True
+    try:
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)
+        if handle in (0, -1):
+            return False
+        mode = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        return bool(kernel32.SetConsoleMode(handle, mode.value | 0x0004))
+    except Exception:
+        return False
+
+
+def _startup_colors_enabled() -> bool:
+    global _STARTUP_COLOR_SUPPORT
+    requested = os.environ.get("CRONUS_CONSOLE_COLOR", "").strip().lower()
+    if requested in {"0", "false", "no", "off"}:
+        return False
+    if requested not in {"1", "true", "yes", "on"}:
+        return False
+    if _STARTUP_COLOR_SUPPORT is None:
+        _STARTUP_COLOR_SUPPORT = _startup_enable_virtual_terminal()
+    return bool(_STARTUP_COLOR_SUPPORT)
+
+
+def _startup_paint(text: str, color: str) -> str:
+    if not color or not _startup_colors_enabled():
+        return text
+    return f"{color}{text}{_COLOR_RESET}"
+
+
+def _startup_visible_len(text: str) -> int:
+    return len(_ANSI_RE.sub("", str(text)))
+
+
+def _startup_progress_step(percent: int) -> int:
+    pct = max(0, min(100, int(percent)))
+    if pct >= 96:
+        return 6
+    if pct >= 88:
+        return 5
+    if pct >= 78:
+        return 4
+    if pct >= 55:
+        return 3
+    if pct >= 35:
+        return 2
+    return 1
+
+
+def _startup_progress_line(percent: int, detail: str) -> str:
+    global _STARTUP_SPINNER_INDEX
+    try:
+        pct = int(percent)
+    except Exception:
+        pct = 0
+    pct = max(0, min(100, pct))
+    filled = int(round(_STARTUP_PROGRESS_WIDTH * (pct / 100.0)))
+    bar = _startup_paint("█" * filled, _COLOR_NAVY_BLUE) + _startup_paint("░" * (_STARTUP_PROGRESS_WIDTH - filled), _COLOR_DIM)
+    spinner = _STARTUP_SPINNER_FRAMES[_STARTUP_SPINNER_INDEX % len(_STARTUP_SPINNER_FRAMES)]
+    _STARTUP_SPINNER_INDEX += 1
+    detail_text = str(detail or "").strip() or "Starting"
+    label = _startup_paint(detail_text, _COLOR_NAVY_TEXT)
+    step = f"{_startup_progress_step(pct)}/{_STARTUP_PROGRESS_TOTAL_STEPS}"
+    return f"{spinner} {label}  [{bar}] {step} {pct:3d}%"
+
+
+def _render_startup_progress(percent: int, detail: str) -> None:
+    global _STARTUP_PROGRESS_LAST_LEN
+    line = _startup_progress_line(percent, detail)
+    visible_len = _startup_visible_len(line)
+    padding = " " * max(0, _STARTUP_PROGRESS_LAST_LEN - visible_len)
+    _console_write_inline(f"\r{line}{padding}")
+    _STARTUP_PROGRESS_LAST_LEN = visible_len
+
+
+def _console_startup_progress(percent: int, detail: str) -> None:
+    global _STARTUP_PROGRESS_ACTIVE, _STARTUP_PROGRESS_PERCENT
+    try:
+        target = int(percent)
+    except Exception:
+        target = 0
+    target = max(0, min(100, target))
+    start = _STARTUP_PROGRESS_PERCENT if _STARTUP_PROGRESS_ACTIVE else target
+    if _STARTUP_PROGRESS_ACTIVE and target > start:
+        frame_count = min(10, max(3, target - start))
+        for index in range(1, frame_count + 1):
+            frame_percent = start + round((target - start) * (index / frame_count))
+            _render_startup_progress(frame_percent, detail)
+            if index < frame_count:
+                time.sleep(_STARTUP_PROGRESS_FRAME_DELAY)
+    else:
+        _render_startup_progress(target, detail)
+    _STARTUP_PROGRESS_ACTIVE = True
+    _STARTUP_PROGRESS_PERCENT = target
+
+
+def _console_clear_startup_screen() -> None:
+    try:
+        os.system("cls" if os.name == "nt" else "clear")
+    except Exception:
+        pass
+
+
+def _console_finish_startup(*, clear: bool) -> None:
+    global _STARTUP_PROGRESS_ACTIVE, _STARTUP_PROGRESS_LAST_LEN, _STARTUP_PROGRESS_PERCENT, _STARTUP_SPINNER_INDEX
+    if _STARTUP_PROGRESS_ACTIVE:
+        _console_write_inline("\r" + (" " * _STARTUP_PROGRESS_LAST_LEN) + "\r")
+    _STARTUP_PROGRESS_ACTIVE = False
+    _STARTUP_PROGRESS_LAST_LEN = 0
+    _STARTUP_PROGRESS_PERCENT = 0
+    _STARTUP_SPINNER_INDEX = 0
+    if clear:
+        _console_clear_startup_screen()
+
+
+def _console_clear_after_window_show(enabled: bool = True) -> None:
+    global _STARTUP_CLEAR_AFTER_WINDOW_SHOW
+    _STARTUP_CLEAR_AFTER_WINDOW_SHOW = bool(enabled)
+
+
+def _console_finish_after_window_show() -> None:
+    global _STARTUP_CLEAR_AFTER_WINDOW_SHOW
+    clear = bool(_STARTUP_CLEAR_AFTER_WINDOW_SHOW)
+    _STARTUP_CLEAR_AFTER_WINDOW_SHOW = False
+    _console_finish_startup(clear=clear)
+
+
 def _console_event(icon: str, message: str, *, indent: bool = False) -> None:
     _console_write(format_console_line(icon, message, indent=indent))
 
@@ -153,16 +324,28 @@ def _console_status(label: str, detail: str) -> None:
     label_key = str(label or "").strip().lower()
     detail_text = str(detail or "").strip()
     if label_key == "startup":
+        if "existing" in detail_text.lower():
+            _console_startup_progress(18, detail_text)
+        else:
+            _console_startup_progress(8, detail_text or "Preparing startup")
         return
     if label_key == "port":
+        _console_startup_progress(35, detail_text or "Selecting local port")
         return
     if label_key == "backend":
         if detail_text.lower().startswith("not ready"):
+            _console_finish_startup(clear=False)
             _console_event("XX", f"Cronus backend not ready: {detail_text.replace('Not ready:', '', 1).strip()}")
+        elif detail_text.lower().startswith("ready"):
+            _console_startup_progress(78, detail_text)
+        else:
+            _console_startup_progress(55, detail_text or "Starting FastAPI server")
         return
     if label_key == "dashboard":
+        _console_startup_progress(88, detail_text or "Dashboard ready")
         return
     if label_key == "desktop":
+        _console_startup_progress(96, detail_text or "Opening desktop window")
         return
     if label_key == "shutdown":
         return
@@ -539,10 +722,18 @@ def _start_backend_thread() -> threading.Thread:
     return server_thread
 
 def _wait_for_backend_ready(server_thread: threading.Thread, timeout: float = 20.0) -> Tuple[bool, str]:
-    deadline = time.time() + max(1.0, float(timeout or 20.0))
+    wait_seconds = max(1.0, float(timeout or 20.0))
+    started_at = time.time()
+    deadline = started_at + wait_seconds
     url = f"http://{HOST}:{PORT}/api/status"
     last_error = ""
+    last_progress = -1
     while time.time() < deadline:
+        elapsed_ratio = min(1.0, max(0.0, (time.time() - started_at) / wait_seconds))
+        progress = 56 + int(18 * elapsed_ratio)
+        if progress != last_progress:
+            _console_startup_progress(progress, "Waiting for FastAPI backend")
+            last_progress = progress
         if not server_thread.is_alive():
             return False, _BACKEND_THREAD_ERROR or "backend thread exited before ready"
         try:
@@ -797,6 +988,7 @@ def _run_desktop_window() -> bool:
     window.show()
     window.raise_()
     window.activateWindow()
+    _console_finish_after_window_show()
     _apply_windows_rounded_corners(window)
     title_timer = QTimer(window)
 
@@ -853,10 +1045,13 @@ def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
         _console_status("backend", f"Not ready: {detail}")
         _console_status("log", LOG_FILE)
     _console_status("desktop", "Opening desktop window")
+    _console_clear_after_window_show(ready)
     if _run_desktop_window():
         _console_status("shutdown", "Cronus window closed")
         return
     _console_status("desktop", "Desktop window unavailable; opening browser fallback")
+    _console_clear_after_window_show(False)
+    _console_finish_startup(clear=ready)
     webbrowser.open(f"http://{HOST}:{PORT}")
     try:
         while not _SHUTDOWN_REQUESTED.is_set():

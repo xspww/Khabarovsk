@@ -1,4 +1,38 @@
 const RAM_LIMIT_PRESETS=[4096,6144,8192,12288,16384,24576,32768,65536];
+const REVEAL_MS=900;
+
+function revealHeight(el){
+  return `${Math.max(1,el.scrollHeight)}px`;
+}
+
+function refreshReveal(el){
+  if(!el||el.hidden||!el.classList.contains('is-open'))return;
+  requestAnimationFrame(()=>el.style.setProperty('--reveal-height',revealHeight(el)));
+}
+
+function setReveal(el,open){
+  if(!el)return;
+  el.classList.add('reveal-panel');
+  el.dataset.revealState=open?'open':'closed';
+  el.setAttribute('aria-hidden',String(!open));
+  if(open){
+    el.hidden=false;
+    requestAnimationFrame(()=>{
+      el.style.setProperty('--reveal-height',revealHeight(el));
+      el.classList.add('is-open');
+    });
+    return;
+  }
+  if(el.hidden)return;
+  el.style.setProperty('--reveal-height',revealHeight(el));
+  el.classList.remove('is-open');
+  window.setTimeout(()=>{
+    if(el.dataset.revealState==='closed'){
+      el.hidden=true;
+      el.style.removeProperty('--reveal-height');
+    }
+  },REVEAL_MS);
+}
 
 function normalizeRamLimit(value){
   const parsed=Number(value);
@@ -48,8 +82,8 @@ export function renderSettingsPanel(ctx){
   }
 
   const popupOn=!!$('popup-disconnected-enabled').checked;
-  $('autoclose-controls').hidden=!$('queue-autoclose-enabled').checked;
-  $('popup-disconnected-controls').hidden=!popupOn;
+  setReveal($('autoclose-controls'),!!$('queue-autoclose-enabled').checked);
+  setReveal($('popup-disconnected-controls'),popupOn);
   updateSaveState('game');
   updateSaveState('queue');
 }
@@ -64,7 +98,7 @@ export function renderPerformancePanel(ctx){
     $('fps-limit').value=PERF.fps_limit??PERF.framerate_cap??240;
   }
 
-  $('fps-limit-field').hidden=!$('fps-enabled').checked;
+  setReveal($('fps-limit-field'),!!$('fps-enabled').checked);
   const notice=$('fps-notice'),msg=PERF.warning||PERF.msg||'';
   notice.textContent=msg;
   notice.classList.toggle('show',!!msg&&msg!=='ok');
@@ -95,8 +129,9 @@ export function renderRamPanel(ctx){
   }
 
   const enabled=!!$('ram-enabled').checked;
-  currentField.hidden=!enabled;
-  customField.hidden=!enabled||preset.value!=='custom';
+  setReveal(currentField,enabled);
+  setReveal(customField,enabled&&preset.value==='custom');
+  refreshReveal(currentField);
   const notice=$('ram-notice');
   notice.textContent='';
   notice.classList.remove('show');
@@ -116,8 +151,8 @@ export function renderGraphicsPanel(ctx){
     $('process-priority').value=GRAPHICS.process_priority||'low';
   }
 
-  $('graphics-quality-controls').hidden=!$('graphics-auto-enabled').checked;
-  $('priority-controls').hidden=!$('priority-enabled').checked;
+  setReveal($('graphics-quality-controls'),!!$('graphics-auto-enabled').checked);
+  setReveal($('priority-controls'),!!$('priority-enabled').checked);
   const notice=$('graphics-notice'),msg=GRAPHICS.warning||GRAPHICS.msg||'';
   notice.textContent=msg;
   notice.classList.toggle('show',!!msg&&msg!=='ok');
@@ -152,9 +187,10 @@ export function renderWindowSizePanel(ctx){
   const enabled=!!$('window-size-enabled').checked;
   const preset=$('window-size-preset').value;
   const arrange=!!$('window-arrange-enabled').checked;
-  $('window-size-controls').hidden=!enabled;
-  $('window-size-custom').hidden=!enabled||preset!=='custom';
-  $('window-arrange-controls').hidden=!enabled||!arrange;
+  setReveal($('window-size-controls'),enabled);
+  setReveal($('window-size-custom'),enabled&&preset==='custom');
+  setReveal($('window-arrange-controls'),enabled&&arrange);
+  refreshReveal($('window-size-controls'));
 
   if(enabled&&preset!=='custom'&&WINDOW_SIZE_PRESETS[preset]&&!['window-size-width','window-size-height'].includes(active)){
     const pair=WINDOW_SIZE_PRESETS[preset];
@@ -184,7 +220,6 @@ export function renderCpuLimiterPanel(ctx){
   const enabled=!!$('cpu-enabled').checked;
   const applyAll=!!$('cpu-apply-all').checked;
   const defaultLimit=Number($('cpu-default-limit').value)||Number(CPU_LIMITER.default_limit_percent)||20;
-  $('cpu-controls').hidden=!enabled;
 
   const rows=Array.isArray(CPU_LIMITER.rows)?CPU_LIMITER.rows:[];
   $('cpu-account-rows').innerHTML=rows.map(row=>{
@@ -197,6 +232,7 @@ export function renderCpuLimiterPanel(ctx){
     const rowLimit=applyAll?defaultLimit:(row.limit_percent??defaultLimit);
     return `<tr><td><div class="name">${esc(row.display||user)}</div><div class="handle">${esc(user)}</div></td><td>${esc(pid)}</td><td><input id="cpu-row-enabled-${esc(user)}" class="cpu-row-enabled" data-user="${esc(user)}" type="checkbox" ${rowEnabled?'checked':''} ${disabled?'disabled':''}></td><td><input id="cpu-row-limit-${esc(user)}" class="input cpu-row-limit" data-user="${esc(user)}" type="number" min="5" max="95" step="0.01" value="${esc(Number(rowLimit).toFixed(2))}" ${disabled?'disabled':''}></td><td><strong>${esc(status)}</strong><div class="handle">${esc(msg)}</div></td></tr>`;
   }).join('')||'<tr><td colspan="5" style="height:90px;text-align:center;color:var(--muted)">No accounts</td></tr>';
+  setReveal($('cpu-controls'),enabled);
 
   const notice=$('cpu-notice');
   const failed=rows.filter(r=>r.status==='Failed').length;

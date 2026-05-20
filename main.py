@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
+import time
 import urllib.request
+from importlib import metadata as importlib_metadata
+from importlib import util as importlib_util
+from typing import Dict, List, Optional, Tuple
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
@@ -12,10 +17,162 @@ from app_paths import APP_NAME, resource_path
 
 APP_USER_AGENT = "CronusLauncher/RT"
 APP_ICON_FILE = "cronus_icon.png"
+REQUIREMENTS_FILE = os.path.join(BASE_DIR, "requirements.txt")
+_STARTUP_COLOR_SUPPORT: Optional[bool] = None
+_COLOR_RESET = "\x1b[0m"
+_COLOR_GREEN = "\x1b[92m"
+_COLOR_RED = "\x1b[91m"
+_COLOR_DIM = "\x1b[90m"
+_REQUIREMENT_IMPORT_NAMES: Dict[str, str] = {
+    "pillow": "PIL",
+    "pyside6": "PySide6",
+}
+
+
+def _startup_console_write(message: str = "") -> None:
+    try:
+        print(message, flush=True)
+    except UnicodeEncodeError:
+        try:
+            safe = str(message).replace("✓", "OK").replace("×", "XX")
+            print(safe.encode("ascii", "replace").decode("ascii"), flush=True)
+        except Exception:
+            pass
+
+
+def _startup_enable_virtual_terminal() -> bool:
+    if not getattr(sys.stdout, "isatty", lambda: False)():
+        return False
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32
+        handle = kernel32.GetStdHandle(-11)
+        if handle in (0, -1):
+            return False
+        mode = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        return bool(kernel32.SetConsoleMode(handle, mode.value | 0x0004))
+    except Exception:
+        return False
+
+
+def _startup_colors_enabled() -> bool:
+    global _STARTUP_COLOR_SUPPORT
+    requested = os.environ.get("CRONUS_CONSOLE_COLOR", "").strip().lower()
+    if requested in {"0", "false", "no", "off"}:
+        return False
+    if requested not in {"1", "true", "yes", "on"}:
+        return False
+    if _STARTUP_COLOR_SUPPORT is None:
+        _STARTUP_COLOR_SUPPORT = _startup_enable_virtual_terminal()
+    return bool(_STARTUP_COLOR_SUPPORT)
+
+
+def _startup_paint(text: str, color: str) -> str:
+    if not color or not _startup_colors_enabled():
+        return text
+    return f"{color}{text}{_COLOR_RESET}"
+
+
+def _startup_tick_line(package: str, version: str) -> str:
+    return f"{_startup_paint('✓', _COLOR_GREEN)} {package} {_startup_paint('v' + version, _COLOR_DIM)}"
+
+
+def _startup_fail_line(package: str, reason: str) -> str:
+    return f"{_startup_paint('×', _COLOR_RED)} {package} {reason}".rstrip()
+
+
+def _startup_distribution_version(name: str) -> Optional[str]:
+    try:
+        return importlib_metadata.version(name)
+    except importlib_metadata.PackageNotFoundError:
+        return None
+    except Exception:
+        return None
+
+
+def _startup_import_available(name: str) -> bool:
+    try:
+        return importlib_util.find_spec(name) is not None
+    except Exception:
+        return False
+
+
+def _startup_requirement_rows(requirements_file: str = REQUIREMENTS_FILE) -> List[Tuple[str, str, str]]:
+    rows: List[Tuple[str, str, str]] = []
+    try:
+        with open(requirements_file, "r", encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except OSError:
+        return rows
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#") or line.startswith("-"):
+            continue
+        match = re.match(r"^([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?\s*(>=\s*([^;#\s]+))?", line)
+        if not match:
+            continue
+        package = match.group(1)
+        minimum = match.group(3) or ""
+        import_name = _REQUIREMENT_IMPORT_NAMES.get(package.lower(), package.replace("-", "_"))
+        rows.append((package, import_name, minimum))
+    return rows
+
+
+def _startup_version_tuple(value: str) -> Tuple[int, ...]:
+    parts = [int(item) for item in re.findall(r"\d+", str(value or ""))[:4]]
+    return tuple(parts or [0])
+
+
+def _startup_version_ok(installed: str, minimum: str) -> bool:
+    if not minimum:
+        return True
+    return _startup_version_tuple(installed) >= _startup_version_tuple(minimum)
+
+
+def _run_startup_dependency_checks(
+    requirements_file: str = REQUIREMENTS_FILE,
+    *,
+    exit_on_failure: bool = True,
+    animate: bool = True,
+) -> bool:
+    rows = _startup_requirement_rows(requirements_file)
+    failures: List[str] = []
+    for package, import_name, minimum in rows:
+        installed = _startup_distribution_version(package)
+        import_ok = _startup_import_available(import_name)
+        if not installed or not import_ok:
+            failures.append(package)
+            need = f" >= {minimum}" if minimum else ""
+            _startup_console_write(_startup_fail_line(package, f"missing{need}"))
+            continue
+        if not _startup_version_ok(installed, minimum):
+            failures.append(package)
+            _startup_console_write(_startup_fail_line(package, f"v{installed} below required >= {minimum}"))
+            continue
+        _startup_console_write(_startup_tick_line(package, installed))
+        if animate:
+            time.sleep(0.035)
+    _startup_console_write(f"{_startup_paint('✓', _COLOR_GREEN)} Runtime models: none required")
+    if failures:
+        _startup_console_write("")
+        _startup_console_write("Missing startup dependency. Run:")
+        _startup_console_write("python -m pip install -r requirements.txt")
+        if exit_on_failure:
+            sys.exit(1)
+        return False
+    return True
 
 if sys.platform != "win32":
     print(f"{APP_NAME} requires Windows.")
     sys.exit(1)
+
+if __name__ == "__main__":
+    _run_startup_dependency_checks()
 
 try:
     from fastapi import FastAPI

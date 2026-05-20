@@ -1,1 +1,1 @@
-import './dashboard.js';
+import './dashboard.js?v=main-view-animation';

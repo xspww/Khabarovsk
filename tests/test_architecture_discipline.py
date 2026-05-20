@@ -12,7 +12,7 @@ HOTSPOT_FILE_LIMITS = {
     "process_net.py": 900,
     "core.py": 1000,
     "roblox_hybrid.py": 1150,
-    "desktop_host.py": 900,
+    "desktop_host.py": 820,
     "services/process_service.py": 900,
     "runtime/runtime_state_manager.py": 900,
 }
@@ -177,6 +177,17 @@ class ArchitectureDisciplineTests(unittest.TestCase):
         ):
             self.assertIn(f"def {helper_name}", guard)
             self.assertNotIn(f"def {helper_name}", host)
+
+    def test_desktop_console_icon_helpers_are_split_from_host_facade(self):
+        host = (ROOT / "desktop_host.py").read_text(encoding="utf-8-sig", errors="replace")
+        icon = (ROOT / "desktop" / "console_icon.py").read_text(encoding="utf-8-sig", errors="replace")
+
+        self.assertIn("from desktop.console_icon import", host)
+        self.assertIn("def ensure_console_icon_file", icon)
+        self.assertIn("def set_console_window_icon", icon)
+        self.assertIn("WM_SETICON", icon)
+        self.assertNotIn("def _ensure_console_icon_file", host)
+        self.assertNotIn("def _set_console_window_icon", host)
 
     def test_core_logging_is_split_from_runtime_model_facade(self):
         core = (ROOT / "core.py").read_text(encoding="utf-8-sig", errors="replace")

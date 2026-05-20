@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import atexit
 import ctypes
 import os
 import re
@@ -11,13 +10,19 @@ import traceback
 import urllib.error
 import urllib.request
 import webbrowser
-from typing import Any, List, Optional, Tuple
+from typing import Any, Optional, Tuple
 
 import uvicorn
 
-from app_paths import APP_NAME, APP_DATA_DIR, APP_ROOT_DIR, resource_path
+from app_paths import APP_NAME, APP_ROOT_DIR, resource_path
 from console_activity import format_console_line
 from core import LOG_FILE, flog, flog_kv
+from desktop.console_icon import (
+    APP_ICON_FILE,
+    destroy_console_icon_handles as _destroy_console_icon_handles,
+    ensure_console_icon_file as _ensure_console_icon_file,
+    set_console_window_icon as _set_console_window_icon,
+)
 from desktop.instance_guard import (
     INSTANCE_TOKEN as _INSTANCE_TOKEN,
     _acquire_instance_socket,
@@ -40,7 +45,6 @@ from desktop.instance_guard import (
 )
 
 APP_USER_AGENT = "CronusLauncher/RT"
-APP_ICON_FILE = "cronus_icon.png"
 BASE_DIR = APP_ROOT_DIR
 HOST = "127.0.0.1"
 PORT = 7777
@@ -48,7 +52,6 @@ _SHUTDOWN_REQUESTED = threading.Event()
 _BACKEND_THREAD_ERROR = ""
 _app = None
 _farm = None
-_CONSOLE_ICON_HANDLES: List[int] = []
 _STARTUP_PROGRESS_WIDTH = 44
 _STARTUP_PROGRESS_TOTAL_STEPS = 6
 _STARTUP_PROGRESS_FRAME_DELAY = 0.012
@@ -64,97 +67,6 @@ _COLOR_RESET = "\x1b[0m"
 _COLOR_DIM = "\x1b[90m"
 _COLOR_NAVY_BLUE = "\x1b[38;2;30;64;175m"
 _COLOR_NAVY_TEXT = "\x1b[38;2;96;165;250m"
-
-def _destroy_console_icon_handles() -> None:
-    if os.name != "nt":
-        return
-    while _CONSOLE_ICON_HANDLES:
-        handle = _CONSOLE_ICON_HANDLES.pop()
-        try:
-            ctypes.windll.user32.DestroyIcon(ctypes.c_void_p(int(handle)))
-        except Exception:
-            pass
-
-
-atexit.register(_destroy_console_icon_handles)
-
-
-def _ensure_console_icon_file() -> str:
-    source_path = resource_path("assets", APP_ICON_FILE)
-    if not os.path.exists(source_path):
-        return ""
-    icon_path = os.path.join(APP_DATA_DIR, "cronus_console_icon.ico")
-    try:
-        if (
-            os.path.exists(icon_path)
-            and os.path.getmtime(icon_path) >= os.path.getmtime(source_path)
-            and os.path.getsize(icon_path) > 0
-        ):
-            return icon_path
-    except Exception:
-        pass
-    try:
-        from PIL import Image
-
-        with Image.open(source_path) as image:
-            image.convert("RGBA").save(
-                icon_path,
-                format="ICO",
-                sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
-            )
-        return icon_path
-    except Exception as exc:
-        flog_kv("MAIN", "console_icon_create_failed", "warning", source=source_path, error=str(exc))
-        return ""
-
-
-def _set_console_window_icon() -> bool:
-    if os.name != "nt":
-        return False
-    icon_path = _ensure_console_icon_file()
-    if not icon_path:
-        return False
-    try:
-        user32 = ctypes.windll.user32
-        kernel32 = ctypes.windll.kernel32
-        hwnd = int(kernel32.GetConsoleWindow() or 0)
-        if not hwnd:
-            return False
-
-        IMAGE_ICON = 1
-        LR_LOADFROMFILE = 0x00000010
-        WM_SETICON = 0x0080
-        ICON_SMALL = 0
-        ICON_BIG = 1
-        GCLP_HICON = -14
-        GCLP_HICONSM = -34
-
-        def _load_icon(size: int) -> int:
-            return int(user32.LoadImageW(None, icon_path, IMAGE_ICON, size, size, LR_LOADFROMFILE) or 0)
-
-        small_icon = _load_icon(16)
-        big_icon = _load_icon(32) or _load_icon(48)
-        if not small_icon and not big_icon:
-            return False
-        if small_icon:
-            user32.SendMessageW(ctypes.c_void_p(hwnd), WM_SETICON, ICON_SMALL, ctypes.c_void_p(small_icon))
-            _CONSOLE_ICON_HANDLES.append(small_icon)
-        if big_icon:
-            user32.SendMessageW(ctypes.c_void_p(hwnd), WM_SETICON, ICON_BIG, ctypes.c_void_p(big_icon))
-            _CONSOLE_ICON_HANDLES.append(big_icon)
-        try:
-            set_class_long_ptr = getattr(user32, "SetClassLongPtrW", None) or getattr(user32, "SetClassLongW", None)
-            if set_class_long_ptr:
-                if big_icon:
-                    set_class_long_ptr(ctypes.c_void_p(hwnd), GCLP_HICON, ctypes.c_void_p(big_icon))
-                if small_icon:
-                    set_class_long_ptr(ctypes.c_void_p(hwnd), GCLP_HICONSM, ctypes.c_void_p(small_icon))
-        except Exception:
-            pass
-        return True
-    except Exception as exc:
-        flog_kv("MAIN", "console_icon_set_failed", "warning", icon=icon_path, error=str(exc))
-        return False
 
 
 def _console_write(message: str = "") -> None:

@@ -10,7 +10,7 @@ HOTSPOT_FILE_LIMITS = {
     "farm.py": 1350,
     "main.py": 700,
     "process_net.py": 900,
-    "core.py": 1200,
+    "core.py": 1000,
     "roblox_hybrid.py": 1150,
     "desktop_host.py": 900,
     "services/process_service.py": 980,
@@ -177,6 +177,25 @@ class ArchitectureDisciplineTests(unittest.TestCase):
             self.assertIn(f"def {helper_name}", guard)
             self.assertNotIn(f"def {helper_name}", host)
 
+    def test_core_logging_is_split_from_runtime_model_facade(self):
+        core = (ROOT / "core.py").read_text(encoding="utf-8-sig", errors="replace")
+        logging_module = (ROOT / "core_logging.py").read_text(encoding="utf-8-sig", errors="replace")
+
+        self.assertIn("from core_logging import", core)
+        self.assertIn("class Account", core)
+        self.assertIn("class StateManager", core)
+        for helper_name in ("_redact_value", "flog_struct", "flog", "_kv_value", "flog_kv"):
+            self.assertIn(f"def {helper_name}", logging_module)
+            self.assertNotIn(f"def {helper_name}", core)
+
+    def test_smart_queue_is_split_from_core_model_facade(self):
+        core = (ROOT / "core.py").read_text(encoding="utf-8-sig", errors="replace")
+        smart_queue = (ROOT / "runtime" / "smart_queue.py").read_text(encoding="utf-8-sig", errors="replace")
+
+        self.assertIn("from runtime.smart_queue import SmartQueue", core)
+        self.assertIn("class SmartQueue", smart_queue)
+        self.assertNotIn("class SmartQueue", core)
+
     def test_api_route_modules_stay_under_architecture_budget(self):
         route_dir = ROOT / "api_routes"
         for path in route_dir.glob("*.py"):
@@ -242,6 +261,7 @@ class ArchitectureDisciplineTests(unittest.TestCase):
             "runtime/recovery_support.py": 180,
             "runtime/runtime_scheduler.py": 360,
             "runtime/runtime_transactions.py": 260,
+            "runtime/smart_queue.py": 320,
         }
         for rel, max_lines in runtime_files.items():
             with self.subTest(file=rel):
@@ -290,7 +310,8 @@ class ArchitectureDisciplineTests(unittest.TestCase):
         self.assertIn("handle_runtime_signal", text)
 
     def test_smart_queue_has_single_method_definitions(self):
-        tree = ast.parse((ROOT / "core.py").read_text(encoding="utf-8-sig", errors="replace"), filename="core.py")
+        path = ROOT / "runtime" / "smart_queue.py"
+        tree = ast.parse(path.read_text(encoding="utf-8-sig", errors="replace"), filename=path.as_posix())
         smart_queue = next(
             node for node in tree.body
             if isinstance(node, ast.ClassDef) and node.name == "SmartQueue"

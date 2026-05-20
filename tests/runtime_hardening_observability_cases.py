@@ -13,6 +13,101 @@ class RuntimeHardeningObservabilityCases:
         self.assertIn("running_without_pid", codes)
 
 
+    def test_in_game_without_strong_process_proof_is_health_warning(self):
+        from runtime.runtime_health import account_health_flags
+
+        flags = account_health_flags({
+            "state": "IN_GAME",
+            "process_alive": True,
+            "process_proof_level": "weak",
+        }, now=1000.0)
+
+        self.assertIn("process_binding_warning", flags)
+
+
+    def test_detailed_farm_health_exposes_operator_health_fields(self):
+        from runtime.runtime_health import build_detailed_farm_health
+
+        health = build_detailed_farm_health(
+            {
+                "running": True,
+                "status_revision": 9,
+                "status_updated_at": 90.0,
+                "stuck_state_threshold_seconds": 60.0,
+                "last_runtime_event_age_seconds": 12.3,
+                "accounts": [
+                    {
+                        "account_id": "RiskyAccount",
+                        "state": "IN_GAME",
+                        "process_alive": True,
+                        "pid_bound": True,
+                        "process_proof_level": "weak",
+                        "process_reject_reason": "ambiguous_owner",
+                        "last_transition_at": 80.0,
+                        "health_flags": ["process_binding_warning"],
+                    },
+                    {
+                        "account_id": "QueuedAccount",
+                        "state": "QUEUED",
+                        "last_transition_at": 10.0,
+                        "health_flags": [],
+                    },
+                ],
+                "queue_snapshot": {"size": 1, "pending": 1},
+                "runtime_health": {"ok": False, "warnings": ["heartbeat_stale"]},
+                "watchdog_task": {
+                    "TaskInstalled": True,
+                    "TaskState": "Ready",
+                    "ProjectRootMatches": True,
+                    "WatchdogScriptExists": True,
+                    "ExpectedProjectRoot": r"C:\repo",
+                    "TaskWorkingDirectory": r"C:\repo",
+                },
+                "release_gate": {
+                    "ok": False,
+                    "generated_at": 1234.5,
+                    "fail_count": 1,
+                    "warn_count": 0,
+                },
+            },
+            now=100.0,
+        )
+
+        self.assertIn("runtime", health)
+        self.assertIn("watchdog_task", health)
+        self.assertIn("release_gate", health)
+        self.assertEqual(health["runtime"]["last_event_age_seconds"], 12.3)
+        self.assertEqual(health["runtime"]["stuck_accounts"], 2)
+        self.assertEqual(health["runtime"]["ambiguous_process_count"], 1)
+        self.assertEqual(health["watchdog_task"]["status"], "installed")
+        self.assertTrue(health["watchdog_task"]["project_root_matches"])
+        self.assertEqual(health["release_gate"]["last_result"], "fail")
+        self.assertEqual(health["release_gate"]["last_run_at"], 1234.5)
+
+
+    def test_cached_operator_health_reads_watchdog_and_release_gate(self):
+        import json
+        from pathlib import Path
+
+        from runtime.farm_health import load_cached_operator_health
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "watchdog_task_last.json").write_text(
+                json.dumps({"TaskInstalled": True, "ProjectRootMatches": True}),
+                encoding="utf-8",
+            )
+            (root / "release_gate_last.json").write_text(
+                json.dumps({"last_result": "pass", "last_run_at": 200.0}),
+                encoding="utf-8",
+            )
+
+            health = load_cached_operator_health(root)
+
+        self.assertTrue(health["watchdog_task"]["TaskInstalled"])
+        self.assertEqual(health["release_gate"]["last_result"], "pass")
+
+
     def test_timeline_records_event_once(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = RuntimeStore(os.path.join(tmp, "runtime.db"))
@@ -142,6 +237,64 @@ class RuntimeHardeningObservabilityCases:
         self.assertNotIn("event-link", serialized)
         self.assertIn("Resolve blocked account gates", " ".join(bundle["recommendations"]))
         self.assertIn("Check runtime scheduler health", " ".join(bundle["recommendations"]))
+
+
+    def test_runtime_diagnostic_bundle_redacts_freeform_tokens_and_nonces(self):
+        import json
+
+        status = {
+            "running": True,
+            "runtime_health": {
+                "warnings": [
+                    "X-Cronus-Token: runtime-token lua1.payload.signature launch_nonce=runtime-nonce"
+                ]
+            },
+            "command_inflight": {
+                "note": "Authorization X-Cronus-Token: inflight-token"
+            },
+            "accounts": [
+                {
+                    "username": "LeakUser",
+                    "account_id": "LeakUser",
+                    "state": "FAILED",
+                    "health_flags": ["lua session token lua1.account.payload launch_nonce=account-nonce"],
+                    "launch_intent_summary": {
+                        "url": "https://roblox.com/games/1?privateServerLinkCode=private-code&linkCode=link-code&accessCode=access-code",
+                    },
+                }
+            ],
+        }
+        events = [
+            {
+                "event_type": "lua_event",
+                "message": (
+                    ".ROBLOSECURITY=roblosecurity-cookie "
+                    "X-Cronus-Token: event-token "
+                    "lua1.event.payload "
+                    "launch_nonce=event-nonce"
+                ),
+            }
+        ]
+
+        bundle = build_runtime_diagnostic_bundle(status, events, {}, now=1000.0)
+        serialized = json.dumps(bundle, sort_keys=True)
+
+        for leaked in (
+            "runtime-token",
+            "lua1.payload.signature",
+            "runtime-nonce",
+            "inflight-token",
+            "lua1.account.payload",
+            "account-nonce",
+            "private-code",
+            "link-code",
+            "access-code",
+            "roblosecurity-cookie",
+            "event-token",
+            "lua1.event.payload",
+            "event-nonce",
+        ):
+            self.assertNotIn(leaked, serialized)
 
 
     def test_runtime_health_does_not_count_normal_start_as_relaunch_pressure(self):

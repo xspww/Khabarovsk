@@ -235,6 +235,70 @@ class HybridAccountApiAccountRouteCases:
         self.assertEqual(runtime_account.cookie_username, "ReloadUser")
         self.assertEqual(runtime_account.cookie_user_id, "42")
 
+    def test_accounts_reload_clears_runtime_account_allowlist_lock(self):
+        from fastapi.testclient import TestClient
+        import api_routes.accounts_routes as accounts_routes
+        import main
+
+        client = TestClient(main.app)
+        records = [{"username": "UnlockedUser", "cookie": "_|WARNING:reload"}]
+        validated_records = [{
+            "username": "UnlockedUser",
+            "cookie": "_|WARNING:reload",
+            "cookie_username": "UnlockedUser",
+            "cookie_user_id": "42",
+        }]
+
+        with patch.object(
+            accounts_routes.ACCOUNT_STORE,
+            "read_records",
+            return_value=records,
+        ), patch.object(
+            accounts_routes,
+            "validate_cookie_details",
+            return_value=(True, "UnlockedUser", "ok", {"username": "UnlockedUser", "user_id": "42"}),
+        ), patch.object(
+            accounts_routes.ACCOUNT_STORE,
+            "write_records",
+        ), patch.object(
+            accounts_routes.ACCOUNT_STORE,
+            "to_cronus_accounts",
+            return_value=validated_records,
+        ), patch.object(main.farm, "running", False), patch.object(
+            main.farm,
+            "set_accounts",
+        ), patch.object(
+            main.cfg_mgr,
+            "save_accounts",
+        ), patch.object(
+            main.cfg_mgr,
+            "get",
+            return_value=["LockedUser", "OtherUser"],
+        ) as cfg_get, patch.object(
+            main.cfg_mgr,
+            "update",
+        ) as cfg_update, patch.object(
+            main.cfg_mgr,
+            "save",
+        ) as cfg_save, patch.object(
+            main.farm,
+            "apply_config_snapshot",
+        ) as apply_config_snapshot, patch.object(main.farm, "_push_event") as push_event:
+            response = auth_post(client, "/api/accounts/reload", json={})
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertTrue(data["allowlist_cleared"])
+        self.assertEqual(data["allowlist_cleared_count"], 2)
+        self.assertIn("cleared account test lock", data["msg"])
+        cfg_get.assert_any_call("runtime_account_allowlist", [])
+        cfg_update.assert_called_once_with({"runtime_account_allowlist": []})
+        cfg_save.assert_called_once()
+        apply_config_snapshot.assert_called_once()
+        messages = [str(call.args[1]) for call in push_event.call_args_list]
+        self.assertIn("Reload Cookies cleared account test lock: 2 account(s)", messages)
+
     def test_running_account_reload_reconciles_added_and_removed_accounts(self):
         from services.account_reload import replace_farm_accounts
 

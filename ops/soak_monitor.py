@@ -294,7 +294,50 @@ def start_response_allows_monitoring(response: Dict[str, Any]) -> bool:
     return "already running" in msg
 
 
-def monitor(args: argparse.Namespace) -> int:
+def build_soak_summary(
+    *,
+    account: str,
+    reached_in_game: bool,
+    fatal_hits: List[Dict[str, Any]],
+    orphan_processes: List[Dict[str, Any]],
+    runtime_warnings: List[str],
+    duration_seconds: float,
+) -> Dict[str, Any]:
+    failures: List[str] = []
+    if not reached_in_game:
+        failures.append(f"{account} never reached IN_GAME")
+    if fatal_hits:
+        failures.append(f"{len(fatal_hits)} fatal log pattern(s) detected")
+    if orphan_processes:
+        failures.append(f"{len(orphan_processes)} orphan Roblox process(es) after cleanup")
+    if runtime_warnings:
+        failures.append(f"runtime health warnings: {', '.join(runtime_warnings[:5])}")
+    return {
+        "ok": not failures,
+        "account": account,
+        "duration_seconds": int(max(0.0, float(duration_seconds or 0.0))),
+        "failures": failures,
+        "fatal_hits": fatal_hits[:10],
+        "orphan_processes": orphan_processes[:10],
+        "runtime_warnings": runtime_warnings[:10],
+    }
+
+
+def write_summary_json(path: str, summary: Dict[str, Any]) -> None:
+    if not path:
+        return
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(summary, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+
+
+def monitor(args: argparse.Namespace, evidence: Optional[Dict[str, Any]] = None) -> int:
+    evidence = evidence if evidence is not None else {}
+    evidence.setdefault("reached_in_game", False)
+    evidence.setdefault("fatal_hits", [])
+    evidence.setdefault("orphan_processes", [])
+    evidence.setdefault("runtime_warnings", [])
+    evidence.setdefault("duration_seconds", 0.0)
     data_dir = _app_data_dir()
     run_id = time.strftime("%Y%m%d-%H%M%S")
     report_path = data_dir / f"soak_monitor_{run_id}.jsonl"
@@ -346,6 +389,7 @@ def monitor(args: argparse.Namespace) -> int:
         roblox_count = len(metrics.get("roblox") or [])
 
         if log_hits:
+            evidence["fatal_hits"].extend(log_hits)
             raise SoakFailure(f"New fatal log pattern detected: {log_hits[:3]}")
         if roblox_count > args.max_roblox_processes:
             raise SoakFailure(f"Too many Roblox processes for single-account soak: {roblox_count}")
@@ -372,7 +416,10 @@ def monitor(args: argparse.Namespace) -> int:
 
         runtime_health = health.get("runtime_health") or {}
         warnings = list(runtime_health.get("warnings") or [])
+        evidence["runtime_warnings"] = [str(item) for item in warnings]
         state = str(account.get("state") or "")
+        if state == "IN_GAME":
+            evidence["reached_in_game"] = True
         process_alive = bool(account.get("process_alive"))
         liveness = str(account.get("liveness_state") or "")
         blocked = str(account.get("blocked_reason") or "")
@@ -448,6 +495,7 @@ def monitor(args: argparse.Namespace) -> int:
                 wall_elapsed=_fmt_elapsed(wall_elapsed),
                 final_account=last_good_status or account,
             )
+            evidence["duration_seconds"] = wall_elapsed
             return 0
 
         time.sleep(args.interval_seconds)
@@ -474,6 +522,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument("--fps-limit", type=int, default=30)
     parser.add_argument("--max-roblox-processes", type=int, default=1)
     parser.add_argument("--success-mode", choices=("continuous", "cumulative"), default="continuous")
+    parser.add_argument("--summary-json", default="")
     return parser.parse_args(argv)
 
 
@@ -482,8 +531,25 @@ def main(argv: List[str]) -> int:
     data_dir = _app_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
     log = MonitorLog(data_dir / f"soak_monitor_boot_{time.strftime('%Y%m%d-%H%M%S')}.jsonl")
+    evidence: Dict[str, Any] = {
+        "reached_in_game": False,
+        "fatal_hits": [],
+        "orphan_processes": [],
+        "runtime_warnings": [],
+        "duration_seconds": 0.0,
+    }
     try:
-        return monitor(args)
+        code = monitor(args, evidence)
+        summary = build_soak_summary(
+            account=args.account,
+            reached_in_game=bool(evidence.get("reached_in_game")),
+            fatal_hits=list(evidence.get("fatal_hits") or []),
+            orphan_processes=list(evidence.get("orphan_processes") or []),
+            runtime_warnings=list(evidence.get("runtime_warnings") or []),
+            duration_seconds=float(evidence.get("duration_seconds") or args.duration_seconds),
+        )
+        write_summary_json(args.summary_json, summary)
+        return 0 if code == 0 and summary["ok"] else 1
     except Exception as exc:
         api = ApiClient(args.base_url, log)
         try:
@@ -492,6 +558,17 @@ def main(argv: List[str]) -> int:
         except Exception as stop_exc:
             log.write("error", "emergency_stop_failed", error=str(stop_exc))
         log.write("error", "soak_failed", error=str(exc))
+        warnings = [str(item) for item in (evidence.get("runtime_warnings") or [])]
+        warnings.append(str(exc))
+        summary = build_soak_summary(
+            account=args.account,
+            reached_in_game=bool(evidence.get("reached_in_game")),
+            fatal_hits=list(evidence.get("fatal_hits") or []),
+            orphan_processes=list(evidence.get("orphan_processes") or []),
+            runtime_warnings=warnings,
+            duration_seconds=float(evidence.get("duration_seconds") or 0.0),
+        )
+        write_summary_json(args.summary_json, summary)
         return 1
 
 

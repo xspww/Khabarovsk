@@ -6,6 +6,7 @@ import os
 import socket
 import subprocess
 import sys
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping
 
@@ -13,6 +14,7 @@ from typing import Any, Dict, Iterable, List, Mapping
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+WATCHDOG_STATUS_CACHE = "watchdog_task_last.json"
 
 
 def _status(ok: bool, name: str, msg: str, **fields: Any) -> Dict[str, Any]:
@@ -78,6 +80,46 @@ def evaluate_launch_target_readiness(
     }
 
 
+def evaluate_watchdog_readiness(status: Mapping[str, Any]) -> Dict[str, Any]:
+    if status.get("_inspection_error"):
+        return _warn(
+            "watchdog_task",
+            f"Watchdog task could not be inspected: {status.get('_inspection_error')}",
+            **dict(status),
+        )
+    installed = bool(status.get("TaskInstalled"))
+    root_matches = bool(status.get("ProjectRootMatches"))
+    script_exists = bool(status.get("WatchdogScriptExists"))
+    if not installed:
+        return _status(False, "watchdog_task", "Watchdog task is not installed.", **dict(status))
+    if not script_exists:
+        return _status(False, "watchdog_task", "Watchdog script is missing.", **dict(status))
+    if not root_matches:
+        return _status(
+            False,
+            "watchdog_task",
+            "Watchdog task is stale; reinstall it from the current repo.",
+            **dict(status),
+        )
+    return _status(True, "watchdog_task", "Watchdog task points to the current repo.", **dict(status))
+
+
+def _default_data_dir() -> Path:
+    from app_paths import APP_DATA_DIR
+
+    return Path(APP_DATA_DIR)
+
+
+def write_watchdog_status_cache(status: Mapping[str, Any], *, data_dir: Path | None = None) -> Path:
+    root = Path(data_dir) if data_dir is not None else _default_data_dir()
+    root.mkdir(parents=True, exist_ok=True)
+    payload = dict(status)
+    payload["cached_at"] = time.time()
+    path = root / WATCHDOG_STATUS_CACHE
+    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+    return path
+
+
 def _git_dirty_check(root: Path) -> Dict[str, Any]:
     try:
         proc = subprocess.run(
@@ -107,6 +149,31 @@ def _load_runtime_inputs() -> tuple[Mapping[str, Any], List[Mapping[str, Any]], 
     return cfg, records, paths
 
 
+def _collect_watchdog_status(port: int) -> Dict[str, Any]:
+    script = PROJECT_ROOT / "ops" / "watchdog_status.ps1"
+    command = (
+        f"& {{ & '{script}' -Port {int(port)} | "
+        "ConvertTo-Json -Depth 6 -Compress }"
+    )
+    try:
+        proc = subprocess.run(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", command],
+            cwd=str(PROJECT_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=12,
+        )
+    except Exception as exc:
+        return {"_inspection_error": str(exc)[:300]}
+    if proc.returncode != 0:
+        return {"_inspection_error": (proc.stderr or proc.stdout or "watchdog status failed").strip()[:500]}
+    try:
+        data = json.loads(proc.stdout.strip() or "{}")
+    except Exception as exc:
+        return {"_inspection_error": f"invalid watchdog status JSON: {exc}"}
+    return data if isinstance(data, dict) else {"_inspection_error": "watchdog status returned non-object JSON"}
+
+
 def collect_preflight(*, host: str = "127.0.0.1", port: int = 7777, allow_running: bool = False) -> Dict[str, Any]:
     cfg, accounts, paths = _load_runtime_inputs()
     checks: List[Dict[str, Any]] = []
@@ -127,6 +194,12 @@ def collect_preflight(*, host: str = "127.0.0.1", port: int = 7777, allow_runnin
     checks.append(_status((PROJECT_ROOT / "ops" / "run_backend.py").exists(), "backend_runner", "ops/run_backend.py exists."))
     checks.append(_status((PROJECT_ROOT / "ops" / "soak_monitor.py").exists(), "soak_monitor", "ops/soak_monitor.py exists."))
     checks.append(_status((PROJECT_ROOT / "ops" / "install_watchdog_task.ps1").exists(), "watchdog_install", "ops/install_watchdog_task.ps1 exists."))
+    watchdog_status = _collect_watchdog_status(port)
+    try:
+        write_watchdog_status_cache(watchdog_status)
+    except Exception:
+        pass
+    checks.append(evaluate_watchdog_readiness(watchdog_status))
     checks.append(_git_dirty_check(PROJECT_ROOT))
 
     fail_count = sum(1 for item in checks if item.get("status") == "fail")

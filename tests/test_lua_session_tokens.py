@@ -50,6 +50,31 @@ class LuaSessionTokenTests(unittest.TestCase):
         self.assertFalse(expired.ok)
         self.assertEqual(expired.reason, "expired")
 
+    def test_lua_session_token_rejections_do_not_echo_scope_secrets(self):
+        token = issue_lua_session_token(
+            "instance-secret",
+            account="LuaUnit",
+            session_id="session-secret",
+            launch_nonce="nonce-secret",
+            ttl_seconds=60,
+            now=1000,
+        )
+
+        rejected = validate_lua_session_token(
+            "instance-secret",
+            token,
+            account="LuaUnit",
+            session_id="session-secret",
+            launch_nonce="wrong-nonce",
+            now=1030,
+        )
+
+        self.assertFalse(rejected.ok)
+        self.assertEqual(rejected.reason, "launch_nonce_mismatch")
+        self.assertEqual(rejected.account, "")
+        self.assertEqual(rejected.session_id, "")
+        self.assertEqual(rejected.launch_nonce, "")
+
     def test_lua_event_replay_cache_rejects_duplicates_and_stale_timestamps(self):
         cache = LuaEventReplayCache(ttl_seconds=30, max_clock_skew_seconds=10, max_events_per_account=8)
 

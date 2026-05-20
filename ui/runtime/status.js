@@ -1,3 +1,10 @@
+export function healthSeverity(health){
+  if(!health||health.ok===false)return 'danger';
+  const warnings=health.warnings||[];
+  if(warnings.length)return 'warning';
+  return 'ok';
+}
+
 export function createStatusRuntime({api,nextSequence,acceptStatus,setStreamState,loadAccountsConfig,render,loadAvatars,toast}){
   let live=false, reconcileTimer=0, fallbackTimer=0;
   async function manualSnapshot(){

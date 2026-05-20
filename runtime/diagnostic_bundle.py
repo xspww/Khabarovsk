@@ -5,9 +5,12 @@ import time
 from typing import Any, Dict, Iterable, List, Mapping, Optional
 
 
-SECRET_KEY_RE = re.compile(r"(cookie|password|token|secret|roblosecurity|private.*link|accesscode|linkcode)", re.I)
+SECRET_KEY_RE = re.compile(r"(cookie|password|token|secret|roblosecurity|private.*link|accesscode|linkcode|nonce)", re.I)
 COOKIE_RE = re.compile(r"(_\|WARNING:[^\s'\"<>]+|\.ROBLOSECURITY[^\s'\"<>]*)", re.I)
 LINK_CODE_RE = re.compile(r"((?:privateServerLinkCode|linkCode|accessCode)=)[^&\s]+", re.I)
+CRONUS_TOKEN_RE = re.compile(r"(X-Cronus-Token\s*[:=]\s*)[^\s'\"<>]+", re.I)
+LUA_SESSION_TOKEN_RE = re.compile(r"\blua1\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+\b")
+LAUNCH_NONCE_RE = re.compile(r"((?:launch[_-]?nonce)\s*[:=]\s*)[^\s'\"<>]+", re.I)
 
 SAFE_CONFIG_KEYS = (
     "auto_rejoin",
@@ -114,6 +117,9 @@ def _redact_value(key: str, value: Any) -> Any:
     text = str(value)
     text = COOKIE_RE.sub("[REDACTED_COOKIE]", text)
     text = LINK_CODE_RE.sub(r"\1[REDACTED]", text)
+    text = CRONUS_TOKEN_RE.sub(r"\1[REDACTED_TOKEN]", text)
+    text = LUA_SESSION_TOKEN_RE.sub("[REDACTED_LUA_TOKEN]", text)
+    text = LAUNCH_NONCE_RE.sub(r"\1[REDACTED]", text)
     return text
 
 
@@ -149,7 +155,7 @@ def _matches_account(row: Mapping[str, Any], account_id: str) -> bool:
 def _recommendations(status: Mapping[str, Any], accounts: Iterable[Mapping[str, Any]], events: Iterable[Mapping[str, Any]]) -> List[str]:
     output: List[str] = []
     health = status.get("runtime_health") if isinstance(status.get("runtime_health"), Mapping) else {}
-    warnings = [str(item) for item in health.get("warnings", [])] if isinstance(health, Mapping) else []
+    warnings = [str(_redact_value("runtime_health", item)) for item in health.get("warnings", [])] if isinstance(health, Mapping) else []
     if warnings:
         output.append(f"Investigate runtime health warnings: {', '.join(warnings[:5])}")
     scheduler = status.get("scheduler_health") if isinstance(status.get("scheduler_health"), Mapping) else {}

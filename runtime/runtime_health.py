@@ -150,7 +150,10 @@ def account_health_flags(account: Dict[str, Any], now: Optional[float] = None) -
         flags.append("high_retry_count")
     if int(account.get("fail_count") or 0) >= 3:
         flags.append("high_fail_count")
-    if account.get("process_reject_reason"):
+    proof_level = str(account.get("process_proof_level") or "").strip().lower()
+    if account.get("state") == "IN_GAME" and account.get("process_alive") and proof_level != "strong":
+        flags.append("process_binding_warning")
+    if account.get("process_reject_reason") and "process_binding_warning" not in flags:
         flags.append("process_binding_warning")
     return flags
 
@@ -190,6 +193,82 @@ def find_stuck_farm_states(
             "health_flags": flags,
         })
     return stuck
+
+
+def _ambiguous_process_count(accounts: Iterable[Dict[str, Any]]) -> int:
+    count = 0
+    for row in accounts or []:
+        if not isinstance(row, dict):
+            continue
+        flags = set(_account_flags(row))
+        reject_reason = str(row.get("process_reject_reason") or "").strip()
+        if "process_binding_warning" in flags or reject_reason:
+            count += 1
+    return count
+
+
+def _watchdog_task_health(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    raw = dict(snapshot.get("watchdog_task") or {})
+    if not raw:
+        return {
+            "status": "unknown",
+            "task_installed": False,
+            "project_root_matches": False,
+            "watchdog_script_exists": False,
+            "message": "Watchdog task status has not been inspected.",
+        }
+    if raw.get("_inspection_error"):
+        return {
+            "status": "unknown",
+            "task_installed": False,
+            "project_root_matches": False,
+            "watchdog_script_exists": False,
+            "message": str(raw.get("_inspection_error") or "watchdog inspection failed")[:300],
+        }
+
+    task_installed = bool(raw.get("TaskInstalled", raw.get("task_installed", False)))
+    project_root_matches = bool(raw.get("ProjectRootMatches", raw.get("project_root_matches", False)))
+    script_exists = bool(raw.get("WatchdogScriptExists", raw.get("watchdog_script_exists", False)))
+    if not task_installed:
+        status = "missing"
+    elif not script_exists:
+        status = "missing_script"
+    elif not project_root_matches:
+        status = "stale"
+    else:
+        status = "installed"
+    return {
+        "status": status,
+        "task_installed": task_installed,
+        "task_state": str(raw.get("TaskState") or raw.get("task_state") or ""),
+        "project_root_matches": project_root_matches,
+        "watchdog_script_exists": script_exists,
+        "expected_project_root": str(raw.get("ExpectedProjectRoot") or raw.get("expected_project_root") or ""),
+        "task_working_directory": str(raw.get("TaskWorkingDirectory") or raw.get("task_working_directory") or ""),
+        "last_task_result": raw.get("LastTaskResult", raw.get("last_task_result")),
+        "backend_healthy": bool(raw.get("BackendHealthy", raw.get("backend_healthy", False))),
+    }
+
+
+def _release_gate_health(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+    raw = dict(snapshot.get("release_gate") or {})
+    if not raw:
+        return {
+            "last_result": "not_run",
+            "last_run_at": 0.0,
+            "fail_count": 0,
+            "warn_count": 0,
+        }
+    if "last_result" in raw:
+        result = str(raw.get("last_result") or "not_run")
+    else:
+        result = "pass" if bool(raw.get("ok", False)) else "fail"
+    return {
+        "last_result": result,
+        "last_run_at": _safe_float(raw.get("last_run_at", raw.get("generated_at", 0.0)), 0.0),
+        "fail_count": _safe_int(raw.get("fail_count"), 0),
+        "warn_count": _safe_int(raw.get("warn_count"), 0),
+    }
 
 
 def build_public_farm_health(snapshot: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]:
@@ -404,6 +483,13 @@ def build_detailed_farm_health(snapshot: Dict[str, Any], now: Optional[float] = 
         })
     detail = {
         **public,
+        "runtime": {
+            "last_event_age_seconds": public["last_runtime_event_age_seconds"],
+            "stuck_accounts": len(stuck_states),
+            "ambiguous_process_count": _ambiguous_process_count(accounts),
+        },
+        "watchdog_task": _watchdog_task_health(detail_snapshot),
+        "release_gate": _release_gate_health(detail_snapshot),
         "runtime_health": dict(detail_snapshot.get("runtime_health") or {}),
         "workers": dict(detail_snapshot.get("workers") or {}),
         "dispatcher": dict(detail_snapshot.get("dispatcher") or {}),

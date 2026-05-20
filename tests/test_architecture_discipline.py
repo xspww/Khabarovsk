@@ -19,6 +19,8 @@ HOTSPOT_FILE_LIMITS = {
 
 HYBRID_ACCOUNT_TEST_FILE_LIMIT = 1100
 HYBRID_ACCOUNT_TEST_FACADE_LIMIT = 120
+RUNTIME_HARDENING_TEST_FILE_LIMIT = 650
+RUNTIME_HARDENING_TEST_FACADE_LIMIT = 90
 DASHBOARD_STYLE_MODULE_LIMIT = 800
 
 API_ROUTE_FILE_LIMIT = 650
@@ -122,6 +124,29 @@ class ArchitectureDisciplineTests(unittest.TestCase):
                     len(lines),
                     HYBRID_ACCOUNT_TEST_FILE_LIMIT,
                     f"{rel} is over budget. Split by behavior domain instead of appending.",
+                )
+
+    def test_runtime_hardening_regression_suite_stays_split(self):
+        facade = ROOT / "tests" / "test_runtime_hardening.py"
+        facade_text = facade.read_text(encoding="utf-8-sig", errors="replace")
+        facade_lines = facade_text.splitlines()
+        self.assertLessEqual(
+            len(facade_lines),
+            RUNTIME_HARDENING_TEST_FACADE_LIMIT,
+            "tests/test_runtime_hardening.py should stay a small compatibility facade.",
+        )
+        self.assertIn("class RuntimeHardeningTests", facade_text)
+
+        case_files = sorted((ROOT / "tests").glob("runtime_hardening_*_cases.py"))
+        self.assertGreaterEqual(len(case_files), 4)
+        for path in case_files:
+            rel = path.relative_to(ROOT).as_posix()
+            with self.subTest(file=rel):
+                lines = path.read_text(encoding="utf-8-sig", errors="replace").splitlines()
+                self.assertLessEqual(
+                    len(lines),
+                    RUNTIME_HARDENING_TEST_FILE_LIMIT,
+                    f"{rel} is over budget. Split by runtime hardening domain instead of appending.",
                 )
 
     def test_dashboard_stylesheet_stays_split(self):

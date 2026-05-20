@@ -37,6 +37,13 @@ def _medium_validation(pid=4321):
 
 
 class ProcessProofPolicyTests(unittest.TestCase):
+    def test_destructive_kill_requires_strong_process_proof(self):
+        from services.process_proof_policy import allows_destructive_process_action
+
+        self.assertFalse(allows_destructive_process_action("weak"))
+        self.assertFalse(allows_destructive_process_action("medium"))
+        self.assertTrue(allows_destructive_process_action("strong"))
+
     def test_classifies_launch_only_process_proof_as_medium_and_tracker_match_as_strong(self):
         from services.process_proof_policy import classify_process_proof
 

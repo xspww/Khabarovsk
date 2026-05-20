@@ -47,6 +47,10 @@ def process_proof_allowed_for_state(level: Any, state: Any, destructive: bool = 
     return is_at_least_process_proof(level, required_process_proof_for_state(state, destructive=destructive))
 
 
+def allows_destructive_process_action(level: Any) -> bool:
+    return normalize_process_proof_level(level) == PROOF_STRONG
+
+
 def classify_process_proof(
     validation: Dict[str, Any],
     *,
@@ -95,6 +99,7 @@ __all__ = [
     "PROOF_WEAK",
     "PROOF_MEDIUM",
     "PROOF_STRONG",
+    "allows_destructive_process_action",
     "classify_process_proof",
     "normalize_process_proof_level",
     "process_proof_allowed_for_state",

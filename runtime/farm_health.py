@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import json
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from app_paths import APP_DATA_DIR
 from account_hybrid import redact_secret
 from core import account_launch_block_reason, flog_kv
 from runtime.account_selection import runtime_account_filter_reason
@@ -15,6 +18,28 @@ from runtime.runtime_health import (
 )
 from runtime.runtime_view_model import RuntimeViewModelBuilder
 from runtime.telemetry_view import build_runtime_telemetry
+
+
+WATCHDOG_STATUS_CACHE = "watchdog_task_last.json"
+RELEASE_GATE_CACHE = "release_gate_last.json"
+
+
+def _read_cached_json(path: Path) -> Dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def load_cached_operator_health(data_dir: str | Path = APP_DATA_DIR) -> Dict[str, Any]:
+    root = Path(data_dir)
+    return {
+        "watchdog_task": _read_cached_json(root / WATCHDOG_STATUS_CACHE),
+        "release_gate": _read_cached_json(root / RELEASE_GATE_CACHE),
+    }
 
 
 def build_farm_status(farm: Any) -> dict:
@@ -123,6 +148,7 @@ def build_farm_health_snapshot(farm: Any) -> Dict[str, Any]:
         recovery_storm = farm._recovery._storm.snapshot()
     with farm._status_lock:
         status_revision = int(farm._status_revision)
+    operator_health = load_cached_operator_health()
     event_ages = []
     for event in recent_events:
         if not isinstance(event, dict):
@@ -148,6 +174,8 @@ def build_farm_health_snapshot(farm: Any) -> Dict[str, Any]:
         "dispatcher": build_thread_health(farm, farm._dispatcher, now),
         "maintenance": build_thread_health(farm, farm._maintenance, now),
         "last_control_plane_restart_at": float(farm._last_control_plane_restart_at or 0.0),
+        "watchdog_task": operator_health.get("watchdog_task") or {},
+        "release_gate": operator_health.get("release_gate") or {},
     }
 
 

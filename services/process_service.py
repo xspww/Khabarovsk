@@ -27,6 +27,7 @@ from services.process_account_runtime import (
 from services.process_ownership import validate_process_ownership
 from services.process_proof_policy import (
     PROOF_UNTRUSTED,
+    allows_destructive_process_action,
     classify_process_proof,
     process_proof_allowed_for_state,
     required_process_proof_for_state,
@@ -512,7 +513,7 @@ class ProcessService:
         )
         confidence = float(validation.get("confidence") or 0.0)
         proof_level = str(validation.get("process_proof_level") or PROOF_UNTRUSTED)
-        if validation.get("ok") and not process_proof_allowed_for_state(proof_level, getattr(account, "state", ""), destructive=True):
+        if validation.get("ok") and not allows_destructive_process_action(proof_level):
             validation = dict(validation)
             validation["ok"] = False
             validation["reason"] = "process_proof_insufficient"
@@ -653,7 +654,7 @@ class ProcessService:
             return {"ok": False, "killed": False, "pid": pid, "reason": reject_reason, "validation": validation}
 
         proof_level = str(validation.get("process_proof_level") or PROOF_UNTRUSTED)
-        if not process_proof_allowed_for_state(proof_level, getattr(account, "state", ""), destructive=True):
+        if not allows_destructive_process_action(proof_level):
             validation = dict(validation)
             validation["ok"] = False
             validation["reason"] = "process_proof_insufficient"

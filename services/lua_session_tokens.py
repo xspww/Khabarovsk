@@ -83,20 +83,23 @@ def validate_lua_session_token(
     launch_nonce: str,
     now: Optional[float] = None,
 ) -> LuaSessionTokenValidation:
+    def reject(reason: str, expires_at: int = 0) -> LuaSessionTokenValidation:
+        return LuaSessionTokenValidation(False, reason, expires_at=expires_at)
+
     raw = _text(token)
     parts = raw.split(".")
     if len(parts) != 3 or parts[0] != TOKEN_VERSION:
-        return LuaSessionTokenValidation(False, "invalid_format")
+        return reject("invalid_format")
 
     _, payload_b64, supplied_sig = parts
     expected_sig = _sign(secret, payload_b64)
     if not hmac.compare_digest(supplied_sig, expected_sig):
-        return LuaSessionTokenValidation(False, "bad_signature")
+        return reject("bad_signature")
 
     try:
         payload = json.loads(_unb64url(payload_b64).decode("utf-8"))
     except Exception:
-        return LuaSessionTokenValidation(False, "invalid_payload")
+        return reject("invalid_payload")
 
     expected_account = _text(account)
     expected_session_id = _text(session_id)
@@ -108,13 +111,13 @@ def validate_lua_session_token(
 
     current = int(now if now is not None else time.time())
     if not expires_at or expires_at < current:
-        return LuaSessionTokenValidation(False, "expired", actual_account, actual_session_id, actual_launch_nonce, expires_at)
+        return reject("expired", expires_at)
     if actual_account != expected_account:
-        return LuaSessionTokenValidation(False, "account_mismatch", actual_account, actual_session_id, actual_launch_nonce, expires_at)
+        return reject("account_mismatch", expires_at)
     if actual_session_id != expected_session_id:
-        return LuaSessionTokenValidation(False, "session_id_mismatch", actual_account, actual_session_id, actual_launch_nonce, expires_at)
+        return reject("session_id_mismatch", expires_at)
     if actual_launch_nonce != expected_launch_nonce:
-        return LuaSessionTokenValidation(False, "launch_nonce_mismatch", actual_account, actual_session_id, actual_launch_nonce, expires_at)
+        return reject("launch_nonce_mismatch", expires_at)
 
     return LuaSessionTokenValidation(True, "", actual_account, actual_session_id, actual_launch_nonce, expires_at)
 

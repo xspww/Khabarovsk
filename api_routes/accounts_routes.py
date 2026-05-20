@@ -25,6 +25,7 @@ from services.captcha_guard import (
 )
 from services.account_reload import emit_reload_cookie_events, load_accounts_from_store, replace_farm_accounts
 from services.roblox_launch_service import AccountLaunchService, parse_vip_link
+from runtime.account_selection import runtime_account_allowlist
 
 from .context import ApiContext
 from .idempotency import begin_idempotent_request, begin_idempotent_request_sync, finish_idempotent_request
@@ -91,6 +92,26 @@ def register(app, ctx: ApiContext) -> None:
         new_accounts = _load_accounts_from_account_data()
         _apply_game_defaults(ctx, new_accounts, persist=False)
         return replace_farm_accounts(farm, cfg_mgr, new_accounts)
+
+    def _clear_runtime_allowlist_after_reload() -> Dict[str, Any]:
+        current = runtime_account_allowlist({
+            "runtime_account_allowlist": cfg_mgr.get("runtime_account_allowlist", [])
+        })
+        if not current:
+            return {"allowlist_cleared": False, "allowlist_cleared_count": 0}
+        cfg_mgr.update({"runtime_account_allowlist": []})
+        cfg_mgr.save()
+        if hasattr(farm, "apply_config_snapshot"):
+            farm.apply_config_snapshot()
+        if hasattr(farm, "_push_event"):
+            farm._push_event(
+                "system",
+                f"Reload Cookies cleared account test lock: {len(current)} account(s)",
+                severity="info",
+                reason="reload_cookies_clear_allowlist",
+                cleared_count=len(current),
+            )
+        return {"allowlist_cleared": True, "allowlist_cleared_count": len(current)}
 
 
     def _validate_cookie_records_from_store() -> Dict[str, Any]:
@@ -363,6 +384,7 @@ def register(app, ctx: ApiContext) -> None:
             validation = _validate_cookie_records_from_store()
             count = _replace_farm_accounts_from_store()
             emit_reload_cookie_events(farm, validation)
+            allowlist_result = _clear_runtime_allowlist_after_reload()
         except Exception as e:
             raise HTTPException(400, f"Reload failed: {e}")
         removed = int(validation.get("removed") or 0)
@@ -373,7 +395,9 @@ def register(app, ctx: ApiContext) -> None:
             msg += f", {captcha_count} need CAPTCHA"
         if removed:
             msg += f", removed {removed} invalid"
-        result = {"ok": True, "count": count, "msg": msg, **validation}
+        if allowlist_result.get("allowlist_cleared"):
+            msg += ", cleared account test lock"
+        result = {"ok": True, "count": count, "msg": msg, **validation, **allowlist_result}
         finish_idempotent_request(idem, result)
         return result
 

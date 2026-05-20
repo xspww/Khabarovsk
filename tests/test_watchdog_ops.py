@@ -27,6 +27,15 @@ class WatchdogOpsTests(unittest.TestCase):
         self.assertIn("clear_instance_state", runner)
         self.assertIn("refused to start a hidden duplicate", runner)
 
+    def test_watchdog_status_reports_task_action_and_stale_project_root(self):
+        status = (ROOT / "ops" / "watchdog_status.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("ExpectedProjectRoot", status)
+        self.assertIn("TaskWorkingDirectory", status)
+        self.assertIn("TaskArguments", status)
+        self.assertIn("ProjectRootMatches", status)
+        self.assertIn("WatchdogScriptExists", status)
+
     def test_soak_monitor_accepts_existing_running_farm(self):
         from ops.soak_monitor import start_response_allows_monitoring
 
@@ -34,6 +43,28 @@ class WatchdogOpsTests(unittest.TestCase):
         self.assertTrue(start_response_allows_monitoring({"ok": False, "duplicate": True}))
         self.assertTrue(start_response_allows_monitoring({"ok": False, "msg": "Already running"}))
         self.assertFalse(start_response_allows_monitoring({"ok": False, "msg": "No launchable accounts"}))
+
+    def test_soak_summary_fails_when_account_never_reaches_in_game(self):
+        from ops.soak_monitor import build_soak_summary
+
+        summary = build_soak_summary(
+            account="A",
+            reached_in_game=False,
+            fatal_hits=[],
+            orphan_processes=[],
+            runtime_warnings=[],
+            duration_seconds=60,
+        )
+
+        self.assertFalse(summary["ok"])
+        self.assertIn("never reached IN_GAME", summary["failures"][0])
+
+    def test_soak_monitor_accepts_summary_json_argument(self):
+        from ops.soak_monitor import parse_args
+
+        args = parse_args(["--account", "A", "--summary-json", "summary.json"])
+
+        self.assertEqual(args.summary_json, "summary.json")
 
 
 if __name__ == "__main__":

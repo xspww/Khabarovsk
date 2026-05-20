@@ -261,11 +261,12 @@ class ArchitectureDisciplineTests(unittest.TestCase):
     def test_farm_runtime_domain_modules_stay_under_architecture_budget(self):
         runtime_files = {
             "runtime/launch_controller.py": 800,
-            "runtime/recovery_engine.py": 905,
+            "runtime/recovery_engine.py": 820,
             "runtime/recovery_evaluator.py": 350,
             "runtime/recovery_network.py": 200,
             "runtime/recovery_owner.py": 350,
             "runtime/recovery_relaunch.py": 350,
+            "runtime/recovery_scheduling.py": 260,
             "runtime/recovery_signal_router.py": 350,
             "runtime/account_worker.py": 900,
             "runtime/dispatcher.py": 455,
@@ -524,6 +525,17 @@ class ArchitectureDisciplineTests(unittest.TestCase):
         self.assertNotIn("self._pending", recovery)
         self.assertIn("RuntimeScheduler", recovery)
         self.assertIn("RuntimeScheduler", maintenance)
+
+    def test_recovery_scheduling_is_split_from_engine(self):
+        recovery = (ROOT / "runtime" / "recovery_engine.py").read_text(encoding="utf-8")
+        scheduling = (ROOT / "runtime" / "recovery_scheduling.py").read_text(encoding="utf-8")
+
+        self.assertIn("from runtime.recovery_scheduling import", recovery)
+        self.assertIn("def schedule_cooldown", scheduling)
+        self.assertIn("def queue_account", scheduling)
+        self.assertIn("def run_scheduled_recovery", scheduling)
+        self.assertNotIn("self._scheduler.schedule_once(", recovery)
+        self.assertNotIn("self._queue.push(", recovery)
 
     def test_recovery_owner_and_signal_routing_are_split_from_engine(self):
         recovery = (ROOT / "runtime" / "recovery_engine.py").read_text(encoding="utf-8")

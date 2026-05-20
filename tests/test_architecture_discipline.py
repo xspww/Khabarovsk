@@ -13,7 +13,7 @@ HOTSPOT_FILE_LIMITS = {
     "core.py": 1000,
     "roblox_hybrid.py": 1150,
     "desktop_host.py": 900,
-    "services/process_service.py": 980,
+    "services/process_service.py": 900,
     "runtime/runtime_state_manager.py": 900,
 }
 
@@ -24,6 +24,7 @@ DASHBOARD_STYLE_MODULE_LIMIT = 800
 API_ROUTE_FILE_LIMIT = 650
 SERVICE_DOMAIN_FILE_LIMIT = 650
 SERVICE_DOMAIN_FILE_LIMITS = {
+    "services/process_account_runtime.py": 320,
     "services/roblox_processes.py": 700,
 }
 MAINTENANCE_DOMAIN_FILE_LIMIT = 650
@@ -384,6 +385,18 @@ class ArchitectureDisciplineTests(unittest.TestCase):
         self.assertIn("resize_roblox_windows = staticmethod(_resize_roblox_windows)", process_service)
         self.assertIn("arrange_roblox_windows = staticmethod(_arrange_roblox_windows)", process_service)
         self.assertIn("restore_roblox_window_styles = staticmethod(_restore_roblox_window_styles)", process_service)
+
+    def test_process_account_runtime_helpers_are_split_from_process_service(self):
+        process_service = (ROOT / "services" / "process_service.py").read_text(encoding="utf-8")
+        account_runtime = (ROOT / "services" / "process_account_runtime.py").read_text(encoding="utf-8")
+
+        self.assertIn("from services.process_account_runtime import", process_service)
+        self.assertIn("def runtime_generation_matches", account_runtime)
+        self.assertIn("def set_process_diagnostics", account_runtime)
+        self.assertIn("def set_adopt_diagnostics", account_runtime)
+        self.assertNotIn("def _runtime_generation_matches", process_service)
+        self.assertNotIn("def _set_process_diagnostics", process_service)
+        self.assertNotIn("def _set_adopt_diagnostics", process_service)
 
     def test_runtime_transactions_are_split_from_state_manager(self):
         state_manager = (ROOT / "runtime" / "runtime_state_manager.py").read_text(encoding="utf-8")

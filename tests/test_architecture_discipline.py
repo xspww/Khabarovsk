@@ -7,7 +7,7 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 
 HOTSPOT_FILE_LIMITS = {
-    "farm.py": 1350,
+    "farm.py": 1150,
     "main.py": 700,
     "process_net.py": 900,
     "core.py": 1000,
@@ -196,6 +196,16 @@ class ArchitectureDisciplineTests(unittest.TestCase):
         self.assertIn("class SmartQueue", smart_queue)
         self.assertNotIn("class SmartQueue", core)
 
+    def test_farm_health_surface_is_split_from_controller_facade(self):
+        farm = (ROOT / "farm.py").read_text(encoding="utf-8-sig", errors="replace")
+        health = (ROOT / "runtime" / "farm_health.py").read_text(encoding="utf-8-sig", errors="replace")
+
+        self.assertIn("from runtime.farm_health import", farm)
+        self.assertIn("def build_farm_health_snapshot", health)
+        self.assertIn("def get_runtime_diagnostics", health)
+        self.assertNotIn("def _farm_health_snapshot", farm)
+        self.assertNotIn("def _farm_health_account_rows", farm)
+
     def test_api_route_modules_stay_under_architecture_budget(self):
         route_dir = ROOT / "api_routes"
         for path in route_dir.glob("*.py"):
@@ -262,6 +272,7 @@ class ArchitectureDisciplineTests(unittest.TestCase):
             "runtime/runtime_scheduler.py": 360,
             "runtime/runtime_transactions.py": 260,
             "runtime/smart_queue.py": 320,
+            "runtime/farm_health.py": 320,
         }
         for rel, max_lines in runtime_files.items():
             with self.subTest(file=rel):
@@ -427,8 +438,10 @@ class ArchitectureDisciplineTests(unittest.TestCase):
 
     def test_status_payload_is_built_by_runtime_view_model(self):
         farm = (ROOT / "farm.py").read_text(encoding="utf-8")
+        health = (ROOT / "runtime" / "farm_health.py").read_text(encoding="utf-8")
         view_model = (ROOT / "runtime" / "runtime_view_model.py").read_text(encoding="utf-8")
-        self.assertIn("return RuntimeViewModelBuilder(self).build_status()", farm)
+        self.assertIn("return build_farm_status(self)", farm)
+        self.assertIn("return RuntimeViewModelBuilder(farm).build_status()", health)
         self.assertIn("class RuntimeViewModelBuilder", view_model)
         self.assertIn("queue_snapshot", view_model)
         self.assertIn("runtime_health", view_model)

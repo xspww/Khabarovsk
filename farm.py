@@ -80,10 +80,13 @@ from runtime.recovery_view import recovery_step_for_account
 from runtime.supervisor_runtime import SupervisorRuntime
 from runtime.system_maintenance import SystemMaintenance
 from runtime.config_snapshot import apply_runtime_config_snapshot
-from runtime.recovery_support import _set_account_cookie_block, _clear_account_cookie_block
 from runtime.recovery_engine import RecoveryCoordinator, RecoveryEngine
 from runtime.account_worker import AccountWorker
+from runtime.command_rate_limit import FORCE_REJOIN_INTERVAL_SECONDS, PerAccountRateLimiter
 from runtime.dispatcher import Dispatcher
+from runtime.farm_initial_sync import initial_state_sync
+from runtime.farm_preflight import preflight_cookie_blocks
+from runtime.lua_event_guard import lua_event_handler_error_response, validate_lua_event_payload
 
 
 class FarmController:
@@ -108,6 +111,7 @@ class FarmController:
         self._runtime_scheduler: Optional[Any] = None
         self._shutting_down = False
         self._last_control_plane_restart_at = 0.0
+        self._force_rejoin_limiter = PerAccountRateLimiter(FORCE_REJOIN_INTERVAL_SECONDS)
 
         self._total_rejoin = 0
         self._total_crash = 0
@@ -260,106 +264,10 @@ class FarmController:
     def _initial_state_sync(self, state_mgr: Optional[StateManager] = None):
         if state_mgr is None:
             state_mgr = StateManager(self.bus)
-        live_processes = ProcessManager.list_live_game_processes()
-        if not live_processes:
-            flog("[FARM] initial_state_sync: no live RobloxPlayerBeta.exe found")
-            return
-
-        claimed_pids = set()
-        synced = 0
-
-        for acc in self._accounts:
-            with acc._lock:
-                current_pid = acc.pid
-                runtime_generation = acc.runtime_generation
-            if current_pid and acc.bound_process_identity and ProcessManager.is_bound_game_alive(
-                current_pid,
-                owner_key=acc._config_username,
-                expected_identity=acc.bound_process_identity,
-            ):
-                bind_result = ProcessService.bind_account_process(
-                    acc,
-                    current_pid,
-                    state_mgr,
-                    reason="initial_state_sync_existing",
-                    expected_identity=acc.bound_process_identity,
-                    process_name=acc.bound_process_name or "RobloxPlayerBeta.exe",
-                    min_ram_mb=0.0,
-                    increment_generation=False,
-                    expected_runtime_generation=runtime_generation,
-                )
-                if not bind_result.get("ok"):
-                    flog_kv(
-                        "FARM",
-                        "initial_sync_existing_rejected",
-                        "warning",
-                        account=acc.display_name,
-                        pid=current_pid,
-                        reason=bind_result.get("reason", ""),
-                    )
-                    continue
-                claimed_pids.add(current_pid)
-                state_mgr.transition(acc, AccountState.IN_GAME, reason="initial_state_sync_existing", force=True)
-                synced += 1
-
-        candidates = [item for item in live_processes if item["pid"] not in claimed_pids]
-        targets = [
-            acc for acc in sorted(self._accounts, key=lambda a: int(a.priority or 50))
-            if acc.desired_state == AccountState.IN_GAME and not acc.pid
-        ]
-
-        if candidates and len(targets) == 1:
-            target = targets[0]
-            with target._lock:
-                runtime_generation = target.runtime_generation
-            adopt = ProcessService.safe_adopt_visible_process(
-                target,
-                state_mgr,
-                accounts=self._accounts,
-                reason="initial_state_sync_visible_adopt",
-                expected_runtime_generation=runtime_generation,
-            )
-            if adopt.get("ok"):
-                claimed_pids.add(int(adopt.get("pid") or 0))
-                state_mgr.transition(target, AccountState.IN_GAME, reason="initial_state_sync_visible_adopt", force=True)
-                synced += 1
-                candidates = [item for item in candidates if int(item.get("pid") or 0) not in claimed_pids]
-
-        if candidates:
-            flog_kv(
-                "FARM",
-                "initial_sync_unclaimed_skipped",
-                "warning",
-                candidates=len(candidates),
-                targets=len(targets),
-                reason="unclaimed_processes_not_auto_bound",
-            )
-
-        remaining = len(live_processes) - len(claimed_pids)
-        flog(
-            f"[FARM] initial_state_sync complete: synced={synced} "
-            f"live_processes={len(live_processes)} remaining_unclaimed={max(0, remaining)}"
-        )
+        initial_state_sync(self._accounts, state_mgr)
 
     def _preflight_cookie_blocks(self) -> Dict[str, str]:
-        blocked: Dict[str, str] = {}
-        if not self._recovery or not self._state_mgr:
-            return blocked
-        for acc in self._accounts:
-            decision = evaluate_account_auth_gate(acc)
-            if decision.blocked:
-                mark_account_auth_quarantined(acc, decision, source="preflight", runtime_writer=self._runtime_state)
-                self._recovery.fail_account(acc, decision.reason_key, decision.reason)
-                blocked[acc._config_username] = decision.reason
-                flog_kv("FARM", "account_preflight_blocked", "warning", account=acc.display_name, **decision.to_dict())
-                continue
-            with acc._lock:
-                if acc.state == AccountState.FAILED and acc.last_crash_reason == "cookie_mismatch":
-                    _clear_account_cookie_block(acc)
-                    self._runtime_state.clear_recovery(acc, reason="cookie_mismatch_cleared", inflight=False)
-                    self._runtime_state.set_cooldown(acc, 0.0, reason="cookie_mismatch_cleared")
-                    self._state_mgr.transition(acc, AccountState.IDLE, reason="cookie_mismatch_cleared", force=True)
-        return blocked
+        return preflight_cookie_blocks(self._accounts, self._recovery, self._state_mgr, self._runtime_state)
 
     def start(self):
         return self._lifecycle.start()
@@ -381,23 +289,37 @@ class FarmController:
 
     def apply_config_snapshot(self):
         cfg = self.cfg_mgr.snapshot()
-        apply_runtime_config_snapshot(
-            cfg=cfg,
-            accounts=self._accounts,
-            machine_supervisor=self._machine_supervisor,
-            recovery=self._recovery,
-            maintenance=self._maintenance,
-            workers=self._workers,
-            dispatcher=self._dispatcher,
-        )
+        try:
+            apply_runtime_config_snapshot(
+                cfg=cfg,
+                accounts=list(self._accounts),
+                machine_supervisor=self._machine_supervisor,
+                recovery=self._recovery,
+                maintenance=self._maintenance,
+                workers=dict(self._workers),
+                dispatcher=self._dispatcher,
+            )
+        except Exception as e:
+            flog_kv("CONFIG", "runtime_config_snapshot_failed", "warning", error=e)
         self._bump_status_revision()
 
     def _sync_accounts_from_ram(self, persist: bool = False):
         return
 
+    def _check_force_rejoin_rate_limit(self, account_key: str) -> Tuple[bool, str]:
+        limiter = getattr(self, "_force_rejoin_limiter", None)
+        if limiter is None:
+            limiter = PerAccountRateLimiter(FORCE_REJOIN_INTERVAL_SECONDS)
+            self._force_rejoin_limiter = limiter
+        return limiter.check(account_key)
+
     def force_rejoin(self, username: str):
         acc = self._find_account(username)
         if acc and self._recovery:
+            allowed, rate_msg = self._check_force_rejoin_rate_limit(acc._config_username)
+            if not allowed:
+                flog_kv("COMMAND", "force_rejoin_rate_limited", "warning", account=acc.display_name, msg=rate_msg)
+                return False, rate_msg
             routed = self._runtime_orchestrator.request_rejoin(acc, "force_rejoin")
             if not routed:
                 return False, "Rejoin rejected"
@@ -500,11 +422,19 @@ class FarmController:
         if not acc:
             return False, "Account not found"
         was_captcha = clear_account_captcha_hold(acc, runtime_writer=self._runtime_state)
-        decision = evaluate_account_auth_gate(acc)
+        try:
+            decision = evaluate_account_auth_gate(acc)
+        except Exception as e:
+            flog_kv("FARM", "captcha_resume_auth_gate_error", "warning", account=acc.display_name, error=e)
+            return False, f"Captcha cleared for {username}, but auth gate unavailable. Retry later."
         if decision.blocked:
-            mark_account_auth_quarantined(acc, decision, source="manual_resume", runtime_writer=self._runtime_state)
-            if self._recovery:
-                self._recovery.fail_account(acc, decision.reason_key, decision.reason)
+            try:
+                mark_account_auth_quarantined(acc, decision, source="manual_resume", runtime_writer=self._runtime_state)
+                if self._recovery:
+                    self._recovery.fail_account(acc, decision.reason_key, decision.reason)
+            except Exception as e:
+                flog_kv("FARM", "captcha_resume_quarantine_error", "warning", account=acc.display_name, error=e)
+                return False, f"Captcha cleared for {username}, but auth quarantine failed. Retry later."
             self.cfg_mgr.save_accounts(self._accounts)
             self.cfg_mgr.save_runtime(self._accounts)
             self._bump_status_revision()
@@ -675,11 +605,42 @@ class FarmController:
         job_id = str(payload.get("observed_job_id") or payload.get("job_id") or "").strip()
         return bool(place_id and place_id != "0" and job_id)
 
+    def _lua_event_handler_error(self, acc: Account, event_name: str, error: Exception) -> Dict[str, Any]:
+        flog_kv(
+            "LUA_EVENT",
+            "event_handler_exception",
+            "warning",
+            account=acc.display_name,
+            event=event_name,
+            error=error,
+        )
+        return lua_event_handler_error_response(acc, event_name, error)
+
     def handle_lua_rejoin_event(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        valid_payload, payload_error = validate_lua_event_payload(payload)
+        if not valid_payload:
+            flog_kv(
+                "LUA_EVENT",
+                "invalid_payload",
+                "warning",
+                error=payload_error,
+                payload_size=len(str(payload or "")),
+            )
+            return {"ok": False, "status_code": 400, "accepted": False, "msg": payload_error}
         event_name = str(payload.get("event") or "").strip().lower()
         if not event_name:
             return {"ok": False, "status_code": 400, "accepted": False, "msg": "Missing Lua event name"}
-        resolution = resolve_lua_account(self._accounts, payload)
+        try:
+            resolution = resolve_lua_account(self._accounts, payload)
+        except Exception as e:
+            flog_kv("LUA_EVENT", "resolver_exception", "warning", event=event_name, error=e)
+            return {
+                "ok": False,
+                "status_code": 500,
+                "accepted": False,
+                "event": event_name,
+                "msg": "Account resolver failed",
+            }
         identity = resolution.identity
         identity_name = identity.username or identity.account or identity.configured_account
         if not identity_name and not identity.user_id:
@@ -774,7 +735,10 @@ class FarmController:
                 "msg": "Lua event ignored because PID does not match Cronus binding",
             }
 
-        server_detection = self._apply_lua_server_detection(acc, payload)
+        try:
+            server_detection = self._apply_lua_server_detection(acc, payload)
+        except Exception as e:
+            return self._lua_event_handler_error(acc, event_name, e)
         event_payload.update(server_detection)
         if event_name in {"loaded", "in_game", "heartbeat", "teleport_state"}:
             with acc._lock:
@@ -817,11 +781,14 @@ class FarmController:
             description_persisted = False
             if raw_description:
                 description_persisted, _ = self._set_lua_account_description(acc, raw_description)
-            result = self._runtime_orchestrator.request_verify_finished(
-                acc,
-                self._state_mgr or self._runtime_state,
-                reason=reason,
-            )
+            try:
+                result = self._runtime_orchestrator.request_verify_finished(
+                    acc,
+                    self._state_mgr or self._runtime_state,
+                    reason=reason,
+                )
+            except Exception as e:
+                return self._lua_event_handler_error(acc, event_name, e)
             try:
                 self.cfg_mgr.save_accounts(self._accounts)
             except Exception as e:
@@ -884,40 +851,52 @@ class FarmController:
                         status="verified",
                     )
                 signal = RuntimeSignal.LAUNCH_SUCCESS.value
+                try:
+                    accepted = self._runtime_orchestrator.handle_runtime_signal(
+                        acc,
+                        signal,
+                        reason,
+                        payload={**event_payload, "count_rejoin": None},
+                    )
+                except Exception as e:
+                    return self._lua_event_handler_error(acc, event_name, e)
+        elif event_name in {"disconnect", "error_code"}:
+            signal = RuntimeSignal.DISCONNECT_DETECTED.value
+            severity = "critical"
+            try:
                 accepted = self._runtime_orchestrator.handle_runtime_signal(
                     acc,
                     signal,
                     reason,
-                    payload={**event_payload, "count_rejoin": None},
+                    payload=event_payload,
                 )
-        elif event_name in {"disconnect", "error_code"}:
-            signal = RuntimeSignal.DISCONNECT_DETECTED.value
-            severity = "critical"
-            accepted = self._runtime_orchestrator.handle_runtime_signal(
-                acc,
-                signal,
-                reason,
-                payload=event_payload,
-            )
+            except Exception as e:
+                return self._lua_event_handler_error(acc, event_name, e)
             worker = self._workers.get(acc._config_username)
             if worker:
                 worker.wake()
         elif event_name == "teleport_error":
             signal = RuntimeSignal.FAULT.value
             severity = "warning"
-            accepted = self._runtime_orchestrator.handle_runtime_signal(
-                acc,
-                signal,
-                reason,
-                payload=event_payload,
-            )
+            try:
+                accepted = self._runtime_orchestrator.handle_runtime_signal(
+                    acc,
+                    signal,
+                    reason,
+                    payload=event_payload,
+                )
+            except Exception as e:
+                return self._lua_event_handler_error(acc, event_name, e)
             worker = self._workers.get(acc._config_username)
             if worker:
                 worker.wake()
         elif event_name == "rejoin_requested":
             signal = RuntimeSignal.REJOIN_REQUESTED.value
             severity = "warning"
-            accepted = self._runtime_orchestrator.handle_runtime_signal(acc, signal, reason, payload=event_payload)
+            try:
+                accepted = self._runtime_orchestrator.handle_runtime_signal(acc, signal, reason, payload=event_payload)
+            except Exception as e:
+                return self._lua_event_handler_error(acc, event_name, e)
         elif event_name in {"heartbeat", "teleport_state"}:
             accepted = True
         else:

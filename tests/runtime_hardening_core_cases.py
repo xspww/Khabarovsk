@@ -142,6 +142,140 @@ class RuntimeHardeningCoreCases:
         self.assertTrue(farm.cfg_mgr.saved)
         monitor.return_value.stop.assert_called_once()
 
+    def test_initial_state_sync_rejects_stale_existing_pid_snapshot(self):
+        acc = Account(username="RaceUser")
+        acc.pid = 4242
+        acc.bound_process_identity = "robloxplayerbeta.exe|100.000000|c:\\roblox\\robloxplayerbeta.exe"
+        acc.bound_process_name = "RobloxPlayerBeta.exe"
+        acc.browser_tracker_id = "tracker-1"
+        acc.runtime_generation = 7
+        acc.sync_runtime("seed")
+        farm = farm_module.FarmController.__new__(farm_module.FarmController)
+        farm._accounts = [acc]
+
+        class State:
+            def transition(self, *_args, **_kwargs):
+                raise AssertionError("stale binding must not transition")
+
+        def mark_stale(*_args, **_kwargs):
+            acc.runtime_generation = 8
+            acc.sync_runtime("stale")
+            return True
+
+        with patch("runtime.farm_initial_sync.ProcessManager.list_live_game_processes", return_value=[{"pid": 4242}]), \
+             patch("runtime.farm_initial_sync.ProcessManager.is_bound_game_alive", side_effect=mark_stale), \
+             patch("runtime.farm_initial_sync.ProcessService.bind_account_process") as bind_process, \
+             patch("farm.flog"), \
+             patch("runtime.farm_initial_sync.flog_kv") as flog_kv:
+            farm._initial_state_sync(State())
+
+        bind_process.assert_not_called()
+        self.assertTrue(
+            any(call.args[:2] == ("FARM", "initial_sync_existing_rejected") for call in flog_kv.call_args_list)
+        )
+
+    def test_push_event_does_not_hold_account_lock_while_recording_timeline(self):
+        class TrackingRLock:
+            def __init__(self):
+                self._lock = threading.RLock()
+                self.depth = 0
+
+            def __enter__(self):
+                self._lock.acquire()
+                self.depth += 1
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                self.depth -= 1
+                self._lock.release()
+
+            def held(self):
+                return self.depth > 0
+
+        acc = Account(username="EventLockUser")
+        lock = TrackingRLock()
+        acc._lock = lock
+        farm = farm_module.FarmController.__new__(farm_module.FarmController)
+        farm._event_lock = threading.RLock()
+        farm._bump_status_revision = lambda: 1
+        case = self
+
+        class Timeline:
+            def record(self, *_args, **_kwargs):
+                case.assertFalse(lock.held())
+
+        farm._timeline = Timeline()
+
+        with patch("farm.flog"):
+            farm._push_event("unit", "event lock check", account=acc)
+
+    def test_preflight_cookie_blocks_logs_and_continues_when_account_gate_raises(self):
+        first = Account(username="BrokenGate")
+        second = Account(username="HealthyGate")
+        farm = farm_module.FarmController.__new__(farm_module.FarmController)
+        farm._accounts = [first, second]
+        farm._recovery = object()
+        farm._state_mgr = object()
+        farm._runtime_state = RuntimeStateManager(logger=lambda *_args, **_kwargs: None)
+
+        class Decision:
+            blocked = False
+
+        with patch("runtime.farm_preflight.evaluate_account_auth_gate", side_effect=[RuntimeError("gate failed"), Decision()]), \
+             patch("runtime.farm_preflight.flog_kv") as flog_kv:
+            blocked = farm._preflight_cookie_blocks()
+
+        self.assertEqual(blocked, {})
+        self.assertTrue(
+            any(call.args[:2] == ("FARM", "preflight_auth_gate_error") for call in flog_kv.call_args_list)
+        )
+
+    def test_resume_captcha_returns_error_when_auth_gate_raises(self):
+        acc = Account(username="CaptchaGate")
+        farm = farm_module.FarmController.__new__(farm_module.FarmController)
+        farm._accounts = [acc]
+        farm._runtime_state = RuntimeStateManager(logger=lambda *_args, **_kwargs: None)
+        farm._state_mgr = None
+        farm._recovery = None
+        farm.running = False
+
+        with patch("farm.evaluate_account_auth_gate", side_effect=RuntimeError("gate failed")), \
+             patch("farm.flog_kv") as flog_kv:
+            ok, msg = farm.resume_captcha_account("CaptchaGate")
+
+        self.assertFalse(ok)
+        self.assertIn("auth gate unavailable", msg.lower())
+        self.assertTrue(
+            any(call.args[:2] == ("FARM", "captcha_resume_auth_gate_error") for call in flog_kv.call_args_list)
+        )
+
+    def test_force_rejoin_is_rate_limited_per_account(self):
+        acc = Account(username="RateLimitUser")
+        farm = farm_module.FarmController.__new__(farm_module.FarmController)
+        farm.running = True
+        farm._accounts = [acc]
+        farm._recovery = object()
+        farm._workers = {}
+        farm._push_event = lambda *_args, **_kwargs: None
+        calls = []
+
+        class Orchestrator:
+            def request_rejoin(self, account, reason):
+                calls.append((account, reason))
+                return True
+
+        farm._runtime_orchestrator = Orchestrator()
+
+        with patch("runtime.command_rate_limit.time.time", return_value=100.0):
+            first_ok, first_msg = farm.force_rejoin("RateLimitUser")
+            second_ok, second_msg = farm.force_rejoin("RateLimitUser")
+
+        self.assertTrue(first_ok)
+        self.assertIn("Rejoin", first_msg)
+        self.assertFalse(second_ok)
+        self.assertIn("rate", second_msg.lower())
+        self.assertEqual(len(calls), 1)
+
 
     def test_runtime_invariant_monitor_records_suppressed_timeline_events(self):
         acc = Account(username="InvariantUser")

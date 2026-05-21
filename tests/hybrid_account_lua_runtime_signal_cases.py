@@ -2,6 +2,74 @@ from tests.hybrid_account_fixture import *
 
 
 class HybridAccountLuaRuntimeSignalCases:
+    def test_lua_event_rejects_oversized_string_payload_before_resolution(self):
+        controller = FarmController.__new__(FarmController)
+        controller._accounts = [Account("LuaUnit")]
+
+        with patch("farm.resolve_lua_account") as resolver, patch("farm.flog_kv") as flog:
+            result = controller.handle_lua_rejoin_event({
+                "event": "heartbeat",
+                "account": "LuaUnit",
+                "detail": "x" * 513,
+            })
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status_code"], 400)
+        self.assertFalse(result["accepted"])
+        resolver.assert_not_called()
+        self.assertTrue(
+            any(call.args[:2] == ("LUA_EVENT", "invalid_payload") for call in flog.call_args_list)
+        )
+
+    def test_lua_event_resolver_exception_returns_500(self):
+        controller = FarmController.__new__(FarmController)
+        controller._accounts = [Account("LuaUnit")]
+
+        with patch("farm.resolve_lua_account", side_effect=RuntimeError("resolver failed")), \
+             patch("farm.flog_kv") as flog:
+            result = controller.handle_lua_rejoin_event({
+                "event": "heartbeat",
+                "account": "LuaUnit",
+            })
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status_code"], 500)
+        self.assertFalse(result["accepted"])
+        self.assertIn("resolver failed", result["msg"].lower())
+        self.assertTrue(
+            any(call.args[:2] == ("LUA_EVENT", "resolver_exception") for call in flog.call_args_list)
+        )
+
+    def test_lua_event_handler_exception_returns_500_without_quarantine(self):
+        controller = FarmController.__new__(FarmController)
+        account = Account("LuaUnit")
+        controller._accounts = [account]
+        controller._workers = {}
+        controller._push_event = lambda *_args, **_kwargs: None
+
+        class FailingOrchestrator:
+            def handle_runtime_signal(self, *_args, **_kwargs):
+                raise RuntimeError("handler failed")
+
+        controller._runtime_orchestrator = FailingOrchestrator()
+
+        with patch("farm.flog_kv") as flog:
+            result = controller.handle_lua_rejoin_event({
+                "event": "disconnect",
+                "account": "LuaUnit",
+                "username": "LuaUnit",
+                "reason_key": "lua_disconnect_unit",
+            })
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status_code"], 500)
+        self.assertFalse(result["accepted"])
+        self.assertIn("retry later", result["msg"].lower())
+        self.assertEqual(account.state, AccountState.IDLE)
+        self.assertTrue(
+            any(call.args[:2] == ("LUA_EVENT", "event_handler_exception") for call in flog.call_args_list)
+        )
+
     def test_lua_loaded_event_records_vip_server_detection(self):
         controller = FarmController.__new__(FarmController)
         account = Account("LuaUnit")

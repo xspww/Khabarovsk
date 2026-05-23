@@ -9,39 +9,28 @@ local Request =
     or request
 local Load = loadstring or load
 
-local function log(...)
-    local parts = {}
-    for _, value in ipairs({ ... }) do
-        table.insert(parts, tostring(value))
-    end
-    local line = "[CronusRejoinLoader] " .. table.concat(parts, " ")
+local function emit(message, level)
+    local line = "[Cronus] " .. tostring(message or "")
     if rconsoleprint then
         pcall(rconsoleprint, line .. "\n")
     end
-    if print then
+    if level == "warn" and warn then
+        pcall(warn, line)
+    elseif print then
         pcall(print, line)
     end
 end
 
-local function preview(value)
-    value = tostring(value or "")
-    value = value:gsub("[\r\n]+", " ")
-    if #value > 180 then
-        return value:sub(1, 180) .. "..."
-    end
-    return value
+local function log(message)
+    emit(message, "info")
 end
 
-local function failDownload(reason, statusCode, body)
-    local suffix = ""
-    if statusCode then
-        suffix = suffix .. " status=" .. tostring(statusCode)
-    end
-    local bodyPreview = preview(body)
-    if bodyPreview ~= "" then
-        suffix = suffix .. " body=" .. bodyPreview
-    end
-    error(reason .. suffix, 2)
+local function logWarn(message)
+    emit(message, "warn")
+end
+
+local function failDownload(reason)
+    error("[Cronus] " .. tostring(reason or "Rejoin helper failed to load"), 2)
 end
 
 local function encode(value)
@@ -53,19 +42,50 @@ local function encode(value)
     return value
 end
 
+local function selectedPlayer()
+    local ok, players = pcall(function()
+        return game:GetService("Players")
+    end)
+    return ok and players and players.LocalPlayer or nil
+end
+
 local function selectedAccount()
     if tostring(CRONUS_ACCOUNT or "") ~= "" then
         return CRONUS_ACCOUNT
     end
-    local ok, players = pcall(function()
-        return game:GetService("Players")
-    end)
-    local player = ok and players and players.LocalPlayer or nil
+    local player = selectedPlayer()
     return player and tostring(player.Name or "") or ""
+end
+
+local function selectedUserId()
+    local player = selectedPlayer()
+    return player and tostring(player.UserId or "") or ""
+end
+
+local function getProcessId()
+    local providers = {
+        rawget(_G, "getprocessid"),
+        rawget(_G, "get_process_id"),
+        rawget(_G, "getpid"),
+        rawget(_G, "get_pid"),
+    }
+    for _, provider in ipairs(providers) do
+        if type(provider) == "function" then
+            local ok, result = pcall(provider)
+            local pid = tonumber(result)
+            if ok and pid and pid > 0 then
+                return tostring(math.floor(pid))
+            end
+        end
+    end
+    return ""
 end
 
 local function queueOnTeleport(sourceCode)
     local providers = {
+        queue_on_teleport,
+        queueonteleport,
+        queueonTeleport,
         rawget(_G, "queue_on_teleport"),
         rawget(_G, "queueonteleport"),
         rawget(_G, "queueonTeleport"),
@@ -80,26 +100,30 @@ local function queueOnTeleport(sourceCode)
         if type(provider) == "function" then
             local ok, err = pcall(provider, sourceCode)
             if ok then
-                log("helper queued for teleport")
+                log("Rejoin helper restored")
                 return true
             end
-            log("queue_on_teleport failed", err)
+            logWarn("Executor does not support auto-run")
         end
     end
-    log("queue_on_teleport unavailable")
+    logWarn("Executor does not support auto-run")
     return false
 end
 
-local url = ("http://%s:%s/api/lua/rejoin-helper?account=%s"):format(
+local account = selectedAccount()
+local url = ("http://%s:%s/api/lua/rejoin-helper?bootstrap=1&account=%s&username=%s&user_id=%s&pid=%s"):format(
     CRONUS_HOST,
     tostring(CRONUS_PORT),
-    encode(selectedAccount())
+    encode(account),
+    encode(account),
+    encode(selectedUserId()),
+    encode(getProcessId())
 )
 
 local source = nil
 local statusCode = nil
 if Request then
-    log("downloading", url)
+    log("Loading rejoin helper...")
     local response = Request({
         Method = "GET",
         Url = url,
@@ -110,19 +134,19 @@ if Request then
     statusCode = response and (response.StatusCode or response.status_code or response.Status or response.status)
     source = response and (response.Body or response.body or response.Data or response.data)
 elseif game.HttpGet then
-    log("downloading with game:HttpGet", url)
+    log("Loading rejoin helper...")
     source = game:HttpGet(url)
 end
 
 if type(source) ~= "string" or #source <= 0 then
-    failDownload("Cronus Lua helper download failed", statusCode, source)
+    failDownload("Rejoin helper failed to load")
 end
-assert(type(Load) == "function", "executor does not expose loadstring/load")
+assert(type(Load) == "function", "[Cronus] Rejoin helper failed to load")
 if source:sub(1, 1) == "{" then
-    failDownload("Cronus returned JSON instead of Lua. Restart Cronus Launcher or check the port.", statusCode, source)
+    failDownload("Failed to connect to launcher")
 end
 if not source:find("CronusRejoin", 1, true) then
-    failDownload("Downloaded text is not the Cronus rejoin monitor", statusCode, source)
+    failDownload("Rejoin helper failed to load")
 end
 
 if not source:find("CronusRejoin:QueueOnTeleport", 1, true) then
@@ -131,5 +155,5 @@ end
 
 local fn, err = Load(source)
 assert(fn, err)
-log("helper compiled")
+log("Rejoin helper loaded")
 return fn()

@@ -69,22 +69,11 @@ local function getProcessId()
 end
 
 local function getServerInfo()
-    local privateServerId = ""
-    local privateServerOwnerId = ""
-    pcall(function()
-        privateServerId = safeString(game.PrivateServerId)
-    end)
-    pcall(function()
-        privateServerOwnerId = safeString(game.PrivateServerOwnerId)
-    end)
-
-    local ownerNumber = tonumber(privateServerOwnerId) or 0
-    local isPrivate = privateServerId ~= "" or ownerNumber > 0
     return {
-        private_server_id = privateServerId,
-        private_server_owner_id = privateServerOwnerId,
-        is_vip_server = isPrivate and "true" or "false",
-        server_type = isPrivate and "VIP" or "PUBLIC",
+        private_server_id = "",
+        private_server_owner_id = "",
+        is_vip_server = "",
+        server_type = "UNKNOWN",
     }
 end
 

@@ -9,6 +9,7 @@ class HybridAccountLuaHelperCases:
         account = Account("LuaUnit")
         account.session_id = "session-unit"
         account.launch_nonce = "nonce-unit"
+        account.pid = 4321
         old_accounts = main.farm._accounts
         main.farm._accounts = [account]
         client = TestClient(main.app)
@@ -25,10 +26,11 @@ class HybridAccountLuaHelperCases:
         self.assertIn('Token = "lua1.', script)
         self.assertIn('SessionId = "session-unit"', script)
         self.assertIn('LaunchNonce = "nonce-unit"', script)
+        self.assertIn('ExpectedPid = "4321"', script)
         self.assertIn('Account = "LuaUnit"', script)
         self.assertIn('account = safeString(LocalPlayer.Name)', script)
         self.assertIn('configured_account = safeString(self.Account)', script)
-        self.assertIn("pid = getProcessId()", script)
+        self.assertIn("pid = processId", script)
         self.assertIn("ShutdownDelay = 2.50", script)
         self.assertIn('Version = "1.7.1"', script)
         self.assertIn('RequeueSource = "local Request', script)
@@ -58,39 +60,51 @@ class HybridAccountLuaHelperCases:
         self.assertIn("GuiService.ErrorMessageChanged", script)
         self.assertIn("function CronusRejoin:PostAsync", script)
         self.assertIn("function CronusRejoin:ClientRecoveryFallback", script)
-        self.assertIn('log("post begin"', script)
-        self.assertIn('log("post async"', script)
-        self.assertIn('log("post task error"', script)
-        self.assertIn('log("json encode failed"', script)
-        self.assertIn('log("client fallback start"', script)
+        self.assertIn('log("Syncing status...")', script)
+        self.assertIn('log("Status synced")', script)
+        self.assertIn('log("Connection alive")', script)
+        self.assertIn('logWarn("Launcher not responding")', script)
+        self.assertIn('logWarn("Trying fallback recovery...")', script)
+        self.assertIn('logWarn("Disconnect detected")', script)
+        self.assertIn('log("Attempting rejoin...")', script)
         self.assertIn("TeleportService:Teleport(game.PlaceId, LocalPlayer)", script)
         self.assertIn('LocalPlayer:Kick("Cronus recovery fallback")', script)
-        self.assertIn("disconnect ignored during teleport", script)
+        self.assertIn("lua_teleport_transition", script)
         self.assertIn('reportDisconnect("poll")', script)
         self.assertIn("local function hasServerEvidence()", script)
         self.assertIn("local function reportInGame()", script)
         self.assertIn('CronusRejoin:PostAsync("in_game"', script)
         self.assertIn('CronusRejoin:PostAsync("heartbeat"', script)
         self.assertIn("task.wait(0.5)", script)
-        self.assertIn("shutdown fallback after disconnect", script)
+        self.assertIn("pcall(game.Shutdown, game)", script)
         self.assertIn("TeleportService.TeleportInitFailed", script)
         self.assertIn("teleport_state = stateText", script)
+        self.assertIn('log("Teleport detected")', script)
+        self.assertIn('log("Re-attaching after teleport...")', script)
+        self.assertIn('log("Rejoin helper restored")', script)
         self.assertIn("teleport_place_id = safeString(game.PlaceId)", script)
         self.assertIn("universe_id = safeString(game.GameId)", script)
         self.assertIn("private_server_id = serverInfo.private_server_id", script)
         self.assertIn("private_server_owner_id = serverInfo.private_server_owner_id", script)
         self.assertIn("is_vip_server = serverInfo.is_vip_server", script)
         self.assertIn("server_type = serverInfo.server_type", script)
-        self.assertIn("local ownerNumber = tonumber(privateServerOwnerId) or 0", script)
-        self.assertIn('local isPrivate = privateServerId ~= "" or ownerNumber > 0', script)
+        self.assertIn('server_type = "UNKNOWN"', script)
+        self.assertNotIn("game.PrivateServerId", script)
+        self.assertNotIn("game.PrivateServerOwnerId", script)
         self.assertNotIn("TeleportToPlaceInstance", script)
         self.assertIn('G.CronusRejoin = CronusRejoin', script)
         self.assertNotIn("__CRONUS_", script)
         loader = (Path(__file__).resolve().parents[1] / "lua" / "run_in_executor.lua").read_text(encoding="utf-8")
         self.assertIn("/api/lua/rejoin-helper", loader)
+        self.assertIn("bootstrap=1", loader)
         self.assertIn("local Load = loadstring or load", loader)
+        self.assertIn("getProcessId()", loader)
+        self.assertIn("user_id=%s", loader)
         self.assertIn("queueOnTeleport(source)", loader)
-        self.assertIn('log("helper queued for teleport")', loader)
+        self.assertIn('log("Loading rejoin helper...")', loader)
+        self.assertIn('log("Rejoin helper loaded")', loader)
+        self.assertIn('log("Rejoin helper restored")', loader)
+        self.assertIn('logWarn("Executor does not support auto-run")', loader)
         self.assertIn("Load(source)", loader)
 
     def test_lua_rejoin_helper_rejects_unauthenticated_token_mint(self):
@@ -110,6 +124,75 @@ class HybridAccountLuaHelperCases:
 
         self.assertEqual(response.status_code, 403)
         self.assertNotIn('Token = "lua1.', response.text)
+
+    def test_lua_rejoin_helper_bootstrap_serves_scoped_token_for_active_loopback_account(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        account = Account("LuaUnit")
+        account.session_id = "session-unit"
+        account.launch_nonce = "nonce-unit"
+        account.pid = 4321
+        old_accounts = main.farm._accounts
+        main.farm._accounts = [account]
+        client = TestClient(main.app)
+        try:
+            response = client.get(
+                "/api/lua/rejoin-helper?bootstrap=1&account=LuaUnit&username=LuaUnit&pid=4321&port=7777"
+            )
+        finally:
+            main.farm._accounts = old_accounts
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text
+        self.assertNotIn(main.INSTANCE_TOKEN, script)
+        self.assertIn('Token = "lua1.', script)
+        self.assertIn('SessionId = "session-unit"', script)
+        self.assertIn('LaunchNonce = "nonce-unit"', script)
+        self.assertIn('ExpectedPid = "4321"', script)
+
+    def test_lua_rejoin_helper_bootstrap_allows_missing_executor_pid_for_active_account(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        account = Account("LuaUnit")
+        account.session_id = "session-unit"
+        account.launch_nonce = "nonce-unit"
+        account.pid = 4321
+        old_accounts = main.farm._accounts
+        main.farm._accounts = [account]
+        client = TestClient(main.app)
+        try:
+            response = client.get(
+                "/api/lua/rejoin-helper?bootstrap=1&account=LuaUnit&username=LuaUnit&port=7777"
+            )
+        finally:
+            main.farm._accounts = old_accounts
+
+        self.assertEqual(response.status_code, 200)
+        script = response.text
+        self.assertIn('Token = "lua1.', script)
+        self.assertIn('ExpectedPid = "4321"', script)
+
+    def test_lua_rejoin_helper_bootstrap_rejects_wrong_executor_pid(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        account = Account("LuaUnit")
+        account.session_id = "session-unit"
+        account.launch_nonce = "nonce-unit"
+        account.pid = 4321
+        old_accounts = main.farm._accounts
+        main.farm._accounts = [account]
+        client = TestClient(main.app)
+        try:
+            response = client.get(
+                "/api/lua/rejoin-helper?bootstrap=1&account=LuaUnit&username=LuaUnit&pid=9999&port=7777"
+            )
+        finally:
+            main.farm._accounts = old_accounts
+
+        self.assertEqual(response.status_code, 403)
 
     def test_lua_rejoin_helper_reuses_existing_scoped_token_without_renewal(self):
         from fastapi.testclient import TestClient
@@ -178,8 +261,9 @@ class HybridAccountLuaHelperCases:
         self.assertIn("private_server_owner_id = serverInfo.private_server_owner_id", script)
         self.assertIn("is_vip_server = serverInfo.is_vip_server", script)
         self.assertIn("server_type = serverInfo.server_type", script)
-        self.assertIn("local ownerNumber = tonumber(privateServerOwnerId) or 0", script)
-        self.assertIn('local isPrivate = privateServerId ~= "" or ownerNumber > 0', script)
+        self.assertIn('server_type = "UNKNOWN"', script)
+        self.assertNotIn("game.PrivateServerId", script)
+        self.assertNotIn("game.PrivateServerOwnerId", script)
         self.assertIn("/api/lua/rejoin-event", script)
         self.assertIn('["X-Cronus-Token"] = self.Token', script)
         self.assertIn('return self:Send("finished"', script)

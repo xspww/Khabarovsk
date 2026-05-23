@@ -1,3 +1,4 @@
+import io
 import os
 import unittest
 from unittest.mock import patch
@@ -14,6 +15,8 @@ class ConsoleActivityFormatTests(unittest.TestCase):
         console._COLOR_SUPPORT = None
         console._LAST_DISCONNECT_AT.clear()
         console._LAST_CAPTCHA_AT.clear()
+        console._SUSPECT_LOGGED_ACCOUNTS.clear()
+        console._SUSPECT_FINALIZED_AT_BY_ACCOUNT.clear()
         console._ACTIVE_ACCOUNTS.clear()
         console._CAPTCHA_ACCOUNTS.clear()
         console._QUEUE_SIZE = 0
@@ -30,6 +33,8 @@ class ConsoleActivityFormatTests(unittest.TestCase):
         console._COLOR_SUPPORT = None
         console._LAST_DISCONNECT_AT.clear()
         console._LAST_CAPTCHA_AT.clear()
+        console._SUSPECT_LOGGED_ACCOUNTS.clear()
+        console._SUSPECT_FINALIZED_AT_BY_ACCOUNT.clear()
         console._ACTIVE_ACCOUNTS.clear()
         console._CAPTCHA_ACCOUNTS.clear()
         console._QUEUE_SIZE = 0
@@ -136,6 +141,172 @@ class ConsoleActivityFormatTests(unittest.TestCase):
         )
 
         self.assertConsoleLine(line, "🔐 (Zuckmu) CAPTCHA required (PID: 9108) - paused, solve manually then Resume")
+
+    def test_suspect_process_check_uses_plain_line(self):
+        line = console._format_structured(
+            "RUNTIME",
+            "suspect_process_check",
+            "warning",
+            {"account": "UserA", "pid": 4321},
+        )
+
+        self.assertConsoleLine(line, "🚧 Checking Roblox process (UserA)")
+        self.assertNotIn("█", line)
+        self.assertNotIn("░", line)
+        self.assertNotIn("40%", line)
+
+    def test_suspect_process_check_colors_only_timestamp(self):
+        with patch.object(console, "_colors_enabled", return_value=True):
+            line = console._format_structured(
+                "RUNTIME",
+                "suspect_process_check",
+                "warning",
+                {"account": "UserA", "pid": 4321},
+            )
+
+        self.assertTrue(line.startswith("\x1b[38;2;255;215;0m["), line)
+        self.assertIn("\x1b[0m 🚧 Checking Roblox process (UserA)", line)
+        self.assertEqual(line.count("\x1b["), 2, line)
+
+    def test_suspect_process_check_prints_once_as_regular_log(self):
+        with patch.object(console, "_print_line") as write_line:
+            console.emit_structured(
+                "RUNTIME",
+                "suspect_process_check",
+                "warning",
+                account="UserA",
+                pid=4321,
+                duration_seconds=0,
+            )
+
+        write_line.assert_called_once()
+        self.assertIn("🚧 Checking Roblox process (UserA)", write_line.call_args.args[0])
+        self.assertNotIn("4321", write_line.call_args.args[0])
+        self.assertIn("usera", console._SUSPECT_LOGGED_ACCOUNTS)
+
+    def test_suspect_process_check_does_not_spam_while_already_logged(self):
+        with patch.object(console, "_print_line") as write_line:
+            console.emit_structured(
+                "RUNTIME",
+                "suspect_process_check",
+                "warning",
+                account="UserA",
+                duration_seconds=0,
+            )
+            console.emit_structured(
+                "RUNTIME",
+                "suspect_process_check",
+                "warning",
+                account="UserA",
+                pid=4321,
+                duration_seconds=0,
+            )
+
+        write_line.assert_called_once()
+
+    def test_suspect_process_check_final_resets_dedupe_without_clearing(self):
+        console._SUSPECT_LOGGED_ACCOUNTS.add("usera")
+        with (
+            patch.object(console, "_print_line") as write_line,
+            patch.object(console.time, "monotonic", return_value=100.0),
+        ):
+            console.emit_structured(
+                "RUNTIME",
+                "suspect_process_check",
+                "warning",
+                account="UserA",
+                pid=4321,
+                final=True,
+                duration_seconds=0,
+            )
+
+        write_line.assert_not_called()
+        self.assertNotIn("usera", console._SUSPECT_LOGGED_ACCOUNTS)
+
+    def test_process_bind_verified_finishes_active_suspect_line_without_duplicate(self):
+        console._SUSPECT_LOGGED_ACCOUNTS.add("usera")
+        with (
+            patch.object(console, "_print_line") as write_line,
+            patch.object(console.time, "monotonic", return_value=100.0),
+        ):
+            console.emit_structured(
+                "STATE",
+                "process_bind_verified",
+                "info",
+                account="UserA",
+                pid=4321,
+            )
+
+        write_line.assert_called_once()
+        self.assertIn("Found Roblox process 4321 for user (UserA)", write_line.call_args.args[0])
+        self.assertIn("usera", console._SUSPECT_LOGGED_ACCOUNTS)
+
+        with (
+            patch.object(console, "_print_line") as write_line,
+            patch.object(console.time, "monotonic", return_value=101.0),
+        ):
+            console.emit_structured(
+                "RUNTIME",
+                "suspect_process_check",
+                "warning",
+                account="UserA",
+                pid=4321,
+                final=True,
+                duration_seconds=0,
+            )
+
+        write_line.assert_not_called()
+        self.assertNotIn("usera", console._SUSPECT_LOGGED_ACCOUNTS)
+
+    def test_post_bind_suspect_update_is_suppressed_during_settle_window(self):
+        console._SUSPECT_FINALIZED_AT_BY_ACCOUNT["usera"] = 100.0
+        with (
+            patch.object(console, "_print_line") as write_line,
+            patch.object(console.time, "monotonic", return_value=101.0),
+        ):
+            console.emit_structured(
+                "RUNTIME",
+                "suspect_process_check",
+                "warning",
+                account="UserA",
+                pid=4321,
+                final=False,
+                duration_seconds=0,
+            )
+
+        write_line.assert_not_called()
+        self.assertNotIn("usera", console._SUSPECT_LOGGED_ACCOUNTS)
+
+    def test_found_and_ready_logs_print_after_plain_suspect_check(self):
+        account = "IwasTheGuyOni7899"
+        console._SUSPECT_LOGGED_ACCOUNTS.add(account.lower())
+        output = io.StringIO()
+        with (
+            patch.object(console.sys, "stdout", output),
+            patch.object(console.time, "monotonic", return_value=100.0),
+            patch.object(console.time, "strftime", side_effect=["10:13:16", "10:13:17"]),
+        ):
+            console.emit_structured(
+                "STATE",
+                "process_bind_verified",
+                "info",
+                account=account,
+                pid=11880,
+            )
+            console.emit_structured(
+                "STATE",
+                "transition",
+                "info",
+                account=account,
+                old="VERIFY",
+                new="IN_GAME",
+                pid=11880,
+            )
+
+        text = output.getvalue()
+        self.assertIn(f"Found Roblox process 11880 for user ({account})\n", text)
+        self.assertIn(f"[10:13:17] ✔ ({account}) (PID: 11880)\n", text)
+        self.assertNotIn("█", text)
 
     def test_captcha_hold_removes_account_from_active_counter(self):
         console._ACTIVE_ACCOUNTS.add("Zuckmu")

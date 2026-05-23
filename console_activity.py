@@ -14,8 +14,11 @@ _CAPTCHA_ACCOUNTS: set[str] = set()
 _QUEUE_SIZE = 0
 _LAST_DISCONNECT_AT: Dict[str, float] = {}
 _LAST_CAPTCHA_AT: Dict[str, float] = {}
+_SUSPECT_LOGGED_ACCOUNTS: set[str] = set()
+_SUSPECT_FINALIZED_AT_BY_ACCOUNT: Dict[str, float] = {}
 _DISCONNECT_DEDUP_SECONDS = 3.0
 _CAPTCHA_DEDUP_SECONDS = 3.0
+_SUSPECT_FINAL_SUPPRESS_SECONDS = 5.0
 
 _ICON_OK = "✔"
 _ICON_WARN = "⚠️"
@@ -23,6 +26,7 @@ _ICON_FAIL = "❌"
 _ICON_VIP = "🔐"
 _ICON_VIP_SERVER = "👑"
 _ICON_PUBLIC_SERVER = "🦺"
+_ICON_CHECKING = "🚧"
 _ICON_ALIASES = {
     "OK": _ICON_OK,
     "CHECK": _ICON_OK,
@@ -45,6 +49,7 @@ _ICON_ALIASES = {
 _COLOR_RESET = "\x1b[0m"
 _COLOR_DIM = "\x1b[90m"
 _COLOR_WHITE = "\x1b[97m"
+_COLOR_GOLD = "\x1b[38;2;255;215;0m"
 _COLOR_GRAY = "\x1b[38;2;128;128;128m"
 _COLOR_USERNAME = "\x1b[38;2;34;139;34m"
 _COLOR_DISCONNECTED = "\x1b[38;2;255;0;0m"
@@ -56,6 +61,7 @@ _COLOR_BY_ICON = {
     _ICON_VIP: "\x1b[93m",
     _ICON_VIP_SERVER: _COLOR_GRAY,
     _ICON_PUBLIC_SERVER: _COLOR_GRAY,
+    _ICON_CHECKING: "\x1b[93m",
 }
 _COLOR_SUPPORT: Optional[bool] = None
 
@@ -188,6 +194,13 @@ def _duration_text(value: Any) -> str:
         return text
 
 
+def _suspect_process_line(account: str) -> str:
+    stamp = f"[{time.strftime('%H:%M:%S')}]"
+    if _colors_enabled():
+        stamp = _paint(stamp, _COLOR_GOLD)
+    return f"{stamp} {_ICON_CHECKING} Checking Roblox process ({_text(account, 'Account')})"
+
+
 def _line(icon: str, message: str, *, indent: bool = False, stamp_color: str = _COLOR_DIM) -> str:
     stamp = f"[{time.strftime('%H:%M:%S')}]"
     icon_text = _normalize_icon(icon, default="")
@@ -242,6 +255,24 @@ def _print_line(line: str) -> None:
             pass
     except Exception:
         pass
+
+
+def _emit_suspect_process_check(fields: Dict[str, Any]) -> None:
+    account = _account(fields)
+    key = account.lower()
+    final = _boolish(fields.get("final"), False)
+    finalized_at = float(_SUSPECT_FINALIZED_AT_BY_ACCOUNT.get(key) or 0.0)
+    if finalized_at and time.monotonic() - finalized_at <= _SUSPECT_FINAL_SUPPRESS_SECONDS:
+        return
+    if final:
+        _SUSPECT_LOGGED_ACCOUNTS.discard(key)
+        _SUSPECT_FINALIZED_AT_BY_ACCOUNT[key] = time.monotonic()
+        return
+    if key in _SUSPECT_LOGGED_ACCOUNTS:
+        return
+    _SUSPECT_FINALIZED_AT_BY_ACCOUNT.pop(key, None)
+    _SUSPECT_LOGGED_ACCOUNTS.add(key)
+    _print_line(_suspect_process_line(account))
 
 
 def _title_text_locked() -> str:
@@ -331,6 +362,8 @@ def _format_recovery(name: str, fields: Dict[str, Any]) -> Optional[str]:
 def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]:
     account = _account(fields)
     pid = _pid(fields)
+    if scope == "RUNTIME" and name == "suspect_process_check":
+        return _suspect_process_line(account)
     if scope == "CAPTCHA" or name == "captcha_dialog_hold" or (name == "account_hold" and _reason(fields) == "captcha_required"):
         return _captcha_line(account, pid, _text(fields.get("detail") or fields.get("captcha_detail")))
     if scope == "WORKER" and name in {"visible_process_adopted", "rebind_refreshed"} and pid:
@@ -375,9 +408,12 @@ def emit_structured(scope: str, name: str, level: str = "info", **fields: Any) -
     data = dict(fields)
     with _LOCK:
         _update_counters(scope_text, name_text, data)
-        line = _format_structured(scope_text, name_text, level, data)
-        if line:
-            _print_line(line)
+        if scope_text == "RUNTIME" and name_text == "suspect_process_check":
+            _emit_suspect_process_check(data)
+        else:
+            line = _format_structured(scope_text, name_text, level, data)
+            if line:
+                _print_line(line)
         _set_title_locked()
 
 

@@ -98,6 +98,89 @@ class HybridAccountStatusCases:
         self.assertTrue(row["captcha_required"])
         controller._runtime_store.close()
 
+    def test_status_view_model_logs_when_account_becomes_suspect(self):
+        from config_store import ConfigManager
+
+        controller = FarmController(ConfigManager())
+        account = Account("UserA")
+        account.state = AccountState.IN_GAME
+        account.desired_state = AccountState.IN_GAME
+        account.pid = 4321
+        controller.set_accounts([account])
+
+        with patch("runtime.runtime_view_model.ProcessManager.is_bound_game_alive", return_value=False), \
+             patch("runtime.runtime_view_model.ProcessManager.is_not_responding", return_value=False), \
+             patch("runtime.runtime_view_model.flog_kv") as log:
+            controller.get_status()
+            controller.get_status()
+
+        suspect_logs = [
+            call for call in log.call_args_list
+            if call.args[:2] == ("RUNTIME", "suspect_process_check")
+        ]
+        self.assertEqual(len(suspect_logs), 1)
+        self.assertEqual(suspect_logs[0].args[2], "warning")
+        self.assertEqual(suspect_logs[0].kwargs["account"], "UserA")
+        self.assertEqual(suspect_logs[0].kwargs["pid"], 4321)
+        self.assertFalse(suspect_logs[0].kwargs["final"])
+        controller._runtime_store.close()
+
+    def test_status_view_model_logs_initial_suspect_without_pid(self):
+        from config_store import ConfigManager
+
+        controller = FarmController(ConfigManager())
+        account = Account("UserA")
+        account.state = AccountState.IN_GAME
+        account.desired_state = AccountState.IN_GAME
+        controller.set_accounts([account])
+
+        with patch("runtime.runtime_view_model.ProcessManager.is_bound_game_alive", return_value=False), \
+             patch("runtime.runtime_view_model.ProcessManager.is_not_responding", return_value=False), \
+             patch("runtime.runtime_view_model.flog_kv") as log:
+            controller.get_status()
+
+        suspect_logs = [
+            call for call in log.call_args_list
+            if call.args[:2] == ("RUNTIME", "suspect_process_check")
+        ]
+        self.assertEqual(len(suspect_logs), 1)
+        self.assertEqual(suspect_logs[0].kwargs["account"], "UserA")
+        self.assertFalse(suspect_logs[0].kwargs["final"])
+        controller._runtime_store.close()
+
+    def test_status_view_model_finishes_suspect_log_when_truth_resolves(self):
+        from config_store import ConfigManager
+        from services.process_proof_policy import PROOF_STRONG
+
+        controller = FarmController(ConfigManager())
+        account = Account("UserA")
+        account.state = AccountState.IN_GAME
+        account.desired_state = AccountState.IN_GAME
+        account.pid = 4321
+        account.process_binding_status = "verified"
+        account.process_binding_confidence = 100.0
+        account.process_proof_level = PROOF_STRONG
+        account.last_activity_at = time.time()
+        account.observed_server_at = time.time()
+        controller.set_accounts([account])
+
+        with patch("runtime.runtime_view_model.ProcessManager.is_bound_game_alive", side_effect=[False, True]), \
+             patch("runtime.runtime_view_model.ProcessManager.validate_game_process", return_value={"windows": 1}), \
+             patch("runtime.runtime_view_model.ProcessManager.get_pid_owner", return_value="UserA"), \
+             patch("runtime.runtime_view_model.ProcessManager.is_not_responding", return_value=False), \
+             patch("runtime.runtime_view_model.flog_kv") as log:
+            controller.get_status()
+            controller.get_status()
+
+        suspect_logs = [
+            call for call in log.call_args_list
+            if call.args[:2] == ("RUNTIME", "suspect_process_check")
+        ]
+        self.assertEqual([call.kwargs["final"] for call in suspect_logs], [False, True])
+        self.assertFalse(suspect_logs[0].kwargs["final"])
+        self.assertTrue(suspect_logs[1].kwargs["final"])
+        controller._runtime_store.close()
+
     def test_status_step_marks_in_game_complete_even_with_old_launch_reason(self):
         controller = FarmController.__new__(FarmController)
         controller._net_mon = None

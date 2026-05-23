@@ -12,7 +12,7 @@ from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_LABEL, is_accou
 from runtime.account_worker import AccountWorker
 from runtime.account_selection import runtime_account_filter_reason
 from runtime.runtime_health import account_health_flags, build_runtime_health
-from runtime.runtime_truth import build_account_truth
+from runtime.runtime_truth import TRUTH_SUSPECT, build_account_truth
 
 
 IMPORTANT_RUNTIME_EVENTS = {
@@ -40,6 +40,43 @@ def _important_runtime_event(event: Dict[str, Any]) -> bool:
 class RuntimeViewModelBuilder:
     def __init__(self, farm: Any):
         self._farm = farm
+
+    def _log_suspect_transition(self, acc: Any, truth: Any) -> None:
+        account_id = str(getattr(acc, "_config_username", getattr(acc, "username", "")) or "")
+        key = account_id.lower()
+        state_cache = getattr(self._farm, "_last_runtime_truth_state", None)
+        if state_cache is None:
+            state_cache = {}
+            setattr(self._farm, "_last_runtime_truth_state", state_cache)
+        previous = state_cache.get(key)
+        state_cache[key] = truth.truth_state
+        if truth.truth_state != TRUTH_SUSPECT:
+            if previous == TRUTH_SUSPECT:
+                flog_kv(
+                    "RUNTIME",
+                    "suspect_process_check",
+                    "warning",
+                    account=getattr(acc, "display_name", account_id) or account_id,
+                    account_id=account_id,
+                    pid=truth.pid or getattr(acc, "pid", "") or "",
+                    confidence=round(float(truth.confidence or 0.0), 1),
+                    final=True,
+                    reasons=",".join(list(truth.reasons or [])[:4]),
+                )
+            return
+        if previous == TRUTH_SUSPECT:
+            return
+        flog_kv(
+            "RUNTIME",
+            "suspect_process_check",
+            "warning",
+            account=getattr(acc, "display_name", account_id) or account_id,
+            account_id=account_id,
+            pid=truth.pid or getattr(acc, "pid", "") or "",
+            confidence=round(float(truth.confidence or 0.0), 1),
+            final=False,
+            reasons=",".join(list(truth.reasons or [])[:4]),
+        )
 
     def build_status(self) -> dict:
         farm = self._farm
@@ -275,11 +312,13 @@ class RuntimeViewModelBuilder:
                 "can_rejoin": bool(farm.running and not any_command_inflight and display_state != AccountState.FAILED and not blocked_reason),
                 "can_kill": bool(pid_alive and snapshot_pid and not any_command_inflight),
             }
-            account_payload["runtime_truth"] = build_account_truth(
+            runtime_truth = build_account_truth(
                 acc,
                 process_alive=pid_alive,
                 window_count=window_count,
-            ).to_dict()
+            )
+            self._log_suspect_transition(acc, runtime_truth)
+            account_payload["runtime_truth"] = runtime_truth.to_dict()
             account_payload["health_flags"] = account_health_flags(account_payload)
             accounts_data.append(account_payload)
 

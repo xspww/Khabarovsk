@@ -529,10 +529,21 @@
   .tools,
   .form-row,
   .control-line,
+  .limiter-section-head,
   .meta-row,
   .install-inline
   {
     grid-template-columns: 1fr;
+  }
+
+  .limiter-section
+  {
+    padding: 18px;
+  }
+
+  .limiter-section-head .savebar
+  {
+    justify-content: flex-start;
   }
 
   .choice-grid
@@ -572,4 +583,3 @@
   }
 
 }
-

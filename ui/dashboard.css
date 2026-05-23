@@ -1,8 +1,8 @@
-@import url("./styles/base-layout.css?v=main-view-animation");
-@import url("./styles/navigation.css?v=main-view-animation");
-@import url("./styles/controls-tables.css?v=main-view-animation");
-@import url("./styles/cards-modals-responsive.css?v=main-view-animation");
-@import url("./styles/theme-overrides.css?v=main-view-animation");
-@import url("./styles/nested-navigation.css?v=main-view-animation");
-@import url("./styles/accounts-dashboard.css?v=main-view-animation");
-@import url("./styles/reference-sidebar.css?v=main-view-animation");
+@import url("./styles/base-layout.css?v=limiter-single-action");
+@import url("./styles/navigation.css?v=limiter-single-action");
+@import url("./styles/controls-tables.css?v=limiter-single-action");
+@import url("./styles/cards-modals-responsive.css?v=limiter-single-action");
+@import url("./styles/theme-overrides.css?v=limiter-single-action");
+@import url("./styles/nested-navigation.css?v=limiter-single-action");
+@import url("./styles/accounts-dashboard.css?v=limiter-single-action");
+@import url("./styles/reference-sidebar.css?v=limiter-single-action");

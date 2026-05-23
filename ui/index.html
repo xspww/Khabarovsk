@@ -6,7 +6,7 @@
 <meta name="cronus-api-token" content="__CRONUS_API_TOKEN__">
 <title>Cronus Launcher</title>
 <link rel="icon" type="image/png" href="/ui/cronus-favicon.png">
-<link rel="stylesheet" href="/ui/dashboard.css?v=main-view-animation">
+<link rel="stylesheet" href="/ui/dashboard.css?v=limiter-single-action">
 </head>
 <body>
 <div class="app">
@@ -15,25 +15,23 @@
     <nav id="nav" class="nav">
       <button data-view="accounts" class="nav-root active"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.75" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11.2 9.8 5.4a3.1 3.1 0 0 1 4.4 0L20 11.2"/><path d="M6.4 10.4v5.7c0 2.35 1.45 3.9 3.95 3.9h3.3c2.5 0 3.95-1.55 3.95-3.9v-5.7"/><path d="M17.6 6.4v4.05"/><circle cx="12" cy="12.35" r="1.45"/><path d="M10.1 16.35h3.8"/></svg><span class="nav-text">Dashboard</span><span id="nav-accounts-count" class="nav-badge nav-badge-muted">0</span></button>
       <div class="nav-group expanded">
-        <button type="button" class="nav-group-head" data-nav-toggle><span class="nav-group-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.45" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7.2 12 4.4l7.5 2.8L12 10 4.5 7.2z"/><path d="M4.5 11.5 12 14.3l7.5-2.8"/><path d="M4.5 15.8 12 18.6l7.5-2.8"/></svg></span><span>Launcher</span><span class="nav-caret">^</span></button>
+        <button type="button" class="nav-group-head" data-nav-toggle data-nav-group="launcher"><span class="nav-group-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.45" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 7.2 12 4.4l7.5 2.8L12 10 4.5 7.2z"/><path d="M4.5 11.5 12 14.3l7.5-2.8"/><path d="M4.5 15.8 12 18.6l7.5-2.8"/></svg></span><span>Launcher</span><span class="nav-caret">^</span></button>
         <div class="nav-branch">
           <button data-view="queue" class="nav-child"><span class="nav-text">Queue</span></button>
           <button data-view="game" class="nav-child"><span class="nav-text">Game</span></button>
         </div>
       </div>
       <div class="nav-group expanded">
-        <button type="button" class="nav-group-head" data-nav-toggle><span class="nav-group-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.45" stroke-linecap="round" stroke-linejoin="round"><path d="M4.1 16.4a8.5 8.5 0 1 1 15.8 0"/><path d="M12 3.5v2.2"/><path d="m5.9 7.4 1.6 1.6"/><path d="M3.5 12h2.2"/><path d="m18.1 7.4-1.6 1.6"/><path d="M18.3 12h2.2"/><path d="M12.1 11.5c1.45 0 2.45 1.15 2.72 3.92.06.65-.44 1.16-1.08 1.08-2.77-.33-4.04-1.2-4.04-2.88 0-1.18.96-2.12 2.4-2.12z"/></svg></span><span>Performance</span><span class="nav-caret">^</span></button>
+        <button type="button" class="nav-group-head" data-nav-toggle data-nav-group="performance"><span class="nav-group-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.45" stroke-linecap="round" stroke-linejoin="round"><path d="M4.1 16.4a8.5 8.5 0 1 1 15.8 0"/><path d="M12 3.5v2.2"/><path d="m5.9 7.4 1.6 1.6"/><path d="M3.5 12h2.2"/><path d="m18.1 7.4-1.6 1.6"/><path d="M18.3 12h2.2"/><path d="M12.1 11.5c1.45 0 2.45 1.15 2.72 3.92.06.65-.44 1.16-1.08 1.08-2.77-.33-4.04-1.2-4.04-2.88 0-1.18.96-2.12 2.4-2.12z"/></svg></span><span>Performance</span><span class="nav-caret">^</span></button>
         <div class="nav-branch">
-          <button data-view="performance" class="nav-child"><span class="nav-text">FPS Limiter</span></button>
-          <button data-view="ram" class="nav-child"><span class="nav-text">RAM Limiter</span></button>
+          <button data-view="limiter" class="nav-child"><span class="nav-text">Limiter</span></button>
           <button data-view="graphics" class="nav-child"><span class="nav-text">Graphics</span></button>
           <button data-view="window-size" class="nav-child"><span class="nav-text">Window Size</span></button>
-          <button data-view="cpu-limiter" class="nav-child"><span class="nav-text">CPU Limiter</span></button>
         </div>
       </div>
       <div class="nav-separator"></div>
       <div class="nav-group expanded">
-        <button type="button" class="nav-group-head" data-nav-toggle><span class="nav-group-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.65" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4.6 4.6 0 0 0-5.8 5.8L3.8 17.2a2.1 2.1 0 0 0 3 3l5.1-5.1a4.6 4.6 0 0 0 5.8-5.8l-3.2 3.2-3-3 3.2-3.2z"/></svg></span><span>Settings</span><span class="nav-caret">^</span></button>
+        <button type="button" class="nav-group-head" data-nav-toggle data-nav-group="settings"><span class="nav-group-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.65" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4.6 4.6 0 0 0-5.8 5.8L3.8 17.2a2.1 2.1 0 0 0 3 3l5.1-5.1a4.6 4.6 0 0 0 5.8-5.8l-3.2 3.2-3-3 3.2-3.2z"/></svg></span><span>Settings</span><span class="nav-caret">^</span></button>
         <div class="nav-branch">
           <button data-view="troubleshoot" class="nav-child"><span class="nav-text">Troubleshoot</span></button>
         </div>
@@ -62,28 +60,38 @@
       <section class="panel panel-body-only">
         <div class="settings-card">
           <div id="game-map-card" class="map-card empty"><div>Enter Place ID</div></div>
-          <div class="field"><label>Place ID</label><div class="hint">Place to join</div><div class="form-row"><input id="game-place" class="input" placeholder="123456789"><button class="btn primary" id="game-lookup">Lookup</button></div><div id="game-lookup-result" class="hint"></div></div>
+          <div class="field"><label>Place ID</label><div class="hint">Place to join</div><input id="game-place" class="input" placeholder="123456789"><div id="game-lookup-result" class="hint"></div></div>
           <div class="field"><label>Private Server URL</label><div class="hint">Default VIP link</div><input id="game-private" class="input" placeholder="Private server URL"></div>
           <div class="field"><label>Auto Create Private Server</label><div class="hint">Free VIP before launch</div><div class="toggle-row"><input id="game-auto-private-enabled" type="checkbox"><span hidden></span></div></div>
           <div class="field"><label>Multi Roblox</label><div class="hint">Keep other accounts open</div><div class="toggle-row"><input id="game-multi-roblox" type="checkbox"><span hidden></span></div></div>
         </div>
       </section>
     </section>
-    <section id="view-performance" class="view">
-      <div class="page-head"><div class="title">FPS Limiter</div><div class="savebar"><button class="btn ghost reset-action" id="fps-reset" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>Reset</button><button class="btn good save-action" id="fps-save" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>Save Changes</button></div></div>
-      <section class="panel panel-body-only">
-        <div class="settings-card">
-          <div class="field"><label>FPS Limiter</label><div class="hint">reduce CPU/GPU usage (15-1000)</div><div class="toggle-row"><input id="fps-enabled" type="checkbox"><span hidden></span></div><div id="fps-limit-field" hidden><input id="fps-limit" class="input" type="number" min="15" max="1000" placeholder="240"></div></div>
+    <section id="view-limiter" class="view">
+      <div class="page-head"><div class="title">Limiter</div><div class="savebar"><button class="btn ghost reset-action" id="limiter-reset" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>Reset</button><button class="btn good save-action" id="limiter-save" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>Save Changes</button></div></div>
+      <section class="panel panel-body-only limiter-panel">
+        <div class="settings-card limiter-card">
+          <section class="limiter-section">
+          <div class="limiter-section-head"><div class="limiter-copy"><strong>FPS Limiter</strong><div class="hint">Reduce CPU/GPU usage.</div></div></div>
+          <div class="field limiter-toggle"><div class="toggle-row"><input id="fps-enabled" type="checkbox"><span hidden></span></div><div id="fps-limit-field" hidden><input id="fps-limit" class="input" type="number" min="15" max="1000" placeholder="240"></div></div>
           <div id="fps-notice" class="notice"></div>
-        </div>
-      </section>
-    </section>
-    <section id="view-ram" class="view">
-      <div class="page-head"><div class="title">RAM Limiter</div><div class="savebar"><button class="btn ghost reset-action" id="ram-reset" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>Reset</button><button class="btn good save-action" id="ram-save" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>Save Changes</button></div></div>
-      <section class="panel panel-body-only">
-        <div class="settings-card">
-          <div class="field"><label>RAM Limiter</label><div class="hint">Monitors Roblox memory usage and automatically restarts the game if RAM usage stays too high</div><div class="toggle-row"><input id="ram-enabled" type="checkbox"><span hidden></span></div><div id="ram-current-field" hidden><select id="ram-limit-preset" class="input"><option value="4096">4 GB</option><option value="6144">6 GB</option><option value="8192">8 GB</option><option value="12288">12 GB</option><option value="16384">16 GB</option><option value="24576">24 GB</option><option value="32768">32 GB</option><option value="65536">64 GB</option><option value="custom">Custom</option></select><div id="ram-limit-custom-field" hidden><input id="ram-limit-custom" class="input" type="number" min="512" max="65536" step="256" placeholder="Custom MB"></div></div></div>
+          </section>
+          <section class="limiter-section">
+          <div class="limiter-section-head"><div class="limiter-copy"><strong>RAM Limiter</strong><div class="hint">Restart Roblox when memory stays high.</div></div></div>
+          <div class="field limiter-toggle"><div class="toggle-row"><input id="ram-enabled" type="checkbox"><span hidden></span></div><div id="ram-current-field" hidden><select id="ram-limit-preset" class="input"><option value="4096">4 GB</option><option value="6144">6 GB</option><option value="8192">8 GB</option><option value="12288">12 GB</option><option value="16384">16 GB</option><option value="24576">24 GB</option><option value="32768">32 GB</option><option value="65536">64 GB</option><option value="custom">Custom</option></select><div id="ram-limit-custom-field" hidden><input id="ram-limit-custom" class="input" type="number" min="512" max="65536" step="256" placeholder="Custom MB"></div></div></div>
           <div id="ram-notice" class="notice"></div>
+          </section>
+          <section class="limiter-section">
+          <div class="limiter-section-head"><div class="limiter-copy"><strong>CPU Limiter</strong><div class="hint">Limit Roblox CPU usage.</div></div></div>
+          <div class="field limiter-toggle"><div class="toggle-row"><input id="cpu-enabled" type="checkbox"><span hidden></span></div></div>
+          <div id="cpu-controls" hidden>
+            <div class="control-line"><div><strong>Mode</strong><div class="hint">Hard cap or soft fallback</div></div><select id="cpu-mode" class="input"><option value="hard">Hard Cap</option><option value="soft">Soft</option></select></div>
+            <div class="control-line"><div><strong>Default CPU Limit</strong><div class="hint">5-95% per Roblox</div></div><input id="cpu-default-limit" class="input" type="number" min="5" max="95" value="20"></div>
+            <div class="field"><label>Apply to all accounts</label><div class="hint">Use default limit for every live account</div><div class="toggle-row"><input id="cpu-apply-all" type="checkbox"><span hidden></span></div></div>
+            <div class="table-wrap cpu-table"><table><thead><tr><th>Username</th><th>Roblox PID</th><th>Enabled</th><th>Limit %</th><th>Status</th></tr></thead><tbody id="cpu-account-rows"></tbody></table></div>
+          </div>
+          <div id="cpu-notice" class="notice"></div>
+          </section>
         </div>
       </section>
     </section>
@@ -108,21 +116,6 @@
             <div class="field"><label>Auto Arrange</label><div class="hint">Arrange Roblox in rows</div><div class="toggle-row"><input id="window-arrange-enabled" type="checkbox"><span hidden></span></div><div id="window-arrange-controls" hidden><div class="control-line"><div><strong>Windows per row</strong><div class="hint">How many per row</div></div><input id="window-arrange-columns" class="input" type="number" min="1" max="32" placeholder="6"></div><div class="control-line"><div><strong>Gap</strong><div class="hint">Space between windows</div></div><input id="window-arrange-gap" class="input" type="number" min="0" max="80" placeholder="2"></div></div></div>
           </div>
           <div id="window-size-notice" class="notice"></div>
-        </div>
-      </section>
-    </section>
-    <section id="view-cpu-limiter" class="view">
-      <div class="page-head"><div class="title">CPU Limiter</div><div class="savebar"><button class="btn ghost reset-action" id="cpu-reset" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>Reset</button><button class="btn good save-action" id="cpu-save" hidden><svg class="btn-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/></svg>Save Changes</button></div></div>
-      <section class="panel panel-body-only">
-        <div class="settings-card">
-          <div class="field"><label>CPU Limiter</label><div class="hint">Limits Roblox CPU usage to reduce overheating, and high system load</div><div class="toggle-row"><input id="cpu-enabled" type="checkbox"><span hidden></span></div></div>
-          <div id="cpu-controls" hidden>
-            <div class="control-line"><div><strong>Mode</strong><div class="hint">Hard cap or soft fallback</div></div><select id="cpu-mode" class="input"><option value="hard">Hard Cap</option><option value="soft">Soft</option></select></div>
-            <div class="control-line"><div><strong>Default CPU Limit</strong><div class="hint">5-95% per Roblox</div></div><input id="cpu-default-limit" class="input" type="number" min="5" max="95" value="20"></div>
-            <div class="field"><label>Apply to all accounts</label><div class="hint">Use default limit for every live account</div><div class="toggle-row"><input id="cpu-apply-all" type="checkbox"><span hidden></span></div></div>
-            <div class="table-wrap cpu-table"><table><thead><tr><th>Username</th><th>Roblox PID</th><th>Enabled</th><th>Limit %</th><th>Status</th></tr></thead><tbody id="cpu-account-rows"></tbody></table></div>
-          </div>
-          <div id="cpu-notice" class="notice"></div>
         </div>
       </section>
     </section>
@@ -163,6 +156,6 @@
   </div>
 </div>
 <div id="toast" class="toast"></div>
-<script type="module" src="/ui/app.js?v=main-view-animation"></script>
+<script type="module" src="/ui/app.js?v=limiter-single-action"></script>
 </body>
 </html>

@@ -1,13 +1,6 @@
 const RAM_LIMIT_PRESETS=[4096,6144,8192,12288,16384,24576,32768,65536];
-const REVEAL_MS=900;
-
-function revealHeight(el){
-  return `${Math.max(1,el.scrollHeight)}px`;
-}
 
 function refreshReveal(el){
-  if(!el||el.hidden||!el.classList.contains('is-open'))return;
-  requestAnimationFrame(()=>el.style.setProperty('--reveal-height',revealHeight(el)));
 }
 
 function setReveal(el,open){
@@ -15,23 +8,9 @@ function setReveal(el,open){
   el.classList.add('reveal-panel');
   el.dataset.revealState=open?'open':'closed';
   el.setAttribute('aria-hidden',String(!open));
-  if(open){
-    el.hidden=false;
-    requestAnimationFrame(()=>{
-      el.style.setProperty('--reveal-height',revealHeight(el));
-      el.classList.add('is-open');
-    });
-    return;
-  }
-  if(el.hidden)return;
-  el.style.setProperty('--reveal-height',revealHeight(el));
-  el.classList.remove('is-open');
-  window.setTimeout(()=>{
-    if(el.dataset.revealState==='closed'){
-      el.hidden=true;
-      el.style.removeProperty('--reveal-height');
-    }
-  },REVEAL_MS);
+  el.hidden=!open;
+  el.classList.toggle('is-open',open);
+  el.style.removeProperty('--reveal-height');
 }
 
 function normalizeRamLimit(value){

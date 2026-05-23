@@ -117,6 +117,7 @@
   font-weight: 500;
   line-height: 1;
   box-shadow: none;
+  white-space: nowrap;
 }
 
 .savebar .btn svg
@@ -291,6 +292,71 @@ select:focus
 .control-line .input
 {
   max-width: 320px;
+}
+
+.limiter-panel .limiter-card
+{
+  gap: 0;
+  padding: 0;
+}
+
+.limiter-section
+{
+  display: grid;
+  gap: 14px;
+  padding: 22px;
+  border-bottom: 1px solid var(--line);
+}
+
+.limiter-section:last-child
+{
+  border-bottom: 0;
+}
+
+.limiter-section-head
+{
+  display: grid;
+  grid-template-columns: minmax(0,1fr) auto;
+  gap: 16px;
+  align-items: start;
+}
+
+.limiter-section-head .savebar
+{
+  align-self: start;
+  flex-wrap: nowrap;
+}
+
+.limiter-section-head .savebar .btn
+{
+  height: 31px;
+  padding: 0 11px;
+}
+
+.limiter-copy
+{
+  min-width: 0;
+}
+
+.limiter-copy strong
+{
+  font-weight: 600;
+}
+
+@media(min-width:760px)
+{
+  .limiter-copy .hint
+  {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+}
+
+.limiter-toggle
+{
+  gap: 10px;
 }
 
 .toggle-row
@@ -607,4 +673,3 @@ tbody tr.active
 {
   animation: none;
 }
-

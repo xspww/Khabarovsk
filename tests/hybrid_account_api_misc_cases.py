@@ -11,7 +11,7 @@ class HybridAccountApiMiscCases:
             client = TestClient(main.app)
             html = (
                 client.get("/").text
-                + "\n" + client.get("/ui/dashboard.js").text
+                + "\n" + client.get("/ui/app/dashboard.js").text
                 + "\n" + client.get("/ui/panels/settingsPanels.js").text
             )
             self.assertIn("Popup Detector", html)

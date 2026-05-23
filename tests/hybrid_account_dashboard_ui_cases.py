@@ -19,7 +19,7 @@ class HybridAccountDashboardUiCases:
         icons_response = client.get("/ui/components/icons.js")
         bindings_response = client.get("/ui/events/bindings.js")
         settings_response = client.get("/ui/panels/settingsPanels.js")
-        js_response = client.get("/ui/dashboard.js")
+        js_response = client.get("/ui/app/dashboard.js")
         self.assertEqual(css_response.status_code, 200)
         self.assertEqual(app_response.status_code, 200)
         self.assertEqual(api_response.status_code, 200)
@@ -76,9 +76,9 @@ class HybridAccountDashboardUiCases:
         self.assertIn('<link rel="icon" type="image/png" href="/ui/cronus-favicon.png">', page)
         self.assertIn('<meta name="cronus-api-token" content="', page)
         self.assertIn(main.INSTANCE_TOKEN, page)
-        self.assertIn('<link rel="stylesheet" href="/ui/dashboard.css?v=main-view-animation">', page)
-        self.assertIn('<script type="module" src="/ui/app.js?v=main-view-animation"></script>', page)
-        self.assertIn("import './dashboard.js?v=main-view-animation';", js)
+        self.assertIn('<link rel="stylesheet" href="/ui/dashboard.css?v=limiter-single-action">', page)
+        self.assertIn('<script type="module" src="/ui/app.js?v=limiter-single-action"></script>', page)
+        self.assertIn("import './app/dashboard.js?v=limiter-single-action';", js)
         self.assertIn("export async function api", js)
         self.assertIn("export function createStatusRuntime", js)
         self.assertIn("export function healthSeverity", js)
@@ -92,13 +92,13 @@ class HybridAccountDashboardUiCases:
         self.assertIn("export function applySolarStaticIcons", js)
         self.assertIn("export function bindDashboardEvents", js)
         self.assertIn("export function renderSettingsPanel", js)
-        self.assertIn("from './runtime/status.js'", js)
-        self.assertIn("from './runtime/accountStatus.js'", js)
-        self.assertIn("from './components/accountsTable.js'", js)
-        self.assertIn("from './components/feedback.js'", js)
-        self.assertIn("from './components/icons.js'", js)
-        self.assertIn("from './events/bindings.js'", js)
-        self.assertIn("from './panels/settingsPanels.js'", js)
+        self.assertIn("from '../runtime/status.js'", js)
+        self.assertIn("from '../runtime/accountStatus.js'", js)
+        self.assertIn("from '../components/accountsTable.js'", js)
+        self.assertIn("from '../components/feedback.js'", js)
+        self.assertIn("from '../components/icons.js", js)
+        self.assertIn("from '../events/bindings.js'", js)
+        self.assertIn("from '../panels/settingsPanels.js", js)
         self.assertNotIn("setInterval(manualSnapshot,2500)", js)
         self.assertNotIn("<style>", page)
         self.assertNotIn("<span>Cronus Launcher</span>", html)
@@ -183,10 +183,10 @@ class HybridAccountDashboardUiCases:
         self.assertNotIn('class="guard-icon bolt"', html)
         self.assertNotIn('d="M13 2 4 14h7l-1 8 10-13h-7z"', html)
         self.assertNotIn("solarIcon('playCircle','guard-icon bolt')", html)
-        self.assertIn("'list','nav-icon'", html)
-        self.assertIn("solarIcon('layers','nav-icon')", html)
-        self.assertIn("solarIcon('bolt','nav-icon')", html)
-        self.assertIn("solarIcon('settings','nav-icon')", html)
+        self.assertIn("replaceSvg(root,'#nav button[data-view=\"accounts\"] > svg','list','nav-icon')", html)
+        self.assertIn("replaceSvg(root,'#nav [data-nav-group=\"launcher\"] .nav-group-icon svg','layers','nav-icon')", html)
+        self.assertIn("replaceSvg(root,'#nav [data-nav-group=\"performance\"] .nav-group-icon svg','bolt','nav-icon')", html)
+        self.assertIn("replaceSvg(root,'#nav [data-nav-group=\"settings\"] .nav-group-icon svg','settings','nav-icon')", html)
         self.assertIn("'userAdd','btn-icon'", html)
         self.assertIn("'rotateRight','btn-icon'", html)
         self.assertIn("solarIcon('checkSquare','btn-icon')", html)
@@ -223,13 +223,13 @@ class HybridAccountDashboardUiCases:
             self.assertNotIn(old_theme, spacex_css)
         self.assertNotIn(".account-stat-card", html)
         assert_css_contains("max-height:calc(100vh - 360px)")
-        self.assertIn("function animateViewEntry(viewEl)", html)
-        self.assertIn("main-view-enter", html)
-        self.assertIn("viewItemRise", html)
-        self.assertIn(".view.main-view-enter>*", compact_css)
-        self.assertIn("animation:viewItemRise.64s", compact_css)
-        self.assertIn(".view.main-view-enter>:nth-child(2)", compact_css)
-        self.assertIn("animation-delay:.06s", compact_css)
+        self.assertNotIn("function animateViewEntry(viewEl)", html)
+        self.assertNotIn("main-view-enter", html)
+        self.assertNotIn("viewItemRise", html)
+        self.assertNotIn(".view.main-view-enter>*", compact_css)
+        self.assertNotIn("animation:viewItemRise.64s", compact_css)
+        self.assertNotIn(".view.main-view-enter>:nth-child(2)", compact_css)
+        self.assertNotIn("animation-delay:.06s", compact_css)
         self.assertIn("function renderTop(){const c=counts()", html)
         self.assertIn("$('h-captcha').textContent=c.captcha", html)
         self.assertIn("function syncToggleLabels()", html)
@@ -257,7 +257,9 @@ class HybridAccountDashboardUiCases:
         self.assertNotIn("confirm('Close all Roblox", html)
         for removed in ('id="h-finished"', 'id="h-cpu"', 'id="h-ram"', ">Finished<", ">CPU<"):
             self.assertNotIn(removed, html)
-        self.assertIn('data-view="ram"', html)
+        self.assertIn('data-view="limiter"', html)
+        self.assertNotIn('data-view="ram"', html)
+        self.assertNotIn('data-view="cpu-limiter"', html)
         self.assertIn("RAM Limiter", html)
         assert_css_contains(".nav-separator,.nav-badge{display:none!important}")
         self.assertNotIn(".nav-separator,.nav-badge,.side-status{display:none!important}", html)
@@ -298,34 +300,31 @@ class HybridAccountDashboardUiCases:
         self.assertNotIn("confirm('Uninstall", html)
         self.assertNotIn("confirm('Download latest", html)
         self.assertNotIn("Cronus RT", html)
+        self.assertIn('data-view="limiter"', html)
+        self.assertIn('id="view-limiter"', html)
         self.assertIn('data-view="graphics"', html)
         self.assertIn('id="view-graphics"', html)
-        self.assertIn('data-view="ram"', html)
-        self.assertIn('id="view-ram"', html)
+        self.assertNotIn('id="view-ram"', html)
         self.assertIn('data-view="window-size"', html)
         self.assertIn('id="view-window-size"', html)
-        self.assertIn('data-view="cpu-limiter"', html)
-        self.assertIn('id="view-cpu-limiter"', html)
-        game_section = html.split('id="view-game"', 1)[1].split('id="view-performance"', 1)[0]
-        fps_section = html.split('id="view-performance"', 1)[1].split('id="view-ram"', 1)[0]
-        ram_section = html.split('id="view-ram"', 1)[1].split('id="view-graphics"', 1)[0]
+        self.assertNotIn('id="view-cpu-limiter"', html)
+        game_section = html.split('id="view-game"', 1)[1].split('id="view-limiter"', 1)[0]
+        limiter_section = html.split('id="view-limiter"', 1)[1].split('id="view-graphics"', 1)[0]
+        fps_section = limiter_section
+        ram_section = limiter_section
         graphics_section = html.split('id="view-graphics"', 1)[1].split('id="view-window-size"', 1)[0]
-        window_section = html.split('id="view-window-size"', 1)[1].split('id="view-cpu-limiter"', 1)[0]
-        cpu_section = html.split('id="view-cpu-limiter"', 1)[1].split('id="view-queue"', 1)[0]
+        window_section = html.split('id="view-window-size"', 1)[1].split('id="view-queue"', 1)[0]
+        cpu_section = limiter_section
         queue_section = html.split('id="view-queue"', 1)[1].split('id="view-troubleshoot"', 1)[0]
         for button_id in (
             "game-save",
             "game-reset",
-            "fps-save",
-            "fps-reset",
-            "ram-save",
-            "ram-reset",
+            "limiter-save",
+            "limiter-reset",
             "graphics-save",
             "graphics-reset",
             "window-size-save",
             "window-size-reset",
-            "cpu-save",
-            "cpu-reset",
             "queue-save",
             "queue-reset",
         ):
@@ -344,9 +343,9 @@ class HybridAccountDashboardUiCases:
         self.assertIn("roblox_memory_guard_mb:readRamLimit($)", html)
         self.assertIn("toast('RAM Limiter saved')", html)
         assert_css_contains(".toggle-row span{display:none")
-        self.assertEqual(html.count('class="btn ghost reset-action"'), 7)
-        self.assertEqual(html.count('class="btn good save-action"'), 7)
-        self.assertEqual(html.count('class="btn-icon" aria-hidden="true"'), 17)
+        self.assertEqual(html.count('class="btn ghost reset-action"'), 5)
+        self.assertEqual(html.count('class="btn good save-action"'), 5)
+        self.assertEqual(html.count('class="btn-icon" aria-hidden="true"'), 13)
         self.assertIn('id="close-all-roblox-btn"><svg class="btn-icon"', html)
         self.assertIn('id="reload-cookies-btn"><svg class="btn-icon"', html)
         self.assertIn('id="add-btn"><svg class="btn-icon"', html)
@@ -356,10 +355,14 @@ class HybridAccountDashboardUiCases:
         self.assertNotIn("reset.disabled=!isDirty", html)
         self.assertIn("function resetGameSettings()", html)
         self.assertIn("function resetQueueSettings()", html)
+        self.assertIn("function resetLimiterSettings()", html)
+        self.assertIn("async function saveLimiter()", html)
         self.assertIn("function resetPerformanceSettings()", html)
         self.assertIn("function resetGraphicsSettings()", html)
         self.assertIn("function resetWindowSizeSettings()", html)
         self.assertIn("$('game-reset').onclick=a.resetGameSettings", html)
+        self.assertIn("$('limiter-reset').onclick=a.resetLimiterSettings", html)
+        self.assertIn("$('limiter-save').onclick=a.saveLimiter", html)
         self.assertIn("$('queue-reset').onclick=a.resetQueueSettings", html)
         self.assertNotIn("$('game-reset').onclick=async()=>{clearDirty('game');await loadConfig()}", html)
         self.assertNotIn("$('queue-reset').onclick=async()=>{clearDirty('queue');await loadConfig()}", html)
@@ -395,12 +398,15 @@ class HybridAccountDashboardUiCases:
         self.assertNotIn("Priority Applied", fps_section)
         self.assertNotIn("Cap Roblox FPS to reduce CPU and GPU usage.", fps_section)
         self.assertIn("FPS Limiter", fps_section)
-        self.assertIn("reduce CPU/GPU usage (15-1000)", fps_section)
+        self.assertIn("Reduce CPU/GPU usage.", fps_section)
         self.assertNotIn("Limit Roblox FPS.", fps_section)
         self.assertNotIn("15-1000 FPS.", fps_section)
         self.assertNotIn("Limit the framerate of all Roblox instances.", fps_section)
         self.assertNotIn("Frames per second per instance. Allowed range: 15-1000.", fps_section)
-        self.assertIn('id="fps-reset"', fps_section)
+        self.assertIn('id="limiter-reset"', fps_section)
+        self.assertNotIn('id="fps-reset"', fps_section)
+        self.assertNotIn('id="ram-reset"', ram_section)
+        self.assertNotIn('id="cpu-reset"', cpu_section)
         self.assertIn("Save Changes", fps_section)
         self.assertIn("Graphics Quality", graphics_section)
         self.assertNotIn("Low Graphics Quality", graphics_section)
@@ -438,7 +444,7 @@ class HybridAccountDashboardUiCases:
         self.assertIn("function saveWindowSize()", html)
         self.assertIn("/performance/window-size", html)
         self.assertIn("CPU Limiter", cpu_section)
-        self.assertIn("Limits Roblox CPU usage to reduce overheating, and high system load", cpu_section)
+        self.assertIn("Limit Roblox CPU usage.", cpu_section)
         self.assertNotIn("Enable CPU Limiter", cpu_section)
         self.assertIn("Default CPU Limit", cpu_section)
         self.assertIn("Apply to all accounts", cpu_section)
@@ -447,7 +453,8 @@ class HybridAccountDashboardUiCases:
         self.assertIn('id="cpu-controls" hidden', cpu_section)
         self.assertIn("function saveCpuLimiter()", html)
         self.assertIn("/performance/cpu-limiter", html)
-        self.assertIn("'cpu-limiter':'cpu-save'", html)
+        self.assertIn("LIMITER_VIEWS=['performance','ram','cpu-limiter']", html)
+        self.assertIn("updateLimiterSaveState()", html)
         assert_css_contains("grid-template-columns:minmax(180px,250px) minmax(220px,320px)")
         assert_css_contains("#fps-limit-field,#ram-current-field,#window-size-controls,#window-arrange-controls,#graphics-quality-controls,#autoclose-controls,#priority-controls,#cpu-controls{display:grid;gap:10px}")
         for label in ("Settings File", "Current File Cap", "Read-only", "Roblox State"):

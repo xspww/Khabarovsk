@@ -60,10 +60,9 @@ function replaceSvg(root,selector,name,className){
 
 export function applySolarStaticIcons(root=document){
   replaceSvg(root,'#nav button[data-view="accounts"] > svg','list','nav-icon');
-  const groups=root.querySelectorAll('#nav .nav-group-head .nav-group-icon svg');
-  if(groups[0])groups[0].outerHTML=solarIcon('layers','nav-icon');
-  if(groups[1])groups[1].outerHTML=solarIcon('bolt','nav-icon');
-  if(groups[2])groups[2].outerHTML=solarIcon('settings','nav-icon');
+  replaceSvg(root,'#nav [data-nav-group="launcher"] .nav-group-icon svg','layers','nav-icon');
+  replaceSvg(root,'#nav [data-nav-group="performance"] .nav-group-icon svg','bolt','nav-icon');
+  replaceSvg(root,'#nav [data-nav-group="settings"] .nav-group-icon svg','settings','nav-icon');
   replaceSvg(root,'#close-all-roblox-btn svg','trash','btn-icon');
   replaceSvg(root,'#add-btn svg','userAdd','btn-icon');
   replaceSvg(root,'#reload-cookies-btn svg','rotateRight','btn-icon');

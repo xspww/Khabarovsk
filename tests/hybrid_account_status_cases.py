@@ -98,6 +98,52 @@ class HybridAccountStatusCases:
         self.assertTrue(row["captcha_required"])
         controller._runtime_store.close()
 
+    def test_status_view_model_waits_for_lua_when_lua_is_required(self):
+        from config_store import ConfigManager
+
+        cfg = ConfigManager()
+        cfg.update({"use_lua": True})
+        controller = FarmController(cfg)
+        account = Account("LuaWaitUser")
+        account.state = AccountState.IN_GAME
+        account.desired_state = AccountState.IN_GAME
+        account.pid = 4321
+        account.bound_process_identity = "RobloxPlayerBeta.exe|1|C:\\Roblox\\RobloxPlayerBeta.exe"
+        account.process_binding_status = "verified"
+        account.recovery_status = "waiting_for_lua"
+        account.sync_runtime("unit")
+        controller.set_accounts([account])
+
+        with patch("runtime.runtime_view_model.ProcessManager.is_bound_game_alive", return_value=True), \
+             patch("runtime.runtime_view_model.ProcessManager.validate_game_process", return_value={"windows": 1}), \
+             patch("runtime.runtime_view_model.ProcessManager.get_pid_owner", return_value="LuaWaitUser"), \
+             patch("runtime.runtime_view_model.ProcessManager.is_not_responding", return_value=False):
+            status = controller.get_status()
+
+        row = status["accounts"][0]
+        self.assertEqual(status["in_game"], 0)
+        self.assertEqual(row["state"], "VERIFY")
+        self.assertEqual(row["state_label"], "Waiting For Lua")
+        self.assertTrue(row["lua_required"])
+        self.assertFalse(row["lua_online"])
+
+        now = time.time()
+        account.lua_in_game_at = now
+        account.lua_last_event_at = now
+        account.lua_last_event = "in_game"
+
+        with patch("runtime.runtime_view_model.ProcessManager.is_bound_game_alive", return_value=True), \
+             patch("runtime.runtime_view_model.ProcessManager.validate_game_process", return_value={"windows": 1}), \
+             patch("runtime.runtime_view_model.ProcessManager.get_pid_owner", return_value="LuaWaitUser"), \
+             patch("runtime.runtime_view_model.ProcessManager.is_not_responding", return_value=False):
+            status = controller.get_status()
+
+        row = status["accounts"][0]
+        self.assertEqual(status["in_game"], 1)
+        self.assertEqual(row["state"], "IN_GAME")
+        self.assertTrue(row["lua_online"])
+        controller._runtime_store.close()
+
     def test_status_view_model_logs_when_account_becomes_suspect(self):
         from config_store import ConfigManager
 

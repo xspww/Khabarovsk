@@ -1,1 +1,1 @@
-import './app/dashboard.js?v=limiter-single-action';
+import './app/dashboard.js?v=developer-copy-no-hang';

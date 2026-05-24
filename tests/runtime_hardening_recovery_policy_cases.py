@@ -107,6 +107,42 @@ class RuntimeHardeningRecoveryPolicyCases:
             stop.set()
             recovery.stop()
 
+    def test_use_lua_defers_process_launch_success_until_lua_confirms(self):
+        recovery, _queue, stop = self._make_recovery()
+        recovery._cfg["use_lua"] = True
+        acc = Account(username="LuaRequiredUser")
+        acc.pid = 4321
+        acc.process_binding_status = "verified"
+        acc.process_binding_confidence = 100.0
+        acc.process_proof_level = "strong"
+        try:
+            accepted = recovery.handle_runtime_signal(
+                acc,
+                "launch_success",
+                "post_launch_detected",
+                payload={"trigger": "post_launch_detected", "count_rejoin": False},
+            )
+
+            self.assertTrue(accepted)
+            self.assertEqual(acc.state, AccountState.VERIFY)
+            self.assertEqual(acc.recovery_status, "waiting_for_lua")
+            self.assertIsNone(acc.in_game_since)
+
+            accepted = recovery.handle_runtime_signal(
+                acc,
+                "launch_success",
+                "lua_in_game_verified",
+                payload={"trigger": "in_game", "evidence_source": "lua_helper", "count_rejoin": False},
+            )
+
+            self.assertTrue(accepted)
+            self.assertEqual(acc.state, AccountState.IN_GAME)
+            self.assertEqual(acc.recovery_status, "in_game")
+            self.assertIsNotNone(acc.in_game_since)
+        finally:
+            stop.set()
+            recovery.stop()
+
 
     def test_recovery_owner_registry_rejects_duplicate_and_stale_release(self):
         registry = RecoveryOwnerRegistry()

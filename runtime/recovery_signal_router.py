@@ -9,6 +9,7 @@ from runtime.recovery_context import SESSION_CONFLICT
 from runtime.recovery_policy import canonical_reason, context_from_signal
 from runtime.recovery_support import _enrich_visual_disconnect_payload_with_log
 from runtime.runtime_state_manager import RuntimeStateManager
+from runtime.lua_liveness_policy import lua_event_source
 from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
 from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_captcha_status_text, set_account_captcha_hold
 
@@ -228,6 +229,7 @@ class RecoverySignalRouter:
                 acc,
                 trigger=str(payload.get("trigger") or reason_key or "launch_success"),
                 count_rejoin=count_rejoin,
+                lua_confirmed=lua_event_source(reason_key, payload),
             )
         elif signal_name in {RuntimeSignal.FATAL.value, RuntimeSignal.AUTH_FAILURE.value, RuntimeSignal.SESSION_FAILURE.value}:
             reason_msg = str(payload.get("reason_msg") or payload.get("detail") or reason_key)

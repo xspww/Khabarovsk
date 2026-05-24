@@ -43,6 +43,7 @@ def register(app, ctx: ApiContext) -> None:
             "crash_timeout", "heartbeat_timeout", "launch_verify_window", "login_warmup_delay",
             "anti_spam_window", "launch_rate_interval", "account_switch_cooldown",
             "queue_delay_seconds", "queue_duration_seconds", "max_concurrent_accounts",
+            "use_lua",
             "game_private_server_url", "game_place_id",
             "auto_create_private_server_enabled", "auto_create_private_server_free_only",
             "auto_close_enabled", "auto_close_minutes",
@@ -85,6 +86,8 @@ def register(app, ctx: ApiContext) -> None:
             updates["queue_duration_seconds"] = _int_setting(updates["queue_duration_seconds"], 15, 0, 86400)
         if "max_concurrent_accounts" in updates:
             updates["max_concurrent_accounts"] = _int_setting(updates["max_concurrent_accounts"], 40, 1, 500)
+        if "use_lua" in updates:
+            updates["use_lua"] = bool(updates["use_lua"])
         if "auto_close_minutes" in updates:
             updates["auto_close_minutes"] = _int_setting(updates["auto_close_minutes"], 0, 0, 1440)
         if "auto_close_enabled" in updates:

@@ -3,10 +3,11 @@ from __future__ import annotations
 from typing import Any, List
 
 from core import Account, AccountState, flog, flog_kv
+from runtime.lua_liveness_policy import mark_waiting_for_lua
 from services.process_service import ProcessManager, ProcessService
 
 
-def initial_state_sync(accounts: List[Account], state_mgr: Any) -> None:
+def initial_state_sync(accounts: List[Account], state_mgr: Any, lua_required: bool = False, runtime_state: Any = None) -> None:
     live_processes = ProcessManager.list_live_game_processes()
     if not live_processes:
         flog("[FARM] initial_state_sync: no live RobloxPlayerBeta.exe found")
@@ -69,13 +70,16 @@ def initial_state_sync(accounts: List[Account], state_mgr: Any) -> None:
                     )
                     continue
                 claimed_pids.add(current_pid)
-                state_mgr.transition(
-                    acc,
-                    AccountState.IN_GAME,
-                    reason="initial_state_sync_existing",
-                    force=True,
-                    expected_generation=runtime_generation,
-                )
+                if lua_required:
+                    mark_waiting_for_lua(acc, runtime_state, state_mgr, "initial_state_sync_existing")
+                else:
+                    state_mgr.transition(
+                        acc,
+                        AccountState.IN_GAME,
+                        reason="initial_state_sync_existing",
+                        force=True,
+                        expected_generation=runtime_generation,
+                    )
                 synced += 1
 
     candidates = [item for item in live_processes if item["pid"] not in claimed_pids]
@@ -97,7 +101,10 @@ def initial_state_sync(accounts: List[Account], state_mgr: Any) -> None:
         )
         if adopt.get("ok"):
             claimed_pids.add(int(adopt.get("pid") or 0))
-            state_mgr.transition(target, AccountState.IN_GAME, reason="initial_state_sync_visible_adopt", force=True)
+            if lua_required:
+                mark_waiting_for_lua(target, runtime_state, state_mgr, "initial_state_sync_visible_adopt")
+            else:
+                state_mgr.transition(target, AccountState.IN_GAME, reason="initial_state_sync_visible_adopt", force=True)
             synced += 1
             candidates = [item for item in candidates if int(item.get("pid") or 0) not in claimed_pids]
 

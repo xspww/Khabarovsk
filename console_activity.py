@@ -16,6 +16,7 @@ _LAST_DISCONNECT_AT: Dict[str, float] = {}
 _LAST_CAPTCHA_AT: Dict[str, float] = {}
 _SUSPECT_LOGGED_ACCOUNTS: set[str] = set()
 _SUSPECT_FINALIZED_AT_BY_ACCOUNT: Dict[str, float] = {}
+_LUA_LIVENESS_REQUIRED = False
 _DISCONNECT_DEDUP_SECONDS = 3.0
 _CAPTCHA_DEDUP_SECONDS = 3.0
 _SUSPECT_FINAL_SUPPRESS_SECONDS = 5.0
@@ -71,6 +72,12 @@ _KV_LINE_RE = re.compile(r"^\[[A-Z_]+\]\s+[a-z0-9_]+\b.*\b[a-zA-Z_][a-zA-Z0-9_]*
 def _enabled() -> bool:
     value = os.environ.get("CRONUS_CONSOLE_ACTIVITY", "").strip().lower()
     return value in {"1", "true", "yes", "on"}
+
+
+def set_lua_liveness_required(enabled: bool) -> None:
+    global _LUA_LIVENESS_REQUIRED
+    with _LOCK:
+        _LUA_LIVENESS_REQUIRED = bool(enabled)
 
 
 def _enable_virtual_terminal() -> bool:
@@ -340,7 +347,7 @@ def _format_state(name: str, fields: Dict[str, Any]) -> Optional[str]:
         if new == "IN_GAME":
             return _line(_ICON_OK, f"{_username_paren(account)} {_pid_paren(pid or 'bound')}", stamp_color=_COLOR_GRAY)
         return None
-    if name == "process_bind_verified" and pid:
+    if name == "process_bind_verified" and pid and not _LUA_LIVENESS_REQUIRED:
         return _line("", f"Found Roblox process {_pid_value(pid)} for user {_username_paren(account)}", stamp_color=_COLOR_WHITE)
     return None
 
@@ -366,7 +373,7 @@ def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]
         return _suspect_process_line(account)
     if scope == "CAPTCHA" or name == "captcha_dialog_hold" or (name == "account_hold" and _reason(fields) == "captcha_required"):
         return _captcha_line(account, pid, _text(fields.get("detail") or fields.get("captcha_detail")))
-    if scope == "WORKER" and name in {"visible_process_adopted", "rebind_refreshed"} and pid:
+    if scope == "WORKER" and name in {"visible_process_adopted", "rebind_refreshed"} and pid and not _LUA_LIVENESS_REQUIRED:
         return _line("", f"Found Roblox process {_pid_value(pid)} for user {_username_paren(account)}", stamp_color=_COLOR_WHITE)
     if scope in {"SERVER", "VIP", "VIP_TRACKER"} and name in {"selected", "server_selected", "smart_selected", "private_server_selected"}:
         return None

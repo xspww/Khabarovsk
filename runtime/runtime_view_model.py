@@ -13,6 +13,7 @@ from runtime.account_worker import AccountWorker
 from runtime.account_selection import runtime_account_filter_reason
 from runtime.runtime_health import account_health_flags, build_runtime_health
 from runtime.runtime_truth import TRUTH_SUSPECT, build_account_truth
+from runtime.lua_liveness_policy import LUA_WAITING_STATUS, account_lua_online, lua_liveness_required
 
 
 IMPORTANT_RUNTIME_EVENTS = {
@@ -109,6 +110,8 @@ class RuntimeViewModelBuilder:
 
         any_command_inflight = farm._command_tracker.any_inflight()
         cfg_snapshot = farm.cfg_mgr.snapshot()
+        lua_required = lua_liveness_required(cfg_snapshot)
+        lua_timeout = float(cfg_snapshot.get("heartbeat_timeout", 60) or 60)
         queue_snapshot = farm._queue.snapshot() if farm._queue else {
             "size": 0,
             "pending": 0,
@@ -129,6 +132,7 @@ class RuntimeViewModelBuilder:
             snapshot_identity = str(runtime_snapshot.get("process_identity") or "")
             snapshot_public = str(runtime_snapshot.get("public_state") or getattr(getattr(acc, "state", None), "name", "IDLE"))
             display_state = AccountState.__members__.get(snapshot_public, AccountState.IDLE)
+            lua_online = account_lua_online(acc, timeout=lua_timeout) if lua_required else False
             pid_alive = bool(snapshot_pid and ProcessManager.is_bound_game_alive(
                 snapshot_pid,
                 owner_key=acc._config_username,
@@ -148,6 +152,9 @@ class RuntimeViewModelBuilder:
             window_count = int(process_validation.get("windows") or 0)
             if display_state == AccountState.IN_GAME and snapshot_pid and not pid_alive:
                 display_state = AccountState.CRASH
+            if lua_required and not lua_online and display_state == AccountState.IN_GAME:
+                display_state = AccountState.VERIFY
+            display_public_state = display_state.name if lua_required and not lua_online and snapshot_public == "IN_GAME" else snapshot_public
 
             meta = STATE_META.get(display_state, {"label": display_state.name, "color": "#6b7280"})
             cpu = mon.get_cpu(snapshot_pid) if (snapshot_pid and pid_alive) else 0.0
@@ -177,6 +184,12 @@ class RuntimeViewModelBuilder:
             elif display_state == AccountState.IN_GAME and pid_alive:
                 state_label = "In Game"
                 state_color = meta["color"]
+            if lua_required and not lua_online and (
+                str(acc.recovery_status or "") == LUA_WAITING_STATUS
+                or (display_state == AccountState.VERIFY and bool(snapshot_pid and pid_alive))
+            ):
+                state_label = "Waiting For Lua"
+                state_color = "#38bdf8"
             cooldown_until = float(acc.cooldown_until or 0.0)
             cooldown_left = max(0, int(cooldown_until - time.time()))
             captcha_required = is_account_captcha_required(acc)
@@ -201,10 +214,15 @@ class RuntimeViewModelBuilder:
                 "account_id": acc._config_username,
                 "display": acc.display_name,
                 "state": display_state.name,
-                "public_state": snapshot_public,
+                "public_state": display_public_state,
                 "desired_state": runtime_snapshot.get("desired_public_state", acc.desired_state.name),
                 "state_label": state_label,
                 "state_color": state_color,
+                "lua_required": lua_required,
+                "lua_online": bool(lua_online),
+                "lua_last_event": getattr(acc, "lua_last_event", "") or "",
+                "lua_last_event_at": float(getattr(acc, "lua_last_event_at", 0.0) or 0.0),
+                "lua_in_game_at": float(getattr(acc, "lua_in_game_at", 0.0) or 0.0),
                 "description": acc.description,
                 "manual_status": acc.manual_status,
                 "finished_at": float(acc.finished_at or 0.0),

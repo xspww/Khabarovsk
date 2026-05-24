@@ -19,12 +19,13 @@ from services.lua_session_tokens import (
     validate_lua_session_token,
 )
 
-from .auth import api_token_valid
+from .auth import api_token_valid, require_api_token
 from .context import ApiContext
 
 
 _SCRIPT_PATH = resource_path("lua", "internal", "rejoin_monitor.lua")
 _ACCOUNT_MODULE_PATH = resource_path("lua", "internal", "account_status_client.lua")
+_EXECUTOR_LOADER_PATH = resource_path("lua", "run_in_executor.lua")
 _TOKEN_HEADERS = ("X-Cronus-Token", "X-Argus-Token", "X-RoboGuard-Token")
 _TOKEN_QUERY_KEYS = ("cronus_token", "argus_token")
 _TOKEN_BODY_KEYS = ("token", "cronus_token", "argus_token", "api_token", "_cronus_token", "_argus_token")
@@ -60,6 +61,11 @@ def _load_script_template() -> str:
 
 def _load_account_module_template() -> str:
     with open(_ACCOUNT_MODULE_PATH, "r", encoding="utf-8") as handle:
+        return handle.read()
+
+
+def _load_executor_loader() -> str:
+    with open(_EXECUTOR_LOADER_PATH, "r", encoding="utf-8") as handle:
         return handle.read()
 
 
@@ -491,6 +497,13 @@ def _handle_lua_rejoin_event(ctx: ApiContext, farm: Any, request: Request, body:
 
 def register(app, ctx: ApiContext) -> None:
     farm = ctx.farm
+
+    @app.get("/api/lua/executor-loader")
+    def api_lua_executor_loader(request: Request):
+        require_api_token(request, ctx)
+        if not os.path.exists(_EXECUTOR_LOADER_PATH):
+            raise HTTPException(404, "Lua executor loader not found")
+        return {"ok": True, "source": _load_executor_loader()}
 
     @app.get("/api/lua/rejoin-helper", response_class=PlainTextResponse)
     def api_lua_rejoin_helper(request: Request, account: str = "", port: int = 0, shutdown_delay: float = 3.0):

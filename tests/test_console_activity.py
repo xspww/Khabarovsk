@@ -20,6 +20,7 @@ class ConsoleActivityFormatTests(unittest.TestCase):
         console._ACTIVE_ACCOUNTS.clear()
         console._CAPTCHA_ACCOUNTS.clear()
         console._QUEUE_SIZE = 0
+        console.set_lua_liveness_required(False)
 
     def tearDown(self):
         if self._old_activity is None:
@@ -38,6 +39,7 @@ class ConsoleActivityFormatTests(unittest.TestCase):
         console._ACTIVE_ACCOUNTS.clear()
         console._CAPTCHA_ACCOUNTS.clear()
         console._QUEUE_SIZE = 0
+        console.set_lua_liveness_required(False)
 
     def assertConsoleLine(self, line, suffix):
         self.assertRegex(line, r"^\[\d{2}:\d{2}:\d{2}\] ")
@@ -55,6 +57,22 @@ class ConsoleActivityFormatTests(unittest.TestCase):
 
         self.assertConsoleLine(found, "Found Roblox process 6504 for user (IwasTheGuyOni7899)")
         self.assertConsoleLine(ready, "✔ (IwasTheGuyOni7899) (PID: 6504)")
+
+    def test_found_process_line_is_hidden_when_lua_liveness_is_required(self):
+        console.set_lua_liveness_required(True)
+
+        found = console._format_state(
+            "process_bind_verified",
+            {"account": "IwasTheGuyOni7899", "pid": 6504},
+        )
+        adopted = console._format_misc(
+            "WORKER",
+            "visible_process_adopted",
+            {"account": "IwasTheGuyOni7899", "pid": 6504},
+        )
+
+        self.assertIsNone(found)
+        self.assertIsNone(adopted)
 
     def test_found_process_timestamp_is_white_when_color_is_enabled(self):
         with patch.object(console, "_colors_enabled", return_value=True):

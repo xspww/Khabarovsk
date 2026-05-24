@@ -30,6 +30,7 @@ from runtime.recovery_scheduling import (
 )
 from runtime.recovery_signal_router import RecoverySignalRouter
 from runtime.recovery_support import RECOVERY_REASON_MESSAGES, compute_backoff
+from runtime.lua_liveness_policy import lua_liveness_required, mark_waiting_for_lua
 
 class RecoveryCoordinator:
     """Central recovery/rejoin controller. Every path that wants recovery reports here."""
@@ -623,11 +624,22 @@ class RecoveryCoordinator:
         self._schedule_cooldown(acc, delay, canonical, f"{canonical}_backoff")
         self._persist_runtime()
 
-    def report_launch_success(self, acc: Account, trigger: str = "launch_success", count_rejoin: Optional[bool] = None):
+    def report_lua_waiting(self, acc: Account, trigger: str = "lua_required"):
+        with acc._lock:
+            runtime_generation = int(acc.runtime_generation or 0)
+            recovery_generation = int(acc.recovery_generation or 0)
+        mark_waiting_for_lua(acc, self._runtime_state, self._state_mgr, trigger)
+        self._release_recovery_owner(acc._config_username, runtime_generation, recovery_generation, "waiting_for_lua")
+        self._persist_runtime()
+
+    def report_launch_success(self, acc: Account, trigger: str = "launch_success", count_rejoin: Optional[bool] = None, lua_confirmed: bool = False):
         auth_gate = evaluate_account_auth_gate(acc)
         if auth_gate.blocked:
             mark_account_auth_quarantined(acc, auth_gate, source="launch_success", runtime_writer=self._runtime_state)
             self.fail_account(acc, auth_gate.reason_key, auth_gate.reason)
+            return
+        if lua_liveness_required(self._cfg) and not lua_confirmed:
+            self.report_lua_waiting(acc, trigger)
             return
         with acc._lock:
             runtime_generation = int(acc.runtime_generation or 0)

@@ -192,6 +192,41 @@ class HybridAccountLuaRuntimeSignalCases:
         self.assertEqual(routed, [])
         self.assertEqual(account.last_watchdog_classification, "lua_in_game_missing_server_evidence")
 
+    def test_lua_in_game_records_lua_online_evidence(self):
+        controller = FarmController.__new__(FarmController)
+        account = Account("LuaUnit")
+        account.state = AccountState.VERIFY
+        account.session_id = "session-a"
+        account.launch_nonce = "nonce-a"
+        controller._accounts = [account]
+        controller._workers = {}
+        controller._bump_status_revision = lambda: None
+
+        class FakeOrchestrator:
+            def handle_runtime_signal(self, acc, signal, reason, payload=None):
+                return True
+
+        controller._runtime_orchestrator = FakeOrchestrator()
+        controller._push_event = lambda *args, **kwargs: None
+
+        result = controller.handle_lua_rejoin_event({
+            "event": "in_game",
+            "account": "LuaUnit",
+            "username": "LuaUnit",
+            "server_type": "PUBLIC",
+            "is_vip_server": "false",
+            "place_id": "123456",
+            "job_id": "job-1",
+        })
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["accepted"])
+        self.assertEqual(account.lua_last_event, "in_game")
+        self.assertGreater(account.lua_last_event_at, 0)
+        self.assertGreater(account.lua_in_game_at, 0)
+        self.assertEqual(account.lua_session_id, "session-a")
+        self.assertEqual(account.lua_launch_nonce, "nonce-a")
+
     def test_lua_private_server_owner_id_counts_as_vip_detection(self):
         controller = FarmController.__new__(FarmController)
         account = Account("LuaUnit")

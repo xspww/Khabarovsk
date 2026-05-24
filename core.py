@@ -239,6 +239,11 @@ class Account:
     observed_job_id: str            = ""
     observed_universe_id: str       = ""
     observed_server_at: float       = 0.0
+    lua_last_event: str             = ""
+    lua_last_event_at: float        = 0.0
+    lua_in_game_at: float           = 0.0
+    lua_session_id: str             = ""
+    lua_launch_nonce: str           = ""
     scheduler_slot: str             = ""
     supervisor_state: str           = "stopped"
     last_transaction_status: str    = ""

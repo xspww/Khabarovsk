@@ -23,6 +23,7 @@ local CronusRejoin = {
     LastErrorCode = "",
     LastDisconnectAt = 0,
     LastPostOk = {},
+    ConnectionAliveLogged = false,
     FallbackScheduled = {},
     EventCounter = 0,
     FallbackEvents = {
@@ -371,7 +372,10 @@ function CronusRejoin:Post(eventName, extra)
     end
     if success and accepted then
         if eventName == "heartbeat" then
-            log("Connection alive")
+            if not self.ConnectionAliveLogged then
+                self.ConnectionAliveLogged = true
+                log("Connection alive")
+            end
         else
             log("Status synced")
         end
@@ -433,7 +437,10 @@ function CronusRejoin:GetFallback(eventName, payload, previousStatus)
 
     if success and accepted then
         if eventName == "heartbeat" then
-            log("Connection alive")
+            if not self.ConnectionAliveLogged then
+                self.ConnectionAliveLogged = true
+                log("Connection alive")
+            end
         else
             log("Status synced")
         end

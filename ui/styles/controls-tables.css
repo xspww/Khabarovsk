@@ -305,11 +305,6 @@ select:focus
   display: grid;
   gap: 14px;
   padding: 22px;
-  border-bottom: 1px solid var(--line);
-}
-
-.limiter-section:last-child
-{
   border-bottom: 0;
 }
 
@@ -430,6 +425,41 @@ select:focus
 .cpu-table
 {
   margin-top: 4px;
+}
+
+.developer-card
+{
+  display: grid;
+  gap: 14px;
+}
+
+.developer-lua-head
+{
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.developer-lua-head label
+{
+  display: block;
+}
+
+.developer-copy-btn
+{
+  height: 31px;
+  padding: 0 11px;
+  flex: 0 0 auto;
+}
+
+.lua-copy-box
+{
+  min-height: min(560px,calc(100vh - 230px));
+  font: 12px/1.45 var(--mono);
+  white-space: pre;
+  overflow: auto;
+  resize: vertical;
 }
 
 /* Accounts table and operator status */

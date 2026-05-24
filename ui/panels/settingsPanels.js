@@ -35,6 +35,7 @@ export function renderSettingsPanel(ctx){
     'queue-max',
     'queue-duration',
     'queue-delay',
+    'queue-use-lua',
     'queue-autoclose-enabled',
     'queue-autoclose-minutes',
     'popup-disconnected-enabled',
@@ -53,6 +54,7 @@ export function renderSettingsPanel(ctx){
     $('queue-max').value=CONFIG.max_concurrent_accounts??40;
     $('queue-duration').value=CONFIG.queue_duration_seconds??15;
     $('queue-delay').value=CONFIG.queue_delay_seconds??CONFIG.launch_rate_interval??15;
+    $('queue-use-lua').checked=!!CONFIG.use_lua;
     $('queue-autoclose-enabled').checked=!!CONFIG.auto_close_enabled;
     $('queue-autoclose-minutes').value=CONFIG.auto_close_minutes??0;
     $('popup-disconnected-enabled').checked=CONFIG.popup_disconnected_enabled!==false;
@@ -298,6 +300,7 @@ export async function saveQueuePanel(ctx){
     max_concurrent_accounts:Number($('queue-max').value)||1,
     queue_duration_seconds:Number($('queue-duration').value)||0,
     queue_delay_seconds:Number($('queue-delay').value)||0,
+    use_lua:$('queue-use-lua').checked,
     auto_close_enabled:$('queue-autoclose-enabled').checked,
     auto_close_minutes:Number($('queue-autoclose-minutes').value)||0,
     popup_disconnected_enabled:$('popup-disconnected-enabled').checked,

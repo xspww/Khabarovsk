@@ -74,6 +74,7 @@ from runtime.runtime_timeline import RuntimeTimeline
 from runtime.runtime_orchestrator import RuntimeOrchestrator
 from runtime.machine_supervisor import MachineSupervisor
 from runtime.lua_identity import lua_event_requires_pid_guard, resolve_lua_account
+from runtime.lua_liveness_policy import lua_liveness_required, mark_waiting_for_lua
 from runtime.farm_lifecycle import FarmLifecycleService
 from runtime.lua_server_detection import LuaServerDetection, detect_lua_server
 from runtime.recovery_view import recovery_step_for_account
@@ -119,6 +120,8 @@ class FarmController:
         self._event_lock = threading.RLock()
         self._status_lock = threading.Lock()
         self._status_revision = 0
+        self._last_runtime_truth_state: Dict[str, str] = {}
+        self._last_runtime_truth_progress: Dict[str, int] = {}
         self._runtime_state = RuntimeStateManager(logger=flog_kv)
         self._runtime_store = RuntimeStore(os.path.join(APP_DATA_DIR, "cronus_runtime.db"))
         self._timeline = RuntimeTimeline(
@@ -136,6 +139,12 @@ class FarmController:
             flog_kv("RUNTIME", "open_transaction_rollback_failed", "warning", error=e)
         self._supervisor = SupervisorRuntime(store=self._runtime_store, logger=flog_kv)
         self._machine_supervisor = MachineSupervisor(cfg_mgr.snapshot(), self._accounts)
+        try:
+            from console_activity import set_lua_liveness_required
+
+            set_lua_liveness_required(lua_liveness_required(cfg_mgr.snapshot()))
+        except Exception:
+            pass
         self._runtime_orchestrator = RuntimeOrchestrator(
             self._runtime_state,
             timeline=self._timeline,
@@ -264,7 +273,13 @@ class FarmController:
     def _initial_state_sync(self, state_mgr: Optional[StateManager] = None):
         if state_mgr is None:
             state_mgr = StateManager(self.bus)
-        initial_state_sync(self._accounts, state_mgr)
+        cfg = self.cfg_mgr.snapshot() if hasattr(self, "cfg_mgr") else {}
+        initial_state_sync(
+            self._accounts,
+            state_mgr,
+            lua_required=lua_liveness_required(cfg),
+            runtime_state=getattr(self, "_runtime_state", None),
+        )
 
     def _preflight_cookie_blocks(self) -> Dict[str, str]:
         return preflight_cookie_blocks(self._accounts, self._recovery, self._state_mgr, self._runtime_state)
@@ -289,6 +304,12 @@ class FarmController:
 
     def apply_config_snapshot(self):
         cfg = self.cfg_mgr.snapshot()
+        try:
+            from console_activity import set_lua_liveness_required
+
+            set_lua_liveness_required(lua_liveness_required(cfg))
+        except Exception:
+            pass
         try:
             apply_runtime_config_snapshot(
                 cfg=cfg,
@@ -465,10 +486,14 @@ class FarmController:
                     expected_browser_tracker_id=tracker_id,
                 )
             )
+        lua_required = lua_liveness_required(self.cfg_mgr.snapshot())
         if self._state_mgr:
             if live_session:
-                self._state_mgr.transition(acc, AccountState.IN_GAME, reason="manual_resume_live_session", force=True)
-                self._state_mgr.clear_recovery(acc, reason="manual_resume_live_session", inflight=False)
+                if lua_required:
+                    mark_waiting_for_lua(acc, self._runtime_state, self._state_mgr, "manual_resume_live_session")
+                else:
+                    self._state_mgr.transition(acc, AccountState.IN_GAME, reason="manual_resume_live_session", force=True)
+                    self._state_mgr.clear_recovery(acc, reason="manual_resume_live_session", inflight=False)
                 self._state_mgr.set_binding_status(acc, "verified", reason="manual_resume_live_session")
             else:
                 self._state_mgr.transition(acc, AccountState.IDLE, reason="manual_resume", force=True)
@@ -491,6 +516,8 @@ class FarmController:
             worker = self._workers.get(acc._config_username)
             if worker:
                 worker.wake()
+            if lua_required:
+                return True, f"Captcha cleared for {username}. Waiting for Lua."
             return True, f"Captcha cleared for {username}. Live session verified."
         worker = self._workers.get(acc._config_username)
         if not worker or not worker.is_alive():
@@ -741,9 +768,14 @@ class FarmController:
             return self._lua_event_handler_error(acc, event_name, e)
         event_payload.update(server_detection)
         if event_name in {"loaded", "in_game", "heartbeat", "teleport_state"}:
+            now = time.time()
             with acc._lock:
-                acc.last_activity_at = time.time()
+                acc.last_activity_at = now
                 acc.last_activity_reason = f"lua:{event_name}"
+                acc.lua_last_event = event_name
+                acc.lua_last_event_at = now
+                acc.lua_session_id = acc.session_id
+                acc.lua_launch_nonce = acc.launch_nonce
                 acc.sync_runtime(f"lua:{event_name}")
 
         if event_name in {"description", "set_description", "status_note"}:
@@ -860,6 +892,15 @@ class FarmController:
                     )
                 except Exception as e:
                     return self._lua_event_handler_error(acc, event_name, e)
+                if accepted and event_name == "in_game":
+                    with acc._lock:
+                        now = time.time()
+                        acc.lua_in_game_at = now
+                        acc.lua_last_event = event_name
+                        acc.lua_last_event_at = now
+                        acc.lua_session_id = acc.session_id
+                        acc.lua_launch_nonce = acc.launch_nonce
+                        acc.sync_runtime("lua_in_game_confirmed")
         elif event_name in {"disconnect", "error_code"}:
             signal = RuntimeSignal.DISCONNECT_DETECTED.value
             severity = "critical"

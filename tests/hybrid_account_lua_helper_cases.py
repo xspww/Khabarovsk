@@ -62,6 +62,8 @@ class HybridAccountLuaHelperCases:
         self.assertIn("function CronusRejoin:ClientRecoveryFallback", script)
         self.assertIn('log("Syncing status...")', script)
         self.assertIn('log("Status synced")', script)
+        self.assertIn("ConnectionAliveLogged = false", script)
+        self.assertIn("if not self.ConnectionAliveLogged then", script)
         self.assertIn('log("Connection alive")', script)
         self.assertIn('logWarn("Launcher not responding")', script)
         self.assertIn('logWarn("Trying fallback recovery...")', script)
@@ -106,6 +108,30 @@ class HybridAccountLuaHelperCases:
         self.assertIn('log("Rejoin helper restored")', loader)
         self.assertIn('logWarn("Executor does not support auto-run")', loader)
         self.assertIn("Load(source)", loader)
+
+    def test_lua_executor_loader_source_is_available_to_authenticated_ui(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        response = auth_get(client, "/api/lua/executor-loader")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertTrue(payload["ok"])
+        self.assertIn("/api/lua/rejoin-helper", payload["source"])
+        self.assertIn("bootstrap=1", payload["source"])
+        self.assertIn("local Load = loadstring or load", payload["source"])
+        self.assertNotIn(main.INSTANCE_TOKEN, payload["source"])
+
+    def test_lua_executor_loader_source_requires_api_token(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        response = client.get("/api/lua/executor-loader")
+
+        self.assertEqual(response.status_code, 403)
 
     def test_lua_rejoin_helper_rejects_unauthenticated_token_mint(self):
         from fastapi.testclient import TestClient

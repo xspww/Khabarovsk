@@ -10,6 +10,7 @@ _INT_RANGES: Dict[str, Tuple[int, int]] = {
     "max_fail_count": (1, 100),
     "crash_timeout": (1, 3600),
     "heartbeat_timeout": (1, 3600),
+    "lua_wait_timeout": (1, 3600),
     "launch_verify_window": (1, 3600),
     "queue_delay_seconds": (0, 3600),
     "queue_duration_seconds": (0, 86400),

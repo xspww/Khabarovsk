@@ -46,6 +46,7 @@ DEFAULTS: Dict[str, Any] = {
     "queue_duration_seconds":   15,
     "max_concurrent_accounts":  40,
     "use_lua":                  False,
+    "lua_wait_timeout":         60,
     "machine_supervisor_enabled": True,
     "machine_supervisor_max_launching_accounts": 1,
     "machine_supervisor_cpu_high_percent": 96.0,

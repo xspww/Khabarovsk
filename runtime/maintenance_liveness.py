@@ -7,6 +7,7 @@ from core import AccountState, flog, flog_kv
 from services.process_service import ProcessManager, ProcessService
 from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_account_captcha_required, set_account_captcha_hold
 from runtime.home_rejoin_guard import detect_home_rejoin_issue
+from runtime.lua_liveness_policy import LUA_WAITING_STATUS, lua_liveness_required, lua_wait_timeout_seconds
 from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
 from runtime.maintenance_watchdog_actions import (
     handle_disconnect_dialog_rejoin,
@@ -57,7 +58,14 @@ class MaintenanceLivenessMixin:
                 session_id = acc.session_id
                 launch_nonce = acc.launch_nonce
                 transaction_id = acc.rejoin_transaction_id
+                recovery_status = str(acc.recovery_status or "")
             if state in (AccountState.LAUNCHING, AccountState.VERIFY):
+                lua_wait_timed_out = (
+                    state == AccountState.VERIFY
+                    and lua_liveness_required(self._cfg)
+                    and recovery_status == LUA_WAITING_STATUS
+                    and age >= lua_wait_timeout_seconds(self._cfg)
+                )
                 if age < verify_window:
                     continue
                 pid_live = bool(pid and ProcessManager.is_bound_game_alive(
@@ -66,6 +74,31 @@ class MaintenanceLivenessMixin:
                     expected_identity=identity,
                     expected_browser_tracker_id=acc.browser_tracker_id,
                 ))
+                if pid_live and lua_wait_timed_out:
+                    flog_kv(
+                        "MAINT",
+                        "lua_wait_timeout_recovery",
+                        "warning",
+                        account=acc.display_name,
+                        age=f"{age:.1f}",
+                        timeout=f"{lua_wait_timeout_seconds(self._cfg):.1f}",
+                        pid=pid or "",
+                    )
+                    self._runtime_signal(
+                        acc,
+                        "loading_freeze",
+                        "lua_wait_timeout",
+                        payload={
+                            "trigger": "lua_wait_timeout",
+                            "detail": f"Lua did not confirm in-game state within {lua_wait_timeout_seconds(self._cfg):.1f}s",
+                            "reason_msg": "Waiting For Lua timed out",
+                        },
+                        expected_runtime_generation=runtime_generation,
+                        expected_session_id=session_id,
+                        expected_launch_nonce=launch_nonce,
+                        expected_transaction_id=transaction_id,
+                    )
+                    continue
                 if pid_live:
                     self._runtime_signal(
                         acc,

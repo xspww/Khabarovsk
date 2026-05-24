@@ -74,6 +74,7 @@ class ConfigSectionsTests(unittest.TestCase):
             "machine_supervisor_cpu_high_percent": "500",
             "machine_supervisor_memory_high_percent": "-10",
             "popup_disconnected_enabled": "disabled",
+            "lua_wait_timeout": "0",
             "home_rejoin_grace_seconds": "0",
             "home_rejoin_hold_seconds": "0",
             "cpu_limiter_accounts": "bad",
@@ -89,6 +90,7 @@ class ConfigSectionsTests(unittest.TestCase):
         self.assertEqual(clean["machine_supervisor_cpu_high_percent"], 100.0)
         self.assertEqual(clean["machine_supervisor_memory_high_percent"], 1.0)
         self.assertFalse(clean["popup_disconnected_enabled"])
+        self.assertEqual(clean["lua_wait_timeout"], 1)
         self.assertEqual(clean["home_rejoin_grace_seconds"], 1)
         self.assertEqual(clean["home_rejoin_hold_seconds"], 1.0)
         self.assertEqual(clean["cpu_limiter_accounts"], {})

@@ -31,6 +31,7 @@ REASON_ALIASES = {
     "home_screen_no_job": "loading_freeze",
     "home_screen_wrong_place": "loading_freeze",
     "home_screen_no_server_evidence": "loading_freeze",
+    "lua_wait_timeout": "loading_freeze",
 }
 
 

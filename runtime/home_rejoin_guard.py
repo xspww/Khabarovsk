@@ -24,6 +24,8 @@ def detect_home_rejoin_issue(acc: Any, cfg: Dict[str, Any], now: float, in_game_
         observed_place = str(getattr(acc, "observed_place_id", "") or "").strip()
         observed_job = str(getattr(acc, "observed_job_id", "") or "").strip()
         observed_server_type = str(getattr(acc, "observed_server_type", "") or "").strip().upper()
+        lua_in_game_at = float(getattr(acc, "lua_in_game_at", 0.0) or 0.0)
+        lua_last_event_at = float(getattr(acc, "lua_last_event_at", 0.0) or 0.0)
         launch_intent = dict(getattr(acc, "launch_intent", {}) or {})
         configured_place = str(
             launch_intent.get("place_id")
@@ -65,9 +67,24 @@ def detect_home_rejoin_issue(acc: Any, cfg: Dict[str, Any], now: float, in_game_
             "grace": grace,
         }
 
-    # Missing Lua/server telemetry is not proof that Roblox is stuck on Home.
-    # Treating absence of evidence as a recovery signal caused relaunch storms:
-    # the watchdog killed a healthy-looking client repeatedly before any stronger
-    # process, popup, or server-state signal existed.
+    lua_confirmed_after_launch = bool(
+        lua_in_game_at
+        and lua_last_event_at
+        and (not reference_at or lua_in_game_at >= reference_at - 2.0)
+    )
+    if cfg.get("use_lua", False) and not evidence_after_launch and not lua_confirmed_after_launch:
+        return {
+            "reason_key": "home_screen_no_server_evidence",
+            "detail": "No Lua in-game or server evidence after launch grace; likely Roblox Home/loading shell",
+            "observed_place_id": observed_place,
+            "observed_job_id": observed_job,
+            "observed_server_type": observed_server_type,
+            "launch_age": launch_age,
+            "grace": grace,
+        }
+
+    # Without Lua as the required liveness source, missing telemetry alone is not
+    # proof that Roblox is stuck on Home. Treating absence of evidence as a
+    # recovery signal caused relaunch storms before stronger signals existed.
 
     return None

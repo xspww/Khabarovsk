@@ -204,6 +204,79 @@ class HybridAccountRecoverySignalCases:
 
         self.assertIsNone(issue)
 
+    def test_home_rejoin_guard_uses_missing_lua_evidence_when_lua_required(self):
+        from runtime.home_rejoin_guard import detect_home_rejoin_issue
+
+        acc = Account(username="lua_home_user")
+        now = time.time()
+        acc.in_game_since = now - 180
+        acc.last_launch_at = now - 180
+        acc.launch_intent = {"place_id": "77747658251236"}
+        acc.observed_server_at = 0.0
+        acc.observed_place_id = ""
+        acc.observed_job_id = ""
+        acc.lua_in_game_at = 0.0
+        acc.lua_last_event_at = 0.0
+
+        issue = detect_home_rejoin_issue(
+            acc,
+            {
+                "use_lua": True,
+                "home_rejoin_enabled": True,
+                "home_rejoin_grace_seconds": 60,
+                "launch_verify_window": 25,
+            },
+            now,
+            180,
+        )
+
+        self.assertIsNotNone(issue)
+        self.assertEqual(issue["reason_key"], "home_screen_no_server_evidence")
+
+    def test_waiting_for_lua_timeout_triggers_rejoin_signal(self):
+        maint = object.__new__(SystemMaintenance)
+        maint._cfg = {
+            "use_lua": True,
+            "lua_wait_timeout": 1,
+            "launch_verify_window": 1,
+            "queue_timeout": 90,
+        }
+        maint._accounts = []
+
+        calls = []
+
+        def runtime_signal(*args, **kwargs):
+            calls.append((args, kwargs))
+            return True
+
+        maint._runtime_signal = runtime_signal
+
+        acc = Account(username="lua_timeout_user")
+        now = time.time()
+        acc.state = AccountState.VERIFY
+        acc.desired_state = AccountState.IN_GAME
+        acc.pid = 1234
+        acc.bound_process_identity = "RobloxPlayerBeta.exe|1|C:\\Roblox\\RobloxPlayerBeta.exe"
+        acc.browser_tracker_id = "browser-1"
+        acc.recovery_status = "waiting_for_lua"
+        acc.last_state_change_at = now - 30
+        acc.runtime_generation = 7
+        acc.session_id = "sess"
+        acc.launch_nonce = "nonce"
+        acc.rejoin_transaction_id = "tx"
+        maint._accounts = [acc]
+
+        with patch("runtime.maintenance_liveness.ProcessManager.is_bound_game_alive", return_value=True):
+            SystemMaintenance._recover_stale_joining_states(maint)
+
+        self.assertEqual(len(calls), 1)
+        args, kwargs = calls[0]
+        self.assertEqual(args[1], "loading_freeze")
+        self.assertEqual(args[2], "lua_wait_timeout")
+        self.assertEqual(kwargs["expected_runtime_generation"], 7)
+        self.assertEqual(kwargs["expected_session_id"], "sess")
+        self.assertEqual(kwargs["payload"]["trigger"], "lua_wait_timeout")
+
     def test_memory_pressure_guard_triggers_targeted_rejoin_signal(self):
         maint = object.__new__(SystemMaintenance)
         maint._cfg = {

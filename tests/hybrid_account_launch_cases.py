@@ -322,6 +322,19 @@ class HybridAccountLaunchCases:
         self.assertTrue(decision.blocked)
         self.assertEqual(decision.reason_key, "cookie_mismatch")
 
+    def test_auth_gate_marks_invalid_cookie_status_as_invalid(self):
+        from services.auth_gate import evaluate_account_auth_gate
+
+        acc = Account(username="InvalidCookieUser")
+        acc.manual_status = "Invalid Cookie: cookie validation failed (401)"
+        acc.import_status = "cookie_invalid"
+
+        decision = evaluate_account_auth_gate(acc)
+
+        self.assertTrue(decision.blocked)
+        self.assertEqual(decision.reason_key, "cookie_invalid")
+        self.assertIn("Invalid Cookie", decision.reason)
+
     def test_captcha_hold_blocks_launch_until_resume(self):
         acc = Account(username="CaptchaUser")
         detail = captcha_detail(403, "", {"Rblx-Challenge-Type": "captcha"})

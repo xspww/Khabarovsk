@@ -20,6 +20,19 @@ class AccountReconciliationError(ValueError):
     pass
 
 
+COOKIE_INVALID_IMPORT_STATUS = "cookie_invalid"
+
+
+def mark_invalid_cookie_record(account_store: Any, record: Dict[str, Any], reason: str) -> Dict[str, Any]:
+    normalized = account_store.normalize_record(record)
+    normalized["manual_status"] = f"Invalid Cookie: {reason or 'invalid cookie'}"
+    normalized["import_status"] = COOKIE_INVALID_IMPORT_STATUS
+    normalized["cookie_username"] = ""
+    normalized["cookie_user_id"] = ""
+    normalized["cookie_mismatch"] = False
+    return normalized
+
+
 def load_accounts_from_store(account_store: Any) -> List[Account]:
     return [Account.from_dict(item) for item in account_store.to_cronus_accounts()]
 
@@ -64,19 +77,19 @@ def _validated_replacement_accounts(accounts: List[Account]) -> List[Account]:
 def emit_reload_cookie_events(farm: Any, validation: Dict[str, Any]) -> None:
     valid_accounts = list(validation.get("valid_accounts") or [])
     captcha_accounts = list(validation.get("captcha_accounts") or [])
-    removed_accounts = list(validation.get("removed_accounts") or [])
+    invalid_accounts = list(validation.get("invalid_accounts") or validation.get("removed_accounts") or [])
     valid_count = len(valid_accounts)
-    removed = int(validation.get("removed") or 0)
+    invalid = int(validation.get("invalid") if validation.get("invalid") is not None else validation.get("removed") or 0)
     captcha = int(validation.get("captcha") or 0)
-    summary_level = "warning" if (removed or captcha) else "success"
+    summary_level = "warning" if (invalid or captcha) else "success"
     farm._push_event(
         "cookie",
-        f"Reload Cookies checked: {valid_count} valid, {captcha} CAPTCHA, {removed} invalid",
+        f"Reload Cookies checked: {valid_count} valid, {captcha} CAPTCHA, {invalid} invalid",
         severity=summary_level,
         reason="reload_cookies",
         valid=valid_count,
         captcha=captcha,
-        invalid=removed,
+        invalid=invalid,
     )
     for item in valid_accounts:
         username = str(item.get("username") or "Unknown")
@@ -98,7 +111,7 @@ def emit_reload_cookie_events(farm: Any, validation: Dict[str, Any]) -> None:
             reason=CAPTCHA_REASON,
             detail=detail,
         )
-    for item in removed_accounts:
+    for item in invalid_accounts:
         username = str(item.get("username") or "Unknown")
         reason = str(item.get("reason") or "invalid cookie")
         farm._push_event(
@@ -125,6 +138,7 @@ def _sync_existing_runtime_account(target: Account, source: Account) -> None:
         target.cookie_mismatch = source.cookie_mismatch
         target.description = source.description
         target.manual_status = source.manual_status
+        target.import_status = source.import_status
         target.finished_at = source.finished_at
         target.sync_runtime("reload_cookies_sync")
 

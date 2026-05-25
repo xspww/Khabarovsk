@@ -305,7 +305,9 @@ function CronusRejoin:Post(eventName, extra)
     end
 
     if not Request and not game.HttpGet then
-        logWarn("Launcher not responding")
+        if eventName ~= "heartbeat" then
+            logWarn("Launcher not responding")
+        end
         return false
     end
 
@@ -321,7 +323,9 @@ function CronusRejoin:Post(eventName, extra)
         return HttpService:JSONEncode(payload)
     end)
     if not encodeOk then
-        logWarn("Launcher not responding")
+        if eventName ~= "heartbeat" then
+            logWarn("Launcher not responding")
+        end
         return false
     end
 
@@ -354,7 +358,9 @@ function CronusRejoin:Post(eventName, extra)
     })
 
     if not ok then
-        logWarn("Launcher not responding")
+        if eventName ~= "heartbeat" then
+            logWarn("Launcher not responding")
+        end
         return self:FallbackOrFail(eventName, payload, "request_error")
     end
 
@@ -380,7 +386,9 @@ function CronusRejoin:Post(eventName, extra)
             log("Status synced")
         end
     else
-        logWarn("Launcher not responding")
+        if eventName ~= "heartbeat" then
+            logWarn("Launcher not responding")
+        end
     end
     if not success then
         return self:FallbackOrFail(eventName, payload, status)
@@ -390,11 +398,14 @@ function CronusRejoin:Post(eventName, extra)
 end
 
 function CronusRejoin:GetFallback(eventName, payload, previousStatus)
+    local quiet = eventName == "heartbeat"
     local url = self:QueryEndpoint(payload)
     local requestHeaders = {
         ["User-Agent"] = "CronusLuaRejoin/1.7",
     }
-    logWarn("Trying fallback recovery...")
+    if not quiet then
+        logWarn("Trying fallback recovery...")
+    end
 
     local ok, response
     if Request then
@@ -412,7 +423,9 @@ function CronusRejoin:GetFallback(eventName, payload, previousStatus)
     end
 
     if not ok then
-        logWarn("Launcher not responding")
+        if not quiet then
+            logWarn("Launcher not responding")
+        end
         self.LastPostOk[eventName] = false
         return false, false
     end
@@ -445,7 +458,9 @@ function CronusRejoin:GetFallback(eventName, payload, previousStatus)
             log("Status synced")
         end
     else
-        logWarn("Launcher not responding")
+        if not quiet then
+            logWarn("Launcher not responding")
+        end
     end
     self.LastPostOk[eventName] = success and accepted
     return success, accepted
@@ -489,7 +504,7 @@ function CronusRejoin:PostAsync(eventName, extra)
         local ok, err = pcall(function()
             self:Post(eventName, extra)
         end)
-        if not ok then
+        if not ok and eventName ~= "heartbeat" then
             logWarn("Launcher not responding")
         end
     end)

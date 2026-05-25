@@ -30,7 +30,8 @@ local function logWarn(message)
 end
 
 local function failDownload(reason)
-    error("[Cronus] " .. tostring(reason or "Rejoin helper failed to load"), 2)
+    logWarn(reason or "Rejoin helper failed to load")
+    return nil
 end
 
 local function encode(value)
@@ -139,14 +140,16 @@ elseif game.HttpGet then
 end
 
 if type(source) ~= "string" or #source <= 0 then
-    failDownload("Rejoin helper failed to load")
+    return failDownload("Rejoin helper failed to load")
 end
-assert(type(Load) == "function", "[Cronus] Rejoin helper failed to load")
+if type(Load) ~= "function" then
+    return failDownload("Rejoin helper failed to load")
+end
 if source:sub(1, 1) == "{" then
-    failDownload("Failed to connect to launcher")
+    return nil
 end
 if not source:find("CronusRejoin", 1, true) then
-    failDownload("Rejoin helper failed to load")
+    return failDownload("Rejoin helper failed to load")
 end
 
 if not source:find("CronusRejoin:QueueOnTeleport", 1, true) then
@@ -154,6 +157,8 @@ if not source:find("CronusRejoin:QueueOnTeleport", 1, true) then
 end
 
 local fn, err = Load(source)
-assert(fn, err)
+if not fn then
+    return failDownload("Rejoin helper failed to load")
+end
 log("Rejoin helper loaded")
 return fn()

@@ -111,7 +111,7 @@ class HybridAccountApiAccountRouteCases:
         self.assertEqual(set_accounts.call_args.args[0][0].username, "ReloadUser")
         save_accounts.assert_called_once()
 
-    def test_accounts_reload_route_removes_invalid_cookies_before_reloading(self):
+    def test_accounts_reload_route_marks_invalid_cookies_before_reloading(self):
         from fastapi.testclient import TestClient
         import api_routes.accounts_routes as accounts_routes
         import main
@@ -147,6 +147,8 @@ class HybridAccountApiAccountRouteCases:
             "to_cronus_accounts",
             return_value=[
                 {"username": "ValidUser", "cookie": "_|WARNING:valid"},
+                {"username": "BadUser", "cookie": "_|WARNING:bad", "manual_status": "Invalid Cookie: cookie validation failed (401)", "import_status": "cookie_invalid"},
+                {"username": "EmptyUser", "cookie": "", "manual_status": "Invalid Cookie: missing cookie", "import_status": "cookie_invalid"},
                 {"username": "CaptchaUser", "cookie": "_|WARNING:captcha", "manual_status": CAPTCHA_BLOCK_REASON},
             ],
         ), patch.object(accounts_routes, "audit_event"), patch.object(main.farm, "running", False), patch.object(
@@ -161,15 +163,20 @@ class HybridAccountApiAccountRouteCases:
         self.assertEqual(response.status_code, 200)
         data = response.json()
         self.assertTrue(data["ok"])
-        self.assertEqual(data["kept"], 2)
-        self.assertEqual(data["removed"], 2)
+        self.assertEqual(data["kept"], 4)
+        self.assertEqual(data["removed"], 0)
+        self.assertEqual(data["invalid"], 2)
         self.assertEqual(data["captcha"], 1)
-        self.assertEqual(data["count"], 2)
+        self.assertEqual(data["count"], 4)
         self.assertEqual(validator.call_count, 3)
         written = write_records.call_args.args[0]
-        self.assertEqual([item["username"] for item in written], ["ValidUser", "CaptchaUser"])
-        self.assertTrue(written[1]["cookie_mismatch"])
-        self.assertEqual(set_accounts.call_args.args[0][0].username, "ValidUser")
+        self.assertEqual([item["username"] for item in written], ["ValidUser", "BadUser", "EmptyUser", "CaptchaUser"])
+        self.assertEqual(written[1]["manual_status"], "Invalid Cookie: cookie validation failed (401)")
+        self.assertEqual(written[1]["import_status"], "cookie_invalid")
+        self.assertEqual(written[2]["manual_status"], "Invalid Cookie: missing cookie")
+        self.assertEqual(written[2]["import_status"], "cookie_invalid")
+        self.assertTrue(written[3]["cookie_mismatch"])
+        self.assertEqual([acc.username for acc in set_accounts.call_args.args[0]], ["ValidUser", "BadUser", "EmptyUser", "CaptchaUser"])
         messages = [str(call.args[1]) for call in push_event.call_args_list]
         self.assertIn("Reload Cookies checked: 1 valid, 1 CAPTCHA, 2 invalid", messages)
         self.assertIn("Reload Cookies OK: ValidUser", messages)

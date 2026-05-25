@@ -594,8 +594,7 @@ tbody tr.active
   text-overflow: ellipsis;
 }
 
-.handle,
-.blocked-note
+.handle
 {
   margin-top: 2px;
   color: #71717A;
@@ -605,7 +604,6 @@ tbody tr.active
   text-overflow: ellipsis;
 }
 
-.blocked-note,
 .danger-name
 {
   color: #C88989;
@@ -696,6 +694,18 @@ tbody tr.active
 .status.blocked:before
 {
   background: #B56A6A;
+}
+
+.status.invalid
+{
+  background: transparent;
+  border-color: transparent;
+  color: #d68533;
+}
+
+.status.invalid:before
+{
+  background: #d68533;
 }
 
 .status:before,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Dict
 
-from core import account_launch_block_reason
+from core import account_launch_block_reason, cookie_invalid_block_reason
 from runtime.recovery_support import _set_account_cookie_block
 from services.captcha_guard import (
     CAPTCHA_BLOCK_REASON,
@@ -52,9 +52,10 @@ def evaluate_account_auth_gate(account: Any) -> AuthGateDecision:
             reason=CAPTCHA_BLOCK_REASON,
             category="captcha",
         )
+    reason_key = "cookie_invalid" if cookie_invalid_block_reason(reason) else "cookie_mismatch"
     return AuthGateDecision(
         blocked=True,
-        reason_key="cookie_mismatch",
+        reason_key=reason_key,
         reason=reason,
         category="auth",
     )

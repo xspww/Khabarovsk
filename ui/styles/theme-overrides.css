@@ -534,8 +534,7 @@ tbody tr.active
 }
 
 .num,
-.handle,
-.blocked-note
+.handle
 {
   color: #6c7a92;
 }
@@ -729,4 +728,3 @@ tbody tr.active
   }
 
 }
-

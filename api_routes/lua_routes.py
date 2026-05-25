@@ -90,6 +90,12 @@ def _render_requeue_source(account: str, port: int, shutdown_delay: float, token
         [
             "local Request = (syn and syn.request) or (http and http.request) or http_request or request",
             "local Load = loadstring or load",
+            "local function warnCronus(message)",
+            "    local line = \"[Cronus] \" .. tostring(message or \"Rejoin helper failed to load\")",
+            "    if rconsoleprint then pcall(rconsoleprint, line .. \"\\n\") end",
+            "    if warn then pcall(warn, line) elseif print then pcall(print, line) end",
+            "    return nil",
+            "end",
             f"local url = {_lua_literal(helper_url)}",
             "local source = nil",
             "if Request then",
@@ -98,9 +104,10 @@ def _render_requeue_source(account: str, port: int, shutdown_delay: float, token
             "elseif game.HttpGet then",
             "    source = game:HttpGet(url)",
             "end",
-            "assert(type(source) == \"string\" and #source > 0, \"Cronus teleport reload failed\")",
+            "if type(source) ~= \"string\" or #source <= 0 then return warnCronus(\"Rejoin helper failed to load\") end",
+            "if source:sub(1, 1) == \"{\" then return nil end",
             "local fn, err = Load(source)",
-            "assert(fn, err)",
+            "if not fn then return warnCronus(\"Rejoin helper failed to load\") end",
             "return fn()",
         ]
     )

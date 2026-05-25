@@ -155,6 +155,7 @@ class Account:
     cookie_mismatch: bool = False
     description: str = ""
     manual_status: str = ""
+    import_status: str = ""
     finished_at: float = 0.0
 
     # runtime (not persisted to config)
@@ -397,6 +398,7 @@ class Account:
             "cookie_mismatch": self.cookie_mismatch,
             "description": self.description,
             "manual_status": self.manual_status,
+            "import_status": self.import_status,
             "finished_at": self.finished_at,
         }
 
@@ -416,6 +418,7 @@ class Account:
             cookie_mismatch = bool(d.get("cookie_mismatch", False)),
             description = str(d.get("description", "")),
             manual_status = str(d.get("manual_status", "")),
+            import_status = str(d.get("import_status", "")),
             finished_at = float(d.get("finished_at", 0.0) or 0.0),
         )
 
@@ -439,6 +442,27 @@ def cookie_identity_block_reason(
     return ""
 
 
+def cookie_invalid_block_reason(*values: object) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        lowered = text.lower()
+        if not lowered:
+            continue
+        if lowered == "cookie_invalid":
+            return "Invalid Cookie. Reimport the correct .ROBLOSECURITY for this account."
+        has_cookie = "cookie" in lowered or ".roblosecurity" in lowered
+        invalid = (
+            "invalid" in lowered
+            or "expired" in lowered
+            or "missing" in lowered
+            or "validation failed" in lowered
+            or "not authenticated" in lowered
+        )
+        if has_cookie and invalid:
+            return text
+    return ""
+
+
 def account_launch_block_reason(acc: Account) -> str:
     try:
         from services.captcha_guard import CAPTCHA_BLOCK_REASON, is_account_captcha_required
@@ -447,6 +471,13 @@ def account_launch_block_reason(acc: Account) -> str:
             return CAPTCHA_BLOCK_REASON
     except Exception:
         pass
+    invalid = cookie_invalid_block_reason(
+        getattr(acc, "manual_status", ""),
+        getattr(acc, "import_status", ""),
+        getattr(acc, "last_error", ""),
+    )
+    if invalid:
+        return invalid
     return cookie_identity_block_reason(
         getattr(acc, "username", ""),
         getattr(acc, "cookie_username", ""),

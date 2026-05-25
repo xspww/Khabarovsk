@@ -513,6 +513,7 @@ class AccountDataStore:
             "cookie_mismatch": normalized["cookie_mismatch"],
             "description": normalized["description"],
             "manual_status": normalized["manual_status"],
+            "import_status": normalized["import_status"],
             "finished_at": normalized["finished_at"],
         }
 

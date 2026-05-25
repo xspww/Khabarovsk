@@ -14,7 +14,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import HTTPException, Request
 
 from account_hybrid import ACCOUNT_STORE, audit_event
-from core import Account, account_launch_block_reason, cookie_identity_block_reason, flog_kv
+from core import Account, account_launch_block_reason, cookie_identity_block_reason, cookie_invalid_block_reason, flog_kv
 from roblox_hybrid import resolve_vip_access_code, validate_cookie_details
 from services.captcha_guard import (
     CAPTCHA_BLOCK_REASON,
@@ -23,7 +23,7 @@ from services.captcha_guard import (
     is_captcha_text,
     set_account_captcha_hold,
 )
-from services.account_reload import emit_reload_cookie_events, load_accounts_from_store, replace_farm_accounts
+from services.account_reload import emit_reload_cookie_events, load_accounts_from_store, mark_invalid_cookie_record, replace_farm_accounts
 from services.roblox_launch_service import AccountLaunchService, parse_vip_link
 from runtime.account_selection import runtime_account_allowlist
 
@@ -62,6 +62,9 @@ def register(app, ctx: ApiContext) -> None:
                 str(item.get("cookie_username") or ""),
                 bool(item.get("cookie_mismatch", False)),
             )
+            invalid_reason = cookie_invalid_block_reason(item.get("manual_status"), item.get("import_status"))
+            if invalid_reason:
+                blocked_reason = invalid_reason
             if is_captcha_status_text(item.get("manual_status"), item.get("import_status")):
                 blocked_reason = CAPTCHA_BLOCK_REASON
             runtime = runtime_by_user.get(str(item.get("username") or "").strip().lower())
@@ -117,7 +120,7 @@ def register(app, ctx: ApiContext) -> None:
     def _validate_cookie_records_from_store() -> Dict[str, Any]:
         records = ACCOUNT_STORE.read_records(include_cookies=True)
         kept: List[Dict[str, Any]] = []
-        removed: List[Dict[str, str]] = []
+        invalid: List[Dict[str, str]] = []
         captcha: List[Dict[str, str]] = []
         valid: List[Dict[str, str]] = []
 
@@ -126,7 +129,9 @@ def register(app, ctx: ApiContext) -> None:
             cookie = str(record.get("cookie") or "").strip()
             label = username or "Unknown"
             if not cookie:
-                removed.append({"username": label, "reason": "missing cookie"})
+                reason = "missing cookie"
+                kept.append(mark_invalid_cookie_record(ACCOUNT_STORE, record, reason))
+                invalid.append({"username": label, "reason": reason})
                 continue
 
             try:
@@ -142,7 +147,9 @@ def register(app, ctx: ApiContext) -> None:
                     kept.append(normalized)
                     captcha.append({"username": label, "reason": detail or CAPTCHA_REASON})
                     continue
-                removed.append({"username": label, "reason": detail or "invalid cookie"})
+                reason = detail or "invalid cookie"
+                kept.append(mark_invalid_cookie_record(ACCOUNT_STORE, record, reason))
+                invalid.append({"username": label, "reason": reason})
                 continue
 
             normalized = ACCOUNT_STORE.normalize_record(record)
@@ -158,28 +165,33 @@ def register(app, ctx: ApiContext) -> None:
                 and username.lower() != validated_username.lower()
             )
             normalized["import_status"] = "cookie_mismatch" if normalized["cookie_mismatch"] else ""
-            if is_captcha_status_text(normalized.get("manual_status")) and not normalized["cookie_mismatch"]:
+            if (
+                is_captcha_status_text(normalized.get("manual_status"))
+                or cookie_invalid_block_reason(normalized.get("manual_status"))
+            ) and not normalized["cookie_mismatch"]:
                 normalized["manual_status"] = ""
             kept.append(normalized)
             valid.append({"username": username or label})
 
         ACCOUNT_STORE.write_records(kept)
-        for item in removed:
-            audit_event("reload_cookie_removed", item.get("username", ""), False, reason=item.get("reason", ""))
+        for item in invalid:
+            audit_event("reload_cookie_invalid", item.get("username", ""), False, reason=item.get("reason", ""))
         flog_kv(
             "ACCOUNT_DATA",
             "reload_cookie_validation",
             kept=len(kept),
-            removed=len(removed),
+            invalid=len(invalid),
             total=len(records),
         )
         return {
             "total": len(records),
             "kept": len(kept),
-            "removed": len(removed),
+            "removed": 0,
+            "invalid": len(invalid),
             "captcha": len(captcha),
             "valid_accounts": valid,
-            "removed_accounts": removed,
+            "removed_accounts": [],
+            "invalid_accounts": invalid,
             "captcha_accounts": captcha,
         }
 
@@ -387,14 +399,14 @@ def register(app, ctx: ApiContext) -> None:
             allowlist_result = _clear_runtime_allowlist_after_reload()
         except Exception as e:
             raise HTTPException(400, f"Reload failed: {e}")
-        removed = int(validation.get("removed") or 0)
+        invalid_count = int(validation.get("invalid") or 0)
         valid_count = len(validation.get("valid_accounts") or [])
         msg = f"Checked cookies: {valid_count} valid"
         captcha_count = int(validation.get("captcha") or 0)
         if captcha_count:
             msg += f", {captcha_count} need CAPTCHA"
-        if removed:
-            msg += f", removed {removed} invalid"
+        if invalid_count:
+            msg += f", marked {invalid_count} invalid"
         if allowlist_result.get("allowlist_cleared"):
             msg += ", cleared account test lock"
         result = {"ok": True, "count": count, "msg": msg, **validation, **allowlist_result}
@@ -526,15 +538,19 @@ def register(app, ctx: ApiContext) -> None:
         record = _find_account_record(username, include_cookie=True)
         if not record:
             raise HTTPException(404, "Account not found")
-        blocked_reason = cookie_identity_block_reason(
+        mismatch_reason = cookie_identity_block_reason(
             str(record.get("username") or username),
             str(record.get("cookie_username") or ""),
             bool(record.get("cookie_mismatch", False)),
         )
+        blocked_reason = mismatch_reason
+        invalid_reason = cookie_invalid_block_reason(record.get("manual_status"), record.get("import_status"))
+        if invalid_reason:
+            blocked_reason = invalid_reason
         if is_captcha_status_text(record.get("manual_status"), record.get("import_status")):
             blocked_reason = CAPTCHA_BLOCK_REASON
         if blocked_reason:
-            result = {"ok": False, "fatal": True, "msg": blocked_reason, "blocked_reason": blocked_reason, "cookie_mismatch": blocked_reason != CAPTCHA_BLOCK_REASON}
+            result = {"ok": False, "fatal": True, "msg": blocked_reason, "blocked_reason": blocked_reason, "cookie_mismatch": bool(mismatch_reason)}
             audit_event("launch", username=username, ok=False, detail=blocked_reason, mode="blocked")
             finish_idempotent_request(idem, result)
             return result

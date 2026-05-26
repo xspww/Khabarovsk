@@ -13,6 +13,8 @@ class WatchdogOpsTests(unittest.TestCase):
 
         self.assertIn("Global\\CronusLauncherWatchdog", watchdog)
         self.assertIn("Invoke-RestMethod -Uri $HealthUrl", watchdog)
+        self.assertIn("Update-CronusEndpointFromInstanceState", watchdog)
+        self.assertIn("cronus_rt_instance.json", watchdog)
         self.assertIn("ops\\run_backend.py", watchdog)
         self.assertIn('"logs"', watchdog)
         self.assertIn("Stop-KnownCronusBackends", watchdog)
@@ -27,6 +29,23 @@ class WatchdogOpsTests(unittest.TestCase):
         self.assertIn("prepare_backend_single_instance", runner)
         self.assertIn("clear_instance_state", runner)
         self.assertIn("refused to start a hidden duplicate", runner)
+
+    def test_instance_state_records_endpoint_contract_for_watchdog_and_lua(self):
+        guard = (ROOT / "desktop" / "instance_guard.py").read_text(encoding="utf-8")
+
+        self.assertIn('"schema_version": 2', guard)
+        self.assertIn('"host": HOST', guard)
+        self.assertIn('"port": int(port)', guard)
+        self.assertIn('"token": INSTANCE_TOKEN', guard)
+
+    def test_watchdog_validates_instance_state_before_endpoint_update(self):
+        watchdog = (ROOT / "ops" / "cronus_watchdog.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("Test-CronusInstanceState", watchdog)
+        self.assertIn("$stateBaseDir", watchdog)
+        self.assertIn("ProjectRoot", watchdog)
+        self.assertIn("Get-Process -Id $statePid", watchdog)
+        self.assertIn("ignoring stale instance_state", watchdog)
 
     def test_watchdog_status_reports_task_action_and_stale_project_root(self):
         status = (ROOT / "ops" / "watchdog_status.ps1").read_text(encoding="utf-8")

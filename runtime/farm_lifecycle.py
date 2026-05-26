@@ -161,6 +161,7 @@ class FarmLifecycleService:
             timeline=farm._timeline,
             logger=flog_kv,
             name="RuntimeScheduler",
+            dispatch_worker_count=int(cfg.get("runtime_scheduler_dispatch_workers", 0) or 0),
         )
         limiter = GlobalLaunchLimiter(
             interval=max(

@@ -12,7 +12,7 @@ from .context import ApiContext
 _MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 _TOKEN_HEADERS = ("X-Cronus-Token", "X-Argus-Token", "X-RoboGuard-Token")
 _IDEMPOTENCY_HEADERS = ("X-Cronus-Idempotency-Key", "X-Argus-Idempotency-Key")
-_EXEMPT_PATHS = {"/api/app/shutdown", "/api/lua/rejoin-event"}
+_EXEMPT_PATHS = {"/api/lua/rejoin-event"}
 
 
 def _first_header(request, names) -> str:

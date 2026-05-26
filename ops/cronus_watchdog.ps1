@@ -43,8 +43,75 @@ if (-not $LogDir) {
 }
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $WatchdogLog = Join-Path $LogDir "cronus_watchdog.log"
-$HealthUrl = "http://$HostName`:$Port/api/status"
+$InstanceStateFile = Join-Path (Join-Path $env:LOCALAPPDATA "Cronus Launcher\data") "cronus_rt_instance.json"
 $RunnerMatch = (Resolve-FullPath $Runner).ToLowerInvariant()
+
+function Set-CronusEndpoint([string]$HostValue, [int]$PortValue) {
+    $script:HostName = $HostValue
+    $script:Port = $PortValue
+    $script:HealthUrl = "http://$script:HostName`:$script:Port/api/status"
+}
+
+function Test-CronusInstanceState($State) {
+    try {
+        $statePid = [int]($State.pid)
+        $statePort = [int]($State.port)
+        $stateBaseDir = [string]($State.base_dir)
+        if ($statePort -le 0) {
+            Write-WatchdogLog "WARN" "ignoring stale instance_state reason=missing_port"
+            return $false
+        }
+        if ($stateBaseDir) {
+            $expectedRoot = (Resolve-FullPath $ProjectRoot).ToLowerInvariant()
+            $actualRoot = (Resolve-FullPath $stateBaseDir).ToLowerInvariant()
+            if ($actualRoot -ne $expectedRoot) {
+                Write-WatchdogLog "WARN" "ignoring stale instance_state reason=project_root_mismatch state_root=$stateBaseDir project_root=$ProjectRoot"
+                return $false
+            }
+        }
+        if ($statePid -le 0) {
+            Write-WatchdogLog "WARN" "ignoring stale instance_state reason=missing_pid"
+            return $false
+        }
+        Get-Process -Id $statePid -ErrorAction Stop | Out-Null
+        return $true
+    }
+    catch {
+        Write-WatchdogLog "WARN" "ignoring stale instance_state reason=pid_not_alive detail=$($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Update-CronusEndpointFromInstanceState {
+    if (-not (Test-Path -LiteralPath $InstanceStateFile)) {
+        return $false
+    }
+    try {
+        $state = Get-Content -LiteralPath $InstanceStateFile -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (-not (Test-CronusInstanceState $state)) {
+            return $false
+        }
+        $statePort = [int]($state.port)
+        $stateHost = [string]($state.host)
+        if ($statePort -le 0) {
+            return $false
+        }
+        if (-not $stateHost) {
+            $stateHost = "127.0.0.1"
+        }
+        if ($statePort -ne $script:Port -or $stateHost -ne $script:HostName) {
+            Set-CronusEndpoint $stateHost $statePort
+            Write-WatchdogLog "INFO" "endpoint updated from instance_state host=$stateHost port=$statePort"
+        }
+        return $true
+    }
+    catch {
+        Write-WatchdogLog "WARN" "failed to read instance_state: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+Set-CronusEndpoint $HostName $Port
 
 function Write-WatchdogLog([string]$Level, [string]$Message) {
     $stamp = (Get-Date).ToString("yyyy-MM-ddTHH:mm:ss.fffK")
@@ -52,6 +119,7 @@ function Write-WatchdogLog([string]$Level, [string]$Message) {
 }
 
 function Test-CronusHealth {
+    Update-CronusEndpointFromInstanceState | Out-Null
     try {
         $response = Invoke-RestMethod -Uri $HealthUrl -Method Get -TimeoutSec 3
         return [pscustomobject]@{

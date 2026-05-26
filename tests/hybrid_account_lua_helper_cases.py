@@ -107,6 +107,8 @@ class HybridAccountLuaHelperCases:
         self.assertIn("/api/lua/rejoin-helper", loader)
         self.assertIn("bootstrap=1", loader)
         self.assertIn("local Load = loadstring or load", loader)
+        self.assertIn('cronusGlobal("CRONUS_PORT", 7777)', loader)
+        self.assertIn('cronusGlobal("CRONUS_HOST", "127.0.0.1")', loader)
         self.assertIn("getProcessId()", loader)
         self.assertIn("user_id=%s", loader)
         self.assertIn("queueOnTeleport(source)", loader)
@@ -119,6 +121,9 @@ class HybridAccountLuaHelperCases:
         self.assertNotIn('error("[Cronus] "', loader)
         self.assertNotIn('assert(type(Load) == "function"', loader)
         self.assertIn("Load(source)", loader)
+        account_loader = (Path(__file__).resolve().parents[1] / "lua" / "internal" / "load_account_status.lua").read_text(encoding="utf-8")
+        self.assertIn('cronusGlobal("CRONUS_PORT", 7777)', account_loader)
+        self.assertIn('cronusGlobal("CRONUS_ACCOUNT", "")', account_loader)
 
     def test_lua_executor_loader_source_is_available_to_authenticated_ui(self):
         from fastapi.testclient import TestClient

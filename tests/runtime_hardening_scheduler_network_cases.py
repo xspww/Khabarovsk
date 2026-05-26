@@ -173,6 +173,81 @@ class RuntimeHardeningSchedulerNetworkCases:
         self.assertEqual(scheduler.snapshot(now=121.0)["callback_failure_count"], 1)
 
 
+    def test_runtime_scheduler_can_dispatch_callbacks_without_blocking_due_loop(self):
+        ran = []
+        release = threading.Event()
+        scheduler = RuntimeScheduler(
+            stop=threading.Event(),
+            state_manager=RuntimeStateManager(),
+            logger=lambda *args, **kwargs: None,
+            autostart=False,
+            dispatch_worker_count=2,
+        )
+        try:
+            scheduler.schedule_once(
+                "slow",
+                lambda job: (release.wait(timeout=1.0), ran.append("slow")),
+                due_at=1.0,
+                now=0.0,
+            )
+            scheduler.schedule_once(
+                "fast",
+                lambda job: ran.append("fast"),
+                due_at=1.0,
+                now=0.0,
+            )
+
+            dispatched = scheduler.run_due(now=1.0)
+            deadline = time.time() + 1.0
+            while "fast" not in ran and time.time() < deadline:
+                time.sleep(0.01)
+
+            self.assertEqual(dispatched, 2)
+            self.assertIn("fast", ran)
+            self.assertNotIn("slow", ran)
+        finally:
+            release.set()
+            scheduler.stop()
+
+
+    def test_runtime_scheduler_dispatch_pool_reports_and_joins_workers(self):
+        release = threading.Event()
+        scheduler = RuntimeScheduler(
+            stop=threading.Event(),
+            state_manager=RuntimeStateManager(),
+            logger=lambda *args, **kwargs: None,
+            autostart=False,
+            dispatch_worker_count=1,
+        )
+        try:
+            scheduler.schedule_once(
+                "slow",
+                lambda job: release.wait(timeout=1.0),
+                due_at=1.0,
+                now=0.0,
+            )
+            scheduler.schedule_once(
+                "queued",
+                lambda job: None,
+                due_at=1.0,
+                now=0.0,
+            )
+
+            scheduler.run_due(now=1.0)
+            deadline = time.time() + 1.0
+            while scheduler.snapshot(now=1.0)["dispatch_pool"]["active_count"] < 1 and time.time() < deadline:
+                time.sleep(0.01)
+            snapshot = scheduler.snapshot(now=1.0)
+
+            self.assertGreaterEqual(snapshot["dispatch_pool"]["active_count"], 1)
+            self.assertGreaterEqual(snapshot["dispatch_pool"]["queued_count"], 1)
+        finally:
+            release.set()
+            scheduler.stop(timeout=1.0)
+
+        self.assertEqual(scheduler.snapshot(now=2.0)["dispatch_pool"]["worker_alive_count"], 0)
+
+
     def test_network_fault_scripts_are_scoped_to_cronus_rules(self):
         block = NetworkFaultInjector.build_block_script(r"C:\Roblox\RobloxPlayerBeta.exe", f"{RULE_PREFIX}_unit")
         restore = NetworkFaultInjector.build_restore_script()

@@ -7,11 +7,9 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, Optional
 
 from core import flog_kv
-
+from runtime.runtime_scheduler_dispatch import SchedulerDispatchPool
 
 ScheduleCallback = Callable[["RuntimeScheduledJob"], Any]
-
-
 @dataclass
 class RuntimeScheduledJob:
     job_key: str
@@ -40,6 +38,7 @@ class RuntimeScheduler:
         logger: Optional[Callable[..., None]] = None,
         name: str = "RuntimeScheduler",
         autostart: bool = True,
+        dispatch_worker_count: int = 0,
     ):
         self._external_stop = stop or threading.Event()
         self._state_manager = state_manager
@@ -58,6 +57,8 @@ class RuntimeScheduler:
         self._dispatch_count = 0
         self._callback_failure_count = 0
         self._stale_rejection_count = 0
+        worker_count = max(0, int(dispatch_worker_count or 0))
+        self._dispatch_pool = SchedulerDispatchPool(name, worker_count, self._external_stop, self._dispatch) if worker_count else None
         self._thread = threading.Thread(target=self._loop, daemon=True, name=name)
         if autostart:
             self._thread.start()
@@ -73,6 +74,8 @@ class RuntimeScheduler:
             self._cond.notify_all()
         if self._thread.is_alive():
             self._thread.join(timeout=timeout)
+        if self._dispatch_pool:
+            self._dispatch_pool.stop(timeout=timeout)
 
     def get(self, job_key: str) -> Optional[RuntimeScheduledJob]:
         with self._lock:
@@ -184,7 +187,10 @@ class RuntimeScheduler:
                 if item:
                     due_items.append(item)
         for job, callback in due_items:
-            self._dispatch(job, callback, current)
+            if self._dispatch_pool:
+                self._dispatch_pool.submit(job, callback, current)
+            else:
+                self._dispatch(job, callback, current)
         return len(due_items)
 
     def snapshot(self, now: Optional[float] = None) -> Dict[str, Any]:
@@ -216,6 +222,7 @@ class RuntimeScheduler:
                 "dispatch_count": int(self._dispatch_count),
                 "callback_failure_count": int(self._callback_failure_count),
                 "stale_rejection_count": int(self._stale_rejection_count),
+                "dispatch_pool": self._dispatch_pool.snapshot() if self._dispatch_pool else {},
             }
 
     def _set_job(self, job: RuntimeScheduledJob, callback: ScheduleCallback) -> None:

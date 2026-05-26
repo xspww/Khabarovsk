@@ -39,7 +39,7 @@ if (-not (Test-Path -LiteralPath $Runner)) {
 }
 
 if (-not $LogDir) {
-    $LogDir = Join-Path $env:LOCALAPPDATA "Cronus Launcher\data"
+    $LogDir = Join-Path (Join-Path $env:LOCALAPPDATA "Cronus Launcher\data") "logs"
 }
 New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
 $WatchdogLog = Join-Path $LogDir "cronus_watchdog.log"

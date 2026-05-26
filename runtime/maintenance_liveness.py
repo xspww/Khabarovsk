@@ -99,6 +99,13 @@ class MaintenanceLivenessMixin:
                         expected_transaction_id=transaction_id,
                     )
                     continue
+                if (
+                    pid_live
+                    and state == AccountState.VERIFY
+                    and lua_liveness_required(self._cfg)
+                    and recovery_status == LUA_WAITING_STATUS
+                ):
+                    continue
                 if pid_live:
                     self._runtime_signal(
                         acc,

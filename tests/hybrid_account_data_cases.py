@@ -57,6 +57,59 @@ class HybridAccountDataCases:
             with open(migrated, "r", encoding="utf-8") as handle:
                 self.assertEqual(json.load(handle)["auto_rejoin"], False)
 
+    def test_runtime_logs_and_cache_have_dedicated_data_subdirs(self):
+        import account_hybrid
+        import app_paths
+        import core_logging
+
+        self.assertEqual(Path(core_logging.LOG_FILE).parent, Path(app_paths.LOG_DIR))
+        self.assertEqual(Path(core_logging.STRUCTURED_LOG_FILE).parent, Path(app_paths.LOG_DIR))
+        self.assertEqual(Path(account_hybrid.ACCOUNT_AUDIT_FILE).parent, Path(app_paths.LOG_DIR))
+        self.assertEqual(Path(app_paths.CACHE_DIR).parent, Path(app_paths.APP_DATA_DIR))
+
+    def test_app_data_file_migration_moves_root_log_into_logs_dir(self):
+        import app_paths
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target_data = os.path.join(tmp, "Cronus Launcher", "data")
+            os.makedirs(target_data, exist_ok=True)
+            source = os.path.join(target_data, "cronus_rt1.log")
+            with open(source, "w", encoding="utf-8") as handle:
+                handle.write("old log")
+
+            with patch.object(app_paths, "APP_DATA_DIR", target_data):
+                app_paths.move_app_data_file("cronus_rt1.log", os.path.join("logs", "cronus_rt1.log"))
+
+            migrated = os.path.join(target_data, "logs", "cronus_rt1.log")
+            self.assertFalse(os.path.exists(source))
+            with open(migrated, "r", encoding="utf-8") as handle:
+                self.assertEqual(handle.read(), "old log")
+
+    def test_app_data_file_migration_discards_duplicate_root_cache_icon(self):
+        import app_paths
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target_data = os.path.join(tmp, "Cronus Launcher", "data")
+            target_cache = os.path.join(target_data, "cache")
+            os.makedirs(target_cache, exist_ok=True)
+            source = os.path.join(target_data, "cronus_console_icon.ico")
+            target = os.path.join(target_cache, "cronus_console_icon.ico")
+            with open(source, "wb") as handle:
+                handle.write(b"old")
+            with open(target, "wb") as handle:
+                handle.write(b"cache")
+
+            with patch.object(app_paths, "APP_DATA_DIR", target_data):
+                app_paths.move_app_data_file(
+                    "cronus_console_icon.ico",
+                    os.path.join("cache", "cronus_console_icon.ico"),
+                    discard_if_target_exists=True,
+                )
+
+            self.assertFalse(os.path.exists(source))
+            with open(target, "rb") as handle:
+                self.assertEqual(handle.read(), b"cache")
+
     def test_account_data_never_exposes_cookie_by_default(self):
         cookie = "_|WARNING:-DO-NOT-SHARE-THIS.--unit-test-cookie"
         with tempfile.TemporaryDirectory() as tmp:

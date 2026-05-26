@@ -339,17 +339,18 @@ def monitor(args: argparse.Namespace, evidence: Optional[Dict[str, Any]] = None)
     evidence.setdefault("runtime_warnings", [])
     evidence.setdefault("duration_seconds", 0.0)
     data_dir = _app_data_dir()
+    log_dir = data_dir / "logs"
     run_id = time.strftime("%Y%m%d-%H%M%S")
-    report_path = data_dir / f"soak_monitor_{run_id}.jsonl"
+    report_path = log_dir / f"soak_monitor_{run_id}.jsonl"
     log = MonitorLog(report_path)
     api = ApiClient(args.base_url, log)
     log.write("info", "soak_monitor_started", account=args.account, duration_seconds=args.duration_seconds, report=str(report_path))
 
     log_paths = [
-        data_dir / "cronus_rt1.log",
-        data_dir / "cronus_rt1_events.jsonl",
+        log_dir / "cronus_rt1.log",
+        log_dir / "cronus_rt1_events.jsonl",
     ]
-    log_paths.extend(data_dir.glob("cronus_backend_*.err.log"))
+    log_paths.extend(log_dir.glob("cronus_backend_*.err.log"))
     log_paths.extend(Path("logs").glob("*.err.log"))
     scanner = LogScanner(log_paths)
 
@@ -530,7 +531,7 @@ def main(argv: List[str]) -> int:
     args = parse_args(argv)
     data_dir = _app_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
-    log = MonitorLog(data_dir / f"soak_monitor_boot_{time.strftime('%Y%m%d-%H%M%S')}.jsonl")
+    log = MonitorLog(data_dir / "logs" / f"soak_monitor_boot_{time.strftime('%Y%m%d-%H%M%S')}.jsonl")
     evidence: Dict[str, Any] = {
         "reached_in_game": False,
         "fatal_hits": [],

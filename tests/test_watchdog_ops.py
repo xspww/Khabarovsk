@@ -14,6 +14,7 @@ class WatchdogOpsTests(unittest.TestCase):
         self.assertIn("Global\\CronusLauncherWatchdog", watchdog)
         self.assertIn("Invoke-RestMethod -Uri $HealthUrl", watchdog)
         self.assertIn("ops\\run_backend.py", watchdog)
+        self.assertIn('"logs"', watchdog)
         self.assertIn("Stop-KnownCronusBackends", watchdog)
         self.assertNotIn("taskkill /F /IM python.exe", watchdog)
         self.assertNotIn("Stop-Process -Name python", watchdog)

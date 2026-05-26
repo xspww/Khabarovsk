@@ -9,7 +9,7 @@ import time
 from enum import Enum
 from typing import Any
 
-from app_paths import APP_DATA_DIR, migrate_legacy_data_files
+from app_paths import LOG_DIR, ensure_log_dir, migrate_legacy_data_files, move_app_data_file
 from console_activity import emit_structured as emit_console_activity
 from console_activity import emit_text as emit_console_text
 from services.safe_rotating_log import ProcessSafeRotatingFileHandler
@@ -21,6 +21,7 @@ for _filename in (
     "account_import_pending.json",
     "cronus_rt1.log",
     "cronus_rt1_events.jsonl",
+    "cronus_watchdog.log",
     "cronus_rt1_config.json",
     "cronus_rt1_cookies.json",
     "cronus_rt12_accounts.txt",
@@ -31,8 +32,31 @@ for _filename in (
 ):
     migrate_legacy_data_files((_filename,))
 
-LOG_FILE = os.path.join(APP_DATA_DIR, "cronus_rt1.log")
-STRUCTURED_LOG_FILE = os.path.join(APP_DATA_DIR, "cronus_rt1_events.jsonl")
+
+def _move_log_artifacts_to_log_dir() -> None:
+    for filename in (
+        "account_tools_audit.jsonl",
+        "cronus_watchdog.log",
+        "cronus_rt1.log",
+        "cronus_rt1_events.jsonl",
+    ):
+        for suffix in ("", ".1", ".2", ".3", ".lock"):
+            move_app_data_file(filename + suffix, os.path.join("logs", filename + suffix))
+    for filename in os.listdir(os.path.dirname(LOG_DIR)):
+        is_log = (
+            filename.startswith("cronus_backend_")
+            or filename.startswith("soak_monitor_")
+            or filename.startswith("control_plane_soak_")
+        )
+        if is_log and filename.endswith((".log", ".jsonl")):
+            move_app_data_file(filename, os.path.join("logs", filename))
+
+
+_move_log_artifacts_to_log_dir()
+ensure_log_dir()
+
+LOG_FILE = os.path.join(LOG_DIR, "cronus_rt1.log")
+STRUCTURED_LOG_FILE = os.path.join(LOG_DIR, "cronus_rt1_events.jsonl")
 
 
 _logger = logging.getLogger("cronus_rt1")

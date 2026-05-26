@@ -277,6 +277,33 @@ class HybridAccountRecoverySignalCases:
         self.assertEqual(kwargs["expected_session_id"], "sess")
         self.assertEqual(kwargs["payload"]["trigger"], "lua_wait_timeout")
 
+    def test_waiting_for_lua_keeps_waiting_before_timeout_even_when_pid_is_live(self):
+        maint = object.__new__(SystemMaintenance)
+        maint._cfg = {
+            "use_lua": True,
+            "lua_wait_timeout": 60,
+            "launch_verify_window": 25,
+            "queue_timeout": 90,
+        }
+        calls = []
+        maint._runtime_signal = lambda *args, **kwargs: calls.append((args, kwargs)) or True
+
+        acc = Account(username="lua_waiting_user")
+        now = time.time()
+        acc.state = AccountState.VERIFY
+        acc.desired_state = AccountState.IN_GAME
+        acc.pid = 1234
+        acc.bound_process_identity = "RobloxPlayerBeta.exe|1|C:\\Roblox\\RobloxPlayerBeta.exe"
+        acc.browser_tracker_id = "browser-1"
+        acc.recovery_status = "waiting_for_lua"
+        acc.last_state_change_at = now - 40
+        maint._accounts = [acc]
+
+        with patch("runtime.maintenance_liveness.ProcessManager.is_bound_game_alive", return_value=True):
+            SystemMaintenance._recover_stale_joining_states(maint)
+
+        self.assertEqual(calls, [])
+
     def test_memory_pressure_guard_triggers_targeted_rejoin_signal(self):
         maint = object.__new__(SystemMaintenance)
         maint._cfg = {

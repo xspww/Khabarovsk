@@ -9,7 +9,7 @@ Set-StrictMode -Version 3.0
 $ErrorActionPreference = "Stop"
 
 if (-not $LogDir) {
-    $LogDir = Join-Path $env:LOCALAPPDATA "Cronus Launcher\data"
+    $LogDir = Join-Path (Join-Path $env:LOCALAPPDATA "Cronus Launcher\data") "logs"
 }
 $WatchdogLog = Join-Path $LogDir "cronus_watchdog.log"
 $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue

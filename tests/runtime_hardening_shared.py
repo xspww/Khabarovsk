@@ -17,7 +17,7 @@ if "CRONUS_USER_ROOT" not in os.environ:
 else:
     shutil.rmtree(_TEST_USER_ROOT, ignore_errors=True)
 
-from core import Account, AccountState, EventBus, SmartQueue, StateManager
+from core import Account, AccountState, EventBus, EventName, SmartQueue, StateManager
 import farm as farm_module
 from farm import RecoveryCoordinator, SystemMaintenance
 from runtime.recovery_context import NETWORK_DISCONNECT, SESSION_CONFLICT, RecoveryAttemptContext, normalize_disconnect_category

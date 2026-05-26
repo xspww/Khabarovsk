@@ -9,6 +9,16 @@ class HybridAccountApiAuthRuntimeCases:
         client = TestClient(main.app)
         self.assertEqual(auth_post(client, "/api/app/shutdown", json={"token": "wrong"}).status_code, 403)
 
+    def test_app_shutdown_requires_api_token_header_before_body_validation(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        response = client.post("/api/app/shutdown", json={"token": main.INSTANCE_TOKEN})
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.json()["detail"], "Invalid API token")
+
     def test_api_token_required_for_mutating_routes(self):
         from fastapi.testclient import TestClient
         import main

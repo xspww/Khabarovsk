@@ -122,6 +122,59 @@ class RuntimeHardeningObservabilityCases:
                 store.close()
 
 
+    def test_event_bus_runs_critical_events_inline_when_backpressured(self):
+        bus = EventBus(workers=1, max_pending=1)
+        worker_started = threading.Event()
+        release_worker = threading.Event()
+        seen = []
+
+        def blocking_task():
+            worker_started.set()
+            release_worker.wait(timeout=2.0)
+
+        bus._tasks.put_nowait(("block", blocking_task, {}))
+        self.assertTrue(worker_started.wait(timeout=1.0))
+        bus._tasks.put_nowait(("fill", lambda: None, {}))
+        bus.on(
+            EventName.STATE_CHANGE,
+            lambda **kwargs: seen.append(kwargs["account"]._config_username),
+        )
+
+        try:
+            acc = Account(username="critical_event_user")
+            bus.emit(
+                EventName.STATE_CHANGE,
+                account=acc,
+                old_state=AccountState.IDLE,
+                new_state=AccountState.READY,
+            )
+            self.assertEqual(seen, ["critical_event_user"])
+        finally:
+            release_worker.set()
+
+
+    def test_event_bus_drops_noncritical_events_when_backpressured(self):
+        bus = EventBus(workers=1, max_pending=1)
+        worker_started = threading.Event()
+        release_worker = threading.Event()
+        seen = []
+
+        def blocking_task():
+            worker_started.set()
+            release_worker.wait(timeout=2.0)
+
+        bus._tasks.put_nowait(("block", blocking_task, {}))
+        self.assertTrue(worker_started.wait(timeout=1.0))
+        bus._tasks.put_nowait(("fill", lambda: None, {}))
+        bus.on("telemetry_noise", lambda **kwargs: seen.append(kwargs.get("value")))
+
+        try:
+            bus.emit("telemetry_noise", value="dropped")
+            self.assertEqual(seen, [])
+        finally:
+            release_worker.set()
+
+
     def test_runtime_store_filters_events_by_type_and_severity(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = RuntimeStore(os.path.join(tmp, "runtime.db"))

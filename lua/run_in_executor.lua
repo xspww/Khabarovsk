@@ -1,6 +1,25 @@
-local CRONUS_HOST = "127.0.0.1"
-local CRONUS_PORT = 7777
-local CRONUS_ACCOUNT = ""
+local function cronusGlobal(name, fallback)
+    local ok, value = pcall(function()
+        if getgenv then
+            local env = getgenv()
+            if env and env[name] ~= nil then
+                return env[name]
+            end
+        end
+        if _G and _G[name] ~= nil then
+            return _G[name]
+        end
+        return fallback
+    end)
+    if ok and value ~= nil then
+        return value
+    end
+    return fallback
+end
+
+local CRONUS_HOST = tostring(cronusGlobal("CRONUS_HOST", "127.0.0.1"))
+local CRONUS_PORT = tonumber(cronusGlobal("CRONUS_PORT", 7777)) or 7777
+local CRONUS_ACCOUNT = tostring(cronusGlobal("CRONUS_ACCOUNT", ""))
 
 local Request =
     (syn and syn.request)

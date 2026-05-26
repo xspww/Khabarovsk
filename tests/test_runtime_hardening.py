@@ -5,6 +5,7 @@ from tests.runtime_hardening_recovery_policy_cases import RuntimeHardeningRecove
 from tests.runtime_hardening_recovery_flow_cases import RuntimeHardeningRecoveryFlowCases
 from tests.runtime_hardening_observability_cases import RuntimeHardeningObservabilityCases
 from tests.runtime_hardening_scheduler_network_cases import RuntimeHardeningSchedulerNetworkCases
+from tests.runtime_hardening_migration_cases import RuntimeHardeningMigrationCases
 from tests.runtime_hardening_shared import RuntimeHardeningBase
 
 
@@ -15,6 +16,7 @@ class RuntimeHardeningTests(
     RuntimeHardeningRecoveryFlowCases,
     RuntimeHardeningObservabilityCases,
     RuntimeHardeningSchedulerNetworkCases,
+    RuntimeHardeningMigrationCases,
     unittest.TestCase,
 ):
     """Compatibility facade for the runtime hardening regression suite."""

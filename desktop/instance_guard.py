@@ -154,7 +154,9 @@ def _read_instance_state() -> Dict[str, Any]:
 
 def _write_instance_state(port: int) -> None:
     payload = {
+        "schema_version": 2,
         "pid": os.getpid(),
+        "host": HOST,
         "port": int(port),
         "token": INSTANCE_TOKEN,
         "base_dir": BASE_DIR,

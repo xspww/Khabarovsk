@@ -136,6 +136,19 @@ EVENT_CONTRACTS: Dict[str, Tuple[str, ...]] = {
     EventName.NETWORK_LOST_ACCOUNT: ("account",),
 }
 
+CRITICAL_EVENT_NAMES: Set[str] = {
+    EventName.STATE_CHANGE,
+    EventName.INVALID_TRANSITION,
+    EventName.ACCOUNT_CRASH,
+    EventName.ACCOUNT_FAILED,
+    EventName.RECOVERY_REQUESTED,
+    EventName.REJOIN_SUCCESS,
+    EventName.LAUNCH_SUCCESS,
+    EventName.LAUNCH_FAILED,
+    EventName.NETWORK_STATE_CHANGE,
+    EventName.NETWORK_LOST_ACCOUNT,
+}
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  ACCOUNT DATA MODEL
@@ -517,16 +530,21 @@ class EventBus:
     def _run_worker(self):
         while True:
             event, handler, kwargs = self._tasks.get()
-            started = time.time()
             try:
-                handler(**kwargs)
-            except Exception as e:
-                flog_kv("BUS", "handler_error", "warning", bus_event=event, error=e)
+                self._invoke_handler(event, handler, kwargs)
             finally:
-                elapsed = time.time() - started
-                if elapsed >= self._slow_handler_sec:
-                    flog_kv("BUS", "slow_handler", "warning", bus_event=event, seconds=f"{elapsed:.2f}")
                 self._tasks.task_done()
+
+    def _invoke_handler(self, event: str, handler: Callable, kwargs: Dict[str, Any], inline: bool = False):
+        started = time.time()
+        try:
+            handler(**kwargs)
+        except Exception as e:
+            flog_kv("BUS", "handler_error", "warning", bus_event=event, error=e, inline=inline)
+        finally:
+            elapsed = time.time() - started
+            if elapsed >= self._slow_handler_sec:
+                flog_kv("BUS", "slow_handler", "warning", bus_event=event, seconds=f"{elapsed:.2f}", inline=inline)
 
     def emit(self, event: str, **kwargs):
         required = EVENT_CONTRACTS.get(event)
@@ -537,10 +555,15 @@ class EventBus:
         with self._lock:
             handlers = list(self._handlers.get(event, []))
         for h in handlers:
+            payload = dict(kwargs)
             try:
-                self._tasks.put_nowait((event, h, dict(kwargs)))
+                self._tasks.put_nowait((event, h, payload))
             except queue.Full:
-                flog_kv("BUS", "queue_full_drop", "warning", bus_event=event, pending=self._tasks.qsize())
+                if event in CRITICAL_EVENT_NAMES:
+                    flog_kv("BUS", "queue_full_inline", "warning", bus_event=event, pending=self._tasks.qsize())
+                    self._invoke_handler(event, h, payload, inline=True)
+                else:
+                    flog_kv("BUS", "queue_full_drop", "warning", bus_event=event, pending=self._tasks.qsize())
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -64,6 +64,8 @@ def _default_user_root() -> str:
 
 USER_DATA_ROOT = _default_user_root()
 APP_DATA_DIR = os.path.join(USER_DATA_ROOT, "data")
+LOG_DIR = os.path.join(APP_DATA_DIR, "logs")
+CACHE_DIR = os.path.join(APP_DATA_DIR, "cache")
 LEGACY_APP_DATA_DIR = BUNDLE_DIR if IS_COMPILED else APP_ROOT_DIR
 LEGACY_DATA_DIR = os.path.join(LEGACY_APP_DATA_DIR, "data")
 
@@ -71,6 +73,16 @@ LEGACY_DATA_DIR = os.path.join(LEGACY_APP_DATA_DIR, "data")
 def ensure_user_dirs() -> None:
     os.makedirs(APP_DATA_DIR, exist_ok=True)
     os.makedirs(USER_DATA_ROOT, exist_ok=True)
+
+
+def ensure_log_dir() -> None:
+    ensure_user_dirs()
+    os.makedirs(LOG_DIR, exist_ok=True)
+
+
+def ensure_cache_dir() -> None:
+    ensure_user_dirs()
+    os.makedirs(CACHE_DIR, exist_ok=True)
 
 
 def resource_path(*parts: str) -> str:
@@ -170,6 +182,32 @@ def migrate_legacy_data_files(filenames: Iterable[str]) -> None:
                 break
             if migrated:
                 break
+
+
+def _collision_path(path: str) -> str:
+    candidate = f"{path}.migrated"
+    index = 1
+    while os.path.exists(candidate):
+        index += 1
+        candidate = f"{path}.migrated{index}"
+    return candidate
+
+
+def move_app_data_file(source_rel: str, target_rel: str, *, discard_if_target_exists: bool = False) -> None:
+    source = os.path.join(APP_DATA_DIR, str(source_rel).replace("/", os.sep).replace("\\", os.sep))
+    target = os.path.join(APP_DATA_DIR, str(target_rel).replace("/", os.sep).replace("\\", os.sep))
+    if _norm(source) == _norm(target) or not os.path.exists(source):
+        return
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        if os.path.exists(target):
+            if discard_if_target_exists:
+                os.remove(source)
+                return
+            target = _collision_path(target)
+        shutil.move(source, target)
+    except Exception:
+        pass
 
 
 ensure_user_dirs()

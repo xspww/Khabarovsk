@@ -69,11 +69,12 @@ local function getProcessId()
 end
 
 local function getServerInfo()
+    -- Client Lua cannot safely inspect private server identifiers; Cronus infers that from launch intent.
     return {
         private_server_id = "",
         private_server_owner_id = "",
-        is_vip_server = "",
-        server_type = "UNKNOWN",
+        is_vip_server = "false",
+        server_type = "PUBLIC",
     }
 end
 

@@ -5,7 +5,7 @@ import ctypes
 import os
 from typing import List
 
-from app_paths import APP_DATA_DIR, resource_path
+from app_paths import CACHE_DIR, ensure_cache_dir, move_app_data_file, resource_path
 from core import flog_kv
 
 
@@ -28,7 +28,9 @@ def ensure_console_icon_file() -> str:
     source_path = resource_path("assets", APP_ICON_FILE)
     if not os.path.exists(source_path):
         return ""
-    icon_path = os.path.join(APP_DATA_DIR, "cronus_console_icon.ico")
+    move_app_data_file("cronus_console_icon.ico", os.path.join("cache", "cronus_console_icon.ico"), discard_if_target_exists=True)
+    ensure_cache_dir()
+    icon_path = os.path.join(CACHE_DIR, "cronus_console_icon.ico")
     try:
         if (
             os.path.exists(icon_path)

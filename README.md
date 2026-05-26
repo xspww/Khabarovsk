@@ -144,7 +144,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\uninstall_watchdog_tas
 Watchdog logs:
 
 ```text
-%LOCALAPPDATA%\Cronus Launcher\data\cronus_watchdog.log
+%LOCALAPPDATA%\Cronus Launcher\data\logs\cronus_watchdog.log
 ```
 
 ---
@@ -186,6 +186,8 @@ Runtime data is stored under:
 ```text
 %LOCALAPPDATA%\Cronus Launcher\data
 ```
+
+Logs are stored under `data\logs`. Generated icon/cache files are stored under `data\cache`.
 
 Cookies are encrypted with Windows DPAPI before being written to disk.
 

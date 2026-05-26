@@ -12,11 +12,12 @@ import webbrowser
 from ctypes import wintypes
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from app_paths import APP_DATA_DIR
+from app_paths import APP_DATA_DIR, LOG_DIR, move_app_data_file
 
 
 ACCOUNT_DATA_FILE = os.path.join(APP_DATA_DIR, "AccountData.json")
-ACCOUNT_AUDIT_FILE = os.path.join(APP_DATA_DIR, "account_tools_audit.jsonl")
+move_app_data_file("account_tools_audit.jsonl", os.path.join("logs", "account_tools_audit.jsonl"))
+ACCOUNT_AUDIT_FILE = os.path.join(LOG_DIR, "account_tools_audit.jsonl")
 PENDING_IMPORT_FILE = os.path.join(APP_DATA_DIR, "account_import_pending.json")
 
 COOKIE_RE = re.compile(
@@ -689,6 +690,7 @@ def audit_event(action: str, username: str = "", ok: bool = True, **fields: Any)
     }
     for key, value in fields.items():
         event[str(key)] = redact_secret(value)
+    os.makedirs(os.path.dirname(ACCOUNT_AUDIT_FILE), exist_ok=True)
     with open(ACCOUNT_AUDIT_FILE, "a", encoding="utf-8") as f:
         f.write(json.dumps(event, ensure_ascii=False, default=str) + "\n")
 

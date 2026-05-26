@@ -160,9 +160,9 @@ def roblox_process_count() -> int:
     return total
 
 
-def start_backend(args: argparse.Namespace, data_dir: Path, report: JsonlReport) -> subprocess.Popen:
-    stdout = data_dir / f"control_plane_backend_{time.strftime('%Y%m%d-%H%M%S')}.out.log"
-    stderr = data_dir / f"control_plane_backend_{time.strftime('%Y%m%d-%H%M%S')}.err.log"
+def start_backend(args: argparse.Namespace, log_dir: Path, report: JsonlReport) -> subprocess.Popen:
+    stdout = log_dir / f"control_plane_backend_{time.strftime('%Y%m%d-%H%M%S')}.out.log"
+    stderr = log_dir / f"control_plane_backend_{time.strftime('%Y%m%d-%H%M%S')}.err.log"
     env = os.environ.copy()
     env.setdefault("PYTHONUTF8", "1")
     env.setdefault("PYTHONIOENCODING", "utf-8")
@@ -206,10 +206,11 @@ def wait_ready(base_url: str, data_dir: Path, timeout_seconds: float) -> str:
 def run_soak(args: argparse.Namespace) -> int:
     data_dir = app_data_dir()
     data_dir.mkdir(parents=True, exist_ok=True)
+    log_dir = data_dir / "logs"
     run_id = time.strftime("%Y%m%d-%H%M%S")
-    report = JsonlReport(data_dir / f"control_plane_soak_{run_id}.jsonl")
+    report = JsonlReport(log_dir / f"control_plane_soak_{run_id}.jsonl")
     base_url = f"http://{args.host}:{args.port}"
-    backend = start_backend(args, data_dir, report)
+    backend = start_backend(args, log_dir, report)
     token = ""
     latencies: List[float] = []
     errors: List[str] = []
@@ -217,8 +218,8 @@ def run_soak(args: argparse.Namespace) -> int:
     start = time.monotonic()
     last_heartbeat = 0.0
     scanner = LogScanner([
-        data_dir / "cronus_rt1.log",
-        data_dir / "cronus_rt1_events.jsonl",
+        log_dir / "cronus_rt1.log",
+        log_dir / "cronus_rt1_events.jsonl",
     ])
 
     try:

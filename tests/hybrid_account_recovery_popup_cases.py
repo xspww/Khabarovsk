@@ -116,6 +116,89 @@ class HybridAccountRecoveryPopupCases:
         self.assertEqual(acc.recovery_status, CAPTCHA_REASON)
         self.assertIn(acc._config_username, maint._last_popup_scan_at)
 
+    def test_lua_waiting_verify_account_scans_captcha_popup(self):
+        maint = object.__new__(SystemMaintenance)
+        maint._cfg = {
+            "watchdog_enabled": True,
+            "popup_disconnected_enabled": True,
+            "popup_scan_interval_seconds": 1,
+            "popup_startup_grace_seconds": 0,
+            "watchdog_hold_time": 60,
+            "watchdog_activity_timeout": 180,
+            "watchdog_loading_grace": 90,
+            "watchdog_cpu_low": 0.9,
+            "use_lua": True,
+        }
+        maint._accounts = []
+        maint._workers = {}
+        maint._last_popup_scan_at = {}
+
+        class Net:
+            def is_online(self):
+                return True
+
+        class Recovery:
+            _net = Net()
+
+            def __init__(self):
+                self.failed = []
+
+            def fail_account(self, account, reason, reason_msg):
+                self.failed.append((account.username, reason, reason_msg))
+
+        class State:
+            def __init__(self):
+                self.runtime = RuntimeStateManager(logger=lambda *_args, **_kwargs: None)
+                self.cleared = []
+
+            def set_recovery(self, account, status="", reason="", inflight=None):
+                self.runtime.set_recovery(account, status=status, reason=reason, inflight=inflight)
+
+            def set_cooldown(self, account, until_ts, reason=""):
+                self.runtime.set_cooldown(account, until_ts, reason=reason)
+
+            def clear_process_binding(self, account, reason="", increment_generation=False):
+                self.cleared.append((account.username, account.pid, reason, increment_generation))
+                self.runtime.clear_process_binding(account, reason=reason, increment_generation=increment_generation)
+
+        recovery = Recovery()
+        state = State()
+        maint._recovery = recovery
+        maint._state_mgr = state
+        acc = Account(username="lua_waiting_captcha_user")
+        acc.state = AccountState.VERIFY
+        acc.pid = 5432
+        acc.recovery_status = "waiting_for_lua"
+        acc.last_state_change_at = time.time() - 120
+        acc.last_launch_at = time.time() - 120
+        acc.liveness_state = "waiting_for_lua"
+        maint._accounts = [acc]
+
+        liveness = {
+            "state": "captcha",
+            "score": 8.0,
+            "validation": {"cpu": 3.0, "ram_mb": 300.0, "windows": 1},
+            "reason_key": CAPTCHA_REASON,
+            "dialog": {
+                "matched": True,
+                "action": "hold",
+                "reason_key": CAPTCHA_REASON,
+                "detail": "Roblox Security verification CAPTCHA visible",
+                "popup_confidence": 1.5,
+                "evidence_source": "text",
+            },
+        }
+        with patch.object(ProcessManager, "assess_liveness", return_value=liveness) as assess, \
+             patch.object(ProcessService, "safe_kill_bound_process", return_value={"ok": True, "killed": True, "pid": 5432, "reason": "killed"}):
+            SystemMaintenance._scan_liveness_watchdog(maint)
+
+        self.assertTrue(assess.called)
+        self.assertTrue(assess.call_args.kwargs["inspect_ui"])
+        self.assertTrue(is_account_captcha_required(acc))
+        self.assertEqual(acc.recovery_status, CAPTCHA_REASON)
+        self.assertEqual(recovery.failed, [("lua_waiting_captcha_user", CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)])
+        self.assertIn(acc._config_username, maint._last_popup_scan_at)
+
     def test_captcha_popup_closes_only_bound_account_process(self):
         maint = object.__new__(SystemMaintenance)
         maint._cfg = {

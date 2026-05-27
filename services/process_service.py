@@ -19,6 +19,7 @@ from services.process_account_runtime import (
     account_name as _account_name,
     has_binding_evidence as _has_binding_evidence,
     mark_account_process_proof as _mark_account_process_proof,
+    process_log_fields as _process_log_fields,
     quarantine_process_match as _quarantine_process_match,
     runtime_generation_matches as _runtime_generation_matches,
     set_adopt_diagnostics as _set_adopt_diagnostics,
@@ -165,11 +166,7 @@ class ProcessService:
                 confidence_level=validation.get("confidence_level", ""),
                 windows=windows,
                 hwnd=validation.get("hwnd", 0),
-                runtime_generation=getattr(account, "runtime_generation", 0),
-                recovery_generation=getattr(account, "recovery_generation", 0),
-                command_generation=getattr(account, "command_generation", 0),
-                session_id=getattr(account, "session_id", ""),
-                transaction_id=getattr(account, "rejoin_transaction_id", ""),
+                **_process_log_fields(account),
                 thread=threading.current_thread().name,
             )
         return validation
@@ -210,11 +207,7 @@ class ProcessService:
             process_action="bind_account_process",
             expected_identity=expected_identity or "",
             expected_browser_tracker_id=_account_browser_tracker_id(account),
-            runtime_generation=getattr(account, "runtime_generation", 0),
-            recovery_generation=getattr(account, "recovery_generation", 0),
-            command_generation=getattr(account, "command_generation", 0),
-            session_id=getattr(account, "session_id", ""),
-            transaction_id=getattr(account, "rejoin_transaction_id", ""),
+            **_process_log_fields(account),
         )
         validation = ProcessService.validate_binding(
             account,
@@ -274,11 +267,7 @@ class ProcessService:
             process_proof_level=proof_level,
             binding_decision="verified",
             process_owner_claim=_account_key(account),
-            runtime_generation=getattr(account, "runtime_generation", 0),
-            recovery_generation=getattr(account, "recovery_generation", 0),
-            command_generation=getattr(account, "command_generation", 0),
-            session_id=getattr(account, "session_id", ""),
-            transaction_id=getattr(account, "rejoin_transaction_id", ""),
+            **_process_log_fields(account),
         )
         return {"ok": True, "pid": int(pid), "identity": identity, "name": name, "validation": validation}
 
@@ -434,11 +423,7 @@ class ProcessService:
             reason=reason,
             process_action="safe_adopt_visible_process",
             confidence=validation.get("confidence", 0.0),
-            runtime_generation=getattr(account, "runtime_generation", 0),
-            recovery_generation=getattr(account, "recovery_generation", 0),
-            command_generation=getattr(account, "command_generation", 0),
-            session_id=getattr(account, "session_id", ""),
-            transaction_id=getattr(account, "rejoin_transaction_id", ""),
+            **_process_log_fields(account),
             thread=threading.current_thread().name,
         )
         return {"ok": True, "pid": pid, "reason": "adopted_visible_singleton", "validation": validation, "live": visible}
@@ -480,9 +465,7 @@ class ProcessService:
             pid=target_pid,
             reason=reason,
             process_action="release_account_process",
-            runtime_generation=getattr(account, "runtime_generation", 0),
-            recovery_generation=getattr(account, "recovery_generation", 0),
-            command_generation=getattr(account, "command_generation", 0),
+            **_process_log_fields(account, include_session=False),
         )
 
     @staticmethod
@@ -570,9 +553,7 @@ class ProcessService:
             confidence=confidence,
             owner=validation.get("owner", ""),
             identity=validation.get("identity", ""),
-            runtime_generation=getattr(account, "runtime_generation", 0),
-            recovery_generation=getattr(account, "recovery_generation", 0),
-            command_generation=getattr(account, "command_generation", 0),
+            **_process_log_fields(account, include_session=False),
         )
         return {
             "ok": bool(killed),
@@ -645,11 +626,7 @@ class ProcessService:
                 binding_decision=validation.get("binding_decision", "rejected"),
                 process_reject_reason=validation.get("process_reject_reason", validation.get("reason", "")),
                 process_owner_claim=validation.get("process_owner_claim", ""),
-                runtime_generation=getattr(account, "runtime_generation", 0),
-                recovery_generation=getattr(account, "recovery_generation", 0),
-                command_generation=getattr(account, "command_generation", 0),
-                session_id=getattr(account, "session_id", ""),
-                transaction_id=getattr(account, "rejoin_transaction_id", ""),
+                **_process_log_fields(account),
             )
             return {"ok": False, "killed": False, "pid": pid, "reason": reject_reason, "validation": validation}
 
@@ -705,11 +682,7 @@ class ProcessService:
             process_action="safe_kill_bound_process",
             identity=identity,
             confidence=validation.get("confidence", 0.0),
-            runtime_generation=getattr(account, "runtime_generation", 0),
-            recovery_generation=getattr(account, "recovery_generation", 0),
-            command_generation=getattr(account, "command_generation", 0),
-            session_id=getattr(account, "session_id", ""),
-            transaction_id=getattr(account, "rejoin_transaction_id", ""),
+            **_process_log_fields(account),
         )
         return {"ok": True, "killed": bool(killed), "pid": pid, "reason": "killed" if killed else "kill_failed", "validation": validation}
 
@@ -812,9 +785,7 @@ class ProcessManager(_LegacyProcessManager):
                 confidence=result.get("confidence", 0.0),
                 confidence_level=result.get("confidence_level", ""),
                 identity=result.get("identity", ""),
-                runtime_generation=getattr(account, "runtime_generation", 0),
-                recovery_generation=getattr(account, "recovery_generation", 0),
-                command_generation=getattr(account, "command_generation", 0),
+                **_process_log_fields(account, include_session=False),
             )
         return result
 

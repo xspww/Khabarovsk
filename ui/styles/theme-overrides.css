@@ -165,13 +165,13 @@ body
 .side-launch .guard-action.good .guard-icon
 {
   fill: none;
-  stroke: var(--ok);
+  stroke: #8ec6ff;
 }
 
 .side-launch .guard-action .guard-icon.start
 {
   fill: none;
-  stroke: #16a964;
+  stroke: #8ec6ff;
 }
 
 .side-launch .guard-action .guard-icon.stop

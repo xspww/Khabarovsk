@@ -1,3 +1,21 @@
+@font-face
+{
+  font-family: "Kanit";
+  src: url("/ui/fonts/Kanit-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face
+{
+  font-family: "Kanit";
+  src: url("/ui/fonts/Kanit-Medium.ttf") format("truetype");
+  font-weight: 500 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root
 {
   color-scheme: dark;
@@ -16,8 +34,8 @@
   --danger: #B56A6A;
   --danger-text: #C88989;
   --shadow: 0 12px 28px rgba(0,0,0,.32);
-  --font: "Inter","Geist","SF Pro Display","Segoe UI",system-ui,sans-serif;
-  --mono: "IBM Plex Mono","Cascadia Mono","Consolas",monospace;
+  --font: "Kanit","Segoe UI",system-ui,sans-serif;
+  --mono: "Kanit","Segoe UI",system-ui,sans-serif;
   --window-radius: 10px;
 }
 

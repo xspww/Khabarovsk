@@ -324,6 +324,19 @@
   background: #62a2ff;
 }
 
+.accounts-shell .status.lua
+{
+  background: rgba(0,255,255,.10);
+  border-color: rgba(0,255,255,.18);
+  color: #00FFFF;
+}
+
+.accounts-shell .status.lua:before
+{
+  background: #00FFFF;
+  box-shadow: 0 0 8px rgba(0,255,255,.38);
+}
+
 .accounts-shell .status.cooldown,
 .accounts-shell .status.recovery,
 .accounts-shell .status.network,

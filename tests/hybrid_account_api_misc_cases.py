@@ -48,14 +48,16 @@ class HybridAccountApiMiscCases:
     def test_popup_disconnected_config_gates_popup_scans(self):
         import inspect
         from farm import AccountWorker, SystemMaintenance
+        from runtime.account_worker_disconnects import handle_disconnect_checks
 
         worker_source = inspect.getsource(AccountWorker.run)
+        disconnect_source = inspect.getsource(handle_disconnect_checks)
         maintenance_source = inspect.getsource(SystemMaintenance._scan_liveness_watchdog)
         self.assertIn('self.cfg.get("popup_disconnected_enabled", True)', worker_source)
         self.assertIn("popup_scan_interval_seconds", worker_source)
-        self.assertIn("effective_hold_sec", worker_source)
-        self.assertIn("disconnect_detected", worker_source)
-        self.assertIn('"279"', worker_source)
+        self.assertIn("effective_hold_sec", disconnect_source)
+        self.assertIn("disconnect_detected", disconnect_source)
+        self.assertIn('"279"', disconnect_source)
         self.assertIn("popup_enabled", maintenance_source)
         self.assertIn("popup_scan_max_parallel", maintenance_source)
         self.assertIn("_popup_periodic_scan_batch", maintenance_source)

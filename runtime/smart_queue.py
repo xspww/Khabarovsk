@@ -215,6 +215,17 @@ class SmartQueue:
         with self._lock:
             return len(self._entries)
 
+    def has_fresh_entry(self, acc: Any) -> bool:
+        key = acc._config_username
+        with self._lock:
+            entry = self._entries.get(key)
+            if not entry:
+                return False
+            return (
+                int(entry.get("recovery_generation", entry.get("generation", 0)) or 0) == int(getattr(acc, "recovery_generation", 0) or 0)
+                and int(entry.get("runtime_generation", 0) or 0) == int(getattr(acc, "runtime_generation", 0) or 0)
+            )
+
     def cancel_account(self, acc_or_key: Any, reason: str = "cancel_account") -> int:
         key = str(getattr(acc_or_key, "_config_username", acc_or_key) or "")
         with self._cond:

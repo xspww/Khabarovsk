@@ -89,7 +89,7 @@ def register(app, ctx: ApiContext) -> None:
         if "use_lua" in updates:
             updates["use_lua"] = bool(updates["use_lua"])
         if "lua_wait_timeout" in updates:
-            updates["lua_wait_timeout"] = _int_setting(updates["lua_wait_timeout"], 60, 1, 3600)
+            updates["lua_wait_timeout"] = _int_setting(updates["lua_wait_timeout"], 60, 1, 60)
         if "auto_close_minutes" in updates:
             updates["auto_close_minutes"] = _int_setting(updates["auto_close_minutes"], 0, 0, 1440)
         if "auto_close_enabled" in updates:

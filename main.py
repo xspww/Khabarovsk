@@ -14,12 +14,12 @@ if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
 from app_paths import APP_NAME, resource_path
+from desktop import console_output
 
 APP_USER_AGENT = "CronusLauncher/RT"
 APP_ICON_FILE = "cronus_icon.png"
 REQUIREMENTS_FILE = os.path.join(BASE_DIR, "requirements.txt")
 _STARTUP_COLOR_SUPPORT: Optional[bool] = None
-_COLOR_RESET = "\x1b[0m"
 _COLOR_GREEN = "\x1b[92m"
 _COLOR_RED = "\x1b[91m"
 _COLOR_DIM = "\x1b[90m"
@@ -30,42 +30,16 @@ _REQUIREMENT_IMPORT_NAMES: Dict[str, str] = {
 
 
 def _startup_console_write(message: str = "") -> None:
-    try:
-        print(message, flush=True)
-    except UnicodeEncodeError:
-        try:
-            safe = str(message).replace("✓", "OK").replace("×", "XX")
-            print(safe.encode("ascii", "replace").decode("ascii"), flush=True)
-        except Exception:
-            pass
+    console_output.write_line(message, {"✓": "OK", "×": "XX"})
 
 
 def _startup_enable_virtual_terminal() -> bool:
-    if not getattr(sys.stdout, "isatty", lambda: False)():
-        return False
-    if os.name != "nt":
-        return True
-    try:
-        import ctypes
-
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.GetStdHandle(-11)
-        if handle in (0, -1):
-            return False
-        mode = ctypes.c_uint32()
-        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
-            return False
-        return bool(kernel32.SetConsoleMode(handle, mode.value | 0x0004))
-    except Exception:
-        return False
+    return console_output.enable_virtual_terminal(sys.stdout)
 
 
 def _startup_colors_enabled() -> bool:
     global _STARTUP_COLOR_SUPPORT
-    requested = os.environ.get("CRONUS_CONSOLE_COLOR", "").strip().lower()
-    if requested in {"0", "false", "no", "off"}:
-        return False
-    if requested not in {"1", "true", "yes", "on"}:
+    if not console_output.color_requested():
         return False
     if _STARTUP_COLOR_SUPPORT is None:
         _STARTUP_COLOR_SUPPORT = _startup_enable_virtual_terminal()
@@ -73,9 +47,7 @@ def _startup_colors_enabled() -> bool:
 
 
 def _startup_paint(text: str, color: str) -> str:
-    if not color or not _startup_colors_enabled():
-        return text
-    return f"{color}{text}{_COLOR_RESET}"
+    return console_output.paint(text, color, enabled=_startup_colors_enabled())
 
 
 def _startup_tick_line(package: str, version: str) -> str:

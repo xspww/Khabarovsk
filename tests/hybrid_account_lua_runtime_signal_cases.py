@@ -117,6 +117,52 @@ class HybridAccountLuaRuntimeSignalCases:
             "VIP",
             "server_detected",
             account="LuaUnit",
+            pid="",
+            is_vip=True,
+            server_type="VIP",
+            private_server_id="3659f6a2",
+            place_id="123456",
+            job_id="job-1",
+        )
+
+    def test_lua_loaded_without_pid_still_logs_bound_vip_server_detection(self):
+        controller = FarmController.__new__(FarmController)
+        account = Account("LuaUnit")
+        account.pid = 555
+        account.state = AccountState.IN_GAME
+        controller._accounts = [account]
+        controller._workers = {}
+        bumped = []
+        pushed = []
+        controller._bump_status_revision = lambda: bumped.append(True)
+        controller._push_event = lambda *args, **kwargs: pushed.append((args, kwargs))
+
+        with patch("farm.flog_kv") as flog:
+            result = controller.handle_lua_rejoin_event({
+                "event": "loaded",
+                "account": "LuaUnit",
+                "username": "LuaUnit",
+                "private_server_id": "3659f6a2-private",
+                "private_server_owner_id": "42",
+                "is_vip_server": "true",
+                "server_type": "VIP",
+                "place_id": "123456",
+                "job_id": "job-1",
+            })
+
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["accepted"])
+        self.assertEqual(result["matched_pid"], 555)
+        self.assertEqual(result["lua_pid"], "")
+        self.assertEqual(account.observed_server_type, "VIP")
+        self.assertEqual(account.observed_private_server_id, "3659f6a2-private")
+        self.assertTrue(bumped)
+        self.assertTrue(pushed)
+        flog.assert_any_call(
+            "VIP",
+            "server_detected",
+            account="LuaUnit",
+            pid="555",
             is_vip=True,
             server_type="VIP",
             private_server_id="3659f6a2",
@@ -266,6 +312,7 @@ class HybridAccountLuaRuntimeSignalCases:
             "VIP",
             "server_detected",
             account="LuaUnit",
+            pid="",
             is_vip=True,
             server_type="VIP",
             private_server_id="",
@@ -311,11 +358,60 @@ class HybridAccountLuaRuntimeSignalCases:
             "VIP",
             "server_detected",
             account="LuaUnit",
+            pid="",
             is_vip=True,
             server_type="VIP",
             private_server_id="",
             place_id="123456",
             job_id="",
+        )
+
+    def test_lua_public_signal_overrides_stale_private_observation_after_public_launch(self):
+        controller = FarmController.__new__(FarmController)
+        account = Account("LuaUnit")
+        account.pid = 555
+        account.server_type = ServerType.PUBLIC
+        account.observed_server_type = "VIP"
+        account.launch_intent = {"private_server_intent": True}
+        controller._accounts = [account]
+        controller._workers = {}
+        controller._bump_status_revision = lambda: None
+
+        class FakeOrchestrator:
+            def handle_runtime_signal(self, acc, signal, reason, payload=None):
+                return True
+
+        controller._runtime_orchestrator = FakeOrchestrator()
+        controller._push_event = lambda *args, **kwargs: None
+
+        with patch("farm.flog_kv") as flog:
+            result = controller.handle_lua_rejoin_event({
+                "event": "loaded",
+                "account": "LuaUnit",
+                "username": "LuaUnit",
+                "pid": "555",
+                "private_server_id": "",
+                "private_server_owner_id": "0",
+                "is_vip_server": "false",
+                "server_type": "PUBLIC",
+                "place_id": "123456",
+                "job_id": "job-1",
+            })
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["observed_server_type"], "PUBLIC")
+        self.assertFalse(result["observed_is_vip"])
+        self.assertEqual(account.observed_server_type, "PUBLIC")
+        flog.assert_any_call(
+            "VIP",
+            "server_detected",
+            account="LuaUnit",
+            pid="555",
+            is_vip=False,
+            server_type="PUBLIC",
+            private_server_id="",
+            place_id="123456",
+            job_id="job-1",
         )
 
     def test_lua_vip_detection_logs_once_per_process_and_job(self):
@@ -350,6 +446,38 @@ class HybridAccountLuaRuntimeSignalCases:
 
         vip_logs = [call for call in flog.call_args_list if call.args[:2] == ("VIP", "server_detected")]
         self.assertEqual(len(vip_logs), 1)
+
+    def test_lua_teleport_state_logs_terminal_event(self):
+        controller = FarmController.__new__(FarmController)
+        account = Account("LuaUnit")
+        controller._accounts = [account]
+        controller._workers = {}
+        controller._bump_status_revision = lambda: None
+        pushed = []
+        controller._push_event = lambda *args, **kwargs: pushed.append((args, kwargs))
+
+        with patch("farm.flog_kv") as flog:
+            result = controller.handle_lua_rejoin_event({
+                "event": "teleport_state",
+                "account": "LuaUnit",
+                "username": "LuaUnit",
+                "teleport_state": "Enum.TeleportState.Started",
+                "teleport_place_id": "123456",
+                "job_id": "job-1",
+            })
+
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["accepted"])
+        self.assertTrue(pushed)
+        flog.assert_any_call(
+            "LUA",
+            "teleport_detected",
+            account="LuaUnit",
+            pid="",
+            teleport_state="Enum.TeleportState.Started",
+            place_id="123456",
+            job_id="job-1",
+        )
 
     def test_lua_description_event_updates_account_note_without_credentials(self):
         controller = FarmController.__new__(FarmController)

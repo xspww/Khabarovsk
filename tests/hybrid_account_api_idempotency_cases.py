@@ -2,6 +2,27 @@ from tests.hybrid_account_fixture import *
 
 
 class HybridAccountApiIdempotencyCases:
+    def test_stop_endpoint_clears_terminal_after_farm_stops(self):
+        from fastapi.testclient import TestClient
+        import main
+
+        client = TestClient(main.app)
+        command = {"command_id": "cmd-stop"}
+        with patch.object(main.farm, "begin_command", return_value=(True, command)), \
+             patch.object(main.farm, "finish_command") as finish_command, \
+             patch.object(main.farm, "running", True), \
+             patch.object(main.farm, "stop") as stop_guard, \
+             patch("api_routes.runtime_routes.console_output.clear_screen") as clear_screen:
+            response = auth_post(client, "/api/stop")
+
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertTrue(data["ok"])
+        self.assertEqual(data["msg"], "Farm stopped")
+        stop_guard.assert_called_once()
+        clear_screen.assert_called_once()
+        finish_command.assert_called_once()
+
     def test_close_all_roblox_endpoint_only_closes_roblox_clients(self):
         from fastapi.testclient import TestClient
         import main

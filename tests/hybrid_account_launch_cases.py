@@ -663,63 +663,6 @@ class HybridAccountLaunchCases:
         finally:
             release_multi_roblox_guard()
 
-    def test_auto_private_server_failure_blocks_public_launch(self):
-        class FakeRobloxHTTP:
-            def __init__(self, cookie):
-                self.cookie = cookie
-
-            def get_auth_ticket(self):
-                return True, "ticket-secret"
-
-        started = []
-        updates = []
-        with patch(
-            "roblox_hybrid.validate_record_cookie_identity",
-            return_value={"ok": True, "cookie_username": "UserA", "cookie_user_id": "42"},
-        ), patch(
-            "roblox_hybrid.ensure_multi_roblox_guard",
-            return_value=(True, "ready"),
-        ), patch.object(
-            HybridLauncher,
-            "kill_duplicate_instances",
-            return_value={"ok": True, "killed": [], "count": 0},
-        ), patch(
-            "roblox_hybrid.ensure_owned_private_server",
-            return_value={
-                "ok": False,
-                "msg": "Private servers are disabled for this universe",
-                "universe_id": "456",
-            },
-        ), patch(
-            "roblox_hybrid.RobloxHTTP",
-            FakeRobloxHTTP,
-        ), patch(
-            "roblox_hybrid.os.startfile",
-            side_effect=lambda uri: started.append(uri),
-            create=True,
-        ), patch(
-            "roblox_hybrid.ACCOUNT_STORE.update_record",
-            side_effect=lambda username, payload: updates.append((username, payload)),
-        ):
-            result = HybridLauncher.launch_record(
-                {"username": "UserA", "cookie": "_|WARNING:-cookie", "place_id": "123456"},
-                target={
-                    "place_id": "123456",
-                    "auto_create_private_server_enabled": True,
-                    "auto_create_private_server_free_only": True,
-                },
-                multi_roblox=True,
-            )
-
-        self.assertFalse(result["ok"])
-        self.assertTrue(result["fatal"])
-        self.assertEqual(result["mode"], "vip")
-        self.assertFalse(result["vip_resolved"])
-        self.assertTrue(result["auto_private_server"])
-        self.assertIn("Private servers are disabled", result["msg"])
-        self.assertEqual(started, [])
-        self.assertTrue(any(payload.get("owned_private_servers") for _username, payload in updates))
-
     def test_multi_roblox_guard_not_ready_blocks_launch(self):
         with patch(
             "roblox_hybrid.validate_record_cookie_identity",

@@ -596,6 +596,9 @@ class HybridLauncher:
                 data.get("auto_create_private_server_enabled", False),
             )
         )
+        if not auto_private_enabled and not explicit_vip_link:
+            links = []
+            global_vip_link = ""
         if auto_private_enabled:
             link_candidates = [str(vip_link or "").strip()] + [str(link or "").strip() for link in links] + [global_vip_link]
             for candidate in link_candidates:

@@ -429,12 +429,32 @@ class ArchitectureDisciplineTests(unittest.TestCase):
         account_runtime = (ROOT / "services" / "process_account_runtime.py").read_text(encoding="utf-8")
 
         self.assertIn("from services.process_account_runtime import", process_service)
+        self.assertIn("def process_log_fields", account_runtime)
+        self.assertIn("_process_log_fields(account)", process_service)
         self.assertIn("def runtime_generation_matches", account_runtime)
         self.assertIn("def set_process_diagnostics", account_runtime)
         self.assertIn("def set_adopt_diagnostics", account_runtime)
         self.assertNotIn("def _runtime_generation_matches", process_service)
         self.assertNotIn("def _set_process_diagnostics", process_service)
         self.assertNotIn("def _set_adopt_diagnostics", process_service)
+
+    def test_cronus_runtime_refactor_seams_stay_split(self):
+        expectations = {
+            "farm.py": ["handle_lua_rejoin_event as _handle_lua_rejoin_event", "return _handle_lua_rejoin_event("],
+            "runtime/lua_rejoin_events.py": ["def handle_lua_rejoin_event(", "farm: Any"],
+            "runtime/launch_controller.py": ["return LaunchAttempt(self, acc, stop).run()"],
+            "runtime/launch_attempt.py": ["class LaunchAttempt"],
+            "runtime/account_worker.py": ["handle_disconnect_checks(self, acc, runtime)"],
+            "runtime/account_worker_disconnects.py": ["def handle_disconnect_checks"],
+            "api_routes/accounts_routes.py": ["from . import account_records"],
+            "api_routes/account_records.py": ["def validate_cookie_records_from_store"],
+            "desktop_host.py": ["from desktop import console_output"],
+            "desktop/console_output.py": ["def enable_virtual_terminal"],
+        }
+        for rel, snippets in expectations.items():
+            text = (ROOT / rel).read_text(encoding="utf-8")
+            for snippet in snippets:
+                self.assertIn(snippet, text)
 
     def test_runtime_transactions_are_split_from_state_manager(self):
         state_manager = (ROOT / "runtime" / "runtime_state_manager.py").read_text(encoding="utf-8")

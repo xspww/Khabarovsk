@@ -30,6 +30,22 @@ def account_browser_tracker_id(acc: Any) -> str:
     return str(getattr(acc, "browser_tracker_id", "") or "")
 
 
+def process_log_fields(account: Any, include_session: bool = True) -> Dict[str, Any]:
+    fields = {
+        "runtime_generation": getattr(account, "runtime_generation", 0),
+        "recovery_generation": getattr(account, "recovery_generation", 0),
+        "command_generation": getattr(account, "command_generation", 0),
+    }
+    if include_session:
+        fields.update(
+            {
+                "session_id": getattr(account, "session_id", ""),
+                "transaction_id": getattr(account, "rejoin_transaction_id", ""),
+            }
+        )
+    return fields
+
+
 def runtime_generation_matches(account: Any, expected_generation: Optional[int], reason: str) -> bool:
     if expected_generation is None:
         return True

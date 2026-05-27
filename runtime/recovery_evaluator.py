@@ -137,7 +137,19 @@ class RecoveryEvaluator:
             r._state_mgr.transition(acc, AccountState.READY, reason=f"{trigger}:force_restart", force=True)
             current = AccountState.READY
 
-        if current in (AccountState.IN_GAME, AccountState.LAUNCHING, AccountState.VERIFY, AccountState.QUEUED):
+        if current == AccountState.QUEUED:
+            has_fresh_queue_entry = False
+            queue_has_fresh_entry = getattr(r._queue, "has_fresh_entry", None)
+            if callable(queue_has_fresh_entry):
+                has_fresh_queue_entry = bool(queue_has_fresh_entry(acc))
+            if has_fresh_queue_entry:
+                r._log_hold(acc, trigger, "active_state=QUEUED")
+                return
+            r._log_recovery_decision("queue_repair", acc, trigger, reason_detail="queued_state_without_queue_entry")
+            r._queue_account(acc, f"{trigger}:queue_repair")
+            return
+
+        if current in (AccountState.IN_GAME, AccountState.LAUNCHING, AccountState.VERIFY):
             r._log_hold(acc, trigger, f"active_state={current.name}")
             return
 

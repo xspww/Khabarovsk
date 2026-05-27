@@ -20,7 +20,7 @@ def lua_wait_timeout_seconds(cfg: Dict[str, Any] | None) -> float:
         value = float(data.get("lua_wait_timeout", data.get("heartbeat_timeout", 60)) or 60)
     except Exception:
         value = 60.0
-    return max(1.0, value)
+    return min(60.0, max(1.0, value))
 
 
 def lua_event_source(reason: str = "", payload: Optional[Dict[str, Any]] = None) -> bool:

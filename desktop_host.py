@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import ctypes
 import os
-import re
 import sys
 import threading
 import time
@@ -16,6 +15,7 @@ import uvicorn
 
 from app_paths import APP_NAME, APP_ROOT_DIR, resource_path
 from console_activity import format_console_line
+from desktop import console_output
 from core import LOG_FILE, flog, flog_kv
 from desktop.console_icon import (
     APP_ICON_FILE,
@@ -62,72 +62,26 @@ _STARTUP_PROGRESS_PERCENT = 0
 _STARTUP_SPINNER_INDEX = 0
 _STARTUP_CLEAR_AFTER_WINDOW_SHOW = False
 _STARTUP_COLOR_SUPPORT: Optional[bool] = None
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-_COLOR_RESET = "\x1b[0m"
 _COLOR_DIM = "\x1b[90m"
 _COLOR_NAVY_BLUE = "\x1b[38;2;30;64;175m"
 _COLOR_NAVY_TEXT = "\x1b[38;2;96;165;250m"
 
 
 def _console_write(message: str = "") -> None:
-    try:
-        print(message, flush=True)
-    except UnicodeEncodeError:
-        try:
-            safe_message = str(message).replace("→", "->")
-            print(safe_message.encode("ascii", "replace").decode("ascii"), flush=True)
-        except Exception:
-            pass
-    except Exception:
-        pass
+    console_output.write_line(message, {"→": "->"})
 
 
 def _console_write_inline(message: str = "") -> None:
-    try:
-        sys.stdout.write(str(message))
-        sys.stdout.flush()
-    except UnicodeEncodeError:
-        try:
-            safe_message = (
-                str(message)
-                .replace("→", "->")
-                .replace("█", "#")
-                .replace("░", ".")
-            )
-            for frame in _STARTUP_SPINNER_FRAMES:
-                safe_message = safe_message.replace(frame, "*")
-            sys.stdout.write(safe_message.encode("ascii", "replace").decode("ascii"))
-            sys.stdout.flush()
-        except Exception:
-            pass
-    except Exception:
-        pass
+    console_output.write_inline(message, {"→": "->", "█": "#", "░": "."}, _STARTUP_SPINNER_FRAMES)
 
 
 def _startup_enable_virtual_terminal() -> bool:
-    if not getattr(sys.stdout, "isatty", lambda: False)():
-        return False
-    if os.name != "nt":
-        return True
-    try:
-        kernel32 = ctypes.windll.kernel32
-        handle = kernel32.GetStdHandle(-11)
-        if handle in (0, -1):
-            return False
-        mode = ctypes.c_uint32()
-        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
-            return False
-        return bool(kernel32.SetConsoleMode(handle, mode.value | 0x0004))
-    except Exception:
-        return False
+    return console_output.enable_virtual_terminal(sys.stdout)
 
 
 def _startup_colors_enabled() -> bool:
     global _STARTUP_COLOR_SUPPORT
-    requested = os.environ.get("CRONUS_CONSOLE_COLOR", "").strip().lower()
-    if requested in {"0", "false", "no", "off"}:
-        return False
-    if requested not in {"1", "true", "yes", "on"}:
+    if not console_output.color_requested():
         return False
     if _STARTUP_COLOR_SUPPORT is None:
         _STARTUP_COLOR_SUPPORT = _startup_enable_virtual_terminal()
@@ -135,13 +89,11 @@ def _startup_colors_enabled() -> bool:
 
 
 def _startup_paint(text: str, color: str) -> str:
-    if not color or not _startup_colors_enabled():
-        return text
-    return f"{color}{text}{_COLOR_RESET}"
+    return console_output.paint(text, color, enabled=_startup_colors_enabled())
 
 
 def _startup_visible_len(text: str) -> int:
-    return len(_ANSI_RE.sub("", str(text)))
+    return console_output.visible_len(text)
 
 
 def _startup_progress_step(percent: int) -> int:
@@ -374,8 +326,8 @@ def _wait_for_backend_ready(server_thread: threading.Thread, timeout: float = 20
 
 def _run_desktop_window() -> bool:
     try:
-        from PySide6.QtCore import QPoint, QTimer, Qt, QUrl
-        from PySide6.QtGui import QBitmap, QColor, QIcon, QPainter, QPixmap
+        from PySide6.QtCore import QPoint, QSize, QTimer, Qt, QUrl
+        from PySide6.QtGui import QBitmap, QColor, QFontDatabase, QIcon, QPainter, QPen, QPixmap
         from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget
         from PySide6.QtWebEngineWidgets import QWebEngineView
     except Exception as exc:
@@ -383,29 +335,46 @@ def _run_desktop_window() -> bool:
         return False
 
     WINDOW_RADIUS = 10
-    TITLE_ICON_FILE = resource_path("ui", "cronus-start-icon.png")
+    TITLE_ICON_FILE = resource_path("assets", APP_ICON_FILE)
+    TITLE_FONT_FILES = (
+        resource_path("ui", "fonts", "Kanit-Regular.ttf"),
+        resource_path("ui", "fonts", "Kanit-Medium.ttf"),
+    )
 
-    def _tinted_title_icon(color: QColor) -> QPixmap:
+    def _load_title_fonts() -> None:
+        for font_file in TITLE_FONT_FILES:
+            if os.path.exists(font_file):
+                QFontDatabase.addApplicationFont(font_file)
+
+    def _title_icon_pixmap() -> QPixmap:
         source = QPixmap(TITLE_ICON_FILE)
         if source.isNull():
             return QPixmap()
-        source = source.scaled(
-            24,
-            16,
+        return source.scaled(
+            22,
+            22,
             Qt.AspectRatioMode.KeepAspectRatio,
             Qt.TransformationMode.SmoothTransformation,
         )
-        tinted = QPixmap(source.size())
-        tinted.fill(QColor(0, 0, 0, 0))
-        painter = QPainter(tinted)
-        painter.drawPixmap(0, 0, source)
-        try:
-            painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
-        except AttributeError:
-            painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
-        painter.fillRect(tinted.rect(), color)
+
+    def _window_control_icon(kind: str) -> QIcon:
+        pixmap = QPixmap(16, 16)
+        pixmap.fill(QColor(0, 0, 0, 0))
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = QPen(QColor("#6b7a91"), 1.6)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        if kind == "minimize":
+            painter.drawLine(5, 8, 11, 8)
+        elif kind == "maximize":
+            painter.drawRect(5, 5, 6, 6)
+        else:
+            painter.drawLine(5, 5, 11, 11)
+            painter.drawLine(11, 5, 5, 11)
         painter.end()
-        return tinted
+        return QIcon(pixmap)
 
     class RoundedMainWindow(QMainWindow):
         def resizeEvent(self, event):
@@ -436,16 +405,17 @@ def _run_desktop_window() -> bool:
             self._window = parent
             self._drag_pos = QPoint()
             self._running = False
-            self._idle_icon = _tinted_title_icon(QColor("#616777"))
-            self._active_icon = _tinted_title_icon(QColor("#16a964"))
+            self._idle_icon = _title_icon_pixmap()
+            self._active_icon = self._idle_icon
             self.setObjectName("CronusTitleBar")
             self.setFixedHeight(32)
             layout = QHBoxLayout(self)
             layout.setContentsMargins(12, 0, 10, 0)
-            layout.setSpacing(8)
+            layout.setSpacing(6)
             self._status_icon = QLabel(self)
             self._status_icon.setObjectName("CronusStatusIcon")
-            self._status_icon.setFixedSize(24, 18)
+            self._status_icon.setFixedSize(22, 22)
+            self._status_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
             if not self._idle_icon.isNull():
                 self._status_icon.setPixmap(self._idle_icon)
             layout.addWidget(self._status_icon)
@@ -454,9 +424,9 @@ def _run_desktop_window() -> bool:
             title_label.setObjectName("CronusTitle")
             layout.addWidget(title_label)
             layout.addStretch(1)
-            min_btn = self._button("WinMinButton", "Minimize", "-")
-            max_btn = self._button("WinMaxButton", "Maximize", "[]")
-            close_btn = self._button("WinCloseButton", "Close", "x")
+            min_btn = self._button("WinMinButton", "Minimize", "minimize")
+            max_btn = self._button("WinMaxButton", "Maximize", "maximize")
+            close_btn = self._button("WinCloseButton", "Close", "close")
             min_btn.clicked.connect(parent.showMinimized)
             max_btn.clicked.connect(self._toggle_maximized)
             close_btn.clicked.connect(parent.close)
@@ -473,30 +443,30 @@ def _run_desktop_window() -> bool:
                     border-top-right-radius: 10px;
                 }
                 #CronusTitle {
+                    font-family: "Kanit";
                     color: #cbd7ef;
                     font-size: 12px;
-                    font-weight: 700;
+                    font-weight: 500;
                 }
                 #CronusStatusIcon {
                     margin-right: 0px;
                 }
                 QPushButton#WinMinButton, QPushButton#WinMaxButton, QPushButton#WinCloseButton {
-                    width: 28px; height: 20px; min-width: 28px; max-width: 28px;
-                    min-height: 20px; max-height: 20px; border-radius: 7px;
-                    border: 1px solid #1d2a41;
-                    background-color: #0f1728;
-                    color: #74839d;
-                    font-size: 10px;
-                    font-weight: 800;
+                    width: 34px; height: 22px; min-width: 34px; max-width: 34px;
+                    min-height: 22px; max-height: 22px; border-radius: 9px;
+                    border: 1px solid #17243a;
+                    background-color: #0b1424;
+                    color: #5f6f84;
+                    padding: 0px;
                 }
                 QPushButton#WinMinButton:hover, QPushButton#WinMaxButton:hover {
-                    background-color: #15223a;
-                    border-color: #2d456c;
+                    background-color: #101c31;
+                    border-color: #284366;
                     color: #e7f0ff;
                 }
                 QPushButton#WinCloseButton:hover {
-                    background-color: #371723;
-                    border-color: #6b273a;
+                    background-color: #2a1420;
+                    border-color: #713247;
                     color: #ff8b98;
                 }
                 """
@@ -511,11 +481,13 @@ def _run_desktop_window() -> bool:
             if not icon.isNull():
                 self._status_icon.setPixmap(icon)
 
-        def _button(self, name: str, tooltip: str, text: str):
-            button = QPushButton(text, self)
+        def _button(self, name: str, tooltip: str, icon_name: str):
+            button = QPushButton("", self)
             button.setObjectName(name)
             button.setToolTip(tooltip)
-            button.setFixedSize(28, 20)
+            button.setFixedSize(34, 22)
+            button.setIcon(_window_control_icon(icon_name))
+            button.setIconSize(QSize(16, 16))
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             return button
@@ -564,6 +536,7 @@ def _run_desktop_window() -> bool:
 
     _set_app_user_model_id()
     app_qt = QApplication.instance() or QApplication(sys.argv[:1])
+    _load_title_fonts()
     icon_path = resource_path("assets", APP_ICON_FILE)
     icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon()
     if not icon.isNull():

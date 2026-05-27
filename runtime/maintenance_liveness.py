@@ -5,9 +5,11 @@ from typing import Dict, List, Optional
 
 from core import AccountState, flog, flog_kv
 from services.process_service import ProcessManager, ProcessService
-from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_account_captcha_required, set_account_captcha_hold
+from services.captcha_guard import CAPTCHA_REASON
 from runtime.home_rejoin_guard import detect_home_rejoin_issue
 from runtime.lua_liveness_policy import LUA_WAITING_STATUS, lua_liveness_required, lua_wait_timeout_seconds
+from runtime.maintenance_captcha import handle_watchdog_captcha
+from runtime.maintenance_lua_timeout import handle_in_game_lua_wait_timeout
 from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
 from runtime.maintenance_watchdog_actions import (
     handle_disconnect_dialog_rejoin,
@@ -48,6 +50,8 @@ class MaintenanceLivenessMixin:
         now = time.time()
         verify_window = max(15.0, float(self._cfg.get("launch_verify_window", 25) or 25) + 10.0)
         queue_window = max(30.0, float(self._cfg.get("queue_timeout", 90) or 90))
+        lua_required_now = lua_liveness_required(self._cfg)
+        lua_timeout = lua_wait_timeout_seconds(self._cfg)
         for acc in self._accounts:
             with acc._lock:
                 state = acc.state
@@ -62,11 +66,11 @@ class MaintenanceLivenessMixin:
             if state in (AccountState.LAUNCHING, AccountState.VERIFY):
                 lua_wait_timed_out = (
                     state == AccountState.VERIFY
-                    and lua_liveness_required(self._cfg)
+                    and lua_required_now
                     and recovery_status == LUA_WAITING_STATUS
-                    and age >= lua_wait_timeout_seconds(self._cfg)
+                    and age >= lua_timeout
                 )
-                if age < verify_window:
+                if age < verify_window and not lua_wait_timed_out:
                     continue
                 pid_live = bool(pid and ProcessManager.is_bound_game_alive(
                     pid,
@@ -81,7 +85,7 @@ class MaintenanceLivenessMixin:
                         "warning",
                         account=acc.display_name,
                         age=f"{age:.1f}",
-                        timeout=f"{lua_wait_timeout_seconds(self._cfg):.1f}",
+                        timeout=f"{lua_timeout:.1f}",
                         pid=pid or "",
                     )
                     self._runtime_signal(
@@ -90,8 +94,9 @@ class MaintenanceLivenessMixin:
                         "lua_wait_timeout",
                         payload={
                             "trigger": "lua_wait_timeout",
-                            "detail": f"Lua did not confirm in-game state within {lua_wait_timeout_seconds(self._cfg):.1f}s",
+                            "detail": f"Lua did not confirm in-game state within {lua_timeout:.1f}s",
                             "reason_msg": "Waiting For Lua timed out",
+                            "state": state.name,
                         },
                         expected_runtime_generation=runtime_generation,
                         expected_session_id=session_id,
@@ -102,7 +107,7 @@ class MaintenanceLivenessMixin:
                 if (
                     pid_live
                     and state == AccountState.VERIFY
-                    and lua_liveness_required(self._cfg)
+                    and lua_required_now
                     and recovery_status == LUA_WAITING_STATUS
                 ):
                     continue
@@ -135,8 +140,8 @@ class MaintenanceLivenessMixin:
                     expected_runtime_generation=runtime_generation,
                     expected_session_id=session_id,
                     expected_launch_nonce=launch_nonce,
-                    expected_transaction_id=transaction_id,
-                )
+                        expected_transaction_id=transaction_id,
+                    )
             elif state == AccountState.QUEUED and age >= queue_window:
                 flog_kv(
                     "MAINT",
@@ -146,6 +151,8 @@ class MaintenanceLivenessMixin:
                     age=f"{age:.1f}",
                 )
                 self._runtime_evaluate(acc, trigger="queue_timeout")
+            elif state == AccountState.IN_GAME and handle_in_game_lua_wait_timeout(self, acc, self._cfg, now):
+                continue
 
     def _recover_failed_live_sessions(self):
         for acc in self._accounts:
@@ -300,6 +307,7 @@ class MaintenanceLivenessMixin:
         except Exception:
             memory_guard_hold = 30.0
         net_online = self._recovery._net.is_online()
+        lua_required_now = lua_liveness_required(self._cfg)
         popup_scan_at = getattr(self, "_last_popup_scan_at", None)
         if popup_scan_at is None:
             popup_scan_at = {}
@@ -309,12 +317,21 @@ class MaintenanceLivenessMixin:
             popup_candidates = []
             for candidate in self._accounts:
                 with candidate._lock:
-                    if candidate.state != AccountState.IN_GAME:
-                        continue
+                    candidate_state = candidate.state
                     if not candidate.pid:
                         continue
-                    candidate_in_game_for = now - (candidate.in_game_since or now)
-                if candidate_in_game_for >= startup_grace:
+                    candidate_lua_waiting = (
+                        candidate_state == AccountState.VERIFY
+                        and lua_required_now
+                        and str(candidate.recovery_status or "") == LUA_WAITING_STATUS
+                    )
+                    if candidate_state == AccountState.IN_GAME:
+                        candidate_runtime_age = now - (candidate.in_game_since or now)
+                    elif candidate_lua_waiting:
+                        candidate_runtime_age = now - (candidate.last_state_change_at or candidate.last_launch_at or now)
+                    else:
+                        continue
+                if candidate_runtime_age >= startup_grace:
                     popup_candidates.append(candidate._config_username)
             popup_batch_keys = self._popup_periodic_scan_batch(
                 now,
@@ -325,14 +342,24 @@ class MaintenanceLivenessMixin:
 
         for acc in self._accounts:
             with acc._lock:
-                if acc.state != AccountState.IN_GAME:
+                account_state = acc.state
+                lua_waiting_verify = (
+                    account_state == AccountState.VERIFY
+                    and lua_required_now
+                    and str(acc.recovery_status or "") == LUA_WAITING_STATUS
+                )
+                if account_state != AccountState.IN_GAME and not lua_waiting_verify:
                     acc.liveness_suspect_since = 0.0
                     continue
                 pid = acc.pid
                 previous_cpu = acc.last_activity_cpu
                 previous_ram = acc.last_activity_ram_mb
-                in_game_for = now - (acc.in_game_since or now)
-                last_activity = acc.last_activity_at or acc.in_game_since or now
+                if account_state == AccountState.IN_GAME:
+                    in_game_for = now - (acc.in_game_since or now)
+                    last_activity = acc.last_activity_at or acc.in_game_since or now
+                else:
+                    in_game_for = now - (acc.last_state_change_at or acc.last_launch_at or now)
+                    last_activity = acc.last_activity_at or acc.last_state_change_at or acc.last_launch_at or now
                 recovery_inflight = acc.recovery_inflight
                 old_state = acc.liveness_state
 
@@ -382,55 +409,15 @@ class MaintenanceLivenessMixin:
                 )
 
             if state == "captcha" or str(dialog.get("reason_key") or "") == CAPTCHA_REASON:
-                detail = str(dialog.get("detail") or "").strip() or "Roblox Security verification CAPTCHA visible"
-                with acc._lock:
-                    captcha_pid = acc.pid
-                    captcha_runtime_generation = acc.runtime_generation
-                if not is_account_captcha_required(acc):
-                    flog_kv(
-                        "WATCHDOG",
-                        "captcha_dialog_hold",
-                        "warning",
-                        account=acc.display_name,
-                        pid=pid,
-                        confidence=f"{float(dialog.get('popup_confidence', dialog.get('confidence', 0.0)) or 0.0):.2f}",
-                        source=dialog.get("evidence_source", ""),
-                        detail=detail,
-                    )
-                set_account_captcha_hold(acc, detail, source="watchdog_popup", runtime_writer=self._state_mgr)
-                if captcha_pid and hasattr(self._state_mgr, "clear_process_binding"):
-                    kill_result = ProcessService.safe_kill_bound_process(
-                        acc,
-                        self._state_mgr,
-                        reason="captcha_hold",
-                        expected_runtime_generation=captcha_runtime_generation,
-                        increment_generation=False,
-                    )
-                    flog_kv(
-                        "CAPTCHA",
-                        "account_process_closed",
-                        "warning",
-                        account=acc.display_name,
-                        pid=captcha_pid,
-                        killed=bool(kill_result.get("killed")),
-                        kill_reason=kill_result.get("reason", ""),
-                    )
-                else:
-                    flog_kv(
-                        "CAPTCHA",
-                        "account_process_close_skipped",
-                        "warning",
-                        account=acc.display_name,
-                        pid=captcha_pid or "",
-                        reason="missing_bound_pid" if not captcha_pid else "state_manager_unavailable",
-                    )
-                if hasattr(self._recovery, "fail_account"):
-                    self._recovery.fail_account(acc, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
+                handle_watchdog_captcha(self, acc, pid, dialog)
                 continue
 
             if state == "missing":
                 if worker:
                     worker.handle_missing_bound_process("maintenance_pid_missing")
+                continue
+
+            if account_state != AccountState.IN_GAME:
                 continue
 
             home_issue = detect_home_rejoin_issue(acc, self._cfg, now, in_game_for)

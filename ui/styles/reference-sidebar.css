@@ -258,7 +258,7 @@
 .side-launch .guard-action .guard-icon.bolt
 {
   fill: none;
-  stroke: #1f9d62;
+  stroke: #8ec6ff;
 }
 
 .side-launch .guard-action.danger .guard-icon,
@@ -271,46 +271,50 @@
 .side-launch .guard-action .guard-icon.start
 {
   fill: none;
-  stroke: #16a964;
+  stroke: #8ec6ff;
   stroke-width: 3;
 }
 
 .side-launch .guard-action.good
 {
   background: #101a2d;
-  border-color: rgba(31,157,98,.48);
-  color: #dceaff;
-  box-shadow: 0 0 0 1px rgba(31,157,98,.16),0 0 14px rgba(31,157,98,.24),0 1px 2px rgba(0,0,0,.22);
+  border-color: #1c314f;
+  color: #8ec6ff;
+  box-shadow: none;
 }
 
 .side-launch .guard-action.good:hover:not(:disabled)
 {
-  background: #13264a;
-  border-color: rgba(31,157,98,.72);
-  color: #ffffff;
-  box-shadow: 0 0 0 1px rgba(31,157,98,.24),0 0 20px rgba(31,157,98,.38),0 2px 8px rgba(0,0,0,.28);
+  background: #13233a;
+  border-color: #29486d;
+  color: #d7ebff;
+  box-shadow: none;
 }
 
 .side-launch .guard-action.danger
 {
-  border-color: rgba(224,91,106,.52);
-  box-shadow: 0 0 0 1px rgba(224,91,106,.16),0 0 14px rgba(224,91,106,.24),0 1px 2px rgba(0,0,0,.22);
+  background: #1d101a;
+  border-color: #4a2637;
+  color: #ff7d8e;
+  box-shadow: none;
 }
 
 .side-launch .guard-action.danger:hover:not(:disabled)
 {
-  border-color: rgba(224,91,106,.76);
-  box-shadow: 0 0 0 1px rgba(224,91,106,.24),0 0 20px rgba(224,91,106,.38),0 2px 8px rgba(0,0,0,.28);
+  background: #2a1420;
+  border-color: #713247;
+  color: #ffb0bb;
+  box-shadow: none;
 }
 
 .side-launch .guard-action .guard-icon.bolt
 {
-  filter: drop-shadow(0 0 5px rgba(31,157,98,.72));
+  filter: none;
 }
 
 .side-launch .guard-action .guard-icon.stop
 {
-  filter: drop-shadow(0 0 5px rgba(224,91,106,.72));
+  filter: none;
 }
 
 #close-all-roblox-btn .btn-icon

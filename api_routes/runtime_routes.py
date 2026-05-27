@@ -8,6 +8,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from core import account_launch_block_reason, flog_kv
+from desktop import console_output
 from runtime.account_selection import runtime_account_filter_reason
 from runtime.popup_detector.popup_sampler import PopupWindowSampler
 from .auth import require_api_token
@@ -232,6 +233,7 @@ def register(app, ctx: ApiContext) -> None:
                 result = {"ok": False, "accepted": False, "command_id": command["command_id"], "msg": "Not running"}
                 return result
             farm.stop()
+            console_output.clear_screen()
             ok = True
             result = {"ok": True, "accepted": True, "command_id": command["command_id"], "msg": "Farm stopped"}
             return result

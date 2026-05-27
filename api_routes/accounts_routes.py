@@ -5,7 +5,6 @@ import json
 import os
 import re
 import time
-import urllib.error
 import urllib.parse
 import urllib.request
 import webbrowser
@@ -14,22 +13,21 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import HTTPException, Request
 
 from account_hybrid import ACCOUNT_STORE, audit_event
-from core import Account, account_launch_block_reason, cookie_identity_block_reason, cookie_invalid_block_reason, flog_kv
+from core import cookie_identity_block_reason, cookie_invalid_block_reason
 from roblox_hybrid import resolve_vip_access_code, validate_cookie_details
 from services.captcha_guard import (
     CAPTCHA_BLOCK_REASON,
     CAPTCHA_REASON,
     is_captcha_status_text,
-    is_captcha_text,
     set_account_captcha_hold,
 )
-from services.account_reload import emit_reload_cookie_events, load_accounts_from_store, mark_invalid_cookie_record, replace_farm_accounts
+from services.account_reload import emit_reload_cookie_events
 from services.roblox_launch_service import AccountLaunchService, parse_vip_link
-from runtime.account_selection import runtime_account_allowlist
 
+from . import account_records
 from .context import ApiContext
 from .idempotency import begin_idempotent_request, begin_idempotent_request_sync, finish_idempotent_request
-from .settings_state import _apply_game_defaults, _normalize_window_size_settings
+from .settings_state import _normalize_window_size_settings
 
 APP_USER_AGENT = "CronusLauncher/RT"
 _AVATAR_CACHE: Dict[str, Tuple[float, str]] = {}
@@ -39,194 +37,23 @@ _AVATAR_CACHE_TTL = 300.0
 def register(app, ctx: ApiContext) -> None:
     cfg_mgr = ctx.cfg_mgr
     farm = ctx.farm
-    def _account_data_records(include_cookies: bool = False) -> List[Dict[str, Any]]:
-        try:
-            return ACCOUNT_STORE.read_records(include_cookies=include_cookies)
-        except Exception as e:
-            flog_kv("ACCOUNT_DATA", "read_failed", "warning", error=e)
-            return []
-
-
     def _account_data_api_records() -> List[Dict[str, Any]]:
-        records = _account_data_records(include_cookies=False)
-        runtime_by_user = {
-            str(account.username or "").strip().lower(): account
-            for account in farm._accounts
-            if str(account.username or "").strip()
-        }
-        result: List[Dict[str, Any]] = []
-        for record in records:
-            item = ACCOUNT_STORE.to_api_record(record)
-            blocked_reason = cookie_identity_block_reason(
-                str(item.get("username") or ""),
-                str(item.get("cookie_username") or ""),
-                bool(item.get("cookie_mismatch", False)),
-            )
-            invalid_reason = cookie_invalid_block_reason(item.get("manual_status"), item.get("import_status"))
-            if invalid_reason:
-                blocked_reason = invalid_reason
-            if is_captcha_status_text(item.get("manual_status"), item.get("import_status")):
-                blocked_reason = CAPTCHA_BLOCK_REASON
-            runtime = runtime_by_user.get(str(item.get("username") or "").strip().lower())
-            if runtime:
-                runtime_snapshot = runtime.runtime_snapshot()
-                runtime_blocked = account_launch_block_reason(runtime)
-                if runtime_blocked:
-                    blocked_reason = runtime_blocked
-                item["state"] = runtime.state.name
-                item["pid"] = runtime.pid
-                item["runtime_state"] = runtime_snapshot.get("runtime_state") or str(runtime.runtime.lifecycle_state)
-                item["can_rejoin"] = bool(farm.running and runtime.state.name != "FAILED" and not blocked_reason)
-                item["can_kill"] = bool(runtime.pid)
-                item["cookie_username"] = runtime.cookie_username or item.get("cookie_username", "")
-                item["cookie_user_id"] = runtime.cookie_user_id or item.get("cookie_user_id", "")
-                item["cookie_mismatch"] = bool(runtime.cookie_mismatch or item.get("cookie_mismatch", False))
-            item["blocked_reason"] = blocked_reason
-            item["launchable"] = not bool(blocked_reason)
-            result.append(item)
-        return result
-
-
-    def _load_accounts_from_account_data() -> List[Account]:
-        return load_accounts_from_store(ACCOUNT_STORE)
-
+        return account_records.account_data_api_records(ACCOUNT_STORE, farm)
 
     def _replace_farm_accounts_from_store() -> int:
-        new_accounts = _load_accounts_from_account_data()
-        _apply_game_defaults(ctx, new_accounts, persist=False)
-        return replace_farm_accounts(farm, cfg_mgr, new_accounts)
+        return account_records.replace_farm_accounts_from_store(ctx, cfg_mgr, farm, ACCOUNT_STORE)
 
     def _clear_runtime_allowlist_after_reload() -> Dict[str, Any]:
-        current = runtime_account_allowlist({
-            "runtime_account_allowlist": cfg_mgr.get("runtime_account_allowlist", [])
-        })
-        if not current:
-            return {"allowlist_cleared": False, "allowlist_cleared_count": 0}
-        cfg_mgr.update({"runtime_account_allowlist": []})
-        cfg_mgr.save()
-        if hasattr(farm, "apply_config_snapshot"):
-            farm.apply_config_snapshot()
-        if hasattr(farm, "_push_event"):
-            farm._push_event(
-                "system",
-                f"Reload Cookies cleared account test lock: {len(current)} account(s)",
-                severity="info",
-                reason="reload_cookies_clear_allowlist",
-                cleared_count=len(current),
-            )
-        return {"allowlist_cleared": True, "allowlist_cleared_count": len(current)}
-
+        return account_records.clear_runtime_allowlist_after_reload(cfg_mgr, farm)
 
     def _validate_cookie_records_from_store() -> Dict[str, Any]:
-        records = ACCOUNT_STORE.read_records(include_cookies=True)
-        kept: List[Dict[str, Any]] = []
-        invalid: List[Dict[str, str]] = []
-        captcha: List[Dict[str, str]] = []
-        valid: List[Dict[str, str]] = []
-
-        for record in records:
-            username = str(record.get("username") or "").strip()
-            cookie = str(record.get("cookie") or "").strip()
-            label = username or "Unknown"
-            if not cookie:
-                reason = "missing cookie"
-                kept.append(mark_invalid_cookie_record(ACCOUNT_STORE, record, reason))
-                invalid.append({"username": label, "reason": reason})
-                continue
-
-            try:
-                ok, cookie_username, detail, meta = validate_cookie_details(cookie)
-            except Exception as exc:
-                raise RuntimeError(f"Cookie validation unavailable for {label}: {exc}") from exc
-
-            if not ok:
-                if is_captcha_text(detail):
-                    normalized = ACCOUNT_STORE.normalize_record(record)
-                    normalized["manual_status"] = CAPTCHA_BLOCK_REASON
-                    normalized["import_status"] = CAPTCHA_REASON
-                    kept.append(normalized)
-                    captcha.append({"username": label, "reason": detail or CAPTCHA_REASON})
-                    continue
-                reason = detail or "invalid cookie"
-                kept.append(mark_invalid_cookie_record(ACCOUNT_STORE, record, reason))
-                invalid.append({"username": label, "reason": reason})
-                continue
-
-            normalized = ACCOUNT_STORE.normalize_record(record)
-            validated_username = str(meta.get("username") or cookie_username or "").strip()
-            if not username and validated_username:
-                normalized["username"] = validated_username
-                username = validated_username
-            normalized["cookie_username"] = validated_username
-            normalized["cookie_user_id"] = str(meta.get("user_id") or "")
-            normalized["cookie_mismatch"] = bool(
-                validated_username
-                and username
-                and username.lower() != validated_username.lower()
-            )
-            normalized["import_status"] = "cookie_mismatch" if normalized["cookie_mismatch"] else ""
-            if (
-                is_captcha_status_text(normalized.get("manual_status"))
-                or cookie_invalid_block_reason(normalized.get("manual_status"))
-            ) and not normalized["cookie_mismatch"]:
-                normalized["manual_status"] = ""
-            kept.append(normalized)
-            valid.append({"username": username or label})
-
-        ACCOUNT_STORE.write_records(kept)
-        for item in invalid:
-            audit_event("reload_cookie_invalid", item.get("username", ""), False, reason=item.get("reason", ""))
-        flog_kv(
-            "ACCOUNT_DATA",
-            "reload_cookie_validation",
-            kept=len(kept),
-            invalid=len(invalid),
-            total=len(records),
-        )
-        return {
-            "total": len(records),
-            "kept": len(kept),
-            "removed": 0,
-            "invalid": len(invalid),
-            "captcha": len(captcha),
-            "valid_accounts": valid,
-            "removed_accounts": [],
-            "invalid_accounts": invalid,
-            "captcha_accounts": captcha,
-        }
-
+        return account_records.validate_cookie_records_from_store(ACCOUNT_STORE, validate_cookie_details, audit_event)
 
     def _find_account_record(username: str, include_cookie: bool = True) -> Optional[Dict[str, Any]]:
-        wanted = str(username or "").strip().lower()
-        for record in _account_data_records(include_cookies=include_cookie):
-            if str(record.get("username") or "").strip().lower() == wanted:
-                return record
-        return None
-
+        return account_records.find_account_record(ACCOUNT_STORE, username, include_cookie=include_cookie)
 
     def _import_cookie_validator(cookie: str):
-        ok, username, detail, meta = validate_cookie_details(cookie)
-        return ok, username, detail, meta
-
-
-    def _global_launch_target(body: Dict[str, Any], record: Dict[str, Any]) -> Dict[str, Any]:
-        target = dict(body or {})
-        place_id = str(target.get("place_id") or cfg_mgr.get("game_place_id", "") or record.get("place_id") or "").strip()
-        vip_links = list(record.get("vip_links") or [])
-        if place_id:
-            vip_links = [
-                link for link in vip_links
-                if not parse_vip_link(str(link or "").strip())[0]
-                or parse_vip_link(str(link or "").strip())[0] == place_id
-            ]
-        target.setdefault("vip_links", vip_links)
-        target["place_id"] = place_id
-        global_vip = str(cfg_mgr.get("game_private_server_url", "") or "").strip()
-        global_place = parse_vip_link(global_vip)[0] if global_vip else ""
-        target.setdefault("global_vip_link", global_vip if (not place_id or not global_place or global_place == place_id) else "")
-        target.setdefault("auto_create_private_server_enabled", cfg_mgr.get("auto_create_private_server_enabled", False))
-        target.setdefault("auto_create_private_server_free_only", cfg_mgr.get("auto_create_private_server_free_only", True))
-        return target
+        return account_records.import_cookie_validator(cookie, validate_cookie_details)
 
 
     def _lookup_roblox_place(place_id: str) -> Dict[str, Any]:

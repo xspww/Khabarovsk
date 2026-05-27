@@ -354,6 +354,25 @@ class RuntimeHardeningRecoveryFlowCases:
             scheduler.stop()
 
 
+    def test_queued_state_without_queue_entry_is_repaired(self):
+        recovery, queue, stop = self._make_recovery()
+        acc = Account(username="orphan_queued_user")
+        acc.state = AccountState.QUEUED
+        acc.desired_state = AccountState.IN_GAME
+        acc.session_checked = True
+        acc.session_valid = True
+        try:
+            recovery.evaluate(acc, trigger="queue_timeout")
+
+            self.assertEqual(acc.state, AccountState.QUEUED)
+            self.assertEqual(acc.recovery_status, "queued")
+            self.assertEqual(queue.snapshot()["size"], 1)
+            self.assertIs(queue.pop(timeout=0.01), acc)
+        finally:
+            stop.set()
+            recovery.stop()
+
+
     def test_recovery_cooldown_schedule_keeps_runtime_fields(self):
         recovery, _queue, stop = self._make_recovery()
         acc = Account(username="cooldown_schedule_user")

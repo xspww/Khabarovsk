@@ -189,19 +189,20 @@ def launch(cls, acc: Account) -> Tuple[bool, str, str]:
             from roblox_hybrid import HybridLauncher
 
             target_place = str(acc.place_id or "")
-            active_vip = str(acc.active_vip or "")
+            auto_private_enabled = bool(cls.AUTO_CREATE_PRIVATE_SERVER_ENABLED)
+            active_vip = str(acc.active_vip or "") if auto_private_enabled else ""
             if target_place and active_vip:
                 active_place, _active_code = cls.parse_vip_link(active_vip)
                 if active_place and active_place != target_place:
                     active_vip = ""
-            vip_links = list(acc.vip_links or [])
+            vip_links = list(acc.vip_links or []) if auto_private_enabled else []
             if target_place:
                 vip_links = [
                     link for link in vip_links
                     if not cls.parse_vip_link(str(link or "").strip())[0]
                     or cls.parse_vip_link(str(link or "").strip())[0] == target_place
                 ]
-            global_vip = cls.GLOBAL_VIP_LINK
+            global_vip = cls.GLOBAL_VIP_LINK if auto_private_enabled else ""
             global_place = cls.parse_vip_link(global_vip)[0] if global_vip else ""
             if target_place and global_place and global_place != target_place:
                 global_vip = ""
@@ -211,7 +212,7 @@ def launch(cls, acc: Account) -> Tuple[bool, str, str]:
                 "vip_link": active_vip,
                 "global_vip_link": global_vip,
                 "browser_tracker_id": getattr(acc, "browser_tracker_id", ""),
-                "auto_create_private_server_enabled": bool(cls.AUTO_CREATE_PRIVATE_SERVER_ENABLED),
+                "auto_create_private_server_enabled": auto_private_enabled,
                 "auto_create_private_server_free_only": bool(cls.AUTO_CREATE_PRIVATE_SERVER_FREE_ONLY),
             }
             record = {
@@ -222,7 +223,7 @@ def launch(cls, acc: Account) -> Tuple[bool, str, str]:
                 "vip_links": vip_links,
                 "global_vip_link": global_vip,
                 "browser_tracker_id": getattr(acc, "browser_tracker_id", ""),
-                "auto_create_private_server_enabled": bool(cls.AUTO_CREATE_PRIVATE_SERVER_ENABLED),
+                "auto_create_private_server_enabled": auto_private_enabled,
                 "auto_create_private_server_free_only": bool(cls.AUTO_CREATE_PRIVATE_SERVER_FREE_ONLY),
             }
             result = HybridLauncher.launch_record(record, target=target, multi_roblox=bool(cls.MULTI_ROBLOX_ENABLED))
@@ -236,8 +237,9 @@ def launch(cls, acc: Account) -> Tuple[bool, str, str]:
                     mode=str(result.get("mode") or ""),
                 )
                 mode = str(result.get("mode") or "")
-                attempted_vip_hybrid = str(result.get("attempted_vip") or acc.active_vip or "")
+                attempted_vip_hybrid = str(result.get("attempted_vip") or "")
                 if mode == "vip":
+                    attempted_vip_hybrid = attempted_vip_hybrid or str(acc.active_vip or "")
                     acc.server_type = ServerType.VIP
                     acc.active_vip = attempted_vip_hybrid
                 elif mode in {"job", "public"}:

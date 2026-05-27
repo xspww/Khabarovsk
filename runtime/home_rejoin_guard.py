@@ -83,8 +83,15 @@ def detect_home_rejoin_issue(acc: Any, cfg: Dict[str, Any], now: float, in_game_
             "grace": grace,
         }
 
-    # Without Lua as the required liveness source, missing telemetry alone is not
-    # proof that Roblox is stuck on Home. Treating absence of evidence as a
-    # recovery signal caused relaunch storms before stronger signals existed.
+    if cfg.get("home_rejoin_require_server_evidence", True) and configured_place and not evidence_after_launch:
+        return {
+            "reason_key": "home_screen_no_server_evidence",
+            "detail": f"No Roblox server evidence after launch grace for place={configured_place}; likely Home/loading shell",
+            "observed_place_id": observed_place,
+            "observed_job_id": observed_job,
+            "observed_server_type": observed_server_type,
+            "launch_age": launch_age,
+            "grace": grace,
+        }
 
     return None

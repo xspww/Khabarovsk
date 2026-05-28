@@ -108,10 +108,6 @@ DEFAULTS: Dict[str, Any] = {
     "recovery_restore_window":  3600,
     "watchdog_activity_timeout": 180,
     "watchdog_loading_grace":   90,
-    "home_rejoin_enabled":      True,
-    "home_rejoin_grace_seconds": 60,
-    "home_rejoin_hold_seconds": 5.0,
-    "home_rejoin_require_server_evidence": True,
     "event_bus_workers":        4,
     "event_bus_max_pending":    128,
     # ── Roblox Watchdog (ใหม่ RT.1.0) ──

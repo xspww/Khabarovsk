@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import time
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from core import AccountState, flog, flog_kv
 from services.process_service import ProcessManager, ProcessService
 from services.captcha_guard import CAPTCHA_REASON
-from runtime.home_rejoin_guard import detect_home_rejoin_issue
 from runtime.lua_liveness_policy import LUA_WAITING_STATUS, lua_liveness_required, lua_wait_timeout_seconds
-from runtime.maintenance_captcha import handle_watchdog_captcha
+from runtime.maintenance_captcha import detect_and_hold_captcha, handle_watchdog_captcha
 from runtime.maintenance_lua_timeout import handle_in_game_lua_wait_timeout
 from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
 from runtime.maintenance_watchdog_actions import (
@@ -79,6 +78,8 @@ class MaintenanceLivenessMixin:
                     expected_browser_tracker_id=acc.browser_tracker_id,
                 ))
                 if pid_live and lua_wait_timed_out:
+                    if detect_and_hold_captcha(self, acc, pid, "lua_wait_timeout"):
+                        continue
                     flog_kv(
                         "MAINT",
                         "lua_wait_timeout_recovery",
@@ -313,18 +314,16 @@ class MaintenanceLivenessMixin:
             popup_scan_at = {}
             self._last_popup_scan_at = popup_scan_at
         popup_batch_keys = set()
+        lua_waiting_scan_keys = set()
         if popup_enabled:
-            popup_candidates = []
+            lua_waiting_candidates = []
+            regular_popup_candidates = []
             for candidate in self._accounts:
                 with candidate._lock:
                     candidate_state = candidate.state
                     if not candidate.pid:
                         continue
-                    candidate_lua_waiting = (
-                        candidate_state == AccountState.VERIFY
-                        and lua_required_now
-                        and str(candidate.recovery_status or "") == LUA_WAITING_STATUS
-                    )
+                    candidate_lua_waiting = candidate_state == AccountState.VERIFY and lua_required_now and str(candidate.recovery_status or "") == LUA_WAITING_STATUS
                     if candidate_state == AccountState.IN_GAME:
                         candidate_runtime_age = now - (candidate.in_game_since or now)
                     elif candidate_lua_waiting:
@@ -332,13 +331,20 @@ class MaintenanceLivenessMixin:
                     else:
                         continue
                 if candidate_runtime_age >= startup_grace:
-                    popup_candidates.append(candidate._config_username)
-            popup_batch_keys = self._popup_periodic_scan_batch(
-                now,
-                popup_candidates,
-                popup_scan_interval,
-                popup_scan_max_parallel,
-            )
+                    if candidate_lua_waiting:
+                        lua_waiting_candidates.append(candidate._config_username)
+                    else:
+                        regular_popup_candidates.append(candidate._config_username)
+            popup_candidates = lua_waiting_candidates + regular_popup_candidates
+            scan_interval = popup_scan_interval
+            if lua_waiting_candidates:
+                try:
+                    lua_scan_interval = float(self._cfg.get("lua_captcha_scan_interval_seconds", 5.0) or 5.0)
+                except Exception:
+                    lua_scan_interval = 5.0
+                scan_interval = min(popup_scan_interval, max(2.0, lua_scan_interval))
+            popup_batch_keys = self._popup_periodic_scan_batch(now, popup_candidates, scan_interval, popup_scan_max_parallel)
+            lua_waiting_scan_keys = set(lua_waiting_candidates).intersection(popup_batch_keys)
 
         for acc in self._accounts:
             with acc._lock:
@@ -373,6 +379,7 @@ class MaintenanceLivenessMixin:
 
             popup_key = acc._config_username
             popup_periodic_allowed = bool(popup_enabled and popup_key in popup_batch_keys)
+            lua_waiting_popup_allowed = bool(popup_key in lua_waiting_scan_keys)
             inspect_ui = popup_enabled and (
                 popup_periodic_allowed
                 or old_state in {"suspect_frozen", "frozen", "reconnecting", "teleporting"}
@@ -387,6 +394,7 @@ class MaintenanceLivenessMixin:
                 loading_grace=loading_grace,
                 cpu_threshold=cpu_low,
                 inspect_ui=inspect_ui,
+                ui_sample_count=2 if lua_waiting_popup_allowed else None,
             )
             state = str(liveness.get("state") or "unknown")
             score = float(liveness.get("score") or 0.0)
@@ -418,77 +426,6 @@ class MaintenanceLivenessMixin:
                 continue
 
             if account_state != AccountState.IN_GAME:
-                continue
-
-            home_issue = detect_home_rejoin_issue(acc, self._cfg, now, in_game_for)
-            if home_issue and not recovery_inflight:
-                reason_key = str(home_issue.get("reason_key") or "home_screen_stuck")
-                try:
-                    home_hold_sec = max(1.0, float(self._cfg.get("home_rejoin_hold_seconds", 5) or 5))
-                except Exception:
-                    home_hold_sec = 5.0
-                with acc._lock:
-                    if acc.last_watchdog_classification != "home_screen_stuck" or not acc.liveness_suspect_since:
-                        acc.liveness_suspect_since = now
-                        home_suspect_for = 0.0
-                    else:
-                        home_suspect_for = max(0.0, now - acc.liveness_suspect_since)
-                    runtime_generation = acc.runtime_generation
-                    session_id = acc.session_id
-                    launch_nonce = acc.launch_nonce
-                    transaction_id = acc.rejoin_transaction_id
-                    acc.liveness_state = "home_screen_stuck"
-                    acc.last_watchdog_classification = "home_screen_stuck"
-                    acc.last_activity_reason = f"home_guard:{reason_key}"
-                    acc.sync_runtime("home_screen_stuck")
-                self._set_recovery_status(acc, status="home_screen_stuck", reason=reason_key, inflight=False)
-                if home_suspect_for < home_hold_sec:
-                    flog_kv(
-                        "WATCHDOG",
-                        "home_screen_suspect",
-                        "warning",
-                        account=acc.display_name,
-                        pid=pid,
-                        reason=reason_key,
-                        suspect=f"{home_suspect_for:.1f}",
-                        hold=f"{home_hold_sec:.1f}",
-                        detail=home_issue.get("detail", ""),
-                        observed_place_id=home_issue.get("observed_place_id", ""),
-                        observed_job_id=home_issue.get("observed_job_id", ""),
-                    )
-                    continue
-                flog_kv(
-                    "WATCHDOG",
-                    "home_screen_rejoin_signal",
-                    "warning",
-                    account=acc.display_name,
-                    pid=pid,
-                    reason=reason_key,
-                    suspect=f"{home_suspect_for:.1f}",
-                    detail=home_issue.get("detail", ""),
-                    launch_age=f"{float(home_issue.get('launch_age') or 0.0):.1f}",
-                    observed_place_id=home_issue.get("observed_place_id", ""),
-                    observed_job_id=home_issue.get("observed_job_id", ""),
-                    runtime_generation=runtime_generation,
-                    session_id=session_id,
-                    transaction_id=transaction_id,
-                )
-                with acc._lock:
-                    acc.liveness_suspect_since = 0.0
-                self._runtime_signal(
-                    acc,
-                    "loading_freeze",
-                    reason_key,
-                    payload={
-                        "trigger": "home_screen_guard",
-                        "detail": f"PID={pid} {home_issue.get('detail', '')}",
-                        "reason_msg": f"PID={pid} {home_issue.get('detail', '')}",
-                    },
-                    expected_runtime_generation=runtime_generation,
-                    expected_session_id=session_id,
-                    expected_launch_nonce=launch_nonce,
-                    expected_transaction_id=transaction_id,
-                )
                 continue
 
             inactive_for = max(0.0, now - last_activity)

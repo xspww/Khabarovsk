@@ -83,7 +83,12 @@ def is_captcha_window_texts(values: Any) -> bool:
         return True
     if any(keyword in joined for keyword in CAPTCHA_UI_KEYWORDS):
         return True
-    return "security" in normalized and "chrome legacy window" in normalized
+    if "security" in normalized and (
+        "chrome legacy window" in normalized
+        or any("roblox" in text for text in normalized)
+    ):
+        return True
+    return False
 
 
 def _is_cookie_auth_status_text(text: str) -> bool:

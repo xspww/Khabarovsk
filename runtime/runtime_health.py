@@ -65,6 +65,11 @@ def _queue_detailed(queue_snapshot: Dict[str, Any]) -> Dict[str, Any]:
             {
                 "account_id": str(item.get("account") or ""),
                 "reason": str(item.get("reason") or ""),
+                "queue_position": _safe_int(item.get("queue_position"), 0),
+                "queue_sequence": _safe_int(item.get("queue_sequence"), 0),
+                "priority": _safe_int(item.get("priority"), 50),
+                "score": round(_safe_float(item.get("score"), 0.0), 2),
+                "ready": bool(item.get("ready", False)),
                 "age_seconds": round(_safe_float(item.get("age_seconds"), 0.0), 1),
                 "due_in_seconds": round(_safe_float(item.get("due_in_seconds"), 0.0), 1),
                 "runtime_generation": _safe_int(item.get("runtime_generation"), 0),

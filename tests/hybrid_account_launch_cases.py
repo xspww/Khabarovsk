@@ -449,6 +449,19 @@ class HybridAccountLaunchCases:
         self.assertFalse(result.recovery_allowed)
         self.assertEqual(result.evidence_source, "text")
 
+    def test_security_webview_without_chrome_legacy_classifies_as_captcha_hold(self):
+        from runtime.popup_detector.popup_classifier import classify_popup_observation
+
+        result = classify_popup_observation(
+            ["Roblox", "Security"],
+            threshold=0.75,
+        )
+
+        self.assertTrue(result.matched)
+        self.assertEqual(result.action, "hold")
+        self.assertEqual(result.reason_key, CAPTCHA_REASON)
+        self.assertFalse(result.recovery_allowed)
+
     def test_popup_observer_confirms_captcha_security_webview(self):
         from runtime.popup_detector.popup_sampler import PopupObserver
 

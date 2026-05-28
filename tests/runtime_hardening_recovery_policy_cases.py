@@ -217,6 +217,49 @@ class RuntimeHardeningRecoveryPolicyCases:
         self.assertEqual(snapshot["stale_rejections"], 1)
 
 
+    def test_queue_snapshot_matches_dispatch_order(self):
+        normal = Account(username="queue_row_1_normal")
+        priority = Account(username="queue_row_2_priority", priority=10)
+        boosted = Account(username="queue_row_3_boosted")
+        queue = SmartQueue()
+
+        queue.push(normal, reason="normal")
+        queue.push(priority, reason="normal")
+        queue.push(boosted, reason="force_rejoin")
+
+        snapshot = queue.snapshot()
+        entries = snapshot["entries"]
+        self.assertEqual(
+            [item["account"] for item in entries],
+            ["queue_row_3_boosted", "queue_row_2_priority", "queue_row_1_normal"],
+        )
+        self.assertEqual([item["queue_position"] for item in entries], [1, 2, 3])
+        self.assertEqual([queue.pop(timeout=0.01).username for _ in range(3)], [
+            "queue_row_3_boosted",
+            "queue_row_2_priority",
+            "queue_row_1_normal",
+        ])
+
+
+    def test_queue_position_does_not_drift_from_aging(self):
+        queue = SmartQueue()
+        normal = Account(username="queue_stable_normal", priority=50)
+        priority = Account(username="queue_stable_priority", priority=20)
+
+        with patch("runtime.smart_queue.time.time", return_value=1000.0):
+            queue.push(normal, reason="normal")
+        with patch("runtime.smart_queue.time.time", return_value=1001.0):
+            queue.push(priority, reason="normal")
+
+        with patch("runtime.smart_queue.time.time", return_value=1002.0):
+            initial = [item["account"] for item in queue.snapshot()["entries"]]
+        with patch("runtime.smart_queue.time.time", return_value=2000.0):
+            later = [item["account"] for item in queue.snapshot()["entries"]]
+
+        self.assertEqual(initial, ["queue_stable_priority", "queue_stable_normal"])
+        self.assertEqual(later, initial)
+
+
     def test_error_267_normalizes_to_rejoinable_network_disconnect(self):
         self.assertEqual(normalize_disconnect_category(popup_code="267"), NETWORK_DISCONNECT)
 

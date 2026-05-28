@@ -199,6 +199,32 @@ class HybridAccountPopupWindowCases:
                 self.assertEqual(result.action, "")
                 self.assertEqual(result.evidence_source, "visual_strong")
 
+    def test_visual_pipeline_detects_captcha_challenge_page_without_text(self):
+        from PIL import Image, ImageDraw
+        from runtime.popup_detector.popup_classifier import classify_popup_observation
+        from runtime.popup_detector.popup_visual_detector import detect_visual_features
+
+        image = Image.new("RGB", (800, 600), (255, 255, 255))
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((0, 0, 800, 38), fill=(238, 239, 241))
+        draw.text((376, 12), "Security", fill=(20, 20, 20))
+        draw.text((274, 70), "Verification", fill=(10, 10, 10))
+        draw.rectangle((260, 185, 540, 430), outline=(235, 235, 235), width=1)
+        draw.text((350, 245), "Verification", fill=(0, 0, 0))
+        draw.text((315, 292), "Please solve this challenge", fill=(100, 110, 120))
+        draw.rectangle((340, 350, 460, 385), fill=(64, 200, 120))
+        draw.text((365, 360), "Start Puzzle", fill=(255, 255, 255))
+
+        visual = detect_visual_features(image)
+        result = classify_popup_observation([], visual, process_idle=False)
+
+        self.assertTrue(visual["matched"])
+        self.assertTrue(visual["captcha_challenge"])
+        self.assertEqual(visual["visual_stage"], "captcha_challenge")
+        self.assertEqual(result.action, "hold")
+        self.assertEqual(result.reason_key, CAPTCHA_REASON)
+        self.assertFalse(result.recovery_allowed)
+
     def test_visual_pipeline_detects_small_window_disconnect_leave_bar(self):
         from PIL import Image, ImageDraw
         from runtime.popup_detector.popup_classifier import classify_popup_observation

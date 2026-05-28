@@ -366,6 +366,69 @@ class HybridAccountRecoveryPopupCases:
         self.assertEqual(inspect_flags, [True, False, False])
         self.assertEqual(len(maint._last_popup_scan_at), 1)
 
+    def test_lua_waiting_popup_scan_is_prioritized_over_ingame_accounts(self):
+        maint = object.__new__(SystemMaintenance)
+        maint._cfg = {
+            "watchdog_enabled": True,
+            "popup_disconnected_enabled": True,
+            "popup_scan_interval_seconds": 30,
+            "popup_scan_max_parallel": 1,
+            "popup_startup_grace_seconds": 0,
+            "watchdog_hold_time": 60,
+            "watchdog_activity_timeout": 180,
+            "watchdog_loading_grace": 90,
+            "watchdog_cpu_low": 0.9,
+            "use_lua": True,
+        }
+        maint._accounts = []
+        maint._workers = {}
+        maint._last_popup_scan_at = {}
+        maint._last_popup_batch_at = 0.0
+        maint._popup_scan_cursor = 0
+
+        class Net:
+            def is_online(self):
+                return True
+
+        class Recovery:
+            _net = Net()
+
+        maint._recovery = Recovery()
+        live = Account(username="popup_live_first")
+        live.state = AccountState.IN_GAME
+        live.pid = 4100
+        live.in_game_since = time.time() - 120
+        live.last_activity_at = time.time()
+        waiting = Account(username="popup_lua_waiting_last")
+        waiting.state = AccountState.VERIFY
+        waiting.pid = 4101
+        waiting.recovery_status = "waiting_for_lua"
+        waiting.last_state_change_at = time.time() - 120
+        waiting.last_launch_at = time.time() - 120
+        maint._accounts = [live, waiting]
+
+        inspect_by_pid = {}
+        sample_by_pid = {}
+
+        def _record_liveness(pid, *args, **kwargs):
+            inspect_by_pid[pid] = bool(kwargs.get("inspect_ui"))
+            sample_by_pid[pid] = kwargs.get("ui_sample_count")
+            return {
+                "state": "alive",
+                "score": 8.0,
+                "validation": {"cpu": 3.0, "ram_mb": 300.0, "windows": 1},
+                "reason_key": "",
+                "dialog": {},
+            }
+
+        with patch.object(ProcessManager, "assess_liveness", side_effect=_record_liveness):
+            SystemMaintenance._scan_liveness_watchdog(maint)
+
+        self.assertFalse(inspect_by_pid[4100])
+        self.assertTrue(inspect_by_pid[4101])
+        self.assertEqual(sample_by_pid[4101], 2)
+        self.assertEqual(set(maint._last_popup_scan_at), {"popup_lua_waiting_last"})
+
     def test_popup_scan_queue_advances_by_account_order_after_interval(self):
         maint = object.__new__(SystemMaintenance)
         maint._cfg = {

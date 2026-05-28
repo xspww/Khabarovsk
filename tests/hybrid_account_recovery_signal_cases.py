@@ -77,7 +77,7 @@ class HybridAccountRecoverySignalCases:
         self.assertEqual(kwargs["expected_runtime_generation"], 7)
         self.assertEqual(kwargs["payload"]["popup_code"], "273")
 
-    def test_home_screen_without_job_evidence_triggers_rejoin_signal(self):
+    def test_home_like_missing_server_evidence_does_not_trigger_rejoin_signal(self):
         maint = object.__new__(SystemMaintenance)
         maint._cfg = {
             "watchdog_enabled": True,
@@ -87,10 +87,8 @@ class HybridAccountRecoverySignalCases:
             "watchdog_loading_grace": 90,
             "watchdog_cpu_low": 0.9,
             "launch_verify_window": 1,
-            "home_rejoin_enabled": True,
-            "home_rejoin_grace_seconds": 1,
-            "home_rejoin_hold_seconds": 1,
-            "home_rejoin_require_server_evidence": True,
+            "use_lua": True,
+            "lua_wait_timeout": 60,
         }
         maint._workers = {}
         maint._runtime_owner = None
@@ -112,7 +110,7 @@ class HybridAccountRecoverySignalCases:
 
         recovery = Recovery()
         maint._recovery = recovery
-        acc = Account(username="home_stuck_user")
+        acc = Account(username="lua_primary_no_home_user")
         acc.state = AccountState.IN_GAME
         acc.desired_state = AccountState.IN_GAME
         acc.pid = 1234
@@ -125,8 +123,6 @@ class HybridAccountRecoverySignalCases:
         acc.observed_place_id = "123456"
         acc.observed_job_id = ""
         acc.liveness_state = "alive"
-        acc.last_watchdog_classification = "home_screen_stuck"
-        acc.liveness_suspect_since = now - 5
         acc.runtime_generation = 7
         acc.session_id = "sess"
         acc.launch_nonce = "nonce"
@@ -143,190 +139,7 @@ class HybridAccountRecoverySignalCases:
         with patch.object(ProcessManager, "assess_liveness", return_value=liveness):
             SystemMaintenance._scan_liveness_watchdog(maint)
 
-        self.assertEqual(len(recovery.calls), 1)
-        args, kwargs = recovery.calls[0]
-        self.assertEqual(args[1], "loading_freeze")
-        self.assertEqual(args[2], "home_screen_no_job")
-        self.assertEqual(kwargs["expected_runtime_generation"], 7)
-        self.assertEqual(kwargs["expected_session_id"], "sess")
-        self.assertEqual(kwargs["payload"]["trigger"], "home_screen_guard")
-        self.assertEqual(acc.last_watchdog_classification, "home_screen_stuck")
-
-    def test_home_screen_without_server_evidence_triggers_rejoin_signal(self):
-        maint = object.__new__(SystemMaintenance)
-        maint._cfg = {
-            "watchdog_enabled": True,
-            "popup_disconnected_enabled": False,
-            "watchdog_hold_time": 60,
-            "watchdog_activity_timeout": 180,
-            "watchdog_loading_grace": 90,
-            "watchdog_cpu_low": 0.9,
-            "launch_verify_window": 1,
-            "home_rejoin_enabled": True,
-            "home_rejoin_grace_seconds": 1,
-            "home_rejoin_hold_seconds": 1,
-            "home_rejoin_require_server_evidence": True,
-        }
-        maint._workers = {}
-        maint._runtime_owner = None
-        maint._runtime_state = RuntimeStateManager(logger=lambda *_args, **_kwargs: None)
-
-        class Net:
-            def is_online(self):
-                return True
-
-        class Recovery:
-            _net = Net()
-
-            def __init__(self):
-                self.calls = []
-
-            def handle_runtime_signal(self, *args, **kwargs):
-                self.calls.append((args, kwargs))
-                return True
-
-        recovery = Recovery()
-        maint._recovery = recovery
-        acc = Account(username="home_no_server_evidence_user")
-        acc.state = AccountState.IN_GAME
-        acc.desired_state = AccountState.IN_GAME
-        acc.pid = 1234
-        now = time.time()
-        acc.in_game_since = now - 120
-        acc.last_launch_at = now - 120
-        acc.last_activity_at = now - 120
-        acc.launch_intent = {"place_id": "123456"}
-        acc.observed_server_at = 0.0
-        acc.observed_place_id = ""
-        acc.observed_job_id = ""
-        acc.liveness_state = "alive"
-        acc.last_watchdog_classification = "home_screen_stuck"
-        acc.liveness_suspect_since = now - 5
-        maint._accounts = [acc]
-
-        liveness = {
-            "state": "alive",
-            "score": 8.0,
-            "validation": {"cpu": 3.0, "ram_mb": 300.0, "windows": 1},
-            "reason_key": "",
-            "dialog": {},
-        }
-        with patch.object(ProcessManager, "assess_liveness", return_value=liveness):
-            SystemMaintenance._scan_liveness_watchdog(maint)
-
-        self.assertEqual(len(recovery.calls), 1)
-        args, kwargs = recovery.calls[0]
-        self.assertEqual(args[1], "loading_freeze")
-        self.assertEqual(args[2], "home_screen_no_server_evidence")
-        self.assertEqual(kwargs["payload"]["trigger"], "home_screen_guard")
-
-    def test_home_rejoin_guard_allows_teleported_subplace_with_job(self):
-        from runtime.home_rejoin_guard import detect_home_rejoin_issue
-
-        acc = Account(username="teleport_user")
-        now = time.time()
-        acc.in_game_since = now - 120
-        acc.last_launch_at = now - 120
-        acc.launch_intent = {"place_id": "77747658251236"}
-        acc.observed_server_at = now - 90
-        acc.observed_place_id = "130167267952199"
-        acc.observed_job_id = "a47501ca-e723-4f6b-be91-0937074f8635"
-
-        issue = detect_home_rejoin_issue(
-            acc,
-            {
-                "home_rejoin_enabled": True,
-                "home_rejoin_grace_seconds": 60,
-                "launch_verify_window": 25,
-                "home_rejoin_require_server_evidence": True,
-            },
-            now,
-            120,
-        )
-
-        self.assertIsNone(issue)
-
-    def test_home_rejoin_guard_rejoins_missing_server_evidence_when_required(self):
-        from runtime.home_rejoin_guard import detect_home_rejoin_issue
-
-        acc = Account(username="no_evidence_user")
-        now = time.time()
-        acc.in_game_since = now - 180
-        acc.last_launch_at = now - 180
-        acc.launch_intent = {"place_id": "77747658251236"}
-        acc.observed_server_at = 0.0
-        acc.observed_place_id = ""
-        acc.observed_job_id = ""
-
-        issue = detect_home_rejoin_issue(
-            acc,
-            {
-                "home_rejoin_enabled": True,
-                "home_rejoin_grace_seconds": 60,
-                "launch_verify_window": 25,
-                "home_rejoin_require_server_evidence": True,
-            },
-            now,
-            180,
-        )
-
-        self.assertIsNotNone(issue)
-        self.assertEqual(issue["reason_key"], "home_screen_no_server_evidence")
-
-    def test_home_rejoin_guard_ignores_missing_server_evidence_when_disabled(self):
-        from runtime.home_rejoin_guard import detect_home_rejoin_issue
-
-        acc = Account(username="no_evidence_disabled_user")
-        now = time.time()
-        acc.in_game_since = now - 180
-        acc.last_launch_at = now - 180
-        acc.launch_intent = {"place_id": "77747658251236"}
-        acc.observed_server_at = 0.0
-        acc.observed_place_id = ""
-        acc.observed_job_id = ""
-
-        issue = detect_home_rejoin_issue(
-            acc,
-            {
-                "home_rejoin_enabled": True,
-                "home_rejoin_grace_seconds": 60,
-                "launch_verify_window": 25,
-                "home_rejoin_require_server_evidence": False,
-            },
-            now,
-            180,
-        )
-
-        self.assertIsNone(issue)
-
-    def test_home_rejoin_guard_uses_missing_lua_evidence_when_lua_required(self):
-        from runtime.home_rejoin_guard import detect_home_rejoin_issue
-
-        acc = Account(username="lua_home_user")
-        now = time.time()
-        acc.in_game_since = now - 180
-        acc.last_launch_at = now - 180
-        acc.launch_intent = {"place_id": "77747658251236"}
-        acc.observed_server_at = 0.0
-        acc.observed_place_id = ""
-        acc.observed_job_id = ""
-        acc.lua_in_game_at = 0.0
-        acc.lua_last_event_at = 0.0
-
-        issue = detect_home_rejoin_issue(
-            acc,
-            {
-                "use_lua": True,
-                "home_rejoin_enabled": True,
-                "home_rejoin_grace_seconds": 60,
-                "launch_verify_window": 25,
-            },
-            now,
-            180,
-        )
-
-        self.assertIsNotNone(issue)
-        self.assertEqual(issue["reason_key"], "home_screen_no_server_evidence")
+        self.assertEqual(recovery.calls, [])
 
     def test_waiting_for_lua_timeout_triggers_rejoin_signal(self):
         maint = object.__new__(SystemMaintenance)
@@ -403,6 +216,54 @@ class HybridAccountRecoverySignalCases:
         self.assertEqual(args[2], "lua_wait_timeout")
         self.assertEqual(kwargs["payload"]["trigger"], "lua_wait_timeout")
 
+    def test_waiting_for_lua_timeout_holds_captcha_before_rejoin_signal(self):
+        maint = object.__new__(SystemMaintenance)
+        maint._cfg = {"use_lua": True, "lua_wait_timeout": 1, "launch_verify_window": 1, "queue_timeout": 90}
+        calls = []
+        maint._runtime_signal = lambda *args, **kwargs: calls.append((args, kwargs)) or True
+
+        class Recovery:
+            def __init__(self):
+                self.failed = []
+
+            def fail_account(self, account, reason, reason_msg):
+                self.failed.append((account.username, reason, reason_msg))
+
+        class State:
+            def __init__(self):
+                self.runtime = RuntimeStateManager(logger=lambda *_args, **_kwargs: None)
+
+            def set_recovery(self, account, status="", reason="", inflight=None):
+                self.runtime.set_recovery(account, status=status, reason=reason, inflight=inflight)
+
+            def set_cooldown(self, account, until_ts, reason=""):
+                self.runtime.set_cooldown(account, until_ts, reason=reason)
+
+            def clear_process_binding(self, account, reason="", increment_generation=False):
+                self.runtime.clear_process_binding(account, reason=reason, increment_generation=increment_generation)
+
+        recovery = Recovery()
+        maint._recovery = recovery
+        maint._state_mgr = State()
+        acc = Account(username="lua_timeout_captcha_user")
+        now = time.time()
+        acc.state = AccountState.VERIFY
+        acc.desired_state = AccountState.IN_GAME
+        acc.pid = 1234
+        acc.recovery_status = "waiting_for_lua"
+        acc.last_state_change_at = now - 30
+        maint._accounts = [acc]
+        dialog = {"matched": True, "action": "hold", "reason_key": CAPTCHA_REASON, "detail": "Security"}
+
+        with patch("runtime.maintenance_liveness.ProcessManager.is_bound_game_alive", return_value=True), \
+             patch("runtime.maintenance_captcha.ProcessManager.inspect_disconnect_dialog", return_value=dialog), \
+             patch("runtime.maintenance_captcha.ProcessService.safe_kill_bound_process", return_value={"killed": True}):
+            SystemMaintenance._recover_stale_joining_states(maint)
+
+        self.assertEqual(calls, [])
+        self.assertTrue(is_account_captcha_required(acc))
+        self.assertEqual(recovery.failed, [("lua_timeout_captcha_user", CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)])
+
     def test_in_game_missing_lua_timeout_triggers_rejoin_signal(self):
         maint = object.__new__(SystemMaintenance)
         maint._cfg = {
@@ -444,6 +305,58 @@ class HybridAccountRecoverySignalCases:
         self.assertEqual(kwargs["expected_session_id"], "sess")
         self.assertEqual(kwargs["payload"]["trigger"], "lua_wait_timeout")
         self.assertEqual(kwargs["payload"]["state"], "IN_GAME")
+
+    def test_in_game_missing_lua_timeout_holds_captcha_before_rejoin_signal(self):
+        maint = object.__new__(SystemMaintenance)
+        maint._cfg = {"use_lua": True, "lua_wait_timeout": 1, "launch_verify_window": 25, "queue_timeout": 90}
+        calls = []
+        maint._runtime_signal = lambda *args, **kwargs: calls.append((args, kwargs)) or True
+
+        class Recovery:
+            def __init__(self):
+                self.failed = []
+
+            def fail_account(self, account, reason, reason_msg):
+                self.failed.append((account.username, reason, reason_msg))
+
+        class State:
+            def __init__(self):
+                self.runtime = RuntimeStateManager(logger=lambda *_args, **_kwargs: None)
+
+            def set_recovery(self, account, status="", reason="", inflight=None):
+                self.runtime.set_recovery(account, status=status, reason=reason, inflight=inflight)
+
+            def set_cooldown(self, account, until_ts, reason=""):
+                self.runtime.set_cooldown(account, until_ts, reason=reason)
+
+            def clear_process_binding(self, account, reason="", increment_generation=False):
+                self.runtime.clear_process_binding(account, reason=reason, increment_generation=increment_generation)
+
+        recovery = Recovery()
+        maint._recovery = recovery
+        maint._state_mgr = State()
+        acc = Account(username="in_game_lua_captcha_user")
+        now = time.time()
+        acc.state = AccountState.IN_GAME
+        acc.desired_state = AccountState.IN_GAME
+        acc.pid = 1234
+        acc.recovery_status = "in_game"
+        acc.last_state_change_at = now - 2
+        acc.last_launch_at = now - 2
+        acc.in_game_since = now - 2
+        acc.lua_in_game_at = 0.0
+        acc.lua_last_event_at = 0.0
+        maint._accounts = [acc]
+        dialog = {"matched": True, "action": "hold", "reason_key": CAPTCHA_REASON, "detail": "Security"}
+
+        with patch("runtime.maintenance_liveness.ProcessManager.is_bound_game_alive", return_value=True), \
+             patch("runtime.maintenance_captcha.ProcessManager.inspect_disconnect_dialog", return_value=dialog), \
+             patch("runtime.maintenance_captcha.ProcessService.safe_kill_bound_process", return_value={"killed": True}):
+            SystemMaintenance._recover_stale_joining_states(maint)
+
+        self.assertEqual(calls, [])
+        self.assertTrue(is_account_captcha_required(acc))
+        self.assertEqual(recovery.failed, [("in_game_lua_captcha_user", CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)])
 
     def test_waiting_for_lua_keeps_waiting_before_timeout_even_when_pid_is_live(self):
         maint = object.__new__(SystemMaintenance)

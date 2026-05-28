@@ -630,6 +630,75 @@ def _small_disconnect_panel_features(screenshot: Any) -> Dict[str, Any]:
         return {"matched": False, "score": 0.0, "source": "small_panel", "reason": f"small_panel:{exc}"}
 
 
+def _captcha_challenge_features(screenshot: Any) -> Dict[str, Any]:
+    try:
+        small = _resize_luma(screenshot, MODAL_ANALYSIS_SIZE)
+        pixels = small.load()
+        width, height = small.size
+        white_samples = 0
+        white_hits = 0
+        for y in range(0, height, 3):
+            for x in range(0, width, 3):
+                white_samples += 1
+                if int(pixels[x, y]) >= 225:
+                    white_hits += 1
+        white_ratio = white_hits / float(max(1, white_samples))
+
+        x_min, x_max = int(width * 0.24), int(width * 0.76)
+        y_min, y_max = int(height * 0.26), int(height * 0.86)
+        dark_rows = 0
+        for y in range(int(height * 0.04), int(height * 0.62)):
+            hits = sum(1 for x in range(int(width * 0.18), int(width * 0.82)) if int(pixels[x, y]) <= 90)
+            if hits / float(max(1, int(width * 0.64))) >= 0.015:
+                dark_rows += 1
+
+        green_button_mask: List[List[bool]] = []
+        for y in range(y_min, y_max):
+            row: List[bool] = []
+            for x in range(x_min, x_max):
+                value = int(pixels[x, y])
+                row.append(120 <= value <= 205)
+            green_button_mask.append(row)
+
+        button = {}
+        min_button_w = _scaled_min(width, 0.10, 22)
+        min_button_h = _scaled_min(height, 0.035, 6)
+        for item in _binary_components(green_button_mask):
+            item_w = int(item["width"])
+            item_h = int(item["height"])
+            area = int(item["area"])
+            if item_w < min_button_w or item_h < min_button_h:
+                continue
+            fill = area / float(max(1, item_w * item_h))
+            center_x = x_min + int(item["x"]) + item_w / 2.0
+            center_y = y_min + int(item["y"]) + item_h / 2.0
+            if fill >= 0.50 and width * 0.30 <= center_x <= width * 0.70 and height * 0.45 <= center_y <= height * 0.78:
+                button = {**item, "x": x_min + int(item["x"]), "y": y_min + int(item["y"]), "fill": round(fill, 3)}
+                break
+
+        breakdown: Dict[str, float] = {}
+        if white_ratio >= 0.70:
+            breakdown["white_security_page"] = 0.35
+        if dark_rows >= _scaled_min(height, 0.025, 5):
+            breakdown["security_text_rows"] = 0.22
+        if button:
+            breakdown["start_puzzle_button"] = 0.48
+        score = round(sum(breakdown.values()), 3)
+        matched = bool(button and (white_ratio >= 0.82 or (white_ratio >= 0.70 and dark_rows >= _scaled_min(height, 0.018, 4))))
+        return {
+            "matched": matched,
+            "score": score,
+            "strength": "strong" if matched else ("weak" if button else "none"),
+            "source": "captcha_challenge",
+            "breakdown": breakdown,
+            "white_ratio": round(white_ratio, 3),
+            "dark_rows": dark_rows,
+            "button": button,
+        }
+    except Exception as exc:
+        return {"matched": False, "score": 0.0, "source": "captcha_challenge", "reason": f"captcha:{exc}"}
+
+
 def detect_visual_features(screenshot: Any) -> Dict[str, Any]:
     if screenshot is None:
         return {"matched": False, "score": 0.0, "reason": "no_screenshot"}
@@ -640,6 +709,7 @@ def detect_visual_features(screenshot: Any) -> Dict[str, Any]:
     button_layout = _button_layout_features(screenshot, dict(center_modal.get("rect") or {}))
     structural = _structural_popup_features(screenshot)
     small_panel = _small_disconnect_panel_features(screenshot)
+    captcha_challenge = _captcha_challenge_features(screenshot)
 
     title_template = _load_template("disconnect_title.png")
     reconnect_template = _load_template("disconnect_reconnect_btn.png")
@@ -670,6 +740,7 @@ def detect_visual_features(screenshot: Any) -> Dict[str, Any]:
     overlay_score = float(overlay.get("score") or 0.0)
     structural_score = float(structural.get("score") or 0.0)
     small_panel_score = float(small_panel.get("score") or 0.0)
+    captcha_score = float(captcha_challenge.get("score") or 0.0)
     structural_separator = float(structural.get("separator_strength") or 0.0)
     structural_button = bool((structural.get("button") or {}).get("area"))
     modal_shape = bool(center_modal.get("centered") and center_modal.get("modal_shape"))
@@ -678,6 +749,7 @@ def detect_visual_features(screenshot: Any) -> Dict[str, Any]:
     overlay_confirmed = bool(overlay.get("matched"))
     modal_button_confirmed = bool(modal_shape and button and (separator or overlay_confirmed))
     small_panel_confirmed = bool(small_panel.get("matched"))
+    captcha_confirmed = bool(captcha_challenge.get("matched"))
     structural_button_confirmed = bool(
         overlay_confirmed
         and structural_score >= 0.96
@@ -694,18 +766,22 @@ def detect_visual_features(screenshot: Any) -> Dict[str, Any]:
         + min(0.75, template_score),
         3,
     )
-    score = round(max(pipeline_score, template_score, structural_score, small_panel_score), 3)
-    strong = bool(template_matched or modal_button_confirmed or structural_button_confirmed or small_panel_confirmed)
+    score = round(max(pipeline_score, template_score, structural_score, small_panel_score, captcha_score), 3)
+    strong = bool(template_matched or modal_button_confirmed or structural_button_confirmed or small_panel_confirmed or captcha_confirmed)
     weak = bool(structural.get("matched") or modal_shape or button)
     matched = strong or weak
-    source = "template" if template_matched else ("visual_pipeline" if strong else ("structural" if weak else "none"))
+    source = "captcha_challenge" if captcha_confirmed else ("template" if template_matched else ("visual_pipeline" if strong else ("structural" if weak else "none")))
     stage = (
-        "template"
-        if template_matched
+        "captcha_challenge"
+        if captcha_confirmed
         else (
-            "modal_button"
-            if modal_button_confirmed
-            else ("small_panel" if small_panel_confirmed else ("structural_button" if structural_button_confirmed else ("structural_weak" if weak else "none")))
+            "template"
+            if template_matched
+            else (
+                "modal_button"
+                if modal_button_confirmed
+                else ("small_panel" if small_panel_confirmed else ("structural_button" if structural_button_confirmed else ("structural_weak" if weak else "none")))
+            )
         )
     )
     button_pattern = "bar" if small_panel_confirmed else str(button_layout.get("pattern") or "none")
@@ -723,6 +799,8 @@ def detect_visual_features(screenshot: Any) -> Dict[str, Any]:
         "template_score": round(template_score, 3),
         "structural_score": round(structural_score, 3),
         "small_panel_score": round(small_panel_score, 3),
+        "captcha_score": round(captcha_score, 3),
+        "captcha_challenge": captcha_confirmed,
         "title_rms": round(title_rms, 2),
         "reconnect_rms": round(reconnect_rms, 2),
         "overlay": overlay,
@@ -730,5 +808,6 @@ def detect_visual_features(screenshot: Any) -> Dict[str, Any]:
         "button_layout": button_layout,
         "structural": structural,
         "small_panel": small_panel,
+        "captcha": captcha_challenge,
         "reason": template_reason,
     }

@@ -54,7 +54,7 @@ class HybridAccountStatusCases:
             {"snapshot": lambda _self: {"pending_count": 2, "overdue_count": 0, "last_dispatch_latency_seconds": 0.25}},
         )()
 
-        with patch("runtime.runtime_view_model.ProcessManager.is_bound_game_alive", return_value=True), \
+        with patch("runtime.runtime_view_model.ProcessManager.validate_game_process", return_value={"ok": True, "windows": 1}), \
              patch("runtime.runtime_view_model.ProcessManager.get_pid_owner", return_value="UserA"), \
              patch("runtime.runtime_view_model.ProcessManager.is_not_responding", return_value=False):
             status = controller.get_status()
@@ -85,7 +85,7 @@ class HybridAccountStatusCases:
         set_account_captcha_hold(account, "Roblox Security verification visible", source="unit")
         controller.set_accounts([account])
 
-        with patch("runtime.runtime_view_model.ProcessManager.is_bound_game_alive", return_value=True), \
+        with patch("runtime.runtime_view_model.ProcessManager.validate_game_process", return_value={"ok": True, "windows": 1}), \
              patch("runtime.runtime_view_model.ProcessManager.get_pid_owner", return_value="CaptchaLiveUser"), \
              patch("runtime.runtime_view_model.ProcessManager.is_not_responding", return_value=False):
             status = controller.get_status()
@@ -96,6 +96,49 @@ class HybridAccountStatusCases:
         row = status["accounts"][0]
         self.assertEqual(row["state_label"], "Captcha")
         self.assertTrue(row["captcha_required"])
+        controller._runtime_store.close()
+
+    def test_running_status_reuses_snapshot_cache_until_revision_changes(self):
+        from config_store import ConfigManager
+
+        controller = FarmController(ConfigManager())
+        controller.running = True
+        snapshots = [
+            {"status_revision": 0, "status_updated_at": time.time(), "accounts": []},
+            {"status_revision": 1, "status_updated_at": time.time(), "accounts": []},
+        ]
+
+        with patch("farm.build_farm_status", side_effect=snapshots) as build:
+            first = controller.get_status()
+            second = controller.get_status()
+            controller._bump_status_revision()
+            third = controller.get_status()
+
+        self.assertEqual(first["status_revision"], second["status_revision"])
+        self.assertEqual(build.call_count, 2)
+        self.assertTrue(second["status_perf"]["cache_hit"])
+        self.assertEqual(third["status_revision"], 1)
+        controller._runtime_store.close()
+
+    def test_running_status_process_cache_reuses_validation_result(self):
+        from config_store import ConfigManager
+        from runtime.runtime_view_model import RuntimeViewModelBuilder
+
+        controller = FarmController(ConfigManager())
+        controller.running = True
+        account = Account("CachedProcessUser")
+        account.pid = 4321
+        account.bound_process_identity = "RobloxPlayerBeta.exe|1|C:\\Roblox\\RobloxPlayerBeta.exe"
+        builder = RuntimeViewModelBuilder(controller)
+
+        with patch("runtime.runtime_view_model.ProcessManager.validate_game_process", return_value={"ok": True, "windows": 1}) as validate, \
+             patch("runtime.runtime_view_model.ProcessManager.is_not_responding", return_value=False):
+            first = builder._process_status(account, account.pid, account.bound_process_identity)
+            second = builder._process_status(account, account.pid, account.bound_process_identity)
+
+        self.assertTrue(first["alive"])
+        self.assertEqual(second["validation"]["windows"], 1)
+        self.assertEqual(validate.call_count, 1)
         controller._runtime_store.close()
 
     def test_status_view_model_waits_for_lua_when_lua_is_required(self):
@@ -114,8 +157,7 @@ class HybridAccountStatusCases:
         account.sync_runtime("unit")
         controller.set_accounts([account])
 
-        with patch("runtime.runtime_view_model.ProcessManager.is_bound_game_alive", return_value=True), \
-             patch("runtime.runtime_view_model.ProcessManager.validate_game_process", return_value={"windows": 1}), \
+        with patch("runtime.runtime_view_model.ProcessManager.validate_game_process", return_value={"ok": True, "windows": 1}), \
              patch("runtime.runtime_view_model.ProcessManager.get_pid_owner", return_value="LuaWaitUser"), \
              patch("runtime.runtime_view_model.ProcessManager.is_not_responding", return_value=False):
             status = controller.get_status()
@@ -132,8 +174,7 @@ class HybridAccountStatusCases:
         account.lua_last_event_at = now
         account.lua_last_event = "in_game"
 
-        with patch("runtime.runtime_view_model.ProcessManager.is_bound_game_alive", return_value=True), \
-             patch("runtime.runtime_view_model.ProcessManager.validate_game_process", return_value={"windows": 1}), \
+        with patch("runtime.runtime_view_model.ProcessManager.validate_game_process", return_value={"ok": True, "windows": 1}), \
              patch("runtime.runtime_view_model.ProcessManager.get_pid_owner", return_value="LuaWaitUser"), \
              patch("runtime.runtime_view_model.ProcessManager.is_not_responding", return_value=False):
             status = controller.get_status()
@@ -162,8 +203,7 @@ class HybridAccountStatusCases:
         account.sync_runtime("unit")
         controller.set_accounts([account])
 
-        with patch("runtime.runtime_view_model.ProcessManager.is_bound_game_alive", return_value=True), \
-             patch("runtime.runtime_view_model.ProcessManager.validate_game_process", return_value={"windows": 1}), \
+        with patch("runtime.runtime_view_model.ProcessManager.validate_game_process", return_value={"ok": True, "windows": 1}), \
              patch("runtime.runtime_view_model.ProcessManager.get_pid_owner", return_value="LuaCaptchaUser"), \
              patch("runtime.runtime_view_model.ProcessManager.is_not_responding", return_value=False):
             status = controller.get_status()
@@ -185,7 +225,7 @@ class HybridAccountStatusCases:
         account.pid = 4321
         controller.set_accounts([account])
 
-        with patch("runtime.runtime_view_model.ProcessManager.is_bound_game_alive", return_value=False), \
+        with patch("runtime.runtime_view_model.ProcessManager.validate_game_process", return_value={"ok": False, "windows": 0}), \
              patch("runtime.runtime_view_model.ProcessManager.is_not_responding", return_value=False), \
              patch("runtime.runtime_view_model.flog_kv") as log:
             controller.get_status()
@@ -211,7 +251,7 @@ class HybridAccountStatusCases:
         account.desired_state = AccountState.IN_GAME
         controller.set_accounts([account])
 
-        with patch("runtime.runtime_view_model.ProcessManager.is_bound_game_alive", return_value=False), \
+        with patch("runtime.runtime_view_model.ProcessManager.validate_game_process", return_value={"ok": False, "windows": 0}), \
              patch("runtime.runtime_view_model.ProcessManager.is_not_responding", return_value=False), \
              patch("runtime.runtime_view_model.flog_kv") as log:
             controller.get_status()
@@ -241,8 +281,7 @@ class HybridAccountStatusCases:
         account.observed_server_at = time.time()
         controller.set_accounts([account])
 
-        with patch("runtime.runtime_view_model.ProcessManager.is_bound_game_alive", side_effect=[False, True]), \
-             patch("runtime.runtime_view_model.ProcessManager.validate_game_process", return_value={"windows": 1}), \
+        with patch("runtime.runtime_view_model.ProcessManager.validate_game_process", side_effect=[{"ok": False, "windows": 0}, {"ok": True, "windows": 1}]), \
              patch("runtime.runtime_view_model.ProcessManager.get_pid_owner", return_value="UserA"), \
              patch("runtime.runtime_view_model.ProcessManager.is_not_responding", return_value=False), \
              patch("runtime.runtime_view_model.flog_kv") as log:

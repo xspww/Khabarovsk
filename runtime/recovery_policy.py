@@ -27,10 +27,6 @@ REASON_ALIASES = {
     "multi_roblox_guard_failed": "multi_roblox_guard_failed",
     "launch_verify_timeout": "watchdog_timeout",
     "process_memory_pressure": "watchdog_timeout",
-    "home_screen_stuck": "loading_freeze",
-    "home_screen_no_job": "loading_freeze",
-    "home_screen_wrong_place": "loading_freeze",
-    "home_screen_no_server_evidence": "loading_freeze",
     "lua_wait_timeout": "loading_freeze",
 }
 

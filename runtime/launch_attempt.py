@@ -167,9 +167,32 @@ class LaunchAttempt:
             launch_ts = acc.last_launch_at or time.time()
         verify_window = controller._cfg.get("launch_verify_window", 25)
         quick_bind_deadline = time.time() + min(6.0, max(1.0, float(verify_window) / 3.0))
+        try:
+            quick_bind_poll = max(0.5, min(1.5, float(controller._cfg.get("launch_quick_bind_poll_seconds", 0.75) or 0.75)))
+        except Exception:
+            quick_bind_poll = 0.75
+        try:
+            visible_probe_interval = max(1.5, min(4.0, float(controller._cfg.get("launch_visible_probe_interval_seconds", 2.0) or 2.0)))
+        except Exception:
+            visible_probe_interval = 2.0
+        next_visible_probe_at = time.time()
         while not stop.is_set() and time.time() < quick_bind_deadline:
-            presence = controller._visible_process_presence()
-            if presence.get("visible_count"):
+            if controller._try_bind_any_live_game(acc, "post_launch_existing", launched_after=launch_ts, expected_runtime_generation=launch_guard["runtime_generation"]):
+                ProcessService.cleanup_extra_launch_processes(
+                    before_pids,
+                    keep_pids=[acc.pid] if acc.pid else [],
+                    launched_after=launch_ts,
+                    reason="post_launch_existing_cleanup",
+                    account=acc,
+                )
+                return True
+            now = time.time()
+            if now >= next_visible_probe_at:
+                next_visible_probe_at = now + visible_probe_interval
+                presence = controller._visible_process_presence()
+            else:
+                presence = {}
+            if int(presence.get("visible_count") or 0) == 1:
                 adopt = controller._safe_adopt_visible(
                     acc,
                     "post_launch_visible_adopt",
@@ -185,16 +208,7 @@ class LaunchAttempt:
                         expected=launch_guard,
                     )
                     return True
-            if controller._try_bind_any_live_game(acc, "post_launch_existing", launched_after=launch_ts, expected_runtime_generation=launch_guard["runtime_generation"]):
-                ProcessService.cleanup_extra_launch_processes(
-                    before_pids,
-                    keep_pids=[acc.pid] if acc.pid else [],
-                    launched_after=launch_ts,
-                    reason="post_launch_existing_cleanup",
-                    account=acc,
-                )
-                return True
-            time.sleep(0.5)
+            stop.wait(timeout=quick_bind_poll)
         pid = ProcessManager.detect_new_pid(
             before_pids,
             timeout=verify_window,

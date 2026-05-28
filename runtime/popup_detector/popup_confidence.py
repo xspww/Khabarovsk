@@ -32,6 +32,9 @@ def popup_confidence_score(
         button_score = float(visual_features.get("button_score") or 0.0)
         template_score = float(visual_features.get("template_score") or 0.0)
         structural_score = float(visual_features.get("structural_score") or 0.0)
+        captcha_score = float(visual_features.get("captcha_score") or 0.0)
+        if bool(visual_features.get("captcha_challenge")):
+            breakdown["visual_captcha"] = min(1.0, max(0.75, captcha_score))
         if overlay_score > 0:
             breakdown["visual_overlay"] = min(0.25, overlay_score)
         if modal_score > 0:

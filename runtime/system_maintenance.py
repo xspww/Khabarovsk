@@ -109,13 +109,14 @@ class SystemMaintenance(
             ("maintenance:reconcile", self._reconcile_interval(), self._run_reconcile, "periodic_reconcile"),
         ]
         self._maintenance_job_keys = [key for key, _interval, _callback, _reason in jobs]
-        for key, interval, callback, reason in jobs:
+        stagger = min(1.0, max(0.1, base / max(1, len(jobs))))
+        for index, (key, interval, callback, reason) in enumerate(jobs):
             self._scheduler.schedule_periodic(
                 key,
                 interval,
                 callback,
                 reason=reason,
-                initial_delay=interval,
+                initial_delay=interval + (index * stagger),
                 payload={"maintenance_job": key},
             )
 

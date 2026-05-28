@@ -250,6 +250,9 @@
 .accounts-shell .user-main
 {
   min-width: 0;
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .accounts-shell .avatar,
@@ -269,6 +272,9 @@
   font-weight: 800;
   color: #e8f1ff;
   line-height: 1.15;
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .accounts-shell .handle
@@ -277,6 +283,9 @@
   color: #65758e;
   font: 700 10px var(--mono);
   line-height: 1.1;
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
 }
 
 .accounts-shell .status

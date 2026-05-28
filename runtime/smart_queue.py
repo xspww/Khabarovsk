@@ -20,6 +20,7 @@ class SmartQueue:
         self._busy = threading.Event()
         self._closed = False
         self._stale_rejections = 0
+        self._sequence = 0
 
     def is_busy(self) -> bool:
         return self._busy.is_set()
@@ -85,6 +86,7 @@ class SmartQueue:
                 existing["due_at"] = min(float(existing.get("due_at") or due_at), due_at)
                 if self._is_boosted(reason):
                     existing["boosted"] = True
+                    existing["score"] = self._calculate_score(existing["acc"], True)
                 flog_kv(
                     "QUEUE",
                     "dedupe",
@@ -97,6 +99,8 @@ class SmartQueue:
                 )
                 return
 
+            boosted = self._is_boosted(reason)
+            self._sequence += 1
             self._entries[key] = {
                 "acc": acc,
                 "reason": reason,
@@ -105,7 +109,9 @@ class SmartQueue:
                 "generation": generation,
                 "recovery_generation": generation,
                 "runtime_generation": runtime_generation,
-                "boosted": self._is_boosted(reason),
+                "boosted": boosted,
+                "score": self._calculate_score(acc, boosted),
+                "sequence": self._sequence,
             }
             flog_kv(
                 "QUEUE",
@@ -120,8 +126,7 @@ class SmartQueue:
             )
             self._cond.notify_all()
 
-    def _entry_score(self, entry: Dict[str, Any], now: float) -> float:
-        acc = entry["acc"]
+    def _calculate_score(self, acc: Any, boosted: bool = False) -> float:
         base = float(int(getattr(acc, "priority", 50) or 50))
         retry_penalty = min(
             80.0,
@@ -131,9 +136,14 @@ class SmartQueue:
                 int(getattr(acc, "crash_retry_count", 0) or 0)
             ) * 5.0,
         )
-        aging_credit = min(40.0, max(0.0, now - float(entry.get("queued_at") or now)) / 15.0)
-        boost = -1000.0 if entry.get("boosted") else 0.0
-        return base + retry_penalty - aging_credit + boost
+        boost = -1000.0 if boosted else 0.0
+        return base + retry_penalty + boost
+
+    def _entry_score(self, entry: Dict[str, Any], now: float) -> float:
+        try:
+            return float(entry.get("score"))
+        except (TypeError, ValueError):
+            return self._calculate_score(entry["acc"], bool(entry.get("boosted")))
 
     def _entry_due_at(self, entry: Dict[str, Any]) -> float:
         acc = entry["acc"]
@@ -141,6 +151,14 @@ class SmartQueue:
             float(entry.get("due_at") or 0.0),
             float(getattr(acc, "cooldown_until", 0.0) or 0.0),
         )
+
+    def _snapshot_sort_key(self, entry: Dict[str, Any], now: float):
+        due_at = self._entry_due_at(entry)
+        queued_at = float(entry.get("queued_at") or now)
+        sequence = int(entry.get("sequence") or 0)
+        ready_rank = 0 if due_at <= now else 1
+        score_at_due = self._entry_score(entry, max(now, due_at))
+        return (ready_rank, due_at if ready_rank else 0.0, score_at_due, sequence, queued_at)
 
     def pop(self, timeout: float = 1.0) -> Optional[Any]:
         deadline = time.time() + timeout
@@ -195,7 +213,11 @@ class SmartQueue:
 
                 best_key, best_entry = min(
                     ready,
-                    key=lambda item: (self._entry_score(item[1], now), float(item[1].get("queued_at") or now)),
+                    key=lambda item: (
+                        self._entry_score(item[1], now),
+                        int(item[1].get("sequence") or 0),
+                        float(item[1].get("queued_at") or now),
+                    ),
                 )
                 self._entries.pop(best_key, None)
                 acc = best_entry["acc"]
@@ -249,15 +271,27 @@ class SmartQueue:
         now = time.time()
         with self._lock:
             entries = []
-            for key, entry in self._entries.items():
+            ordered_entries = sorted(
+                self._entries.items(),
+                key=lambda item: self._snapshot_sort_key(item[1], now),
+            )
+            for position, (key, entry) in enumerate(ordered_entries, start=1):
                 acc = entry.get("acc")
+                due_at = self._entry_due_at(entry)
+                score = self._entry_score(entry, now)
                 entries.append({
                     "account": key,
                     "display": getattr(acc, "display_name", key),
                     "reason": entry.get("reason", ""),
+                    "queue_position": position,
+                    "queue_sequence": int(entry.get("sequence") or 0),
+                    "priority": int(getattr(acc, "priority", 50) or 50),
+                    "score": round(score, 2),
+                    "ready": due_at <= now,
                     "queued_at": float(entry.get("queued_at") or 0.0),
                     "age_seconds": round(max(0.0, now - float(entry.get("queued_at") or now)), 2),
-                    "due_in_seconds": round(max(0.0, self._entry_due_at(entry) - now), 2),
+                    "due_at": round(due_at, 3),
+                    "due_in_seconds": round(max(0.0, due_at - now), 2),
                     "runtime_generation": int(entry.get("runtime_generation", 0) or 0),
                     "recovery_generation": int(entry.get("recovery_generation", entry.get("generation", 0)) or 0),
                     "boosted": bool(entry.get("boosted", False)),

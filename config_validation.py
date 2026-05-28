@@ -31,7 +31,6 @@ _INT_RANGES: Dict[str, Tuple[int, int]] = {
     "runtime_invariant_suppress_seconds": (1, 3600),
     "watchdog_activity_timeout": (1, 86400),
     "watchdog_loading_grace": (1, 86400),
-    "home_rejoin_grace_seconds": (1, 86400),
     "fps_limit": (15, 1000),
     "graphics_quality_level": (1, 10),
     "roblox_window_width": (320, 1920),
@@ -59,9 +58,15 @@ _FLOAT_RANGES: Dict[str, Tuple[float, float]] = {
     "watchdog_hold_time": (1.0, 86400.0),
     "roblox_memory_guard_mb": (512.0, 65536.0),
     "roblox_memory_guard_hold_seconds": (5.0, 3600.0),
-    "home_rejoin_hold_seconds": (1.0, 3600.0),
     "cpu_limiter_default_percent": (5.0, 95.0),
     "roblox_window_resize_interval_seconds": (1.0, 3600.0),
+}
+
+_REMOVED_CONFIG_KEYS = {
+    "home_rejoin_enabled",
+    "home_rejoin_grace_seconds",
+    "home_rejoin_hold_seconds",
+    "home_rejoin_require_server_evidence",
 }
 
 
@@ -123,6 +128,8 @@ def validate_config_payload(raw: Any, defaults: Mapping[str, Any]) -> Dict[str, 
         else:
             clean[key] = value
     for key, value in source.items():
+        if key in _REMOVED_CONFIG_KEYS:
+            continue
         if key not in clean and not str(key).startswith("__"):
             clean[key] = value
     clean["schema_version"] = CONFIG_SCHEMA_VERSION

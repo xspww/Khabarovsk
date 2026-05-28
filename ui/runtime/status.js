@@ -6,7 +6,7 @@ export function healthSeverity(health){
 }
 
 export function createStatusRuntime({api,nextSequence,acceptStatus,setStreamState,loadAccountsConfig,render,loadAvatars,toast}){
-  let live=false, reconcileTimer=0, fallbackTimer=0;
+  let live=false, reconcileTimer=0, fallbackTimer=0, eventSource=null;
   async function manualSnapshot(){
     const seq=nextSequence();
     try{
@@ -24,21 +24,34 @@ export function createStatusRuntime({api,nextSequence,acceptStatus,setStreamStat
     if(reconcileTimer)return;
     reconcileTimer=setInterval(()=>{if(live)manualSnapshot()},15000);
   }
+  function stopFallbackPolling(){
+    if(!fallbackTimer)return;
+    clearInterval(fallbackTimer);
+    fallbackTimer=0;
+  }
   function startFallbackPolling(){
     if(fallbackTimer)return;
     fallbackTimer=setInterval(()=>{if(!live)manualSnapshot()},2500);
   }
+  function closeStream(){
+    if(eventSource){eventSource.close();eventSource=null}
+    stopFallbackPolling();
+    live=false;
+  }
   function connectStream(){
+    if(eventSource&&eventSource.readyState!==EventSource.CLOSED)return eventSource;
     if(!window.EventSource){
       setStreamState('polling');
-      fallbackTimer=setInterval(manualSnapshot,1500);
+      startFallbackPolling();
       manualSnapshot();
       return null;
     }
     const es=new EventSource('/api/stream');
+    eventSource=es;
     setStreamState('connecting');
     es.addEventListener('snapshot',async ev=>{
       live=true;
+      stopFallbackPolling();
       const nextStatus=JSON.parse(ev.data);
       if(!acceptStatus(nextStatus,0))return;
       setStreamState('live','stream online');
@@ -48,8 +61,9 @@ export function createStatusRuntime({api,nextSequence,acceptStatus,setStreamStat
       ensureSlowReconcile();
     });
     es.onerror=()=>{live=false;setStreamState('reconnecting');startFallbackPolling()};
+    window.addEventListener('beforeunload',closeStream,{once:true});
     manualSnapshot();
     return es;
   }
-  return {manualSnapshot,connectStream};
+  return {manualSnapshot,connectStream,closeStream};
 }

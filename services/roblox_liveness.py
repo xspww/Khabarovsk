@@ -294,6 +294,7 @@ def assess_liveness(
     cpu_threshold: float = 0.9,
     ram_delta_threshold: float = 8.0,
     inspect_ui: bool = False,
+    ui_sample_count: Optional[int] = None,
 ) -> Dict[str, Any]:
     validation = cls.validate_game_process(pid, min_ram_mb=0.0)
     if not validation.get("ok"):
@@ -337,7 +338,7 @@ def assess_liveness(
             pid,
             prepare=bool(inspect_ui),
             process_idle=score <= 4.0,
-            sample_count=6 if inspect_ui else 2,
+            sample_count=int(ui_sample_count or (6 if inspect_ui else 2)),
         )
         if inspect_ui and dialog.get("matched") and not dialog.get("error_code"):
             log_evidence = _collect_popup_log_evidence()

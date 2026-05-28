@@ -98,24 +98,31 @@ def register(app, ctx: ApiContext) -> None:
         async def stream():
             last_revision = None
             last_snapshot_sent = 0.0
-            while True:
-                if await request.is_disconnected():
-                    break
-                try:
-                    snapshot = farm.get_status()
-                    revision = snapshot.get("status_revision")
-                    now = time.time()
-                    if revision != last_revision or now - last_snapshot_sent >= 2.5:
-                        payload = json.dumps(snapshot, ensure_ascii=False, default=str, separators=(",", ":"))
-                        yield f"event: snapshot\ndata: {payload}\n\n"
-                        last_revision = revision
-                        last_snapshot_sent = now
-                    else:
-                        yield f": keepalive {now:.0f}\n\n"
-                except Exception as e:
-                    payload = json.dumps({"ok": False, "error": str(e), "ts": time.time()}, ensure_ascii=False)
-                    yield f"event: stream_error\ndata: {payload}\n\n"
-                await asyncio.sleep(1.0)
+            if hasattr(farm, "open_status_stream"):
+                farm.open_status_stream()
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    try:
+                        now = time.time()
+                        revision = farm.get_status_revision() if hasattr(farm, "get_status_revision") else None
+                        if last_revision is None or revision != last_revision or now - last_snapshot_sent >= 5.0:
+                            snapshot = farm.get_status()
+                            revision = snapshot.get("status_revision")
+                            payload = json.dumps(snapshot, ensure_ascii=False, default=str, separators=(",", ":"))
+                            yield f"event: snapshot\ndata: {payload}\n\n"
+                            last_revision = revision
+                            last_snapshot_sent = now
+                        else:
+                            yield f": keepalive {now:.0f}\n\n"
+                    except Exception as e:
+                        payload = json.dumps({"ok": False, "error": str(e), "ts": time.time()}, ensure_ascii=False)
+                        yield f"event: stream_error\ndata: {payload}\n\n"
+                    await asyncio.sleep(1.0)
+            finally:
+                if hasattr(farm, "close_status_stream"):
+                    farm.close_status_stream()
 
         return StreamingResponse(
             stream(),

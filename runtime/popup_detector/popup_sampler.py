@@ -308,14 +308,20 @@ class PopupObserver:
                     windows = self.sampler.windows_for_pid(pid, include_hidden=True)
                     hwnd = int((windows[0].get("hwnd") if windows else 0) or 0)
                 texts = self.sampler.read_texts(hwnd) if hwnd else []
-                screenshot = self.sampler.capture_window_image(hwnd) if hwnd else None
-                visual = detect_visual_features(screenshot)
                 classification = classify_popup_observation(
                     texts,
-                    visual,
+                    {},
                     process_idle=process_idle,
                     threshold=self.threshold,
                 )
+                if not classification.matched:
+                    screenshot = self.sampler.capture_window_image(hwnd) if hwnd else None
+                    classification = classify_popup_observation(
+                        texts,
+                        detect_visual_features(screenshot),
+                        process_idle=process_idle,
+                        threshold=self.threshold,
+                    )
                 samples.append(classification)
                 if index < sample_total - 1 and interval > 0:
                     if classification.error_code:

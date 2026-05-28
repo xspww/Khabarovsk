@@ -120,6 +120,16 @@ class FarmController:
         self._event_lock = threading.RLock()
         self._status_lock = threading.Lock()
         self._status_revision = 0
+        self._status_cache_lock = threading.Lock()
+        self._status_cache_snapshot: Optional[dict] = None
+        self._status_cache_revision = -1
+        self._status_cache_expires_at = 0.0
+        self._status_cache_hits = 0
+        self._status_cache_misses = 0
+        self._status_cache_last_build_ms = 0.0
+        self._status_stream_clients = 0
+        self._dashboard_process_cache_lock = threading.Lock()
+        self._dashboard_process_cache: Dict[Any, Any] = {}
         self._last_runtime_truth_state: Dict[str, str] = {}
         self._last_runtime_truth_progress: Dict[str, int] = {}
         self._runtime_state = RuntimeStateManager(logger=flog_kv)
@@ -172,6 +182,39 @@ class FarmController:
             self._status_revision += 1
             flog_kv("STATUS", "revision_bumped", revision=self._status_revision)
             return self._status_revision
+
+    def get_status_revision(self) -> int:
+        with self._status_lock:
+            return int(self._status_revision)
+
+    def _status_cache_ttl(self) -> float:
+        try:
+            value = float(self.cfg_mgr.get("status_snapshot_cache_ttl_seconds", 1.0) or 0.0)
+        except Exception:
+            value = 1.0
+        if value <= 0:
+            return 0.0
+        return min(2.0, max(0.25, value))
+
+    def open_status_stream(self) -> int:
+        with self._status_cache_lock:
+            self._status_stream_clients += 1
+            return self._status_stream_clients
+
+    def close_status_stream(self) -> int:
+        with self._status_cache_lock:
+            self._status_stream_clients = max(0, self._status_stream_clients - 1)
+            return self._status_stream_clients
+
+    def _status_perf_snapshot(self, cache_hit: bool, cache_age: float = 0.0) -> Dict[str, Any]:
+        return {
+            "cache_hit": bool(cache_hit),
+            "cache_age_seconds": round(max(0.0, cache_age), 3),
+            "cache_hits": int(self._status_cache_hits),
+            "cache_misses": int(self._status_cache_misses),
+            "last_build_ms": round(float(self._status_cache_last_build_ms or 0.0), 2),
+            "active_stream_clients": int(self._status_stream_clients),
+        }
 
     def _record_timeline(
         self,
@@ -655,7 +698,33 @@ class FarmController:
         )
 
     def get_status(self) -> dict:
-        return build_farm_status(self)
+        if not self.running:
+            return build_farm_status(self)
+
+        ttl = self._status_cache_ttl()
+        revision = self.get_status_revision()
+        now = time.time()
+        if ttl > 0:
+            with self._status_cache_lock:
+                cached = self._status_cache_snapshot
+                if cached is not None and self._status_cache_revision == revision and now < self._status_cache_expires_at:
+                    self._status_cache_hits += 1
+                    cached_view = dict(cached)
+                    cached_view["status_perf"] = self._status_perf_snapshot(True, now - float(cached.get("status_updated_at") or now))
+                    return cached_view
+
+        started = time.perf_counter()
+        snapshot = build_farm_status(self)
+        build_ms = (time.perf_counter() - started) * 1000.0
+        with self._status_cache_lock:
+            self._status_cache_misses += 1
+            self._status_cache_last_build_ms = build_ms
+            snapshot["status_perf"] = self._status_perf_snapshot(False)
+            if ttl > 0:
+                self._status_cache_snapshot = snapshot
+                self._status_cache_revision = int(snapshot.get("status_revision", revision) or 0)
+                self._status_cache_expires_at = time.time() + ttl
+        return snapshot
 
     def get_public_farm_health(self) -> dict:
         return get_public_farm_health_payload(self)

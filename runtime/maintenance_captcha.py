@@ -4,7 +4,37 @@ from typing import Any, Dict
 
 from core import flog_kv
 from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_account_captcha_required, set_account_captcha_hold
-from services.process_service import ProcessService
+from services.process_service import ProcessManager, ProcessService
+
+
+def detect_and_hold_captcha(owner: Any, acc: Any, pid: int, source: str) -> bool:
+    if not pid:
+        return False
+    try:
+        dialog = ProcessManager.inspect_disconnect_dialog(
+            pid,
+            prepare=True,
+            process_idle=False,
+            sample_count=2,
+        )
+    except Exception as exc:
+        flog_kv(
+            "CAPTCHA",
+            "timeout_probe_failed",
+            "warning",
+            account=acc.display_name,
+            pid=pid,
+            source=source,
+            error=str(exc),
+        )
+        return False
+    if not dialog.get("matched") or str(dialog.get("reason_key") or "") != CAPTCHA_REASON:
+        return False
+    dialog = dict(dialog)
+    dialog.setdefault("detail", "Roblox Security verification CAPTCHA visible")
+    dialog.setdefault("evidence_source", source)
+    handle_watchdog_captcha(owner, acc, pid, dialog)
+    return True
 
 
 def handle_watchdog_captcha(owner: Any, acc: Any, pid: int, dialog: Dict[str, Any]) -> None:

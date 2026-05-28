@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import threading
 from typing import Any, Dict, List
 
 from account_hybrid import redact_secret
@@ -41,6 +42,61 @@ def _important_runtime_event(event: Dict[str, Any]) -> bool:
 class RuntimeViewModelBuilder:
     def __init__(self, farm: Any):
         self._farm = farm
+
+    def _process_cache_ttl(self) -> float:
+        if not bool(getattr(self._farm, "running", False)):
+            return 0.0
+        try:
+            value = float(self._farm.cfg_mgr.get("dashboard_process_cache_ttl_seconds", 2.0) or 0.0)
+        except Exception:
+            value = 2.0
+        if value <= 0:
+            return 0.0
+        return min(5.0, max(0.5, value))
+
+    def _process_status(self, acc: Any, pid: int | None, identity: str) -> Dict[str, Any]:
+        if not pid:
+            return {"alive": False, "validation": {}, "not_responding": False}
+        ttl = self._process_cache_ttl()
+        key = (int(pid), str(acc._config_username), str(identity or ""), str(getattr(acc, "browser_tracker_id", "") or ""))
+        now = time.time()
+        if ttl > 0:
+            lock = getattr(self._farm, "_dashboard_process_cache_lock", None)
+            if lock is None:
+                lock = threading.Lock()
+                setattr(self._farm, "_dashboard_process_cache_lock", lock)
+            cache = getattr(self._farm, "_dashboard_process_cache", None)
+            if cache is None:
+                cache = {}
+                setattr(self._farm, "_dashboard_process_cache", cache)
+            with lock:
+                cached = cache.get(key)
+                if cached and now - float(cached[0] or 0.0) < ttl:
+                    return dict(cached[1])
+        try:
+            validation = ProcessManager.validate_game_process(
+                pid,
+                owner_key=acc._config_username,
+                expected_identity=identity,
+                expected_browser_tracker_id=acc.browser_tracker_id,
+                min_ram_mb=0.0,
+            )
+        except Exception:
+            validation = {}
+        alive = bool(validation.get("ok"))
+        result = {
+            "alive": alive,
+            "validation": validation,
+            "not_responding": bool(alive and ProcessManager.is_not_responding(pid)),
+        }
+        if ttl > 0:
+            with lock:
+                cache[key] = (now, dict(result))
+                if len(cache) > 128:
+                    stale_keys = sorted(cache, key=lambda item: float(cache[item][0] or 0.0))[:32]
+                    for stale_key in stale_keys:
+                        cache.pop(stale_key, None)
+        return result
 
     def _log_suspect_transition(self, acc: Any, truth: Any) -> None:
         account_id = str(getattr(acc, "_config_username", getattr(acc, "username", "")) or "")
@@ -121,8 +177,14 @@ class RuntimeViewModelBuilder:
             "oldest_age_seconds": 0,
             "entries": [],
         }
+        queue_entries_by_account = {
+            str(item.get("account") or ""): item
+            for item in (queue_snapshot.get("entries") or [])
+            if isinstance(item, dict)
+        }
 
         for acc in farm._accounts:
+            queue_entry = queue_entries_by_account.get(acc._config_username) or {}
             runtime_snapshot = farm._runtime_state.snapshot(acc)
             snapshot_pid = runtime_snapshot.get("pid")
             try:
@@ -133,22 +195,9 @@ class RuntimeViewModelBuilder:
             snapshot_public = str(runtime_snapshot.get("public_state") or getattr(getattr(acc, "state", None), "name", "IDLE"))
             display_state = AccountState.__members__.get(snapshot_public, AccountState.IDLE)
             lua_online = account_lua_online(acc, timeout=lua_timeout) if lua_required else False
-            pid_alive = bool(snapshot_pid and ProcessManager.is_bound_game_alive(
-                snapshot_pid,
-                owner_key=acc._config_username,
-                expected_identity=snapshot_identity,
-                expected_browser_tracker_id=acc.browser_tracker_id,
-            ))
-            try:
-                process_validation = ProcessManager.validate_game_process(
-                    snapshot_pid,
-                    owner_key=acc._config_username,
-                    expected_identity=snapshot_identity,
-                    expected_browser_tracker_id=acc.browser_tracker_id,
-                    min_ram_mb=0.0,
-                ) if pid_alive else {}
-            except Exception:
-                process_validation = {}
+            process_status = self._process_status(acc, snapshot_pid, snapshot_identity)
+            pid_alive = bool(process_status.get("alive"))
+            process_validation = dict(process_status.get("validation") or {})
             window_count = int(process_validation.get("windows") or 0)
             if display_state == AccountState.IN_GAME and snapshot_pid and not pid_alive:
                 display_state = AccountState.CRASH
@@ -159,7 +208,7 @@ class RuntimeViewModelBuilder:
             meta = STATE_META.get(display_state, {"label": display_state.name, "color": "#6b7280"})
             cpu = mon.get_cpu(snapshot_pid) if (snapshot_pid and pid_alive) else 0.0
             mem = mon.get_ram(snapshot_pid) if (snapshot_pid and pid_alive) else 0.0
-            is_nr = bool(snapshot_pid and pid_alive and display_state == AccountState.IN_GAME and ProcessManager.is_not_responding(snapshot_pid))
+            is_nr = bool(display_state == AccountState.IN_GAME and process_status.get("not_responding"))
             vip_tracker_status = []
             if acc._vip_tracker:
                 try:
@@ -218,6 +267,13 @@ class RuntimeViewModelBuilder:
                 "desired_state": runtime_snapshot.get("desired_public_state", acc.desired_state.name),
                 "state_label": state_label,
                 "state_color": state_color,
+                "queue": dict(queue_entry),
+                "queue_position": int(queue_entry.get("queue_position") or 0),
+                "queue_reason": str(queue_entry.get("reason") or ""),
+                "queue_ready": bool(queue_entry.get("ready", False)),
+                "queue_due_in_seconds": float(queue_entry.get("due_in_seconds") or 0.0),
+                "queue_age_seconds": float(queue_entry.get("age_seconds") or 0.0),
+                "queue_score": float(queue_entry.get("score") or 0.0),
                 "lua_required": lua_required,
                 "lua_online": bool(lua_online),
                 "lua_last_event": getattr(acc, "lua_last_event", "") or "",

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import math
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from core import flog_kv
 
@@ -82,11 +82,13 @@ def minimize_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
         return {"ok": False, "count": len(windows), "minimized": 0, "error": str(exc), "windows": windows}
 
 
-def resize_windows(windows: List[Dict[str, Any]], width: int, height: int) -> Dict[str, Any]:
-    width = max(320, min(int(width or 640), 1920))
-    height = max(240, min(int(height or 480), 1080))
+def resize_windows(windows: List[Dict[str, Any]], width: int, height: int, unlock_size: bool = True) -> Dict[str, Any]:
+    min_width = 80 if unlock_size else 320
+    min_height = 60 if unlock_size else 240
+    width = max(min_width, min(int(width or 200), 1920))
+    height = max(min_height, min(int(height or 150), 1080))
     if not windows:
-        return {"ok": True, "count": 0, "resized": 0, "skipped": 0, "width": width, "height": height, "windows": []}
+        return {"ok": True, "count": 0, "resized": 0, "skipped": 0, "width": width, "height": height, "unlock_size": bool(unlock_size), "windows": []}
     try:
         user32 = ctypes.windll.user32
         get_window_long, set_window_long = _window_long_api(user32)
@@ -105,7 +107,7 @@ def resize_windows(windows: List[Dict[str, Any]], width: int, height: int) -> Di
         SWP_NOACTIVATE = 0x0010
         SWP_FRAMECHANGED = 0x0020
         SWP_SHOWWINDOW = 0x0040
-        compact_required = width < 816 or height < 638
+        compact_required = bool(unlock_size) and (width < 816 or height < 638)
 
         resized: List[Dict[str, Any]] = []
         failed: List[Dict[str, Any]] = []
@@ -175,12 +177,43 @@ def resize_windows(windows: List[Dict[str, Any]], width: int, height: int) -> Di
             "width": width,
             "height": height,
             "compact": compact_required,
+            "unlock_size": bool(unlock_size),
             "failed_windows": failed,
             "windows": windows,
         }
     except Exception as exc:
         flog_kv("WINDOW", "resize_roblox_windows_failed", "warning", error=str(exc), count=len(windows), width=width, height=height)
-        return {"ok": False, "count": len(windows), "resized": 0, "skipped": 0, "failed": len(windows), "width": width, "height": height, "error": str(exc), "windows": windows}
+        return {"ok": False, "count": len(windows), "resized": 0, "skipped": 0, "failed": len(windows), "width": width, "height": height, "unlock_size": bool(unlock_size), "error": str(exc), "windows": windows}
+
+
+def _auto_arrange_gap(
+    target_width: int,
+    target_height: int,
+    columns: int,
+    rows: int,
+    work_width: int,
+    work_height: int,
+    margin: int,
+) -> int:
+    if columns <= 1 and rows <= 1:
+        return 0
+    usable_width = max(80, work_width - (margin * 2))
+    usable_height = max(60, work_height - (margin * 2))
+    scale_without_gap = min(
+        usable_width / float(max(1, columns * target_width)),
+        usable_height / float(max(1, rows * target_height)),
+    )
+    density = columns * rows
+    preferred = 8
+    if target_width <= 360 or target_height <= 260 or density > 16:
+        preferred = 2
+    elif density > 8:
+        preferred = 4
+    if scale_without_gap < 0.6:
+        return 0
+    if scale_without_gap < 0.8:
+        preferred = min(preferred, 2)
+    return preferred
 
 
 def arrange_windows(
@@ -190,14 +223,21 @@ def arrange_windows(
     columns: int = 6,
     gap: int = 2,
     margin: int = 0,
+    unlock_size: bool = True,
+    resize: bool = True,
+    rows: Optional[int] = None,
 ) -> Dict[str, Any]:
-    target_width = max(80, min(int(width or 640), 1920))
-    target_height = max(60, min(int(height or 480), 1080))
+    min_width = 80 if unlock_size else 320
+    min_height = 60 if unlock_size else 240
+    target_width = max(min_width, min(int(width or 200), 1920))
+    target_height = max(min_height, min(int(height or 150), 1080))
     columns = max(1, min(int(columns or 6), 32))
-    gap = max(0, min(int(gap or 0), 80))
+    requested_rows = max(1, min(int(rows or 0), 32)) if rows else None
+    auto_gap = int(gap or 0) <= 0
+    gap = 0 if auto_gap else max(0, min(int(gap or 0), 80))
     margin = max(0, min(int(margin or 0), 300))
     if not windows:
-        return {"ok": True, "count": 0, "arranged": 0, "failed": 0, "width": target_width, "height": target_height, "columns": columns, "gap": gap, "margin": margin, "windows": []}
+        return {"ok": True, "count": 0, "arranged": 0, "failed": 0, "width": target_width, "height": target_height, "columns": columns, "rows": requested_rows or 0, "gap": gap, "gap_auto": auto_gap, "margin": margin, "unlock_size": bool(unlock_size), "resize": bool(resize), "windows": []}
     try:
         user32 = ctypes.windll.user32
         get_window_long, set_window_long = _window_long_api(user32)
@@ -222,7 +262,10 @@ def arrange_windows(
         work_width = max(80, int(work.get("width") or 1920))
         work_height = max(60, int(work.get("height") or 1080))
         effective_columns = min(columns, max(1, len(windows)))
-        rows = int(math.ceil(len(windows) / float(effective_columns)))
+        actual_rows = int(math.ceil(len(windows) / float(effective_columns)))
+        rows = max(actual_rows, requested_rows or actual_rows)
+        if auto_gap:
+            gap = _auto_arrange_gap(target_width, target_height, effective_columns, rows, work_width, work_height, margin)
         available_width = max(80, work_width - (margin * 2) - (gap * max(0, effective_columns - 1)))
         available_height = max(60, work_height - (margin * 2) - (gap * max(0, rows - 1)))
         scale = min(
@@ -232,7 +275,7 @@ def arrange_windows(
         )
         tile_width = max(80, int(target_width * scale))
         tile_height = max(60, int(target_height * scale))
-        compact_required = tile_width < 816 or tile_height < 638
+        compact_required = bool(resize) and bool(unlock_size) and (tile_width < 816 or tile_height < 638)
 
         arranged: List[Dict[str, Any]] = []
         failed: List[Dict[str, Any]] = []
@@ -255,16 +298,20 @@ def arrange_windows(
                 )
                 if compact_style != style:
                     set_window_long(ctypes.c_void_p(hwnd), GWL_STYLE, compact_style)
+            current_width = int(item.get("width") or tile_width)
+            current_height = int(item.get("height") or tile_height)
+            apply_width = tile_width if resize else max(80, current_width)
+            apply_height = tile_height if resize else max(60, current_height)
             ok = bool(user32.SetWindowPos(
                 ctypes.c_void_p(hwnd),
                 ctypes.c_void_p(0),
                 x,
                 y,
-                tile_width,
-                tile_height,
+                apply_width,
+                apply_height,
                 SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED | SWP_SHOWWINDOW,
             ))
-            row_data = {"pid": int(item.get("pid") or 0), "hwnd": hwnd, "x": x, "y": y, "width": tile_width, "height": tile_height, "row": row, "column": col}
+            row_data = {"pid": int(item.get("pid") or 0), "hwnd": hwnd, "x": x, "y": y, "width": apply_width, "height": apply_height, "row": row, "column": col}
             if ok:
                 arranged.append(row_data)
             else:
@@ -281,8 +328,11 @@ def arrange_windows(
                 columns=effective_columns,
                 rows=rows,
                 gap=gap,
+                gap_auto=auto_gap,
                 margin=margin,
                 pids=",".join(str(item.get("pid")) for item in arranged),
+                unlock_size=bool(unlock_size),
+                resize=bool(resize),
             )
         return {
             "ok": not failed,
@@ -296,15 +346,19 @@ def arrange_windows(
             "columns": effective_columns,
             "requested_columns": columns,
             "rows": rows,
+            "requested_rows": requested_rows or rows,
             "gap": gap,
+            "gap_auto": auto_gap,
             "margin": margin,
+            "unlock_size": bool(unlock_size),
+            "resize": bool(resize),
             "work_area": work,
             "windows": arranged,
             "failed_windows": failed,
         }
     except Exception as exc:
         flog_kv("WINDOW", "arrange_roblox_windows_failed", "warning", error=str(exc), count=len(windows), width=target_width, height=target_height, columns=columns)
-        return {"ok": False, "count": len(windows), "arranged": 0, "failed": len(windows), "width": target_width, "height": target_height, "columns": columns, "gap": gap, "margin": margin, "error": str(exc), "windows": windows}
+        return {"ok": False, "count": len(windows), "arranged": 0, "failed": len(windows), "width": target_width, "height": target_height, "columns": columns, "gap": gap, "gap_auto": auto_gap, "margin": margin, "unlock_size": bool(unlock_size), "resize": bool(resize), "error": str(exc), "windows": windows}
 
 
 def restore_window_styles(windows: List[Dict[str, Any]]) -> Dict[str, Any]:

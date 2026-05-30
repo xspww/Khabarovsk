@@ -130,10 +130,10 @@ def _visible_roblox_windows(cls) -> List[Dict[str, Any]]:
 def minimize_roblox_windows(cls) -> Dict[str, Any]:
     return minimize_windows(cls._visible_roblox_windows())
 
-def resize_roblox_windows(cls, width: int, height: int, exclude_pids: Optional[List[int]] = None) -> Dict[str, Any]:
+def resize_roblox_windows(cls, width: int, height: int, unlock_size: bool = True, exclude_pids: Optional[List[int]] = None) -> Dict[str, Any]:
     excluded = {int(pid) for pid in (exclude_pids or []) if pid}
     windows = [item for item in cls._visible_roblox_windows() if int(item.get("pid") or 0) not in excluded]
-    return resize_windows(windows, width, height)
+    return resize_windows(windows, width, height, unlock_size=unlock_size)
 
 def _primary_monitor_work_area(cls) -> Dict[str, int]:
     return primary_monitor_work_area()
@@ -145,11 +145,14 @@ def arrange_roblox_windows(
     columns: int = 6,
     gap: int = 2,
     margin: int = 0,
+    unlock_size: bool = True,
+    resize: bool = True,
     exclude_pids: Optional[List[int]] = None,
+    rows: Optional[int] = None,
 ) -> Dict[str, Any]:
     excluded = {int(pid) for pid in (exclude_pids or []) if pid}
     windows = [item for item in cls._visible_roblox_windows() if int(item.get("pid") or 0) not in excluded]
-    return arrange_windows(windows, width, height, columns, gap, margin)
+    return arrange_windows(windows, width, height, columns, gap, margin, unlock_size=unlock_size, resize=resize, rows=rows)
 
 def restore_roblox_window_styles(cls) -> Dict[str, Any]:
     return restore_window_styles(cls._visible_roblox_windows())

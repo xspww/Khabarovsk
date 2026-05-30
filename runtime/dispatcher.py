@@ -58,27 +58,31 @@ class Dispatcher(threading.Thread):
 
     def _apply_window_resize_after_launch(self, acc: Account) -> None:
         target = _window_resize_target_from_config(self._cfg)
-        if not target:
-            return
-        width, height = target
         arrange = _window_arrange_settings_from_config(self._cfg)
+        if not target and not arrange:
+            return
         if arrange:
-            width, height, columns, gap, margin = arrange
+            width, height, columns, rows, gap, margin = arrange
             result = ProcessService.arrange_roblox_windows(
                 width,
                 height,
                 columns,
                 gap,
                 margin,
+                unlock_size=bool(self._cfg.get("roblox_window_unlock_size_enabled", True)),
+                resize=bool(self._cfg.get("roblox_window_resize_enabled", False)),
+                rows=rows,
                 reason="post_launch_window_apply",
                 account=acc,
             )
             changed = int(result.get("arranged") or 0)
             event = "post_launch_arrange"
         else:
+            width, height = target
             result = ProcessService.resize_roblox_windows(
                 width,
                 height,
+                unlock_size=bool(self._cfg.get("roblox_window_unlock_size_enabled", True)),
                 reason="post_launch_window_apply",
                 account=acc,
             )

@@ -16,18 +16,20 @@ def _account_name(acc: Any) -> str:
 def resize_roblox_windows(
     width: int,
     height: int,
+    unlock_size: bool = True,
     exclude_pids: Optional[List[int]] = None,
     reason: str = "",
     account: Any = None,
     idempotency_key: str = "",
 ) -> Dict[str, Any]:
-    result = _ProcessBackend.resize_roblox_windows(width, height, exclude_pids=exclude_pids)
+    result = _ProcessBackend.resize_roblox_windows(width, height, unlock_size=unlock_size, exclude_pids=exclude_pids)
     flog_kv(
         "WINDOW",
         "process_window_resize",
         account=_account_name(account) if account is not None else "",
         width=width,
         height=height,
+        unlock_size=unlock_size,
         resized=result.get("resized", 0),
         count=result.get("count", 0),
         reason=reason,
@@ -43,6 +45,9 @@ def arrange_roblox_windows(
     columns: int = 6,
     gap: int = 2,
     margin: int = 0,
+    unlock_size: bool = True,
+    resize: bool = True,
+    rows: Optional[int] = None,
     exclude_pids: Optional[List[int]] = None,
     reason: str = "",
     account: Any = None,
@@ -54,6 +59,9 @@ def arrange_roblox_windows(
         columns=columns,
         gap=gap,
         margin=margin,
+        unlock_size=unlock_size,
+        resize=resize,
+        rows=rows,
         exclude_pids=exclude_pids,
     )
     flog_kv(
@@ -63,8 +71,12 @@ def arrange_roblox_windows(
         width=width,
         height=height,
         columns=columns,
-        gap=gap,
+        rows=result.get("rows", rows or ""),
+        gap=result.get("gap", gap),
+        gap_auto=result.get("gap_auto", False),
         margin=margin,
+        unlock_size=unlock_size,
+        resize=resize,
         arranged=result.get("arranged", 0),
         count=result.get("count", 0),
         reason=reason,

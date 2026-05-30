@@ -253,12 +253,7 @@ def register(app, ctx: ApiContext) -> None:
         token = ""
         if isinstance(body, dict):
             token = str(body.get("token") or "")
-        token = token or str(
-            request.headers.get("X-Cronus-Token")
-            or request.headers.get("X-Argus-Token")
-            or request.headers.get("X-RoboGuard-Token")
-            or ""
-        )
+        token = token or str(request.headers.get("X-Cronus-Token") or "")
         if not token or not secrets.compare_digest(token, ctx.instance_token):
             raise HTTPException(403, "Invalid shutdown token")
 

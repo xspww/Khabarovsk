@@ -569,7 +569,7 @@ class HybridLauncher:
             close_result = cls.kill_duplicate_instances(browser_tracker_id, graceful=True)
         else:
             release_multi_roblox_guard()
-            from process_net import ProcessManager
+            from services.process_service import ProcessManager
 
             killed_count = ProcessManager.kill_all_roblox_clients(wait_seconds=2.5)
             close_result = {"ok": True, "killed": [], "count": int(killed_count), "all_instances_closed": int(killed_count)}

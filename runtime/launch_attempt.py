@@ -95,7 +95,7 @@ class LaunchAttempt:
             def inject_cookie_for_direct_launch() -> Tuple[bool, str]:
                 if not acc.cookie:
                     return False, "no cookie available"
-                from process_net import IsolationManager
+                from services.cookie_service import IsolationManager
                 return IsolationManager.inject_cookie(acc.username, acc.cookie)
             skip_shared_cookie_inject = bool(multi_roblox and acc.cookie)
             prepare_direct_launch()

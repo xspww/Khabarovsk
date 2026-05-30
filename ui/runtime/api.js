@@ -1,18 +1,1 @@
-export function apiToken(){
-  return document.querySelector('meta[name="cronus-api-token"]')?.content||'';
-}
-
-export async function api(path,method='GET',body){
-  const opt={method,headers:{}};
-  const token=apiToken();
-  if(token)opt.headers['X-Cronus-Token']=token;
-  if(body!==undefined){
-    opt.headers['Content-Type']='application/json';
-    opt.body=JSON.stringify(body);
-  }
-  const r=await fetch('/api'+path,opt);
-  let data={};
-  try{data=await r.json()}catch(e){}
-  if(!r.ok)throw new Error(data.detail||data.msg||r.statusText);
-  return data;
-}
+export function apiToken(){return document.querySelector('meta[name="cronus-api-token"]')?.content||""}export async function api(t,e="GET",n){const o={method:e,headers:{}},a=apiToken();a&&(o.headers["X-Cronus-Token"]=a),void 0!==n&&(o.headers["Content-Type"]="application/json",o.body=JSON.stringify(n));const r=await fetch("/api"+t,o);let i={};try{i=await r.json()}catch(t){}if(!r.ok)throw new Error(i.detail||i.msg||r.statusText);return i}

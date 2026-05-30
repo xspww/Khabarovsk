@@ -1,1 +1,1 @@
-import './app/dashboard.js?v=developer-copy-no-hang';
+import"./app/dashboard.js?v=force-lua-timeout";

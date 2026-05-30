@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import signal
 import sys
 import threading
 import time
@@ -327,7 +328,7 @@ def _wait_for_backend_ready(server_thread: threading.Thread, timeout: float = 20
 def _run_desktop_window() -> bool:
     try:
         from PySide6.QtCore import QPoint, QSize, QTimer, Qt, QUrl
-        from PySide6.QtGui import QBitmap, QColor, QFontDatabase, QIcon, QPainter, QPen, QPixmap
+        from PySide6.QtGui import QBitmap, QColor, QIcon, QPainter, QPen, QPixmap
         from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QMainWindow, QPushButton, QVBoxLayout, QWidget
         from PySide6.QtWebEngineWidgets import QWebEngineView
     except Exception as exc:
@@ -336,16 +337,6 @@ def _run_desktop_window() -> bool:
 
     WINDOW_RADIUS = 10
     TITLE_ICON_FILE = resource_path("assets", APP_ICON_FILE)
-    TITLE_FONT_FILES = (
-        resource_path("ui", "fonts", "Kanit-Regular.ttf"),
-        resource_path("ui", "fonts", "Kanit-Medium.ttf"),
-    )
-
-    def _load_title_fonts() -> None:
-        for font_file in TITLE_FONT_FILES:
-            if os.path.exists(font_file):
-                QFontDatabase.addApplicationFont(font_file)
-
     def _title_icon_pixmap() -> QPixmap:
         source = QPixmap(TITLE_ICON_FILE)
         if source.isNull():
@@ -433,7 +424,6 @@ def _run_desktop_window() -> bool:
             layout.addWidget(min_btn)
             layout.addWidget(max_btn)
             layout.addWidget(close_btn)
-            # Compatibility markers for legacy title-bar tests: MacCloseButton, MacMinButton, MacMaxButton.
             self.setStyleSheet(
                 """
                 #CronusTitleBar {
@@ -536,7 +526,6 @@ def _run_desktop_window() -> bool:
 
     _set_app_user_model_id()
     app_qt = QApplication.instance() or QApplication(sys.argv[:1])
-    _load_title_fonts()
     icon_path = resource_path("assets", APP_ICON_FILE)
     icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon()
     if not icon.isNull():
@@ -584,10 +573,39 @@ def _run_desktop_window() -> bool:
     _console_finish_after_window_show()
     _apply_windows_rounded_corners(window)
     title_timer = QTimer(window)
+    shutting_down = False
+
+    def _stop_desktop_runtime(reason: str = "desktop_shutdown"):
+        nonlocal shutting_down
+        if shutting_down:
+            return
+        shutting_down = True
+        _SHUTDOWN_REQUESTED.set()
+        try:
+            title_timer.stop()
+        except Exception:
+            pass
+        try:
+            farm = _require_configured()[1]
+            if farm.running:
+                farm.stop()
+        except Exception as exc:
+            flog_kv("MAIN", "desktop_shutdown_stop_farm_failed", "warning", reason=reason, error=str(exc))
+        _clear_instance_state()
 
     def _refresh_title_status():
+        if shutting_down:
+            return
         try:
             running = bool(getattr(_require_configured()[1], "running", False))
+        except KeyboardInterrupt:
+            flog("[MAIN] Ctrl+C received - closing desktop window")
+            _stop_desktop_runtime("ctrl_c")
+            try:
+                app_qt.quit()
+            except Exception:
+                pass
+            return
         except Exception:
             running = False
         title_bar.set_running(running)
@@ -597,14 +615,29 @@ def _run_desktop_window() -> bool:
     window._cronus_title_timer = title_timer
     _refresh_title_status()
     flog("[MAIN] Desktop window running")
-    app_qt.exec()
+    previous_sigint = signal.getsignal(signal.SIGINT)
+
+    def _handle_sigint(_signum, _frame):
+        flog("[MAIN] Ctrl+C received - closing desktop window")
+        _stop_desktop_runtime("ctrl_c")
+        app_qt.quit()
+
     try:
-        farm = _require_configured()[1]
-        if farm.running:
-            farm.stop()
+        signal.signal(signal.SIGINT, _handle_sigint)
     except Exception:
-        pass
-    _clear_instance_state()
+        previous_sigint = None
+    try:
+        app_qt.exec()
+    except KeyboardInterrupt:
+        flog("[MAIN] Ctrl+C received - closing desktop window")
+        _stop_desktop_runtime("ctrl_c")
+    finally:
+        if previous_sigint is not None:
+            try:
+                signal.signal(signal.SIGINT, previous_sigint)
+            except Exception:
+                pass
+        _stop_desktop_runtime("desktop_window_closed")
     return True
 
 def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):

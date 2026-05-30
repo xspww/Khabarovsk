@@ -182,13 +182,11 @@ from api_routes.accounts_routes import _AVATAR_CACHE
 
 
 cfg_mgr = ConfigManager()
-legacy_accounts = cfg_mgr.get_accounts()
 try:
-    ACCOUNT_STORE.ensure_from_legacy([account.to_dict() for account in legacy_accounts])
     accounts = [Account.from_dict(item) for item in ACCOUNT_STORE.to_cronus_accounts()]
 except Exception as e:
-    flog_kv("ACCOUNT_DATA", "load_failed_fallback_legacy", "warning", error=e)
-    accounts = legacy_accounts
+    flog_kv("ACCOUNT_DATA", "load_failed_fallback_text_accounts", "warning", error=e)
+    accounts = cfg_mgr.get_accounts()
 
 farm = FarmController(cfg_mgr)
 farm.set_accounts(accounts)
@@ -199,6 +197,7 @@ ROBLOX_INSTALLER = RobloxInstallManager(
 )
 
 app = FastAPI(title=APP_NAME, docs_url=None, redoc_url=None)
+app.mount("/assets", StaticFiles(directory=resource_path("assets")), name="assets")
 app.mount("/ui", StaticFiles(directory=resource_path("ui")), name="ui")
 api_context = ApiContext(
     cfg_mgr=cfg_mgr,

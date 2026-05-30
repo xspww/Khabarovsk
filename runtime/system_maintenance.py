@@ -11,12 +11,7 @@ from runtime.runtime_scheduler import RuntimeScheduledJob, RuntimeScheduler
 from runtime.supervisor_runtime import SupervisorRuntime
 from services.process_service import ProcessManager
 from runtime.maintenance_liveness import MaintenanceLivenessMixin
-from runtime.maintenance_performance import (
-    MaintenancePerformanceMixin,
-    _apply_cpu_limiter_for_bound_process,
-    _window_arrange_settings_from_config,
-    _window_resize_target_from_config,
-)
+from runtime.maintenance_performance import MaintenancePerformanceMixin
 from runtime.maintenance_queue import MaintenanceQueueMixin
 
 
@@ -51,6 +46,7 @@ class SystemMaintenance(
         self._last_auto_close_at = time.time()
         self._last_priority_apply_at = 0.0
         self._last_cpu_limiter_apply_at = 0.0
+        self._cpu_limiter_released = False
         self._last_window_resize_at = 0.0
         self._last_popup_scan_at: Dict[str, float] = {}
         self._last_popup_batch_at = 0.0
@@ -93,6 +89,13 @@ class SystemMaintenance(
         except Exception:
             return 5.0
 
+    def _maintenance_interval(self, key: str, default: float, minimum: float, maximum: float) -> float:
+        try:
+            value = float(self._cfg.get(key, default) or default)
+        except Exception:
+            value = default
+        return max(minimum, min(maximum, value))
+
     def _reconcile_interval(self) -> float:
         try:
             return max(self._base_interval(), float(self._cfg.get("periodic_reconcile_interval", 15) or 15))
@@ -101,15 +104,19 @@ class SystemMaintenance(
 
     def _register_periodic_jobs(self) -> None:
         base = self._base_interval()
+        liveness_interval = self._maintenance_interval("maintenance_liveness_interval_seconds", base, 3.0, 30.0)
+        queue_interval = self._maintenance_interval("maintenance_queue_interval_seconds", 10.0, 5.0, 60.0)
+        performance_interval = self._maintenance_interval("maintenance_performance_interval_seconds", 15.0, 10.0, 60.0)
+        housekeeping_interval = self._maintenance_interval("maintenance_housekeeping_interval_seconds", 20.0, 15.0, 120.0)
         jobs = [
-            ("maintenance:housekeeping", base, self._run_housekeeping, "maintenance_housekeeping"),
-            ("maintenance:liveness", base, self._run_liveness, "maintenance_liveness"),
-            ("maintenance:queue", base, self._run_queue, "maintenance_queue"),
-            ("maintenance:performance", base, self._run_performance, "maintenance_performance"),
+            ("maintenance:liveness", liveness_interval, self._run_liveness, "maintenance_liveness"),
+            ("maintenance:queue", queue_interval, self._run_queue, "maintenance_queue"),
+            ("maintenance:performance", performance_interval, self._run_performance, "maintenance_performance"),
+            ("maintenance:housekeeping", housekeeping_interval, self._run_housekeeping, "maintenance_housekeeping"),
             ("maintenance:reconcile", self._reconcile_interval(), self._run_reconcile, "periodic_reconcile"),
         ]
         self._maintenance_job_keys = [key for key, _interval, _callback, _reason in jobs]
-        stagger = min(1.0, max(0.1, base / max(1, len(jobs))))
+        stagger = min(2.0, max(0.5, base / max(1, len(jobs))))
         for index, (key, interval, callback, reason) in enumerate(jobs):
             self._scheduler.schedule_periodic(
                 key,

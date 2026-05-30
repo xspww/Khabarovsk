@@ -11,16 +11,17 @@ LUA_WAITING_REASON = "lua_required"
 
 
 def lua_liveness_required(cfg: Dict[str, Any] | None) -> bool:
-    return bool((cfg or {}).get("use_lua", False))
+    return True
 
 
 def lua_wait_timeout_seconds(cfg: Dict[str, Any] | None) -> float:
     data = cfg or {}
     try:
-        value = float(data.get("lua_wait_timeout", data.get("heartbeat_timeout", 60)) or 60)
+        raw = data.get("lua_wait_timeout", data.get("heartbeat_timeout", 60))
+        value = 60.0 if raw in (None, "") else float(raw)
     except Exception:
         value = 60.0
-    return min(60.0, max(1.0, value))
+    return min(300.0, max(1.0, value))
 
 
 def lua_event_source(reason: str = "", payload: Optional[Dict[str, Any]] = None) -> bool:

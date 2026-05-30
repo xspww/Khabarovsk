@@ -26,7 +26,7 @@ class ProcessAdapterResult:
 
 
 class RobloxProcessAdapter:
-    """Single process seam for runtime code and tests.
+    """Single process seam for runtime code.
 
     Status reads can use cached or fake process data. Destructive actions still
     require live validation at the adapter seam so callers cannot kill from a

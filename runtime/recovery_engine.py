@@ -32,6 +32,40 @@ from runtime.recovery_signal_router import RecoverySignalRouter
 from runtime.recovery_support import RECOVERY_REASON_MESSAGES, compute_backoff
 from runtime.lua_liveness_policy import lua_liveness_required, mark_waiting_for_lua
 
+
+_SPECIFIC_PROCESS_RECOVERY_REASONS = {
+    "process_crash",
+    "watchdog_timeout",
+    "loading_freeze",
+    "teleport_timeout",
+}
+
+
+def _canonical_recovery_reason(reason_key: str, context: Optional[RecoveryAttemptContext] = None) -> str:
+    canonical = canonical_reason(reason_key)
+    if not context or not context.category:
+        return canonical
+    category = str(context.category or "").strip().upper()
+    if category == "PROCESS_CRASH" and canonical in _SPECIFIC_PROCESS_RECOVERY_REASONS:
+        return canonical
+    return reason_for_category(category, canonical)
+
+
+def _display_recovery_reason(reason_key: str, canonical: str, reason_msg: str = "", context: Optional[RecoveryAttemptContext] = None) -> str:
+    trigger = str(getattr(context, "trigger", "") or "").strip().lower() if context else ""
+    detail = " ".join(
+        part for part in (
+            str(reason_msg or "").strip().lower(),
+            str(getattr(context, "detail", "") or "").strip().lower() if context else "",
+        )
+        if part
+    )
+    raw = str(reason_key or "").strip().lower()
+    if raw == "lua_wait_timeout" or trigger == "lua_wait_timeout" or "waiting for lua" in detail or "lua did not confirm" in detail:
+        return "lua_wait_timeout"
+    return canonical
+
+
 class RecoveryCoordinator:
     """Central recovery/rejoin controller. Every path that wants recovery reports here."""
 
@@ -91,6 +125,10 @@ class RecoveryCoordinator:
         )
         self._evaluator = RecoveryEvaluator(self)
         self._storm = RecoveryStormController(cfg, self._accounts)
+        self._guard_recovery_lock = threading.Lock()
+        self._guard_recovery_scheduled = False
+        self._guard_recovery_attempt = 0
+        self._guard_recovery_last_at = 0.0
 
     def update_config(self, cfg: dict, accounts: Optional[List[Account]] = None) -> None:
         with self._lock:
@@ -177,6 +215,185 @@ class RecoveryCoordinator:
 
     def _queue_slot_available(self, acc: Account) -> bool:
         return queue_slot_available(self._accounts, self._cfg, acc)
+
+    def _cfg_bool(self, key: str, default: bool) -> bool:
+        value = self._cfg.get(key, default)
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
+        return bool(value)
+
+    def _cfg_float(self, key: str, default: float, minimum: float = 0.0, maximum: float = 3600.0) -> float:
+        try:
+            value = float(self._cfg.get(key, default) or default)
+        except Exception:
+            value = default
+        return max(minimum, min(maximum, value))
+
+    def _mark_guard_recovering(self, acc: Account, reason_msg: str, delay: float) -> None:
+        with acc._lock:
+            acc.manual_status = "Multi Roblox guard recovering"
+            acc.last_error = str(reason_msg or "")
+            acc.last_crash_reason = "multi_roblox_guard_failed"
+            self._runtime_state.set_cooldown(acc, time.time() + max(0.0, delay), reason="multi_roblox_guard_self_heal")
+            self._runtime_state.set_recovery(
+                acc,
+                status="guard_recovering",
+                reason="multi_roblox_guard_failed",
+                inflight=True,
+            )
+        self._state_mgr.transition(acc, AccountState.COOLDOWN, reason="multi_roblox_guard_self_heal", force=True)
+
+    def _schedule_multi_roblox_guard_recovery(self, acc: Account, reason_msg: str = "", retry_delay: Optional[float] = None) -> bool:
+        if not self._cfg_bool("multi_roblox_guard_self_heal_enabled", True):
+            return False
+        if self._closed or self._stop.is_set():
+            return False
+        now = time.time()
+        first_delay = self._cfg_float("multi_roblox_guard_self_heal_delay_seconds", 5.0, 0.0, 300.0)
+        delay = first_delay if retry_delay is None else max(0.0, float(retry_delay or 0.0))
+        joined_existing = False
+        with self._guard_recovery_lock:
+            if self._guard_recovery_scheduled:
+                joined_existing = True
+            else:
+                self._guard_recovery_scheduled = True
+                if retry_delay is None:
+                    self._guard_recovery_attempt = 1
+                else:
+                    self._guard_recovery_attempt += 1
+                self._guard_recovery_last_at = now
+                attempt = self._guard_recovery_attempt
+        if joined_existing:
+            self._mark_guard_recovering(acc, reason_msg, delay)
+            self._log_recovery_decision(
+                "multi_roblox_guard_self_heal_joined",
+                acc,
+                "multi_roblox_guard_failed",
+                delay=f"{delay:.1f}",
+            )
+            return True
+        self._mark_guard_recovering(acc, reason_msg, delay)
+        self._scheduler.schedule_once(
+            "recovery:multi_roblox_guard_self_heal",
+            self._run_multi_roblox_guard_self_heal,
+            delay=delay,
+            reason="multi_roblox_guard_failed",
+            payload={
+                "trigger_account": acc._config_username,
+                "reason_msg": reason_msg,
+                "attempt": attempt,
+            },
+        )
+        self._log_recovery_decision(
+            "multi_roblox_guard_self_heal_scheduled",
+            acc,
+            "multi_roblox_guard_failed",
+            delay=f"{delay:.1f}",
+            attempt=attempt,
+            reason_msg=reason_msg,
+        )
+        self._persist_runtime(force=True)
+        return True
+
+    def _guard_recovery_retry_delay(self) -> float:
+        base = self._cfg_float("multi_roblox_guard_self_heal_retry_seconds", 30.0, 5.0, 3600.0)
+        maximum = self._cfg_float("multi_roblox_guard_self_heal_max_retry_seconds", 300.0, 5.0, 3600.0)
+        with self._guard_recovery_lock:
+            attempt = max(1, int(self._guard_recovery_attempt or 1))
+        return min(maximum, base * attempt)
+
+    def _run_multi_roblox_guard_self_heal(self, job: RuntimeScheduledJob) -> None:
+        payload = dict(job.payload or {})
+        trigger_account = str(payload.get("trigger_account") or "")
+        trigger = next((item for item in self._accounts if item._config_username == trigger_account), None)
+        try:
+            killed = 0
+            if self._cfg_bool("multi_roblox_guard_self_heal_close_all", True):
+                killed = ProcessService.kill_all_roblox_clients(
+                    wait_seconds=4.0,
+                    reason="multi_roblox_guard_self_heal",
+                )
+            from roblox_hybrid import ensure_multi_roblox_guard, release_multi_roblox_guard
+
+            release_multi_roblox_guard()
+            time.sleep(1.0)
+            ok, detail = ensure_multi_roblox_guard()
+            if not ok:
+                raise RuntimeError(detail)
+            requeued = self._requeue_after_multi_roblox_guard_recovery()
+            with self._guard_recovery_lock:
+                self._guard_recovery_scheduled = False
+                self._guard_recovery_attempt = 0
+                self._guard_recovery_last_at = time.time()
+            flog_kv(
+                "MULTI_ROBLOX",
+                "guard_self_heal_completed",
+                account=trigger.display_name if trigger else trigger_account,
+                killed=killed,
+                requeued=requeued,
+                detail=detail,
+            )
+            self._persist_runtime(force=True)
+        except Exception as exc:
+            retry_delay = self._guard_recovery_retry_delay()
+            with self._guard_recovery_lock:
+                self._guard_recovery_scheduled = False
+            if trigger is not None:
+                self._log_recovery_decision(
+                    "multi_roblox_guard_self_heal_retry",
+                    trigger,
+                    "multi_roblox_guard_failed",
+                    error=str(exc),
+                    delay=f"{retry_delay:.1f}",
+                )
+                self._schedule_multi_roblox_guard_recovery(trigger, str(exc), retry_delay=retry_delay)
+            else:
+                flog_kv(
+                    "MULTI_ROBLOX",
+                    "guard_self_heal_retry_missing_account",
+                    "warning",
+                    account=trigger_account,
+                    error=str(exc),
+                    delay=f"{retry_delay:.1f}",
+                )
+
+    def _requeue_after_multi_roblox_guard_recovery(self) -> int:
+        requeued = 0
+        for acc in list(self._accounts):
+            with acc._lock:
+                desired = acc.desired_state
+            if desired != AccountState.IN_GAME:
+                continue
+            auth_gate = evaluate_account_auth_gate(acc)
+            if auth_gate.blocked:
+                continue
+            with acc._lock:
+                if acc.last_crash_reason == "multi_roblox_guard_failed":
+                    acc.last_crash_reason = ""
+                if "guard" in str(acc.manual_status or "").lower():
+                    acc.manual_status = ""
+                if "guard" in str(acc.last_error or "").lower():
+                    acc.last_error = ""
+                acc.fail_count = 0
+                acc.retry_count = 0
+                acc.launch_fail_count = 0
+                acc.recovery_budget_attempts.clear()
+                self._runtime_state.clear_process_binding(
+                    acc,
+                    reason="multi_roblox_guard_self_heal_requeue",
+                    increment_generation=True,
+                )
+                self._runtime_state.set_cooldown(acc, 0.0, reason="multi_roblox_guard_self_heal_requeue")
+                self._runtime_state.set_recovery(
+                    acc,
+                    status="queued",
+                    reason="multi_roblox_guard_self_heal_requeue",
+                    inflight=True,
+                )
+            self._state_mgr.transition(acc, AccountState.READY, reason="multi_roblox_guard_self_heal_requeue", force=True)
+            self._queue_account(acc, "multi_roblox_guard_self_heal_requeue")
+            requeued += 1
+        return requeued
 
     def handle_runtime_signal(
         self,
@@ -382,8 +599,8 @@ class RecoveryCoordinator:
             **fields,
         )
 
-    def _schedule_cooldown(self, acc: Account, delay: float, reason: str, transition_reason: str):
-        return _schedule_cooldown(self, acc, delay, reason, transition_reason)
+    def _schedule_cooldown(self, acc: Account, delay: float, reason: str, transition_reason: str, display_reason: str = ""):
+        return _schedule_cooldown(self, acc, delay, reason, transition_reason, display_reason=display_reason)
 
     def _detect_relaunch_loop(self, acc: Account, reason_key: str) -> Optional[str]:
         return detect_relaunch_loop(acc, reason_key, self._cfg, self._net, flog)
@@ -445,9 +662,8 @@ class RecoveryCoordinator:
         cooldown: Optional[float] = None,
         context: Optional[RecoveryAttemptContext] = None,
     ):
-        canonical = canonical_reason(reason_key)
-        if context and context.category:
-            canonical = reason_for_category(context.category, canonical)
+        canonical = _canonical_recovery_reason(reason_key, context)
+        display_reason = _display_recovery_reason(reason_key, canonical, reason_msg, context)
         policy = policy_for(canonical)
         bucket = str(policy.get("bucket") or "crash")
         is_network_recovery = bucket == "network" or canonical in {"connection_error", "network_drop"}
@@ -551,7 +767,7 @@ class RecoveryCoordinator:
             delay=f"{wait_for:.1f}",
             generation=acc.recovery_generation,
         )
-        self._schedule_cooldown(acc, wait_for, canonical, f"recover:{canonical}")
+        self._schedule_cooldown(acc, wait_for, canonical, f"recover:{canonical}", display_reason=display_reason)
         self._persist_runtime()
 
     def report_launch_failure(self, acc: Account, reason: str):
@@ -687,6 +903,9 @@ class RecoveryCoordinator:
             set_account_captcha_hold(acc, reason_msg or reason, source="fail_account", runtime_writer=self._runtime_state)
             reason = CAPTCHA_REASON
             reason_msg = CAPTCHA_BLOCK_REASON
+        if canonical_reason(reason) == "multi_roblox_guard_failed":
+            if self._schedule_multi_roblox_guard_recovery(acc, reason_msg):
+                return
         with acc._lock:
             if acc.state == AccountState.FAILED and acc.recovery_status == "failed":
                 self._log_recovery_decision("fail_suppressed", acc, reason, reason_msg=reason_msg)

@@ -86,10 +86,9 @@ def register(app, ctx: ApiContext) -> None:
             updates["queue_duration_seconds"] = _int_setting(updates["queue_duration_seconds"], 15, 0, 86400)
         if "max_concurrent_accounts" in updates:
             updates["max_concurrent_accounts"] = _int_setting(updates["max_concurrent_accounts"], 40, 1, 500)
-        if "use_lua" in updates:
-            updates["use_lua"] = bool(updates["use_lua"])
+        updates["use_lua"] = True
         if "lua_wait_timeout" in updates:
-            updates["lua_wait_timeout"] = _int_setting(updates["lua_wait_timeout"], 60, 1, 60)
+            updates["lua_wait_timeout"] = _int_setting(updates["lua_wait_timeout"], 60, 1, 300)
         if "auto_close_minutes" in updates:
             updates["auto_close_minutes"] = _int_setting(updates["auto_close_minutes"], 0, 0, 1440)
         if "auto_close_enabled" in updates:

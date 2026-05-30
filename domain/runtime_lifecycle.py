@@ -96,7 +96,7 @@ PUBLIC_TO_LIFECYCLE: Dict[AccountState, RuntimeLifecycleState] = {
 }
 
 
-LEGACY_RUNTIME_TO_LIFECYCLE: Dict[RuntimeState, RuntimeLifecycleState] = {
+RUNTIME_TO_LIFECYCLE: Dict[RuntimeState, RuntimeLifecycleState] = {
     RuntimeState.STOPPED: RuntimeLifecycleState.STOPPED,
     RuntimeState.STARTING: RuntimeLifecycleState.STARTING,
     RuntimeState.JOINING: RuntimeLifecycleState.JOINING,
@@ -111,8 +111,8 @@ def lifecycle_for_public(public_state: AccountState) -> RuntimeLifecycleState:
     return PUBLIC_TO_LIFECYCLE.get(public_state, RuntimeLifecycleState.IDLE)
 
 
-def lifecycle_for_legacy_runtime(runtime_state: RuntimeState) -> RuntimeLifecycleState:
-    return LEGACY_RUNTIME_TO_LIFECYCLE.get(runtime_state, RuntimeLifecycleState.STOPPED)
+def lifecycle_for_runtime_state(runtime_state: RuntimeState) -> RuntimeLifecycleState:
+    return RUNTIME_TO_LIFECYCLE.get(runtime_state, RuntimeLifecycleState.STOPPED)
 
 
 def is_valid_lifecycle_transition(

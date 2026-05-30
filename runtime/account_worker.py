@@ -26,7 +26,7 @@ from services.captcha_guard import (
     set_account_captcha_hold,
 )
 from runtime.supervisor_runtime import SupervisorRuntime
-from runtime.system_maintenance import _apply_cpu_limiter_for_bound_process
+from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
 from runtime.recovery_support import RECOVERY_REASON_MESSAGES, _set_account_cookie_block, compute_backoff
 
 

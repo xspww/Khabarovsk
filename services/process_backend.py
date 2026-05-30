@@ -8,7 +8,7 @@ from services import roblox_liveness as _liveness
 from services import roblox_processes as _processes
 from services import roblox_windows as _windows
 
-# Compatibility re-exports kept for legacy imports from process_net.
+# Internal process backend used by process services.
 from services.resource_monitor import RealtimeResourceMonitor, get_rt_monitor
 from services.cookie_service import IsolationManager
 from services.vip_tracker import VipTracker
@@ -32,9 +32,6 @@ class ProcessManager:
     GLOBAL_VIP_LINK = ""
     AUTO_CREATE_PRIVATE_SERVER_ENABLED = False
     AUTO_CREATE_PRIVATE_SERVER_FREE_ONLY = True
-    _VISUAL_TEMPLATE_BASE_SIZE = (816, 638)
-    _VISUAL_TITLE_BOX = (348, 215, 500, 250)
-    _VISUAL_RECONNECT_BOX = (410, 400, 590, 438)
     CONNECTION_ERROR_KEYWORDS = (
         "connection error",
         "lost connection",
@@ -53,8 +50,6 @@ class ProcessManager:
         "267": "security_kick",
         "268": "unexpected_client_behavior",
     }
-    _visual_template_cache: Dict[str, Any] = {}
-
     _process_cache: Dict[int, Any] = {}
     _cache_lock = threading.Lock()
     _nr_cache: Dict[int, Tuple[float, bool]] = {}
@@ -108,12 +103,8 @@ class ProcessManager:
     is_not_responding = classmethod(_windows.is_not_responding)
     inspect_disconnect_dialog = classmethod(_windows.inspect_disconnect_dialog)
     detect_connection_error = classmethod(_windows.detect_connection_error)
-    _template_path = classmethod(_windows._template_path)
-    _load_visual_template = classmethod(_windows._load_visual_template)
     _get_pid_window_rect = classmethod(_windows._get_pid_window_rect)
     _capture_pid_window_image = classmethod(_windows._capture_pid_window_image)
-    _scaled_box = classmethod(_windows._scaled_box)
-    _rmsdiff = staticmethod(_windows._rmsdiff)
     _inspect_disconnect_dialog_visual = classmethod(_windows._inspect_disconnect_dialog_visual)
 
     parse_vip_link = staticmethod(_launch_service.parse_vip_link)

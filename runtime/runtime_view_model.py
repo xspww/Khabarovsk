@@ -40,19 +40,20 @@ def _important_runtime_event(event: Dict[str, Any]) -> bool:
 
 
 class RuntimeViewModelBuilder:
-    def __init__(self, farm: Any):
+    def __init__(self, farm: Any, include_diagnostics: bool = False):
         self._farm = farm
+        self._include_diagnostics = bool(include_diagnostics)
 
     def _process_cache_ttl(self) -> float:
         if not bool(getattr(self._farm, "running", False)):
             return 0.0
         try:
-            value = float(self._farm.cfg_mgr.get("dashboard_process_cache_ttl_seconds", 2.0) or 0.0)
+            value = float(self._farm.cfg_mgr.get("dashboard_process_cache_ttl_seconds", 5.0) or 0.0)
         except Exception:
-            value = 2.0
+            value = 5.0
         if value <= 0:
             return 0.0
-        return min(5.0, max(0.5, value))
+        return min(10.0, max(1.0, value))
 
     def _process_status(self, acc: Any, pid: int | None, identity: str) -> Dict[str, Any]:
         if not pid:
@@ -139,10 +140,11 @@ class RuntimeViewModelBuilder:
         farm = self._farm
         from core import STATE_META
 
+        include_diagnostics = self._include_diagnostics
         uptime = int(time.time() - farm.start_ts) if farm.start_ts else 0
         h, r = divmod(uptime, 3600)
         m, s = divmod(r, 60)
-        mon = get_rt_monitor()
+        mon = get_rt_monitor() if include_diagnostics else None
         accounts_data = []
         try:
             from roblox_hybrid import multi_roblox_guard_status
@@ -151,14 +153,17 @@ class RuntimeViewModelBuilder:
         except Exception as exc:
             multi_guard = {"state": "unknown", "pid": 0, "detail": str(exc), "last_failure": str(exc), "handle_names": []}
         global_command = farm.command_inflight("global")
-        try:
-            recent_runtime_events = [
-                event
-                for event in farm._runtime_store.list_recent_events(limit=100)
-                if _important_runtime_event(event)
-            ]
-        except Exception as e:
-            flog_kv("RUNTIME", "recent_events_failed", "warning", error=e)
+        if include_diagnostics:
+            try:
+                recent_runtime_events = [
+                    event
+                    for event in farm._runtime_store.list_recent_events(limit=100)
+                    if _important_runtime_event(event)
+                ]
+            except Exception as e:
+                flog_kv("RUNTIME", "recent_events_failed", "warning", error=e)
+                recent_runtime_events = []
+        else:
             recent_runtime_events = []
         events_by_account: Dict[str, List[Dict[str, Any]]] = {}
         for event in recent_runtime_events:
@@ -206,11 +211,11 @@ class RuntimeViewModelBuilder:
             display_public_state = display_state.name if lua_required and not lua_online and snapshot_public == "IN_GAME" else snapshot_public
 
             meta = STATE_META.get(display_state, {"label": display_state.name, "color": "#6b7280"})
-            cpu = mon.get_cpu(snapshot_pid) if (snapshot_pid and pid_alive) else 0.0
-            mem = mon.get_ram(snapshot_pid) if (snapshot_pid and pid_alive) else 0.0
+            cpu = mon.get_cpu(snapshot_pid) if (include_diagnostics and mon and snapshot_pid and pid_alive) else 0.0
+            mem = mon.get_ram(snapshot_pid) if (include_diagnostics and mon and snapshot_pid and pid_alive) else 0.0
             is_nr = bool(display_state == AccountState.IN_GAME and process_status.get("not_responding"))
             vip_tracker_status = []
-            if acc._vip_tracker:
+            if include_diagnostics and acc._vip_tracker:
                 try:
                     vip_tracker_status = [
                         {**item, "link": redact_secret(item.get("link", ""))}
@@ -293,7 +298,7 @@ class RuntimeViewModelBuilder:
                 "process_alive": pid_alive,
                 "process_name": runtime_snapshot.get("process_name", acc.bound_process_name),
                 "process_identity": snapshot_identity,
-                "process_owner": ProcessManager.get_pid_owner(snapshot_pid) if snapshot_pid else "",
+                "process_owner": ProcessManager.get_pid_owner(snapshot_pid) if (include_diagnostics and snapshot_pid) else "",
                 "server_type": acc.server_type.value if acc.server_type else "UNKNOWN",
                 "active_vip": redact_secret(acc.active_vip),
                 "observed_server_type": runtime_snapshot.get("observed_server_type", acc.observed_server_type or ""),
@@ -386,6 +391,16 @@ class RuntimeViewModelBuilder:
                 "can_rejoin": bool(farm.running and not any_command_inflight and display_state != AccountState.FAILED and not blocked_reason),
                 "can_kill": bool(pid_alive and snapshot_pid and not any_command_inflight),
             }
+            if not include_diagnostics:
+                for key in (
+                    "runtime",
+                    "launch_intent",
+                    "recent_runtime_events",
+                    "vip_tracker",
+                    "unmanaged_live_pids",
+                    "multi_roblox_guard_handles",
+                ):
+                    account_payload.pop(key, None)
             runtime_truth = build_account_truth(
                 acc,
                 process_alive=pid_alive,
@@ -403,25 +418,30 @@ class RuntimeViewModelBuilder:
         with farm._event_lock:
             total_rejoin = farm._total_rejoin
             total_crash = farm._total_crash
-            event_log = list(farm._event_log)
+            event_log_count = len(farm._event_log)
+            event_log = list(farm._event_log) if include_diagnostics else []
         with farm._status_lock:
             status_revision = int(farm._status_revision)
         scheduler_snapshot = {}
-        if getattr(farm, "_runtime_scheduler", None):
+        if include_diagnostics and getattr(farm, "_runtime_scheduler", None):
             scheduler_snapshot = farm._runtime_scheduler.snapshot()
-        runtime_health = build_runtime_health(
-            accounts_data,
-            queue_snapshot,
-            recent_runtime_events,
-            scheduler_snapshot=scheduler_snapshot,
+        runtime_health = (
+            build_runtime_health(
+                accounts_data,
+                queue_snapshot,
+                recent_runtime_events,
+                scheduler_snapshot=scheduler_snapshot,
+            )
+            if include_diagnostics
+            else {}
         )
         machine_supervisor = {}
-        if getattr(farm, "_machine_supervisor", None):
+        if include_diagnostics and getattr(farm, "_machine_supervisor", None):
             machine_supervisor = farm._machine_supervisor.snapshot().to_dict()
         recovery_storm = {}
-        if getattr(getattr(farm, "_recovery", None), "_storm", None):
+        if include_diagnostics and getattr(getattr(farm, "_recovery", None), "_storm", None):
             recovery_storm = farm._recovery._storm.snapshot()
-        return {
+        payload = {
             "running": farm.running,
             "status_revision": status_revision,
             "status_updated_at": time.time(),
@@ -454,8 +474,14 @@ class RuntimeViewModelBuilder:
             "can_start": bool((not farm.running) and not any_command_inflight),
             "can_stop": bool(farm.running and not any_command_inflight),
             "accounts": accounts_data,
-            "event_log": event_log,
-            "runtime_events": event_log,
-            "recent_runtime_events": recent_runtime_events,
-            "supervisor": farm._supervisor.snapshot(),
+            "event_log_count": event_log_count,
+            "recent_runtime_event_count": len(recent_runtime_events),
         }
+        if include_diagnostics:
+            payload.update({
+                "event_log": event_log,
+                "runtime_events": event_log,
+                "recent_runtime_events": recent_runtime_events,
+                "supervisor": farm._supervisor.snapshot(),
+            })
+        return payload

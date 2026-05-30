@@ -13,6 +13,7 @@ def schedule_cooldown(
     delay: float,
     reason: str,
     transition_reason: str,
+    display_reason: str = "",
 ) -> None:
     until = time.time() + max(0.0, float(delay or 0.0))
     recovery._state_mgr.set_cooldown(acc, until, reason=transition_reason)
@@ -22,6 +23,7 @@ def schedule_cooldown(
         "cooldown",
         acc,
         reason,
+        display_reason=display_reason or reason,
         delay=f"{max(0.0, float(delay or 0.0)):.1f}",
         until=f"{until:.3f}",
     )

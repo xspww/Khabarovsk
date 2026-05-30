@@ -1,12 +1,8 @@
 from __future__ import annotations
 
-import random
 import os
-import re
 import threading
 import time
-import urllib.error
-import urllib.request
 from typing import Any, Dict, List, Optional, Tuple
 
 from account_hybrid import ACCOUNT_STORE, audit_event
@@ -17,13 +13,10 @@ from core import (
     ConfigManager,
     EventBus,
     EventName,
-    GlobalLaunchLimiter,
     SmartQueue,
     StateManager,
     flog,
     flog_kv,
-    account_launch_block_reason,
-    cookie_identity_block_reason,
 )
 from domain.session_identity import build_launch_intent
 from services.network_monitor import NetworkMonitor, NET_ONLINE
@@ -189,12 +182,12 @@ class FarmController:
 
     def _status_cache_ttl(self) -> float:
         try:
-            value = float(self.cfg_mgr.get("status_snapshot_cache_ttl_seconds", 1.0) or 0.0)
+            value = float(self.cfg_mgr.get("status_snapshot_cache_ttl_seconds", 5.0) or 0.0)
         except Exception:
-            value = 1.0
+            value = 5.0
         if value <= 0:
             return 0.0
-        return min(2.0, max(0.25, value))
+        return min(10.0, max(0.5, value))
 
     def open_status_stream(self) -> int:
         with self._status_cache_lock:
@@ -335,6 +328,12 @@ class FarmController:
 
     def set_accounts(self, accounts: List[Account]):
         self._accounts = accounts
+        try:
+            from console_activity import set_total_accounts
+
+            set_total_accounts(len(self._accounts))
+        except Exception:
+            pass
         self._machine_supervisor.set_accounts(self._accounts)
         self._sync_accounts_from_ram(persist=False)
         if self._recovery:
@@ -697,7 +696,9 @@ class FarmController:
             process_service=ProcessService,
         )
 
-    def get_status(self) -> dict:
+    def get_status(self, include_diagnostics: bool = False) -> dict:
+        if include_diagnostics:
+            return build_farm_status(self, include_diagnostics=True)
         if not self.running:
             return build_farm_status(self)
 

@@ -90,19 +90,35 @@ class AccountLaunchService:
             idempotency_key=idempotency_key,
             idempotency_body_hash=body_hash,
         )
-        if result.get("ok") and window_settings and window_settings.get("enabled"):
+        if result.get("ok") and window_settings and (window_settings.get("enabled") or window_settings.get("arrange_enabled")):
             try:
                 from services.process_service import ProcessService
 
-                resize_result = ProcessService.resize_roblox_windows(
-                    int(window_settings["width"]),
-                    int(window_settings["height"]),
-                    reason="manual_account_launch",
-                    idempotency_key=idempotency_key,
-                )
+                if window_settings.get("arrange_enabled"):
+                    resize_result = ProcessService.arrange_roblox_windows(
+                        int(window_settings["width"]),
+                        int(window_settings["height"]),
+                        int(window_settings.get("arrange_columns") or 6),
+                        int(window_settings.get("arrange_gap") or 0),
+                        int(window_settings.get("arrange_margin") or 0),
+                        unlock_size=bool(window_settings.get("unlock_size_enabled", True)),
+                        resize=bool(window_settings.get("enabled")),
+                        rows=int(window_settings.get("arrange_rows") or 4),
+                        reason="manual_account_launch",
+                        idempotency_key=idempotency_key,
+                    )
+                else:
+                    resize_result = ProcessService.resize_roblox_windows(
+                        int(window_settings["width"]),
+                        int(window_settings["height"]),
+                        unlock_size=bool(window_settings.get("unlock_size_enabled", True)),
+                        reason="manual_account_launch",
+                        idempotency_key=idempotency_key,
+                    )
                 result["window_resize"] = {
                     "ok": bool(resize_result.get("ok", True)),
                     "resized": int(resize_result.get("resized") or 0),
+                    "arranged": int(resize_result.get("arranged") or 0),
                     "count": int(resize_result.get("count") or 0),
                     "width": window_settings["width"],
                     "height": window_settings["height"],

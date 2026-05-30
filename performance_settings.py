@@ -12,8 +12,7 @@ DEFAULT_ROBLOX_SETTINGS_PATH = os.path.join(
     "GlobalBasicSettings_13.xml",
 )
 
-FPS_MIN = 15
-FPS_MAX = 1000
+FPS_MIN = 1
 GRAPHICS_QUALITY_MIN = 1
 GRAPHICS_QUALITY_MAX = 10
 GRAPHICS_LOW_DEFAULT_LEVEL = 1
@@ -40,8 +39,8 @@ def normalize_fps_limit(value: Any, default: int = 240) -> int:
         fps = int(float(value))
     except Exception:
         fps = int(default)
-    if fps < FPS_MIN or fps > FPS_MAX:
-        raise ValueError(f"FPS limit must be between {FPS_MIN} and {FPS_MAX}")
+    if fps < FPS_MIN:
+        raise ValueError(f"FPS limit must be at least {FPS_MIN}")
     return fps
 
 

@@ -23,6 +23,8 @@ def _int_setting(value, default: int, min_value: int, max_value: int) -> int:
 
 
 WINDOW_SIZE_PRESETS: Dict[str, Tuple[int, int]] = {
+    "200x150": (200, 150),
+    "240x180": (240, 180),
     "320x240": (320, 240),
     "480x360": (480, 360),
     "640x480": (640, 480),
@@ -36,16 +38,17 @@ WINDOW_SIZE_PRESETS: Dict[str, Tuple[int, int]] = {
 
 def _normalize_window_size_settings(ctx: ApiContext, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     body = body or {}
+    unlock_size_enabled = bool(body.get("unlock_size_enabled", body.get("roblox_window_unlock_size_enabled", ctx.cfg_mgr.get("roblox_window_unlock_size_enabled", True))))
     enabled = bool(body.get("enabled", body.get("roblox_window_resize_enabled", ctx.cfg_mgr.get("roblox_window_resize_enabled", False))))
-    preset = str(body.get("preset", body.get("roblox_window_size_preset", ctx.cfg_mgr.get("roblox_window_size_preset", "640x480"))) or "640x480")
+    preset = str(body.get("preset", body.get("roblox_window_size_preset", ctx.cfg_mgr.get("roblox_window_size_preset", "200x150"))) or "200x150")
     preset = preset.strip().lower().replace(" ", "")
     if preset != "custom" and preset not in WINDOW_SIZE_PRESETS:
         raise ValueError("Invalid window size preset")
     if preset in WINDOW_SIZE_PRESETS:
         width, height = WINDOW_SIZE_PRESETS[preset]
     else:
-        width = _int_setting(body.get("width", body.get("roblox_window_width", ctx.cfg_mgr.get("roblox_window_width", 640))), 640, 320, 1920)
-        height = _int_setting(body.get("height", body.get("roblox_window_height", ctx.cfg_mgr.get("roblox_window_height", 480))), 480, 240, 1080)
+        width = _int_setting(body.get("width", body.get("roblox_window_width", ctx.cfg_mgr.get("roblox_window_width", 200))), 200, 80, 1920)
+        height = _int_setting(body.get("height", body.get("roblox_window_height", ctx.cfg_mgr.get("roblox_window_height", 150))), 150, 60, 1080)
     interval = _int_setting(
         body.get("interval_seconds", body.get("roblox_window_resize_interval_seconds", ctx.cfg_mgr.get("roblox_window_resize_interval_seconds", 10))),
         10,
@@ -59,12 +62,13 @@ def _normalize_window_size_settings(ctx: ApiContext, body: Optional[Dict[str, An
         1,
         32,
     )
-    arrange_gap = _int_setting(
-        body.get("arrange_gap", body.get("roblox_window_arrange_gap", ctx.cfg_mgr.get("roblox_window_arrange_gap", 2))),
-        2,
-        0,
-        80,
+    arrange_rows = _int_setting(
+        body.get("arrange_rows", body.get("roblox_window_arrange_rows", ctx.cfg_mgr.get("roblox_window_arrange_rows", 4))),
+        4,
+        1,
+        32,
     )
+    arrange_gap = 0
     arrange_margin = _int_setting(
         body.get("arrange_margin", body.get("roblox_window_arrange_margin", ctx.cfg_mgr.get("roblox_window_arrange_margin", 0))),
         0,
@@ -73,12 +77,14 @@ def _normalize_window_size_settings(ctx: ApiContext, body: Optional[Dict[str, An
     )
     return {
         "enabled": enabled,
+        "unlock_size_enabled": unlock_size_enabled,
         "preset": preset,
         "width": int(width),
         "height": int(height),
         "interval_seconds": interval,
         "arrange_enabled": arrange_enabled,
         "arrange_columns": arrange_columns,
+        "arrange_rows": arrange_rows,
         "arrange_gap": arrange_gap,
         "arrange_margin": arrange_margin,
     }
@@ -89,12 +95,14 @@ def _window_size_status(ctx: ApiContext) -> Dict[str, Any]:
     return {
         "ok": True,
         "enabled": settings["enabled"],
+        "unlock_size_enabled": settings["unlock_size_enabled"],
         "preset": settings["preset"],
         "width": settings["width"],
         "height": settings["height"],
         "interval_seconds": settings["interval_seconds"],
         "arrange_enabled": settings["arrange_enabled"],
         "arrange_columns": settings["arrange_columns"],
+        "arrange_rows": settings["arrange_rows"],
         "arrange_gap": settings["arrange_gap"],
         "arrange_margin": settings["arrange_margin"],
         "presets": [{"value": key, "width": value[0], "height": value[1]} for key, value in WINDOW_SIZE_PRESETS.items()],
@@ -127,7 +135,10 @@ def _roblox_runtime_restart_required(ctx: ApiContext) -> Dict[str, Any]:
 def _fps_limiter_status(ctx: ApiContext, path: str = DEFAULT_ROBLOX_SETTINGS_PATH) -> Dict[str, Any]:
     file_status = read_fps_settings(path)
     runtime_status = _roblox_runtime_restart_required(ctx)
-    configured_limit = _int_setting(ctx.cfg_mgr.get("fps_limit", 240), 240, 15, 1000)
+    try:
+        configured_limit = normalize_fps_limit(ctx.cfg_mgr.get("fps_limit", 240))
+    except ValueError:
+        configured_limit = 240
     graphics_enabled = bool(ctx.cfg_mgr.get("graphics_low_enabled", ctx.cfg_mgr.get("graphics_auto_enabled", False)))
     graphics_quality = _int_setting(ctx.cfg_mgr.get("graphics_quality_level", 1), 1, 1, 10)
     priority = str(ctx.cfg_mgr.get("process_priority", "low") or "low")

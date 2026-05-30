@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException, Request
 
-from performance_settings import normalize_graphics_quality, normalize_process_priority
+from performance_settings import normalize_fps_limit, normalize_graphics_quality, normalize_process_priority
 from roblox_hybrid import release_multi_roblox_guard
 
 from .context import ApiContext
@@ -69,9 +69,9 @@ def register(app, ctx: ApiContext) -> None:
             "auto_process_priority_enabled", "process_priority",
             "cpu_limiter_enabled", "cpu_limiter_mode", "cpu_limiter_default_percent",
             "cpu_limiter_apply_all", "cpu_limiter_accounts",
-            "roblox_window_resize_enabled", "roblox_window_size_preset", "roblox_window_width",
+            "roblox_window_unlock_size_enabled", "roblox_window_resize_enabled", "roblox_window_size_preset", "roblox_window_width",
             "roblox_window_height", "roblox_window_resize_interval_seconds",
-            "roblox_window_arrange_enabled", "roblox_window_arrange_columns",
+            "roblox_window_arrange_enabled", "roblox_window_arrange_columns", "roblox_window_arrange_rows",
             "roblox_window_arrange_gap", "roblox_window_arrange_margin",
             "multi_roblox_enabled", "rt_rotation_enabled",
             "runtime_account_allowlist",
@@ -100,7 +100,10 @@ def register(app, ctx: ApiContext) -> None:
         if "fps_limiter_enabled" in updates:
             updates["fps_limiter_enabled"] = bool(updates["fps_limiter_enabled"])
         if "fps_limit" in updates:
-            updates["fps_limit"] = _int_setting(updates["fps_limit"], 240, 15, 1000)
+            try:
+                updates["fps_limit"] = normalize_fps_limit(updates["fps_limit"])
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
         if "graphics_auto_enabled" in updates:
             updates["graphics_auto_enabled"] = bool(updates["graphics_auto_enabled"])
         if "graphics_low_enabled" in updates:
@@ -136,21 +139,24 @@ def register(app, ctx: ApiContext) -> None:
             if normalized_cpu["apply_all"]:
                 normalized_cpu["accounts"] = {}
             updates["cpu_limiter_accounts"] = normalized_cpu["accounts"]
-        if any(k in updates for k in ("roblox_window_resize_enabled", "roblox_window_size_preset", "roblox_window_width", "roblox_window_height", "roblox_window_resize_interval_seconds", "roblox_window_arrange_enabled", "roblox_window_arrange_columns", "roblox_window_arrange_gap", "roblox_window_arrange_margin")):
+        if any(k in updates for k in ("roblox_window_unlock_size_enabled", "roblox_window_resize_enabled", "roblox_window_size_preset", "roblox_window_width", "roblox_window_height", "roblox_window_resize_interval_seconds", "roblox_window_arrange_enabled", "roblox_window_arrange_columns", "roblox_window_arrange_rows", "roblox_window_arrange_gap", "roblox_window_arrange_margin")):
             try:
                 normalized_window = _normalize_window_size_settings(ctx, {
+                    "unlock_size_enabled": updates.get("roblox_window_unlock_size_enabled", cfg_mgr.get("roblox_window_unlock_size_enabled", True)),
                     "enabled": updates.get("roblox_window_resize_enabled", cfg_mgr.get("roblox_window_resize_enabled", False)),
-                    "preset": updates.get("roblox_window_size_preset", cfg_mgr.get("roblox_window_size_preset", "640x480")),
-                    "width": updates.get("roblox_window_width", cfg_mgr.get("roblox_window_width", 640)),
-                    "height": updates.get("roblox_window_height", cfg_mgr.get("roblox_window_height", 480)),
+                    "preset": updates.get("roblox_window_size_preset", cfg_mgr.get("roblox_window_size_preset", "200x150")),
+                    "width": updates.get("roblox_window_width", cfg_mgr.get("roblox_window_width", 200)),
+                    "height": updates.get("roblox_window_height", cfg_mgr.get("roblox_window_height", 150)),
                     "interval_seconds": updates.get("roblox_window_resize_interval_seconds", cfg_mgr.get("roblox_window_resize_interval_seconds", 10)),
                     "arrange_enabled": updates.get("roblox_window_arrange_enabled", cfg_mgr.get("roblox_window_arrange_enabled", False)),
                     "arrange_columns": updates.get("roblox_window_arrange_columns", cfg_mgr.get("roblox_window_arrange_columns", 6)),
-                    "arrange_gap": updates.get("roblox_window_arrange_gap", cfg_mgr.get("roblox_window_arrange_gap", 2)),
+                    "arrange_rows": updates.get("roblox_window_arrange_rows", cfg_mgr.get("roblox_window_arrange_rows", 4)),
+                    "arrange_gap": updates.get("roblox_window_arrange_gap", cfg_mgr.get("roblox_window_arrange_gap", 0)),
                     "arrange_margin": updates.get("roblox_window_arrange_margin", cfg_mgr.get("roblox_window_arrange_margin", 0)),
                 })
             except ValueError as exc:
                 raise HTTPException(400, str(exc))
+            updates["roblox_window_unlock_size_enabled"] = normalized_window["unlock_size_enabled"]
             updates["roblox_window_resize_enabled"] = normalized_window["enabled"]
             updates["roblox_window_size_preset"] = normalized_window["preset"]
             updates["roblox_window_width"] = normalized_window["width"]
@@ -158,6 +164,7 @@ def register(app, ctx: ApiContext) -> None:
             updates["roblox_window_resize_interval_seconds"] = normalized_window["interval_seconds"]
             updates["roblox_window_arrange_enabled"] = normalized_window["arrange_enabled"]
             updates["roblox_window_arrange_columns"] = normalized_window["arrange_columns"]
+            updates["roblox_window_arrange_rows"] = normalized_window["arrange_rows"]
             updates["roblox_window_arrange_gap"] = normalized_window["arrange_gap"]
             updates["roblox_window_arrange_margin"] = normalized_window["arrange_margin"]
         if "popup_disconnected_enabled" in updates:

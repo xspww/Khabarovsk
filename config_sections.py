@@ -83,13 +83,15 @@ class PerformanceConfig:
 
 @dataclass(frozen=True)
 class WindowConfig:
+    unlock_size_enabled: bool = True
     resize_enabled: bool = False
-    size_preset: str = "640x480"
-    width: int = 640
-    height: int = 480
+    size_preset: str = "200x150"
+    width: int = 200
+    height: int = 150
     resize_interval_seconds: int = 10
     arrange_enabled: bool = False
     arrange_columns: int = 6
+    arrange_rows: int = 4
     arrange_gap: int = 2
     arrange_margin: int = 0
 
@@ -150,13 +152,15 @@ def build_config_sections(raw: Dict[str, Any]) -> CronusConfigSections:
             cpu_limiter_accounts=dict(data.get("cpu_limiter_accounts") or {}),
         ),
         window=WindowConfig(
+            unlock_size_enabled=_bool(data, "roblox_window_unlock_size_enabled", True),
             resize_enabled=_bool(data, "roblox_window_resize_enabled", False),
-            size_preset=_str(data, "roblox_window_size_preset", "640x480"),
-            width=_int(data, "roblox_window_width", 640),
-            height=_int(data, "roblox_window_height", 480),
+            size_preset=_str(data, "roblox_window_size_preset", "200x150"),
+            width=_int(data, "roblox_window_width", 200),
+            height=_int(data, "roblox_window_height", 150),
             resize_interval_seconds=_int(data, "roblox_window_resize_interval_seconds", 10),
             arrange_enabled=_bool(data, "roblox_window_arrange_enabled", False),
             arrange_columns=_int(data, "roblox_window_arrange_columns", 6),
+            arrange_rows=_int(data, "roblox_window_arrange_rows", 4),
             arrange_gap=_int(data, "roblox_window_arrange_gap", 2),
             arrange_margin=_int(data, "roblox_window_arrange_margin", 0),
         ),

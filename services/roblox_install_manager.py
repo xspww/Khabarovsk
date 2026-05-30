@@ -22,6 +22,7 @@ WEAO_CURRENT_VERSION_URL = "https://weao.xyz/api/versions/current"
 SETUP_BASE_URL = "https://setup.rbxcdn.com"
 ROBLOX_EXE = "RobloxPlayerBeta.exe"
 WEAO_USER_AGENT = "WEAO-3PService"
+LATEST_VERSION_TTL_SECONDS = 300
 ROBLOX_INSTALL_BLOCKER_NAMES = {
     "robloxplayerbeta.exe",
     "robloxplayerlauncher.exe",
@@ -77,6 +78,10 @@ class RobloxInstallManager:
         self.logger = logger or (lambda _msg: None)
         self._lock = threading.RLock()
         self._job: Dict[str, Any] = self._new_job("Ready")
+        self._latest_version = ""
+        self._latest_version_error = ""
+        self._latest_version_checked_at = 0.0
+        self._latest_version_refreshing = False
 
     def _new_job(self, state: str, **extra: Any) -> Dict[str, Any]:
         payload = {
@@ -98,18 +103,70 @@ class RobloxInstallManager:
         with self._lock:
             job = dict(self._job)
         installed = self.detect_installed()
+        latest = self._latest_version_status()
+        installed_version = installed.get("version") or ""
+        latest_version = latest.get("version") or ""
         blockers = self.find_install_blockers()
         block_msg = self._format_blockers(blockers)
         return {
             "ok": True,
             "installed": installed,
-            "installed_version": installed.get("version") or "",
+            "installed_version": installed_version,
             "installed_path": installed.get("path") or "",
+            "latest_version": latest_version,
+            "latest_version_checked_at": latest.get("checked_at") or 0,
+            "latest_version_error": latest.get("error") or "",
+            "latest_version_refreshing": bool(latest.get("refreshing")),
+            "installed_up_to_date": bool(
+                installed_version and latest_version and installed_version.lower() == latest_version.lower()
+            ),
             "running_blocked": bool(self.guard_running() or self.roblox_running() or blockers),
             "blockers": blockers,
             "block_msg": block_msg,
             "job": job,
         }
+
+    def _latest_version_status(self) -> Dict[str, Any]:
+        now = time.time()
+        with self._lock:
+            version = self._latest_version
+            error = self._latest_version_error
+            checked_at = float(self._latest_version_checked_at or 0)
+            refreshing = bool(self._latest_version_refreshing)
+            should_refresh = not refreshing and (not checked_at or now - checked_at >= LATEST_VERSION_TTL_SECONDS)
+            if should_refresh:
+                self._latest_version_refreshing = True
+                refreshing = True
+        if should_refresh:
+            threading.Thread(
+                target=self._refresh_latest_version,
+                name="RobloxLatestVersionRefresh",
+                daemon=True,
+            ).start()
+        return {
+            "version": version,
+            "error": error,
+            "checked_at": checked_at,
+            "refreshing": refreshing,
+        }
+
+    def _refresh_latest_version(self) -> None:
+        try:
+            version = self.fetch_latest_version()
+            self._store_latest_version(version)
+        except Exception as exc:
+            with self._lock:
+                self._latest_version_error = str(exc)
+                self._latest_version_checked_at = time.time()
+                self._latest_version_refreshing = False
+
+    def _store_latest_version(self, version: str) -> None:
+        normalized = normalize_roblox_version(version)
+        with self._lock:
+            self._latest_version = normalized
+            self._latest_version_error = ""
+            self._latest_version_checked_at = time.time()
+            self._latest_version_refreshing = False
 
     def start_uninstall(self) -> Dict[str, Any]:
         return self._start_job("uninstall", self._run_uninstall)
@@ -158,6 +215,7 @@ class RobloxInstallManager:
     def _run_latest(self) -> None:
         self._set_job("Downloading", progress="Fetching version")
         version = self.fetch_latest_version()
+        self._store_latest_version(version)
         self._run_install_version(version)
 
     def _run_install_version(self, version: str) -> None:

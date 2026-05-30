@@ -212,6 +212,26 @@ def register(app, ctx: ApiContext) -> None:
     def api_get_window_size():
         return _window_size_status(ctx)
 
+    def _apply_window_size_settings(settings: dict, reason: str):
+        if settings["arrange_enabled"]:
+            return ProcessService.arrange_roblox_windows(
+                settings["width"],
+                settings["height"],
+                settings["arrange_columns"],
+                settings["arrange_gap"],
+                settings["arrange_margin"],
+                unlock_size=settings["unlock_size_enabled"],
+                resize=settings["enabled"],
+                rows=settings["arrange_rows"],
+                reason=reason,
+            )
+        return ProcessService.resize_roblox_windows(
+            settings["width"],
+            settings["height"],
+            unlock_size=settings["unlock_size_enabled"],
+            reason=reason,
+        )
+
 
     @app.post("/api/performance/window-size")
     async def api_set_window_size(request: Request):
@@ -223,25 +243,12 @@ def register(app, ctx: ApiContext) -> None:
         except ValueError as exc:
             raise HTTPException(400, str(exc))
         resize_result = {"ok": True, "count": 0, "resized": 0, "skipped": 0}
-        if settings["enabled"]:
-            if settings["arrange_enabled"]:
-                resize_result = ProcessService.arrange_roblox_windows(
-                    settings["width"],
-                    settings["height"],
-                    settings["arrange_columns"],
-                    settings["arrange_gap"],
-                    settings["arrange_margin"],
-                    reason="api_window_size_apply",
-                )
-            else:
-                resize_result = ProcessService.resize_roblox_windows(
-                    settings["width"],
-                    settings["height"],
-                    reason="api_window_size_apply",
-                )
+        if settings["enabled"] or settings["arrange_enabled"]:
+            resize_result = _apply_window_size_settings(settings, "api_window_size_apply")
         else:
             resize_result = ProcessService.restore_roblox_window_styles(reason="api_window_size_apply")
         cfg_mgr.update({
+            "roblox_window_unlock_size_enabled": settings["unlock_size_enabled"],
             "roblox_window_resize_enabled": settings["enabled"],
             "roblox_window_size_preset": settings["preset"],
             "roblox_window_width": settings["width"],
@@ -249,6 +256,7 @@ def register(app, ctx: ApiContext) -> None:
             "roblox_window_resize_interval_seconds": settings["interval_seconds"],
             "roblox_window_arrange_enabled": settings["arrange_enabled"],
             "roblox_window_arrange_columns": settings["arrange_columns"],
+            "roblox_window_arrange_rows": settings["arrange_rows"],
             "roblox_window_arrange_gap": settings["arrange_gap"],
             "roblox_window_arrange_margin": settings["arrange_margin"],
         })
@@ -257,19 +265,54 @@ def register(app, ctx: ApiContext) -> None:
             farm.apply_config_snapshot()
         payload = _window_size_status(ctx)
         payload["resize_result"] = resize_result
-        payload["msg"] = (
-            (
-                f"arranged {int(resize_result.get('arranged') or 0)} Roblox window(s)"
-                if settings["arrange_enabled"]
-                else f"resized {int(resize_result.get('resized') or 0)} Roblox window(s)"
-            ) if settings["enabled"] else "window resize disabled; restored window style"
-        )
+        if settings["arrange_enabled"]:
+            payload["msg"] = f"arranged {int(resize_result.get('arranged') or 0)} Roblox window(s)"
+        elif settings["enabled"]:
+            payload["msg"] = f"resized {int(resize_result.get('resized') or 0)} Roblox window(s)"
+        else:
+            payload["msg"] = "window automation disabled; restored window style"
         audit_event(
             "window_size_apply",
             enabled=settings["enabled"],
+            arrange_enabled=settings["arrange_enabled"],
+            unlock_size_enabled=settings["unlock_size_enabled"],
+            arrange_rows=settings["arrange_rows"],
             preset=settings["preset"],
             width=settings["width"],
             height=settings["height"],
+            resized=resize_result.get("resized", 0),
+            count=resize_result.get("count", 0),
+        )
+        return payload
+
+
+    @app.post("/api/performance/window-size/rearrange")
+    async def api_rearrange_window_size(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Expected object")
+        try:
+            settings = _normalize_window_size_settings(ctx, body)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        one_shot_settings = dict(settings)
+        one_shot_settings["enabled"] = True
+        one_shot_settings["arrange_enabled"] = True
+        resize_result = _apply_window_size_settings(one_shot_settings, "api_window_rearrange_existing")
+        payload = _window_size_status(ctx)
+        payload.update(settings)
+        payload.update({
+            "resize_result": resize_result,
+            "msg": f"arranged {int(resize_result.get('arranged') or 0)} Roblox window(s)",
+        })
+        audit_event(
+            "window_rearrange_existing",
+            arrange_enabled=settings["arrange_enabled"],
+            unlock_size_enabled=settings["unlock_size_enabled"],
+            arrange_rows=settings["arrange_rows"],
+            width=settings["width"],
+            height=settings["height"],
+            arranged=resize_result.get("arranged", 0),
             resized=resize_result.get("resized", 0),
             count=resize_result.get("count", 0),
         )

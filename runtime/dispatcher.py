@@ -14,7 +14,7 @@ from runtime.recovery_engine import RecoveryEngine
 from runtime.runtime_state_manager import RuntimeStateManager
 from runtime.runtime_store import RuntimeStore
 from runtime.supervisor_runtime import SupervisorRuntime
-from runtime.system_maintenance import _window_arrange_settings_from_config, _window_resize_target_from_config
+from runtime.maintenance_performance import _window_arrange_settings_from_config, _window_resize_target_from_config
 
 
 class Dispatcher(threading.Thread):

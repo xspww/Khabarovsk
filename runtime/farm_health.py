@@ -21,7 +21,6 @@ from runtime.telemetry_view import build_runtime_telemetry
 
 
 WATCHDOG_STATUS_CACHE = "watchdog_task_last.json"
-RELEASE_GATE_CACHE = "release_gate_last.json"
 
 
 def _read_cached_json(path: Path) -> Dict[str, Any]:
@@ -38,12 +37,11 @@ def load_cached_operator_health(data_dir: str | Path = APP_DATA_DIR) -> Dict[str
     root = Path(data_dir)
     return {
         "watchdog_task": _read_cached_json(root / WATCHDOG_STATUS_CACHE),
-        "release_gate": _read_cached_json(root / RELEASE_GATE_CACHE),
     }
 
 
-def build_farm_status(farm: Any) -> dict:
-    return RuntimeViewModelBuilder(farm).build_status()
+def build_farm_status(farm: Any, include_diagnostics: bool = False) -> dict:
+    return RuntimeViewModelBuilder(farm, include_diagnostics=include_diagnostics).build_status()
 
 
 def build_farm_health_account_rows(farm: Any, now: float) -> List[Dict[str, Any]]:
@@ -175,7 +173,6 @@ def build_farm_health_snapshot(farm: Any) -> Dict[str, Any]:
         "maintenance": build_thread_health(farm, farm._maintenance, now),
         "last_control_plane_restart_at": float(farm._last_control_plane_restart_at or 0.0),
         "watchdog_task": operator_health.get("watchdog_task") or {},
-        "release_gate": operator_health.get("release_gate") or {},
     }
 
 
@@ -199,7 +196,7 @@ def get_runtime_health(farm: Any) -> dict:
 
 
 def get_runtime_telemetry(farm: Any) -> dict:
-    return build_runtime_telemetry(build_farm_status(farm))
+    return build_runtime_telemetry(build_farm_status(farm, include_diagnostics=True))
 
 
 def get_runtime_events(
@@ -238,7 +235,7 @@ def get_runtime_diagnostics(
     severity: str = "",
 ) -> dict:
     safe_limit = max(1, min(int(limit or 200), 500))
-    status = build_farm_status(farm)
+    status = build_farm_status(farm, include_diagnostics=True)
     try:
         events = farm._runtime_store.list_recent_events(
             account_id=account_id,
@@ -265,7 +262,7 @@ def get_runtime_diagnostics(
 
 
 def get_account(farm: Any, username: str) -> Optional[dict]:
-    status = build_farm_status(farm)
+    status = build_farm_status(farm, include_diagnostics=True)
     for item in status["accounts"]:
         if item["username"] == username:
             acc = next((x for x in farm._accounts if x.username == username), None)

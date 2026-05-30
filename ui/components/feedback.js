@@ -1,17 +1,1 @@
-import {solarIcon} from './icons.js';
-
-export function createFeedback({$,esc}){
-  function toast(msg){
-    const el=$('toast');
-    el.innerHTML=`<span class="toast-icon" aria-hidden="true">${solarIcon('noticeBell')}</span><span class="toast-text">${esc(msg)}</span><button class="toast-close" aria-label="Close notification">&times;</button>`;
-    el.classList.add('show');
-    const close=el.querySelector('.toast-close');
-    if(close)close.onclick=()=>{el.classList.remove('show');clearTimeout(toast.t)};
-    clearTimeout(toast.t);
-    toast.t=setTimeout(()=>el.classList.remove('show'),3200);
-  }
-  function modal(title,body,foot){$('modal-title').textContent=title;$('modal-body').innerHTML=body;$('modal-foot').innerHTML=foot;$('modal-backdrop').hidden=false}
-  function closeModal(){$('modal-backdrop').hidden=true}
-  function cardIcon(type){const icons={cookie:'userAdd',delete:'trash',close:'trash',install:'downloadSquare'};return`<span class="choice-icon">${solarIcon(icons[type]||icons.cookie)}</span>`}
-  return {toast,modal,closeModal,cardIcon};
-}
+import{solarIcon}from"./icons.js";export function createFeedback({$:o,esc:t}){return{toast:function s(e){const a=o("toast");a.innerHTML=`<span class="toast-icon" aria-hidden="true">${solarIcon("noticeBell")}</span><span class="toast-text">${t(e)}</span><button class="toast-close" aria-label="Close notification">&times;</button>`,a.classList.add("show");const n=a.querySelector(".toast-close");n&&(n.onclick=()=>{a.classList.remove("show"),clearTimeout(s.t)}),clearTimeout(s.t),s.t=setTimeout(()=>a.classList.remove("show"),3200)},modal:function(t,s,e){o("modal-title").textContent=t,o("modal-body").innerHTML=s,o("modal-foot").innerHTML=e,o("modal-backdrop").hidden=!1},closeModal:function(){o("modal-backdrop").hidden=!0},cardIcon:function(o){const t={cookie:"userAdd",delete:"trash",close:"trash",install:"downloadSquare"};return`<span class="choice-icon">${solarIcon(t[o]||t.cookie)}</span>`}}}

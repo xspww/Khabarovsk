@@ -27,68 +27,6 @@ COOKIE_RE = re.compile(
 LINK_CODE_RE = re.compile(r"((?:privateServerLinkCode|linkCode|accessCode)=)[^&\s]+", re.I)
 
 CRONUS_ENTROPY = b"Cronus Hybrid AccountData v1"
-ROBOGUARD_ENTROPY = b"RoboGuard Hybrid AccountData v1"
-RAM_ENTROPY = bytes(
-    [
-        0x52,
-        0x4F,
-        0x42,
-        0x4C,
-        0x4F,
-        0x58,
-        0x20,
-        0x41,
-        0x43,
-        0x43,
-        0x4F,
-        0x55,
-        0x4E,
-        0x54,
-        0x20,
-        0x4D,
-        0x41,
-        0x4E,
-        0x41,
-        0x47,
-        0x45,
-        0x52,
-        0x20,
-        0x7C,
-        0x20,
-        0x3A,
-        0x29,
-        0x20,
-        0x7C,
-        0x20,
-        0x42,
-        0x52,
-        0x4F,
-        0x55,
-        0x47,
-        0x48,
-        0x54,
-        0x20,
-        0x54,
-        0x4F,
-        0x20,
-        0x59,
-        0x4F,
-        0x55,
-        0x20,
-        0x42,
-        0x55,
-        0x59,
-        0x20,
-        0x69,
-        0x63,
-        0x33,
-        0x77,
-        0x30,
-        0x6C,
-        0x66,
-    ]
-)
-DPAPI_COMPAT_ENTROPIES = (CRONUS_ENTROPY, ROBOGUARD_ENTROPY, RAM_ENTROPY, b"")
 
 
 class DATA_BLOB(ctypes.Structure):
@@ -154,16 +92,6 @@ def dpapi_unprotect(data: bytes, entropy: bytes = CRONUS_ENTROPY) -> bytes:
         _ = keepalive
 
 
-def dpapi_unprotect_compatible(data: bytes) -> bytes:
-    last_error: Optional[Exception] = None
-    for entropy in DPAPI_COMPAT_ENTROPIES:
-        try:
-            return dpapi_unprotect(data, entropy)
-        except Exception as exc:
-            last_error = exc
-    raise ValueError(f"Unsupported DPAPI payload: {last_error}")
-
-
 def encrypt_cookie(cookie: str) -> str:
     cookie = str(cookie or "").strip()
     if not cookie:
@@ -178,7 +106,7 @@ def decrypt_cookie(value: str) -> str:
         return ""
     if value.startswith("dpapi:v1:"):
         raw = base64.b64decode(value.split(":", 2)[2].encode("ascii"))
-        return dpapi_unprotect_compatible(raw).decode("utf-8", errors="replace")
+        return dpapi_unprotect(raw, CRONUS_ENTROPY).decode("utf-8", errors="replace")
     if value.startswith("_|WARNING:"):
         return value
     return ""
@@ -356,16 +284,10 @@ class AccountDataStore:
         if stripped.startswith(b"{") or stripped.startswith(b"["):
             raw = cls._json_from_bytes(data)
         else:
-            last_error: Optional[Exception] = None
-            raw = None
-            for entropy in DPAPI_COMPAT_ENTROPIES:
-                try:
-                    raw = cls._json_from_bytes(dpapi_unprotect(data, entropy))
-                    break
-                except Exception as exc:
-                    last_error = exc
-            if raw is None:
-                raise ValueError(f"Unsupported or password-locked AccountData.json: {last_error}")
+            try:
+                raw = cls._json_from_bytes(dpapi_unprotect(data, CRONUS_ENTROPY))
+            except Exception as exc:
+                raise ValueError(f"Unsupported or password-locked AccountData.json: {exc}") from exc
         if isinstance(raw, dict):
             accounts = raw.get("accounts", raw.get("Accounts", []))
         else:
@@ -520,13 +442,6 @@ class AccountDataStore:
 
     def to_cronus_accounts(self) -> List[Dict[str, Any]]:
         return [self.to_cronus_account(record) for record in self.read_records(include_cookies=True)]
-
-    def ensure_from_legacy(self, legacy_accounts: Iterable[Dict[str, Any]]) -> None:
-        if os.path.exists(self.path) and self.read_records():
-            return
-        records = [self.normalize_record(item) for item in legacy_accounts if isinstance(item, dict)]
-        if records:
-            self.write_records(records)
 
     def replace_from_cronus_payload(self, payload: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         existing = {

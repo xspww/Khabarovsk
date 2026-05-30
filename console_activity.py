@@ -12,6 +12,7 @@ from desktop import console_output
 _LOCK = threading.Lock()
 _ACTIVE_ACCOUNTS: set[str] = set()
 _CAPTCHA_ACCOUNTS: set[str] = set()
+_TOTAL_ACCOUNTS = 0
 _QUEUE_SIZE = 0
 _LAST_DISCONNECT_AT: Dict[str, float] = {}
 _LAST_CAPTCHA_AT: Dict[str, float] = {}
@@ -35,7 +36,6 @@ _ICON_VIP = "🔐"
 _ICON_VIP_SERVER = "👑"
 _ICON_PUBLIC_SERVER = "🦺"
 _ICON_CHECKING = "🚧"
-_ICON_RELOAD = "🎬"
 _ICON_TELEPORT = "🌀"
 _ICON_ALIASES = {
     "OK": _ICON_OK,
@@ -160,6 +160,26 @@ def _reason(fields: Dict[str, Any], default: str = "") -> str:
     return default
 
 
+def _reason_text(value: Any, default: str = "") -> str:
+    text = _text(value, default)
+    return text.strip().lower().replace(" ", "_") if text else default
+
+
+def _disconnect_reason(fields: Dict[str, Any], default: str = "") -> str:
+    detail = " ".join(
+        _text(fields.get(key)).lower()
+        for key in ("detail", "reason_msg", "message")
+        if _text(fields.get(key))
+    )
+    if "waiting for lua" in detail or "lua did not confirm" in detail:
+        return "lua_wait_timeout"
+    for key in ("display_reason", "actual_reason", "root_reason", "reason_key", "trigger", "watchdog_reason", "cooldown_reason", "reason"):
+        reason = _reason_text(fields.get(key))
+        if reason:
+            return reason
+    return _reason_text(default)
+
+
 def _pid(fields: Dict[str, Any]) -> str:
     return _int_text(
         fields.get("pid")
@@ -228,8 +248,9 @@ def _found_process_line(account: str, pid: Any, fields: Dict[str, Any] | None = 
     )
 
 
-def _reload_line(account: str) -> str:
-    return _line(_ICON_RELOAD, f"Reload {_username_paren(account)}", stamp_color=_COLOR_RELOAD_STAMP)
+def _reload_all_line(count: Any) -> str:
+    account_count = _int_text(count, "0")
+    return _line(_ICON_TELEPORT, f"Reload All Roblox ( {account_count} Accounts )", stamp_color=_COLOR_RELOAD_STAMP)
 
 
 def _teleport_state_text(fields: Dict[str, Any]) -> str:
@@ -340,7 +361,7 @@ def _emit_check_before_disconnect(account: str) -> None:
 
 
 def _title_text_locked() -> str:
-    return f"Cronus | Active: {len(_ACTIVE_ACCOUNTS)} | Queue: {_QUEUE_SIZE} | Checking: {len(_SUSPECT_LOGGED_ACCOUNTS)}"
+    return f"Accounts: {_TOTAL_ACCOUNTS} | Active: {len(_ACTIVE_ACCOUNTS)} | Queue: {_QUEUE_SIZE} | Captcha: {len(_CAPTCHA_ACCOUNTS)}"
 
 
 def _set_title_locked() -> None:
@@ -352,6 +373,17 @@ def _set_title_locked() -> None:
         ctypes.windll.kernel32.SetConsoleTitleW(_title_text_locked())
     except Exception:
         pass
+
+
+def set_total_accounts(count: Any) -> None:
+    global _TOTAL_ACCOUNTS
+    try:
+        total = max(0, int(count or 0))
+    except Exception:
+        total = 0
+    with _LOCK:
+        _TOTAL_ACCOUNTS = total
+        _set_title_locked()
 
 
 def _update_counters(scope: str, name: str, fields: Dict[str, Any]) -> None:
@@ -402,7 +434,7 @@ def _format_state(name: str, fields: Dict[str, Any]) -> Optional[str]:
     if name == "transition":
         new = _text(fields.get("new")).upper()
         if _reason(fields) == "auto_close_cycle":
-            return _reload_line(account)
+            return None
         if _reason(fields) == "captcha_required":
             return _captcha_line(account, pid, _text(fields.get("detail")))
         if new == "IN_GAME":
@@ -426,11 +458,12 @@ def _format_recovery(name: str, fields: Dict[str, Any]) -> Optional[str]:
     if name == "captcha_hold" or reason == "captcha_required":
         return _captcha_line(account, _pid(fields), _text(fields.get("detail") or fields.get("captcha_detail")))
     if name == "network_lost":
-        return _disconnect_line(account, "network_lost", action="reconnect")
+        return _disconnect_line(account, _disconnect_reason(fields, "network_lost"), action="reconnect")
     if name == "cooldown":
+        display_reason = _disconnect_reason(fields, reason)
         delay = _duration_text(fields.get("delay") or fields.get("delay_seconds"))
-        action = "reconnect" if reason in {"network_drop", "connection_error", "network_lost"} else "restart"
-        return _disconnect_line(account, reason, delay, action)
+        action = "reconnect" if display_reason in {"network_drop", "connection_error", "network_lost"} else "restart"
+        return _disconnect_line(account, display_reason, delay, action)
     return None
 
 
@@ -441,6 +474,8 @@ def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]
         return _suspect_process_line(account)
     if scope in {"LUA", "LUA_EVENT"} and name == "teleport_detected":
         return _teleport_line(account, fields)
+    if scope == "QUEUE" and name == "auto_close_cycle":
+        return _reload_all_line(fields.get("killed"))
     if scope == "CAPTCHA" or name == "captcha_dialog_hold" or (name == "account_hold" and _reason(fields) == "captcha_required"):
         return _captcha_line(account, pid, _text(fields.get("detail") or fields.get("captcha_detail")))
     if scope == "WORKER" and name in {"visible_process_adopted", "rebind_refreshed"} and pid:

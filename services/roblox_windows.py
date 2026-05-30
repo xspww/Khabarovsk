@@ -1,12 +1,10 @@
 from __future__ import annotations
 
 import ctypes
-import math
 import time
 from ctypes import wintypes
 from typing import Any, Dict, List, Optional, Tuple
 
-from app_paths import resource_path
 from core import flog, flog_kv
 from runtime.popup_detector import DEFAULT_POPUP_OBSERVER, classify_texts, is_inspection_held
 from services.roblox_processes import ROBLOX_GAME_NAMES
@@ -227,22 +225,6 @@ def detect_connection_error(cls, pid: Optional[int]) -> Tuple[bool, str]:
         return False, ""
     return True, str(info.get("detail") or "")
 
-def _template_path(cls, name: str) -> str:
-    return resource_path("vision_templates", name)
-
-def _load_visual_template(cls, name: str):
-    cached = cls._visual_template_cache.get(name)
-    if cached is not None:
-        return cached
-    try:
-        from PIL import Image
-        img = Image.open(cls._template_path(name)).convert("L")
-        cls._visual_template_cache[name] = img
-        return img
-    except Exception:
-        cls._visual_template_cache[name] = None
-        return None
-
 def _get_pid_window_rect(cls, pid: Optional[int]) -> Optional[Tuple[int, int, int, int]]:
     if pid is None:
         return None
@@ -369,30 +351,6 @@ def _capture_pid_window_image(cls, pid: Optional[int]):
         return image
     except Exception:
         return None
-
-def _scaled_box(cls, box: Tuple[int, int, int, int], size: Tuple[int, int]) -> Tuple[int, int, int, int]:
-    base_w, base_h = cls._VISUAL_TEMPLATE_BASE_SIZE
-    width, height = size
-    sx = float(width) / float(base_w)
-    sy = float(height) / float(base_h)
-    left, top, right, bottom = box
-    return (
-        max(0, int(round(left * sx))),
-        max(0, int(round(top * sy))),
-        min(width, int(round(right * sx))),
-        min(height, int(round(bottom * sy))),
-    )
-
-def _rmsdiff(img_a, img_b) -> float:
-    try:
-        from PIL import ImageChops
-        diff = ImageChops.difference(img_a, img_b)
-        hist = diff.histogram()
-        sq = sum((value * ((idx % 256) ** 2)) for idx, value in enumerate(hist))
-        total = max(1, img_a.size[0] * img_a.size[1])
-        return math.sqrt(float(sq) / float(total))
-    except Exception:
-        return 9999.0
 
 def _inspect_disconnect_dialog_visual(cls, pid: Optional[int]) -> Dict[str, Any]:
     try:

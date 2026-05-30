@@ -7,7 +7,7 @@ from typing import Any, Callable, Dict, Optional
 
 from domain.account_state import AccountState, RuntimeState
 from domain.public_state_mapper import runtime_state_for_public
-from domain.runtime_lifecycle import lifecycle_for_public, lifecycle_for_legacy_runtime
+from domain.runtime_lifecycle import lifecycle_for_public, lifecycle_for_runtime_state
 from runtime.runtime_invariants import check_runtime_invariants, invariant_snapshot
 
 
@@ -60,7 +60,7 @@ def runtime_log_fields(acc: Any, reason: str = "", **fields: Any) -> Dict[str, A
     else:
         public_state = str(getattr(state, "name", state or ""))
         try:
-            canonical_runtime_state = lifecycle_for_legacy_runtime(RuntimeState(str(state))).value
+            canonical_runtime_state = lifecycle_for_runtime_state(RuntimeState(str(state))).value
         except Exception:
             canonical_runtime_state = ""
     payload = {

@@ -26,9 +26,9 @@ from .context import ApiContext
 _SCRIPT_PATH = resource_path("lua", "internal", "rejoin_monitor.lua")
 _ACCOUNT_MODULE_PATH = resource_path("lua", "internal", "account_status_client.lua")
 _EXECUTOR_LOADER_PATH = resource_path("lua", "run_in_executor.lua")
-_TOKEN_HEADERS = ("X-Cronus-Token", "X-Argus-Token", "X-RoboGuard-Token")
-_TOKEN_QUERY_KEYS = ("cronus_token", "argus_token")
-_TOKEN_BODY_KEYS = ("token", "cronus_token", "argus_token", "api_token", "_cronus_token", "_argus_token")
+_TOKEN_HEADERS = ("X-Cronus-Token",)
+_TOKEN_QUERY_KEYS = ("cronus_token",)
+_TOKEN_BODY_KEYS = ("token", "cronus_token", "api_token", "_cronus_token")
 _LOCAL_FALLBACK_EVENTS = {
     "heartbeat",
     "teleport_state",

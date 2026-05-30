@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from core import flog_kv
-from process_net import ProcessManager as _LegacyProcessManager
+from services.process_backend import ProcessManager as _ProcessBackend
 
 
 def _account_name(acc: Any) -> str:
@@ -21,7 +21,7 @@ def resize_roblox_windows(
     account: Any = None,
     idempotency_key: str = "",
 ) -> Dict[str, Any]:
-    result = _LegacyProcessManager.resize_roblox_windows(width, height, exclude_pids=exclude_pids)
+    result = _ProcessBackend.resize_roblox_windows(width, height, exclude_pids=exclude_pids)
     flog_kv(
         "WINDOW",
         "process_window_resize",
@@ -48,7 +48,7 @@ def arrange_roblox_windows(
     account: Any = None,
     idempotency_key: str = "",
 ) -> Dict[str, Any]:
-    result = _LegacyProcessManager.arrange_roblox_windows(
+    result = _ProcessBackend.arrange_roblox_windows(
         width,
         height,
         columns=columns,
@@ -79,7 +79,7 @@ def restore_roblox_window_styles(
     account: Any = None,
     idempotency_key: str = "",
 ) -> Dict[str, Any]:
-    result = _LegacyProcessManager.restore_roblox_window_styles()
+    result = _ProcessBackend.restore_roblox_window_styles()
     flog_kv(
         "WINDOW",
         "process_window_restore",

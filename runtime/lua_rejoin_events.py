@@ -334,6 +334,19 @@ def handle_lua_rejoin_event(
             "account": identity_name,
             "msg": "Unsupported Lua event",
         }
+    if event_name == "heartbeat":
+        return {
+            "ok": True,
+            "accepted": True,
+            "event": event_name,
+            "account": acc._config_username,
+            "matched_pid": resolution.bound_pid,
+            "identity_match": resolution.match_reason,
+            "signal": signal,
+            "observed_server_type": server_detection.get("observed_server_type", ""),
+            "observed_is_vip": bool(server_detection.get("observed_is_vip", False)),
+            "msg": "Lua heartbeat accepted",
+        }
     farm._push_event(
         "lua",
         f"Lua helper: {event_name} - {acc.display_name}",

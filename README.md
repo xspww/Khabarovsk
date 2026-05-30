@@ -1,91 +1,25 @@
-````md id="q8v2mk"
-# 🚀 Cronus Launcher
+# Cronus Launcher
 
-**Local Windows launcher and recovery monitor for Roblox accounts.**
+Local Windows launcher and recovery monitor for Roblox accounts.
 
-Cronus Launcher is a Windows desktop app made for launching Roblox accounts, watching local Roblox processes, and handling reconnect/rejoin recovery automatically.
+This repository runs from source. No `.exe` build is required.
 
-The app runs completely on your PC. The backend binds to `127.0.0.1`, opens a desktop window with PySide6 when available, and falls back to a normal browser window if needed.
+## Requirements
 
----
+- Windows 10 or newer
+- Python 3.11 or newer
+- Roblox installed
 
-# 📌 Status
+## Install
 
-Cronus Launcher is currently in beta.
-
-It works well for local testing and controlled use, but it should not be treated as a polished public release yet.
-
-Release validation is documented in:
-
-```text
-docs/product-runbook.md
-````
-
-Current release checks include:
-
-* Compile checks
-* Unit tests
-* JavaScript syntax checks
-* Backend smoke tests
-* Single-account live soak tests
-
----
-
-# 🎯 Scope
-
-Cronus is designed for:
-
-* Local Roblox account launching
-* Rejoin and reconnect monitoring
-* Runtime queue and status visibility
-* Roblox performance controls
-* Long-running local farm sessions
-
-Cronus is **not** intended to be:
-
-* A hosted cloud dashboard
-* A Roblox executor package
-* A guaranteed unattended production service
-
----
-
-# ✨ Features
-
-* 🔒 Encrypted Roblox cookie storage using Windows DPAPI
-* 👤 Account import, reload, validation, and invalid cookie cleanup
-* 🚀 Roblox launch controls and private server support
-* 🔄 Runtime recovery, reconnect, queue, and status monitoring
-* 🎮 FPS limiter, low graphics mode, CPU limiter, and process priority controls
-* 🖥️ Roblox window resize and arrange tools
-* 🛠️ Roblox install troubleshooting actions
-
-RAM / Roblox Account Manager integration is disabled in this version.
-
-Cronus stores account data locally by itself.
-
----
-
-# 📦 Requirements
-
-* Windows 10 or newer
-* Python 3.11+
-* Roblox installed
-
-Install runtime dependencies:
+Open PowerShell in the project folder:
 
 ```powershell
+cd C:\path\to\Roblox-Auto-Rejoin-windows
 python -m pip install -r requirements.txt
 ```
 
-Install development/test dependencies:
-
-```powershell
-python -m pip install -r requirements-dev.txt
-```
-
----
-
-# ▶️ Run
+## Run
 
 ```powershell
 .\Run.cmd
@@ -97,110 +31,48 @@ or:
 python main.py
 ```
 
-The backend uses a local API token for protected API requests.
+Cronus starts a local backend on `127.0.0.1` and opens the dashboard window.
 
-The dashboard automatically receives and sends that token locally.
+## Lua Script
 
----
-
-# 🛡️ 24/7 Watchdog
-
-Cronus includes a Windows Task Scheduler watchdog for overnight or unattended runs.
-
-The watchdog checks:
-
-```text
-http://127.0.0.1:7777/api/status
-```
-
-If the backend stops responding, Cronus can automatically restart the backend runner.
-
-The watchdog runs as the current Windows user instead of `SYSTEM`, so DPAPI-protected cookies still work correctly.
-
-Install or update the watchdog:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\install_watchdog_task.ps1
-```
-
-Start the watchdog task:
-
-```powershell
-Start-ScheduledTask -TaskName "Cronus Launcher Watchdog"
-```
-
-Check watchdog status:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\watchdog_status.ps1
-```
-
-Remove the watchdog:
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\uninstall_watchdog_task.ps1
-```
-
-Watchdog logs:
-
-```text
-%LOCALAPPDATA%\Cronus Launcher\data\logs\cronus_watchdog.log
-```
-
----
-
-# 📡 Lua Executor Script
-
-For auto-rejoin support, run this file inside your Roblox executor:
+For Lua-based rejoin/status detection, run this script in your Roblox executor:
 
 ```text
 lua/run_in_executor.lua
 ```
 
-Files under:
+Do not paste files from `lua/internal/` directly unless you are debugging.
 
-```text
-lua/internal/
-```
+## Local Data
 
-are internal backend templates used by Cronus APIs.
-
-Do not paste those internal files directly into the executor unless you are debugging.
-
-The Lua runtime supports:
-
-* Heartbeat signals
-* Disconnect detection
-* Rejoin requests
-* Description updates
-* Runtime finished events
-
-Lua scripts do **not** expose Roblox cookies, CSRF tokens, or account passwords.
-
----
-
-# 💾 Data Location
-
-Runtime data is stored under:
+Runtime data is stored here:
 
 ```text
 %LOCALAPPDATA%\Cronus Launcher\data
 ```
 
-Logs are stored under `data\logs`. Generated icon/cache files are stored under `data\cache`.
+Account cookies are stored locally and encrypted with Windows DPAPI.
 
-Cookies are encrypted with Windows DPAPI before being written to disk.
+## Clean Generated Files
 
-Logs, databases, caches, and runtime files are ignored by Git.
-
----
-
-# 🧪 Tests
+To remove local cache/build files:
 
 ```powershell
-python -m compileall -q .
-python -m unittest discover -s tests -p test_*.py
+powershell -NoProfile -ExecutionPolicy Bypass -File .\ops\clean_generated.ps1
 ```
 
+This removes generated files such as `__pycache__`, `.pytest_cache`, `build`, and `dist`.
+
+## Troubleshooting
+
+If dependencies are missing, run:
+
+```powershell
+python -m pip install -r requirements.txt
 ```
+
+If the app does not open, run it from PowerShell so the error is visible:
+
+```powershell
+python main.py
 ```

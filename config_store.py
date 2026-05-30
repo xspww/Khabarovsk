@@ -26,7 +26,6 @@ def _flog_kv(scope: str, name: str, level: str = "info", **fields: Any) -> None:
 
 
 CONFIG_FILE = os.path.join(APP_DATA_DIR, "cronus_rt1_config.json")
-COOKIE_STORE_FILE = os.path.join(APP_DATA_DIR, "cronus_rt1_cookies.json")
 ACCOUNTS_TEXT_FILE = os.path.join(APP_DATA_DIR, "cronus_rt12_accounts.txt")
 RUNTIME_TEXT_FILE = os.path.join(APP_DATA_DIR, "cronus_rt12_runtime.txt")
 
@@ -45,7 +44,7 @@ DEFAULTS: Dict[str, Any] = {
     "queue_delay_seconds":      15,
     "queue_duration_seconds":   15,
     "max_concurrent_accounts":  40,
-    "use_lua":                  False,
+    "use_lua":                  True,
     "lua_wait_timeout":         60,
     "machine_supervisor_enabled": True,
     "machine_supervisor_max_launching_accounts": 1,
@@ -63,6 +62,12 @@ DEFAULTS: Dict[str, Any] = {
     "network_check_interval":   5,
     "network_debounce":         5,
     "periodic_reconcile_interval": 15,
+    "status_snapshot_cache_ttl_seconds": 5.0,
+    "dashboard_process_cache_ttl_seconds": 5.0,
+    "maintenance_liveness_interval_seconds": 5.0,
+    "maintenance_queue_interval_seconds": 10.0,
+    "maintenance_performance_interval_seconds": 15.0,
+    "maintenance_housekeeping_interval_seconds": 20.0,
     "queue_timeout":            90,
     "cooldown_after_crash":     5,
     "relaunch_loop_window":     45,
@@ -92,16 +97,7 @@ DEFAULTS: Dict[str, Any] = {
     "session_conflict_window_seconds": 90,
     "runtime_invariant_monitor_enabled": True,
     "runtime_invariant_suppress_seconds": 60,
-    "runtime_shadow_mode_enabled": False,
     "runtime_scheduler_dispatch_workers": 0,
-    "runtime_actor_enabled": False,
-    "new_recovery_policy_enabled": False,
-    "process_snapshot_cache_enabled": False,
-    "lua_protocol_v2_enabled": False,
-    "sqlite_runtime_source_enabled": False,
-    "farm_supervisor_capacity_enabled": False,
-    "destructive_action_gate_enforced": False,
-    "runtime_capacity_profile": "medium",
     "orphan_sweeper_enabled": True,
     "orphan_sweeper_kill_enabled": True,
     "orphan_sweeper_min_confidence": 45.0,
@@ -140,6 +136,11 @@ DEFAULTS: Dict[str, Any] = {
     "roblox_window_arrange_gap": 2,
     "roblox_window_arrange_margin": 0,
     "multi_roblox_enabled": True,
+    "multi_roblox_guard_self_heal_enabled": True,
+    "multi_roblox_guard_self_heal_delay_seconds": 5.0,
+    "multi_roblox_guard_self_heal_retry_seconds": 30.0,
+    "multi_roblox_guard_self_heal_max_retry_seconds": 300.0,
+    "multi_roblox_guard_self_heal_close_all": True,
     "rt_rotation_enabled": False,
     "runtime_account_allowlist": [],
     "accounts":                 [],
@@ -168,6 +169,7 @@ class ConfigManager:
                 raw["auto_close_minutes"] = 0
         with self._lock:
             self._cfg = {k: raw.get(k, v) for k, v in DEFAULTS.items()}
+            self._cfg["use_lua"] = True
             self._cfg["schema_version"] = int(raw.get("schema_version") or CONFIG_SCHEMA_VERSION)
 
     def save(self):
@@ -184,7 +186,8 @@ class ConfigManager:
 
     def update(self, updates: Dict[str, Any]):
         with self._lock:
-            self._cfg = validate_config_payload({**self._cfg, **updates}, DEFAULTS)
+            self._cfg = validate_config_payload({**self._cfg, **updates, "use_lua": True}, DEFAULTS)
+            self._cfg["use_lua"] = True
 
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
@@ -245,94 +248,7 @@ class ConfigManager:
             except Exception:
                 pass
 
-    def _use_ram_cookie_source(self) -> bool:
-        return False
-
-    def _load_cookie_store(self) -> Dict[str, str]:
-        if self._use_ram_cookie_source():
-            return {}
-        raw = self._read_text_json(COOKIE_STORE_FILE, {})
-        if isinstance(raw, dict):
-            return {
-                str(k).strip().lower(): str(v or "").strip()
-                for k, v in raw.items()
-                if str(k).strip()
-            }
-        return {}
-
-    def _legacy_cookie_quarantine_path(self) -> str:
-        base = f"{COOKIE_STORE_FILE}.migrated.bak"
-        if not os.path.exists(base):
-            return base
-        return f"{base}.{int(time.time())}.{os.getpid()}"
-
-    def _quarantine_legacy_cookie_store(self) -> str:
-        if not os.path.exists(COOKIE_STORE_FILE):
-            return ""
-        target = self._legacy_cookie_quarantine_path()
-        with self._io_lock:
-            os.replace(COOKIE_STORE_FILE, target)
-        return target
-
-    def _migrate_legacy_cookie_store(self, accounts: List["Account"], cookie_store: Dict[str, str]) -> bool:
-        if not cookie_store or not os.path.exists(COOKIE_STORE_FILE):
-            return False
-
-        records: List[Dict[str, Any]] = []
-        seen = set()
-        for acc in accounts:
-            username = str(getattr(acc, "username", "") or "").strip()
-            key = username.lower()
-            cookie = cookie_store.get(key, "")
-            if not username or not cookie:
-                continue
-            if not str(getattr(acc, "cookie", "") or "").strip():
-                acc.cookie = cookie
-            item = acc.to_dict()
-            item["cookie"] = cookie
-            records.append(item)
-            seen.add(key)
-
-        for username, cookie in cookie_store.items():
-            if username in seen or not cookie:
-                continue
-            records.append({"username": username, "cookie": cookie})
-
-        if not records:
-            return False
-
-        try:
-            from account_hybrid import ACCOUNT_STORE
-
-            ACCOUNT_STORE.upsert_records(records)
-            migrated = {
-                str(record.get("username") or "").strip().lower(): str(record.get("cookie") or "").strip()
-                for record in ACCOUNT_STORE.read_records(include_cookies=True)
-            }
-            missing = [
-                str(record.get("username") or "").strip()
-                for record in records
-                if migrated.get(str(record.get("username") or "").strip().lower())
-                != str(record.get("cookie") or "").strip()
-            ]
-            if missing:
-                raise RuntimeError(f"AccountData migration verification failed for {len(missing)} account(s)")
-            quarantine_path = self._quarantine_legacy_cookie_store()
-            _flog_kv(
-                "CONFIG",
-                "legacy_cookie_store_migrated",
-                "info",
-                accounts=len(records),
-                quarantine_path=quarantine_path,
-            )
-            return True
-        except Exception as exc:
-            _flog_kv("CONFIG", "legacy_cookie_store_migration_failed", "warning", error=exc)
-            return False
-
     def save_cookies(self, accounts: List[Account]):
-        if self._use_ram_cookie_source():
-            return
         records: List[Dict[str, Any]] = []
         for acc in accounts:
             username = str(acc.username or "").strip().lower()
@@ -347,8 +263,6 @@ class ConfigManager:
             from account_hybrid import ACCOUNT_STORE
 
             ACCOUNT_STORE.upsert_records(records)
-            if os.path.exists(COOKIE_STORE_FILE):
-                self._quarantine_legacy_cookie_store()
             _flog_kv("CONFIG", "cookies_saved_to_account_data", "info", accounts=len(records))
         except Exception as exc:
             _flog_kv("CONFIG", "cookies_save_to_account_data_failed", "warning", error=exc)
@@ -362,20 +276,13 @@ class ConfigManager:
                 raw = self._cfg.get("accounts", [])
             if raw:
                 self._write_text_json(ACCOUNTS_TEXT_FILE, raw)
-        use_ram_cookie_source = False
-        cookie_store = {} if use_ram_cookie_source else self._load_cookie_store()
         accounts = []
-        for d in raw:
+        for d in raw or []:
             try:
                 acc = Account.from_dict(d)
-                saved_cookie = cookie_store.get(str(acc.username or "").strip().lower(), "")
-                if saved_cookie and not acc.cookie:
-                    acc.cookie = saved_cookie
                 accounts.append(acc)
             except Exception as e:
                 _flog(f"Account parse error: {e}", "warning")
-        if cookie_store:
-            self._migrate_legacy_cookie_store(accounts, cookie_store)
         return accounts
 
     def save_accounts(self, accounts: List[Account]):

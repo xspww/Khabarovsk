@@ -4,30 +4,8 @@ import math
 from collections import deque
 from typing import Any, Dict, List, Tuple
 
-from app_paths import resource_path
-
-
-VISUAL_TEMPLATE_BASE_SIZE = (679, 513)
-VISUAL_TITLE_BOX = (222, 157, 459, 205)
-VISUAL_RECONNECT_BOX = (372, 306, 550, 346)
 STRUCTURAL_ANALYSIS_SIZE = (160, 120)
 MODAL_ANALYSIS_SIZE = (320, 240)
-
-_TEMPLATE_CACHE: Dict[str, Any] = {}
-
-
-def _load_template(name: str):
-    if name in _TEMPLATE_CACHE:
-        return _TEMPLATE_CACHE[name]
-    try:
-        from PIL import Image
-
-        image = Image.open(resource_path("vision_templates", name)).convert("L")
-        _TEMPLATE_CACHE[name] = image
-        return image
-    except Exception:
-        _TEMPLATE_CACHE[name] = None
-        return None
 
 
 def _as_luma(screenshot: Any):
@@ -54,33 +32,6 @@ def _resize_luma(screenshot: Any, size: Tuple[int, int]):
 
 def _scaled_min(total: int, ratio: float, floor: int = 1) -> int:
     return max(int(floor), int(round(max(1, int(total or 0)) * float(ratio))))
-
-
-def _scaled_box(box: Tuple[int, int, int, int], size: Tuple[int, int]) -> Tuple[int, int, int, int]:
-    base_w, base_h = VISUAL_TEMPLATE_BASE_SIZE
-    width, height = size
-    sx = float(width) / float(base_w)
-    sy = float(height) / float(base_h)
-    left, top, right, bottom = box
-    return (
-        max(0, int(round(left * sx))),
-        max(0, int(round(top * sy))),
-        min(width, int(round(right * sx))),
-        min(height, int(round(bottom * sy))),
-    )
-
-
-def _rmsdiff(img_a: Any, img_b: Any) -> float:
-    try:
-        from PIL import ImageChops
-
-        diff = ImageChops.difference(img_a, img_b)
-        hist = diff.histogram()
-        sq = sum((value * ((idx % 256) ** 2)) for idx, value in enumerate(hist))
-        total = max(1, img_a.size[0] * img_a.size[1])
-        return math.sqrt(float(sq) / float(total))
-    except Exception:
-        return 9999.0
 
 
 def _binary_components(mask: List[List[bool]]) -> List[Dict[str, int]]:
@@ -711,29 +662,11 @@ def detect_visual_features(screenshot: Any) -> Dict[str, Any]:
     small_panel = _small_disconnect_panel_features(screenshot)
     captcha_challenge = _captcha_challenge_features(screenshot)
 
-    title_template = _load_template("disconnect_title.png")
-    reconnect_template = _load_template("disconnect_reconnect_btn.png")
     template_score = 0.0
     title_rms = 9999.0
     reconnect_rms = 9999.0
     template_matched = False
     template_reason = ""
-    if title_template is None or reconnect_template is None:
-        template_reason = "missing_template"
-    else:
-        try:
-            title_box = _scaled_box(VISUAL_TITLE_BOX, screenshot.size)
-            reconnect_box = _scaled_box(VISUAL_RECONNECT_BOX, screenshot.size)
-            title_patch = screenshot.crop(title_box).resize(title_template.size)
-            reconnect_patch = screenshot.crop(reconnect_box).resize(reconnect_template.size)
-            title_rms = _rmsdiff(title_patch, title_template)
-            reconnect_rms = _rmsdiff(reconnect_patch, reconnect_template)
-            title_score = max(0.0, min(0.55, (38.0 - title_rms) / 38.0 * 0.55))
-            reconnect_score = max(0.0, min(0.55, (54.0 - reconnect_rms) / 54.0 * 0.55))
-            template_score = round(title_score + reconnect_score, 3)
-            template_matched = template_score >= 0.55
-        except Exception as exc:
-            template_reason = str(exc)
 
     modal_score = float(center_modal.get("score") or 0.0)
     button_score = float(button_layout.get("score") or 0.0)

@@ -1,10 +1,4 @@
-"""
-Roblox process ownership boundary.
-
-Phase 1 keeps the heavy Windows/process implementation in process_net.py, but
-all account-level bind/kill decisions should pass through this module so PID
-identity, owner claims, and stale PID reuse are checked consistently.
-"""
+"""Roblox process ownership boundary."""
 
 from __future__ import annotations
 
@@ -12,7 +6,7 @@ import threading
 from typing import Any, Dict, List, Optional
 
 from core import flog_kv
-from process_net import ProcessManager as _LegacyProcessManager
+from services.process_backend import ProcessManager as _ProcessBackend
 from services.process_account_runtime import (
     account_browser_tracker_id as _account_browser_tracker_id,
     account_key as _account_key,
@@ -69,7 +63,7 @@ class ProcessService:
             except Exception:
                 expected_identity = ""
 
-        validation = _LegacyProcessManager.validate_game_process(
+        validation = _ProcessBackend.validate_game_process(
             pid,
             owner_key=owner_key,
             expected_identity=str(expected_identity or ""),
@@ -127,7 +121,7 @@ class ProcessService:
         validation["binding_decision"] = "verified" if validation.get("ok") else "rejected"
         validation["binding_confidence"] = float(validation.get("confidence") or 0.0)
         validation["process_reject_reason"] = "" if validation.get("ok") else str(validation.get("reason", "") or "")
-        validation["process_owner_claim"] = str(validation.get("owner") or _LegacyProcessManager.get_pid_owner(pid) or "")
+        validation["process_owner_claim"] = str(validation.get("owner") or _ProcessBackend.get_pid_owner(pid) or "")
         _set_process_diagnostics(
             account,
             validation["binding_decision"],
@@ -222,13 +216,13 @@ class ProcessService:
             return {"ok": False, "pid": pid, "reason": validation.get("reason", ""), "validation": validation}
 
         old_pid = getattr(account, "pid", None)
-        identity = str(validation.get("identity") or _LegacyProcessManager.get_process_identity(pid))
+        identity = str(validation.get("identity") or _ProcessBackend.get_process_identity(pid))
         name = process_name or str(validation.get("name") or "RobloxPlayerBeta.exe")
         confidence = float(validation.get("confidence") or 100.0)
         proof_level = str(validation.get("process_proof_level") or PROOF_UNTRUSTED)
 
         if old_pid and int(old_pid) != int(pid):
-            _LegacyProcessManager.evict_pid_cache(old_pid)
+            _ProcessBackend.evict_pid_cache(old_pid)
 
         state_manager.bind_process(
             account,
@@ -241,7 +235,7 @@ class ProcessService:
             reason=reason or "bind_account_process",
             increment_generation=increment_generation,
         )
-        _LegacyProcessManager.claim_pid_owner(pid, _account_key(account))
+        _ProcessBackend.claim_pid_owner(pid, _account_key(account))
         get_rt_monitor().register(int(pid))
         _set_process_diagnostics(
             account,
@@ -291,7 +285,7 @@ class ProcessService:
             _set_adopt_diagnostics(account, [], reject_reason="desired_state_not_in_game")
             return {"ok": False, "reason": "desired_state_not_in_game", "pid": None, "live": []}
 
-        live = _LegacyProcessManager.list_live_game_processes(launched_after=None)
+        live = _ProcessBackend.list_live_game_processes(launched_after=None)
         visible = [
             item for item in live
             if int(item.get("windows") or 0) > 0 or float(item.get("rss_mb") or 0.0) >= float(min_ram_mb or 100.0)
@@ -314,7 +308,7 @@ class ProcessService:
             _set_adopt_diagnostics(account, visible, reject_reason="missing_pid")
             return {"ok": False, "reason": "missing_pid", "pid": None, "live": visible}
 
-        owner = str(candidate.get("owner") or _LegacyProcessManager.get_pid_owner(pid) or "")
+        owner = str(candidate.get("owner") or _ProcessBackend.get_pid_owner(pid) or "")
         account_key = _account_key(account)
         ambiguous_accounts: List[str] = []
         for other in all_accounts:
@@ -329,7 +323,7 @@ class ProcessService:
             other_bound_alive = False
             if other_pid:
                 try:
-                    other_bound_alive = bool(_LegacyProcessManager.is_bound_game_alive(
+                    other_bound_alive = bool(_ProcessBackend.is_bound_game_alive(
                         other_pid,
                         owner_key=_account_key(other),
                         expected_identity=str(getattr(other, "bound_process_identity", "") or ""),
@@ -367,7 +361,7 @@ class ProcessService:
             if other_pid and other_pid == pid:
                 _set_adopt_diagnostics(account, visible, candidate_pid=pid, reject_reason="pid_claimed_by_other_account")
                 return {"ok": False, "reason": "pid_claimed_by_other_account", "pid": pid, "live": visible}
-            other_owner = _LegacyProcessManager.get_pid_owner(pid)
+            other_owner = _ProcessBackend.get_pid_owner(pid)
             if other_owner and other_owner != account_key:
                 _set_adopt_diagnostics(account, visible, candidate_pid=pid, reject_reason=f"owner_mismatch:{other_owner}")
                 return {"ok": False, "reason": f"owner_mismatch:{other_owner}", "pid": pid, "live": visible}
@@ -449,7 +443,7 @@ class ProcessService:
         target_pid = pid or getattr(account, "pid", None)
         if not target_pid:
             return
-        _LegacyProcessManager.evict_pid_cache(target_pid)
+        _ProcessBackend.evict_pid_cache(target_pid)
         _set_process_diagnostics(
             account,
             "released",
@@ -528,8 +522,8 @@ class ProcessService:
             current_pid = int(getattr(account, "pid", 0) or 0)
         except Exception:
             current_pid = 0
-        killed = _LegacyProcessManager.kill_pid(target_pid)
-        _LegacyProcessManager.release_pid_owner(target_pid, _account_key(account))
+        killed = _ProcessBackend.kill_pid(target_pid)
+        _ProcessBackend.release_pid_owner(target_pid, _account_key(account))
         if killed:
             if runtime_state is not None and current_pid == target_pid and hasattr(runtime_state, "clear_process_binding"):
                 runtime_state.clear_process_binding(account, reason=reason or "safe_kill_owned_orphan")
@@ -662,7 +656,7 @@ class ProcessService:
             )
             return {"ok": False, "killed": False, "pid": pid, "reason": "process_proof_insufficient", "validation": validation}
 
-        killed = _LegacyProcessManager.kill_pid(pid)
+        killed = _ProcessBackend.kill_pid(pid)
         if state_manager is not None:
             try:
                 state_manager.clear_process_binding(
@@ -690,7 +684,7 @@ class ProcessService:
     def evict_pid_cache(pid: Optional[int], reason: str = "", account: Any = None) -> None:
         if not pid:
             return
-        _LegacyProcessManager.evict_pid_cache(pid)
+        _ProcessBackend.evict_pid_cache(pid)
         flog_kv(
             "PROC",
             "process_cache_evicted",
@@ -708,7 +702,7 @@ class ProcessService:
         idempotency_key: str = "",
         command_id: str = "",
     ) -> int:
-        killed = _LegacyProcessManager.kill_all_roblox_clients(
+        killed = _ProcessBackend.kill_all_roblox_clients(
             wait_seconds=wait_seconds,
             exclude_pids=exclude_pids,
         )
@@ -735,7 +729,7 @@ class ProcessService:
         reason: str = "",
         account: Any = None,
     ) -> int:
-        killed = _LegacyProcessManager.cleanup_extra_launch_processes(
+        killed = _ProcessBackend.cleanup_extra_launch_processes(
             before,
             keep_pids=keep_pids,
             launched_after=launched_after,
@@ -758,7 +752,7 @@ class ProcessService:
     restore_roblox_window_styles = staticmethod(_restore_roblox_window_styles)
 
 
-class ProcessManager(_LegacyProcessManager):
+class ProcessManager(_ProcessBackend):
     """Compatibility facade preserving the legacy ProcessManager surface."""
 
     validate_binding = staticmethod(ProcessService.validate_binding)
@@ -771,7 +765,7 @@ class ProcessManager(_LegacyProcessManager):
 
     @classmethod
     def staged_orphan_reconcile(cls, *args, **kwargs):
-        result = _LegacyProcessManager.staged_orphan_reconcile(*args, **kwargs)
+        result = _ProcessBackend.staged_orphan_reconcile(*args, **kwargs)
         account = args[0] if args else kwargs.get("acc")
         action = str(result.get("action") or "")
         if action == "quarantine":

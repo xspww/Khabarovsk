@@ -107,7 +107,7 @@ def register(app, ctx: ApiContext) -> None:
                     try:
                         now = time.time()
                         revision = farm.get_status_revision() if hasattr(farm, "get_status_revision") else None
-                        if last_revision is None or revision != last_revision or now - last_snapshot_sent >= 5.0:
+                        if last_revision is None or revision != last_revision or now - last_snapshot_sent >= 10.0:
                             snapshot = farm.get_status()
                             revision = snapshot.get("status_revision")
                             payload = json.dumps(snapshot, ensure_ascii=False, default=str, separators=(",", ":"))

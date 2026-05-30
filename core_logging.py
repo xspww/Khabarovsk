@@ -9,28 +9,10 @@ import time
 from enum import Enum
 from typing import Any
 
-from app_paths import LOG_DIR, ensure_log_dir, migrate_legacy_data_files, move_app_data_file
+from app_paths import LOG_DIR, ensure_log_dir, move_app_data_file
 from console_activity import emit_structured as emit_console_activity
 from console_activity import emit_text as emit_console_text
 from services.safe_rotating_log import ProcessSafeRotatingFileHandler
-
-
-for _filename in (
-    "AccountData.json",
-    "account_tools_audit.jsonl",
-    "account_import_pending.json",
-    "cronus_rt1.log",
-    "cronus_rt1_events.jsonl",
-    "cronus_watchdog.log",
-    "cronus_rt1_config.json",
-    "cronus_rt1_cookies.json",
-    "cronus_rt12_accounts.txt",
-    "cronus_rt12_runtime.txt",
-    "cronus_runtime.db",
-    "cronus_runtime.db-shm",
-    "cronus_runtime.db-wal",
-):
-    migrate_legacy_data_files((_filename,))
 
 
 def _move_log_artifacts_to_log_dir() -> None:
@@ -45,8 +27,6 @@ def _move_log_artifacts_to_log_dir() -> None:
     for filename in os.listdir(os.path.dirname(LOG_DIR)):
         is_log = (
             filename.startswith("cronus_backend_")
-            or filename.startswith("soak_monitor_")
-            or filename.startswith("control_plane_soak_")
         )
         if is_log and filename.endswith((".log", ".jsonl")):
             move_app_data_file(filename, os.path.join("logs", filename))

@@ -115,12 +115,15 @@ class MaintenancePerformanceMixin:
 
             settings = normalize_cpu_limiter_settings(self._cfg)
             if not bool(settings.get("enabled")):
-                CPU_LIMITER.release_all()
-                self._last_cpu_limiter_apply_at = now
+                if not bool(getattr(self, "_cpu_limiter_released", False)):
+                    CPU_LIMITER.release_all()
+                    self._cpu_limiter_released = True
+                    self._last_cpu_limiter_apply_at = now
                 return
             if (now - self._last_cpu_limiter_apply_at) < 10.0:
                 return
             self._last_cpu_limiter_apply_at = now
+            self._cpu_limiter_released = False
             result = CPU_LIMITER.apply(self._accounts, settings)
             if any(int(result.get(key) or 0) > 0 for key in ("applied", "fallback", "failed")):
                 flog_kv(

@@ -262,7 +262,8 @@ class RuntimeScheduler:
             self._last_dispatch_started_at = started
             self._last_dispatch_latency_seconds = max(0.0, float(now) - float(job.due_at or now))
             self._dispatch_count += 1
-        self._emit("runtime_schedule_due", job)
+        if not job.periodic:
+            self._emit("runtime_schedule_due", job)
         try:
             callback(job)
         except Exception as exc:

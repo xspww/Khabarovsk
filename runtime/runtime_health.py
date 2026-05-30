@@ -255,27 +255,6 @@ def _watchdog_task_health(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _release_gate_health(snapshot: Dict[str, Any]) -> Dict[str, Any]:
-    raw = dict(snapshot.get("release_gate") or {})
-    if not raw:
-        return {
-            "last_result": "not_run",
-            "last_run_at": 0.0,
-            "fail_count": 0,
-            "warn_count": 0,
-        }
-    if "last_result" in raw:
-        result = str(raw.get("last_result") or "not_run")
-    else:
-        result = "pass" if bool(raw.get("ok", False)) else "fail"
-    return {
-        "last_result": result,
-        "last_run_at": _safe_float(raw.get("last_run_at", raw.get("generated_at", 0.0)), 0.0),
-        "fail_count": _safe_int(raw.get("fail_count"), 0),
-        "warn_count": _safe_int(raw.get("warn_count"), 0),
-    }
-
-
 def build_public_farm_health(snapshot: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]:
     current = float(now if now is not None else time.time())
     accounts = [row for row in (snapshot.get("accounts") or []) if isinstance(row, dict)]
@@ -494,7 +473,6 @@ def build_detailed_farm_health(snapshot: Dict[str, Any], now: Optional[float] = 
             "ambiguous_process_count": _ambiguous_process_count(accounts),
         },
         "watchdog_task": _watchdog_task_health(detail_snapshot),
-        "release_gate": _release_gate_health(detail_snapshot),
         "runtime_health": dict(detail_snapshot.get("runtime_health") or {}),
         "workers": dict(detail_snapshot.get("workers") or {}),
         "dispatcher": dict(detail_snapshot.get("dispatcher") or {}),

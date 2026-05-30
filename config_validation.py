@@ -10,7 +10,7 @@ _INT_RANGES: Dict[str, Tuple[int, int]] = {
     "max_fail_count": (1, 100),
     "crash_timeout": (1, 3600),
     "heartbeat_timeout": (1, 3600),
-    "lua_wait_timeout": (1, 60),
+    "lua_wait_timeout": (1, 300),
     "launch_verify_window": (1, 3600),
     "queue_delay_seconds": (0, 3600),
     "queue_duration_seconds": (0, 86400),
@@ -53,6 +53,12 @@ _FLOAT_RANGES: Dict[str, Tuple[float, float]] = {
     "session_conflict_window_seconds": (1.0, 3600.0),
     "orphan_sweeper_min_confidence": (0.0, 100.0),
     "recovery_restore_window": (0.0, 86400.0),
+    "status_snapshot_cache_ttl_seconds": (0.0, 60.0),
+    "dashboard_process_cache_ttl_seconds": (0.0, 60.0),
+    "maintenance_liveness_interval_seconds": (1.0, 300.0),
+    "maintenance_queue_interval_seconds": (1.0, 300.0),
+    "maintenance_performance_interval_seconds": (1.0, 300.0),
+    "maintenance_housekeeping_interval_seconds": (1.0, 300.0),
     "watchdog_cpu_low": (0.0, 100.0),
     "watchdog_ram_low": (0.0, 4096.0),
     "watchdog_hold_time": (1.0, 86400.0),
@@ -60,6 +66,9 @@ _FLOAT_RANGES: Dict[str, Tuple[float, float]] = {
     "roblox_memory_guard_hold_seconds": (5.0, 3600.0),
     "cpu_limiter_default_percent": (5.0, 95.0),
     "roblox_window_resize_interval_seconds": (1.0, 3600.0),
+    "multi_roblox_guard_self_heal_delay_seconds": (0.0, 300.0),
+    "multi_roblox_guard_self_heal_retry_seconds": (5.0, 3600.0),
+    "multi_roblox_guard_self_heal_max_retry_seconds": (5.0, 3600.0),
 }
 
 _REMOVED_CONFIG_KEYS = {

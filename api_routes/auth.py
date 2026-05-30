@@ -10,8 +10,8 @@ from core import flog_kv
 from .context import ApiContext
 
 _MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
-_TOKEN_HEADERS = ("X-Cronus-Token", "X-Argus-Token", "X-RoboGuard-Token")
-_IDEMPOTENCY_HEADERS = ("X-Cronus-Idempotency-Key", "X-Argus-Idempotency-Key")
+_TOKEN_HEADERS = ("X-Cronus-Token",)
+_IDEMPOTENCY_HEADERS = ("X-Cronus-Idempotency-Key",)
 _EXEMPT_PATHS = {"/api/lua/rejoin-event"}
 
 
@@ -61,17 +61,14 @@ def install_api_token_middleware(app, ctx: ApiContext) -> None:
                 idempotency_key=_first_header(request, _IDEMPOTENCY_HEADERS),
                 idempotency_body_hash=str(
                     getattr(request.state, "cronus_idempotency_body_hash", "")
-                    or getattr(request.state, "argus_idempotency_body_hash", "")
                     or ""
                 ),
                 idempotency_action=str(
                     getattr(request.state, "cronus_idempotency_action", "")
-                    or getattr(request.state, "argus_idempotency_action", "")
                     or ""
                 ),
                 idempotency_account=str(
                     getattr(request.state, "cronus_idempotency_account", "")
-                    or getattr(request.state, "argus_idempotency_account", "")
                     or ""
                 ),
             )

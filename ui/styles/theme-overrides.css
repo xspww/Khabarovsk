@@ -22,3 +22,13 @@
 #view-troubleshoot #roblox-latest:hover:not(:disabled){background:#174735;border-color:#287451;color:#93ebb8}
 #view-troubleshoot #roblox-uninstall .btn-icon,
 #view-troubleshoot #roblox-latest .btn-icon{width:15px;height:15px;flex:0 0 15px;stroke-width:2.25}
+#view-developer .lua-copy-box{min-height:160px;height:160px;max-height:240px;scrollbar-width:thin;scrollbar-color:#3c4f6f #091321}
+#view-developer .lua-copy-box::-webkit-scrollbar{width:10px;height:10px}
+#view-developer .lua-copy-box::-webkit-scrollbar-track{background:#091321;border:1px solid #16243a;border-radius:8px}
+#view-developer .lua-copy-box::-webkit-scrollbar-thumb{background:#3c4f6f;border:2px solid #091321;border-radius:8px}
+#view-developer .lua-copy-box::-webkit-scrollbar-thumb:hover{background:#54709a}
+#view-developer .lua-copy-box::-webkit-scrollbar-corner{background:#091321}
+#view-developer .lua-copy-box::-webkit-scrollbar-button{display:none;width:0;height:0}
+.accounts-shell .row-actions{align-items:center;justify-content:flex-end}
+.accounts-shell .icon-btn[data-action="delete"]{position:relative;display:inline-flex;align-items:center;justify-content:center;width:23px;height:23px;padding:0;font-size:0;line-height:1;text-align:center}
+.accounts-shell .icon-btn[data-action="delete"]::after{content:"\00d7";position:absolute;left:50%;top:50%;transform:translate(-50%,-53%);font:400 15px/1 Arial,"Segoe UI",sans-serif;color:currentColor}

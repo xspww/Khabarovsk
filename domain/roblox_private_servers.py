@@ -7,8 +7,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional, Tuple
-
+from typing import Any, Dict, List, Tuple, Optional
 
 USER_AGENT = "CronusLauncherHybrid/1.0"
 ROBLOX_HOME = "https://www.roblox.com/"
@@ -466,10 +465,8 @@ def _render_private_server_name(game_name: str, place_id: str = "") -> str:
 
 def ensure_owned_private_server(
     client: Any,
-    username: str,
     owner_user_id: str,
     place_id: str,
-    name_template: str = "",
     free_only: bool = True,
     known_servers: Optional[List[Dict[str, Any]]] = None,
     *,

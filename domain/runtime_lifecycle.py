@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Dict, Set
-
 from .account_state import AccountState, RuntimeState
 
 
@@ -115,14 +114,3 @@ def lifecycle_for_runtime_state(runtime_state: RuntimeState) -> RuntimeLifecycle
     return RUNTIME_TO_LIFECYCLE.get(runtime_state, RuntimeLifecycleState.STOPPED)
 
 
-def is_valid_lifecycle_transition(
-    old: RuntimeLifecycleState,
-    new: RuntimeLifecycleState,
-    *,
-    force_stop: bool = False,
-) -> bool:
-    if old == new:
-        return True
-    if force_stop and new == RuntimeLifecycleState.STOPPED:
-        return True
-    return new in LIFECYCLE_ALLOWED_TRANSITIONS.get(old, set())

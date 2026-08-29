@@ -4,7 +4,6 @@ import inspect
 import sys
 import threading
 from typing import Any, Callable, Dict, Optional
-
 from domain.account_state import AccountState, RuntimeState
 from domain.public_state_mapper import runtime_state_for_public
 from domain.runtime_lifecycle import lifecycle_for_public, lifecycle_for_runtime_state

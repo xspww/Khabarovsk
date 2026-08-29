@@ -8,8 +8,7 @@ import secrets
 import socket
 import time
 import urllib.request
-from typing import Any, Dict, List, Optional, Tuple
-
+from typing import Any, Dict, Optional, List, Tuple
 from app_paths import APP_DATA_DIR, APP_ROOT_DIR, IS_COMPILED, path_targets_current_exe
 from core import flog_kv
 

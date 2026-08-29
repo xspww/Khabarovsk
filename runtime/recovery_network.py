@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, List
-
 from core import AccountState, flog
+from typing import Any, List
 
 
 def handle_network_restored(recovery: Any, accounts: List[Any]) -> None:

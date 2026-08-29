@@ -1,12 +1,12 @@
 from __future__ import annotations
 import re
-import threading
 import time
-from typing import Any, Tuple
+from typing import Tuple, Any
 from core import Account, AccountState, EventName, flog, flog_kv
 from domain.session_identity import build_launch_intent
 from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
 from services.process_service import ProcessManager, ProcessService
+import threading
 def _redact_launch_detail(value: Any) -> str:
     text = str(value or "")
     if not text:

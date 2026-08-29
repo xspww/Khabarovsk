@@ -4,8 +4,8 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
-from runtime.recovery_context import RecoveryAttemptContext
 from runtime.recovery_policy import active_recovery_block_reason
+from runtime.recovery_context import RecoveryAttemptContext
 
 
 class RecoveryOwnerRegistry:

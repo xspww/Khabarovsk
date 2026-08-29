@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import time
 from typing import Any, Dict, Iterable
-
 from runtime.popup_detector.popup_confidence import popup_confidence_score
 from runtime.popup_detector.popup_text_detector import detect_text_features
 from runtime.recovery_context import (
@@ -37,6 +36,7 @@ class PopupClassification:
     modal_score: float = 0.0
     button_score: float = 0.0
     template_score: float = 0.0
+    structural_score: float = 0.0
     text_code_confirmed: bool = False
 
     def to_dict(self) -> Dict[str, Any]:
@@ -61,6 +61,7 @@ class PopupClassification:
             "modal_score": self.modal_score,
             "button_score": self.button_score,
             "template_score": self.template_score,
+            "structural_score": self.structural_score,
             "text_code_confirmed": self.text_code_confirmed,
         }
 
@@ -94,6 +95,7 @@ def classify_popup_observation(
         "modal_score": float(visual_features.get("modal_score") or 0.0),
         "button_score": float(visual_features.get("button_score") or 0.0),
         "template_score": float(visual_features.get("template_score") or 0.0),
+        "structural_score": float(visual_features.get("structural_score") or 0.0),
         "text_code_confirmed": bool(code),
     }
 

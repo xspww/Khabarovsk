@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from fastapi import HTTPException, Request
-
 from account_hybrid import audit_event
 from core import flog_kv
 from performance_settings import (
@@ -12,7 +11,6 @@ from performance_settings import (
 from services.cpu_limiter import CPU_LIMITER
 from services.process_service import ProcessService
 
-from .context import ApiContext
 from .settings_state import (
     _cpu_limiter_settings_from_config,
     _cpu_limiter_status,
@@ -22,6 +20,7 @@ from .settings_state import (
     _roblox_runtime_restart_required,
     _window_size_status,
 )
+from .context import ApiContext
 
 
 def register(app, ctx: ApiContext) -> None:

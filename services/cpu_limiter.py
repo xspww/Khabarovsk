@@ -5,8 +5,7 @@ import os
 import sys
 import threading
 from ctypes import wintypes
-from typing import Any, Dict, Iterable, List, Optional
-
+from typing import Any, Dict, List, Iterable
 
 CPU_LIMIT_MIN = 5
 CPU_LIMIT_MAX = 95

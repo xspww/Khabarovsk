@@ -10,8 +10,6 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
-
-
 TOKEN_VERSION = "lua1"
 DEFAULT_LUA_SESSION_TOKEN_TTL_SECONDS = 15 * 60
 

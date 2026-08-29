@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Dict, Optional, Set
-
 from core_logging import flog_kv
 from domain.account_model import Account
 from domain.account_state import AccountState
@@ -11,6 +9,7 @@ from domain.public_state_mapper import LIFECYCLE_STATE, runtime_state_for_public
 from domain.state_transitions import LIFECYCLE_ALLOWED_TRANSITIONS
 from runtime.event_bus import EventBus, EventName
 from runtime.runtime_state_manager import RuntimeStateManager
+from typing import Dict, Optional, Set
 
 
 ALLOWED_STATE_TRANSITIONS: Dict[AccountState, Set[AccountState]] = {

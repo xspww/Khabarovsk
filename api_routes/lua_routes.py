@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import secrets
 from typing import Any, Dict, Optional
 from urllib.parse import quote
@@ -21,8 +22,6 @@ from services.lua_session_tokens import (
 
 from .auth import api_token_valid, require_api_token
 from .context import ApiContext
-
-
 _SCRIPT_PATH = resource_path("lua", "internal", "rejoin_monitor.lua")
 _ACCOUNT_MODULE_PATH = resource_path("lua", "internal", "account_status_client.lua")
 _EXECUTOR_LOADER_PATH = resource_path("lua", "run_in_executor.lua")
@@ -51,7 +50,35 @@ def _text(value: Any) -> str:
 
 
 def _lua_literal(value: Any) -> str:
-    return json.dumps(str(value or ""), ensure_ascii=True)
+    """Render a Python value as a Lua 5.1 / Luau string literal.
+
+    json.dumps is not safe here: with ensure_ascii=True it emits the
+    JSON-style \\uXXXX escapes, which every Lua dialect rejects (Lua 5.1
+    has no \\u escape and Luau requires braces: \\u{...}), so any non-ASCII
+    account/session value makes the served helper fail to compile under
+    loadstring. Pass non-ASCII through as raw UTF-8 bytes (Lua strings are
+    byte strings) and escape control characters with 3-digit decimal escapes.
+    """
+    text = str(value or "")
+    out = ['"']
+    for ch in text:
+        code = ord(ch)
+        if ch == '"':
+            out.append('\\"')
+        elif ch == "\\":
+            out.append("\\\\")
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ch == "\t":
+            out.append("\\t")
+        elif code < 32 or code == 127:
+            out.append(f"\\{code:03d}")
+        else:
+            out.append(ch)
+    out.append('"')
+    return "".join(out)
 
 
 def _load_script_template() -> str:
@@ -72,6 +99,10 @@ def _load_executor_loader() -> str:
 def _render_lua_template(template: str, replacements: Dict[str, str]) -> str:
     for key, value in replacements.items():
         template = template.replace(key, value)
+    # Some executors reject an empty statement (`;;`) even though Luau accepts
+    # it.  The minified helper must remain compatible with those parsers.
+    while ";;" in template:
+        template = template.replace(";;", ";")
     return template
 
 
@@ -80,34 +111,38 @@ def _selected_lua_port(request: Request, port: int) -> int:
 
 
 def _render_requeue_source(account: str, port: int, shutdown_delay: float, token: str = "") -> str:
+    # Keep this embedded script as small as possible: it is inlined into the
+    # served helper as a string literal, and the served helper must stay under
+    # the executor's loadstring size ceiling (the helper stopped loading once
+    # it grew past ~14 KiB). The session token travels in the URL query
+    # (cronus_token), so an extra X-Cronus-Token header would only add bytes.
     account_qs = quote(str(account or ""), safe="")
     token_qs = quote(str(token or ""), safe="")
     helper_url = f"http://127.0.0.1:{int(port)}/api/lua/rejoin-helper?account={account_qs}&shutdown_delay={shutdown_delay:.2f}"
     if token_qs:
         helper_url = f"{helper_url}&cronus_token={token_qs}"
-    token_header = f", [\"X-Cronus-Token\"] = {_lua_literal(token)}" if token else ""
-    return "\n".join(
+    return ";".join(
         [
-            "local Request = (syn and syn.request) or (http and http.request) or http_request or request",
-            "local Load = loadstring or load",
+            "local Request=(syn and syn.request)or(http and http.request)or http_request or request",
+            "local Load=loadstring or load",
             "local function warnCronus(message)",
-            "    local line = \"[Cronus] \" .. tostring(message or \"Rejoin helper failed to load\")",
-            "    if rconsoleprint then pcall(rconsoleprint, line .. \"\\n\") end",
-            "    if warn then pcall(warn, line) elseif print then pcall(print, line) end",
-            "    return nil",
+            'local line="[Cronus] "..tostring(message or "Rejoin helper failed to load")',
+            'if rconsoleprint then pcall(rconsoleprint,line.."\\n")end',
+            "if warn then pcall(warn,line)elseif print then pcall(print,line)end",
+            "return nil",
             "end",
-            f"local url = {_lua_literal(helper_url)}",
-            "local source = nil",
+            f"local url={_lua_literal(helper_url)}",
+            "local source=nil",
             "if Request then",
-            f"    local response = Request({{ Method = \"GET\", Url = url, Headers = {{ [\"User-Agent\"] = \"CronusRejoinTeleport/1.0\"{token_header} }} }})",
-            "    source = response and (response.Body or response.body or response.Data or response.data)",
+            f'local response=Request({{Method="GET",Url=url,Headers={{["User-Agent"]="CronusRejoinTeleport/1.0"}}}})',
+            "source=response and(response.Body or response.body or response.Data or response.data)",
             "elseif game.HttpGet then",
-            "    source = game:HttpGet(url)",
+            "source=game:HttpGet(url)",
             "end",
-            "if type(source) ~= \"string\" or #source <= 0 then return warnCronus(\"Rejoin helper failed to load\") end",
-            "if source:sub(1, 1) == \"{\" then return nil end",
-            "local fn, err = Load(source)",
-            "if not fn then return warnCronus(\"Rejoin helper failed to load\") end",
+            'if type(source)~="string"or#source<=0 then return warnCronus("Rejoin helper failed to load")end',
+            'if source:sub(1,1)=="{"then return nil end',
+            "local fn,err=Load(source)",
+            'if not fn then return warnCronus("Rejoin helper failed to load")end',
             "return fn()",
         ]
     )
@@ -518,12 +553,14 @@ def register(app, ctx: ApiContext) -> None:
             raise HTTPException(404, "Lua helper template not found")
         token_scope = _validate_lua_helper_access(ctx, request, account)
         script = _render_rejoin_helper(ctx, request, account, port, shutdown_delay, token_scope)
+        _version_match = re.search(r'Version="([^"]+)"', script)
         flog_kv(
             "LUA",
             "rejoin_helper_served",
             account=str(account or ""),
             port=_selected_lua_port(request, port),
             client=str(getattr(getattr(request, "client", None), "host", "") or ""),
+            helper_version=_version_match.group(1) if _version_match else "",
         )
         return _lua_text_response(script)
 

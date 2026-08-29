@@ -9,9 +9,7 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from typing import Any, Dict, List, Optional, Tuple
-
 from fastapi import HTTPException, Request
-
 from account_hybrid import ACCOUNT_STORE, audit_event
 from core import cookie_identity_block_reason, cookie_invalid_block_reason
 from roblox_hybrid import resolve_vip_access_code, validate_cookie_details
@@ -25,9 +23,9 @@ from services.account_reload import emit_reload_cookie_events
 from services.roblox_launch_service import AccountLaunchService, parse_vip_link
 
 from . import account_records
-from .context import ApiContext
 from .idempotency import begin_idempotent_request, begin_idempotent_request_sync, finish_idempotent_request
 from .settings_state import _normalize_window_size_settings
+from .context import ApiContext
 
 APP_USER_AGENT = "CronusLauncher/RT"
 _AVATAR_CACHE: Dict[str, Tuple[float, str]] = {}
@@ -114,6 +112,23 @@ def register(app, ctx: ApiContext) -> None:
             or creator.get("name")
             or ""
         ).strip()
+        # Extended stats for rich game card (mirrors screenshot: genre + playing / visits / favorites / maxPlayers)
+        genre = str(details.get("genre") or details.get("genre1") or "").strip()
+        playing = details.get("playing")
+        visits = details.get("visits")
+        max_players = details.get("maxPlayers")
+        favorited_count = details.get("favoritedCount")
+        # Normalize numeric fields
+        def _int_or_none(v):
+            try:
+                iv = int(v)
+                return iv if iv >= 0 else None
+            except Exception:
+                return None
+        playing_n = _int_or_none(playing)
+        visits_n = _int_or_none(visits)
+        max_players_n = _int_or_none(max_players)
+        favorited_n = _int_or_none(favorited_count)
 
         if not name:
             try:
@@ -138,6 +153,11 @@ def register(app, ctx: ApiContext) -> None:
             "place_id": place,
             "name": name or f"Place {place}",
             "builder": builder,
+            "genre": genre,
+            "playing": playing_n,
+            "visits": visits_n,
+            "max_players": max_players_n,
+            "favorited_count": favorited_n,
             "universe_id": universe_id,
             "image_url": image_url,
             "url": f"https://www.roblox.com/games/{place}",

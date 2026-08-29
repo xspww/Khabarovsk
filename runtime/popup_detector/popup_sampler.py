@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import ctypes
+import json
+import os
 import threading
 import time
 from ctypes import wintypes
 from typing import Any, Dict, List, Optional
-
 from runtime.popup_detector.popup_classifier import PopupClassification, classify_popup_observation
 from runtime.popup_detector.popup_visual_detector import detect_visual_features
 from runtime.recovery_context import VISUAL_DISCONNECT
+from services.captcha_guard import CAPTCHA_REASON
 
 
 _HOLD_LOCK = threading.RLock()
@@ -274,15 +276,54 @@ class PopupObserver:
             and item.confidence >= self.threshold
         ):
             return False
-        if item.visual_stage != "modal_button":
+        if item.visual_stage not in {"modal_button", "structural_button"}:
             return False
         if item.button_pattern not in {"single", "double"}:
             return False
+        if item.visual_stage == "structural_button":
+            # The structural pipeline confirms overlay + modal + separator + an
+            # in-modal button (structural_score >= 0.96); its strength is carried
+            # by structural_score, not modal_score.
+            return bool(
+                item.overlay_score >= 0.25
+                and item.structural_score >= 0.96
+                and item.button_score >= 0.38
+            )
         return bool(
             item.overlay_score >= 0.25
             and item.modal_score >= 1.0
             and item.button_score >= 0.38
         )
+
+    def _maybe_save_captcha_sample(self, pid, texts, screenshot, classification) -> None:
+        """Debug hook: when CRONUS_CAPTCHA_SAMPLE_DIR is set, save every screen
+        classified as captcha (plus a metadata JSON) so the visual detector can
+        be tuned against real screenshots. No-op by default."""
+        sample_dir = os.environ.get("CRONUS_CAPTCHA_SAMPLE_DIR", "").strip()
+        if not sample_dir or screenshot is None:
+            return
+        try:
+            os.makedirs(sample_dir, exist_ok=True)
+            stamp = f"{int(time.time() * 1000)}_{int(pid or 0)}"
+            png_path = os.path.join(sample_dir, f"captcha_{stamp}.png")
+            screenshot.save(png_path)
+            meta = {
+                "pid": pid,
+                "time": time.time(),
+                "texts": list(texts or []),
+                "reason_key": classification.reason_key,
+                "action": classification.action,
+                "evidence_source": classification.evidence_source,
+                "visual_strength": classification.visual_strength,
+                "visual_stage": classification.visual_stage,
+                "confidence": classification.confidence,
+                "confidence_breakdown": dict(classification.confidence_breakdown or {}),
+            }
+            meta_path = os.path.join(sample_dir, f"captcha_{stamp}.json")
+            with open(meta_path, "w", encoding="utf-8") as handle:
+                json.dump(meta, handle, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
     def inspect_pid(
         self,
@@ -308,6 +349,7 @@ class PopupObserver:
                     windows = self.sampler.windows_for_pid(pid, include_hidden=True)
                     hwnd = int((windows[0].get("hwnd") if windows else 0) or 0)
                 texts = self.sampler.read_texts(hwnd) if hwnd else []
+                screenshot = None
                 classification = classify_popup_observation(
                     texts,
                     {},
@@ -323,6 +365,10 @@ class PopupObserver:
                         threshold=self.threshold,
                     )
                 samples.append(classification)
+                if classification.reason_key == CAPTCHA_REASON:
+                    if screenshot is None and hwnd:
+                        screenshot = self.sampler.capture_window_image(hwnd)
+                    self._maybe_save_captcha_sample(pid, texts, screenshot, classification)
                 if index < sample_total - 1 and interval > 0:
                     if classification.error_code:
                         break

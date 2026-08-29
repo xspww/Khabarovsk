@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-
 CAPTCHA_REASON = "captcha_required"
 CAPTCHA_LABEL = "Captcha"
 CAPTCHA_BLOCK_REASON = "CAPTCHA required. Solve it manually, then click Resume or Reload Cookies."
@@ -19,18 +18,16 @@ CAPTCHA_KEYWORDS = (
     "robot check",
 )
 
+# Only strong, captcha-specific markers belong here. Roblox's auto-passing
+# "Security Verification" page shows generic phrases ("verification",
+# "you're not a bot", "real person") and must NOT be treated as a captcha.
 CAPTCHA_UI_KEYWORDS = (
     "captcha",
     "arkose",
     "funcaptcha",
-    "verifying you're not a bot",
-    "verify you're not a bot",
-    "not a bot",
     "start puzzle",
     "please solve this challenge",
-    "real person",
     "security challenge",
-    "verification",
 )
 
 CHALLENGE_HEADER_KEYS = (
@@ -81,14 +78,7 @@ def is_captcha_window_texts(values: Any) -> bool:
         return False
     if is_captcha_text(joined):
         return True
-    if any(keyword in joined for keyword in CAPTCHA_UI_KEYWORDS):
-        return True
-    if "security" in normalized and (
-        "chrome legacy window" in normalized
-        or any("roblox" in text for text in normalized)
-    ):
-        return True
-    return False
+    return any(keyword in joined for keyword in CAPTCHA_UI_KEYWORDS)
 
 
 def _is_cookie_auth_status_text(text: str) -> bool:
@@ -240,6 +230,11 @@ def clear_account_captcha_hold(account: Any, runtime_writer: Any = None) -> bool
         account.session_checked = False
         account.session_valid = False
         account.session_wait_started_at = 0.0
+        try:
+            account._captcha_suspected_at = 0.0
+            account._captcha_suspected_pid = 0
+        except Exception:
+            pass
         account.retry_count = 0
         account.fail_count = 0
         account.launch_fail_count = 0

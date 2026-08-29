@@ -5,11 +5,9 @@ import json
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Dict
-
-from fastapi import Request
-
 from core import flog_kv
+from typing import Any, Dict
+from fastapi import Request
 
 
 _LOCK = threading.RLock()

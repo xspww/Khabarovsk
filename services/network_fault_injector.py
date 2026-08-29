@@ -9,7 +9,6 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional
 
-
 RULE_PREFIX = "CronusLauncher_Test_Block_Roblox"
 RULE_GROUP = "Cronus Launcher Test Network Fault"
 ROBLOX_EXE_NAME = "robloxplayerbeta.exe"

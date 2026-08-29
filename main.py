@@ -4,16 +4,15 @@ import os
 import re
 import sys
 import time
-import urllib.request
 from importlib import metadata as importlib_metadata
 from importlib import util as importlib_util
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-from app_paths import APP_NAME, resource_path
+from app_paths import APP_NAME, IS_COMPILED, resource_path
 from desktop import console_output
 
 APP_USER_AGENT = "CronusLauncher/RT"
@@ -144,7 +143,8 @@ if sys.platform != "win32":
     sys.exit(1)
 
 if __name__ == "__main__":
-    _run_startup_dependency_checks()
+    if not IS_COMPILED:
+        _run_startup_dependency_checks()
 
 try:
     from fastapi import FastAPI
@@ -160,27 +160,22 @@ from core import Account, ConfigManager, LOG_FILE, flog, flog_kv
 from desktop_host import (
     INSTANCE_TOKEN,
     SHUTDOWN_REQUESTED,
-    _cmdline_targets_this_app,
-    _run_desktop_window,
     clear_instance_state,
     run_desktop,
-    run_with_tray,
-    run_without_tray,
 )
 from farm import FarmController
-from services.cpu_limiter import CPU_LIMITER
 from services.network_fault_injector import NETWORK_FAULT_INJECTOR
 from services.process_service import ProcessManager
 from services.roblox_install_manager import RobloxInstallManager
+from services.updater import start_update_checker
+from services.executor_compatibility import ExecutorCompatibilityService
+from services.executor_relauncher import ExecutorRelaunchService
 from performance_settings import (
     apply_graphics_settings_file,
     apply_performance_settings_file,
     apply_process_priority_to_roblox,
 )
-from ui_dashboard import HTML_UI
-from api_routes.accounts_routes import _AVATAR_CACHE
-
-
+from ui_dashboard import get_html_ui
 cfg_mgr = ConfigManager()
 try:
     accounts = [Account.from_dict(item) for item in ACCOUNT_STORE.to_cronus_accounts()]
@@ -196,6 +191,66 @@ ROBLOX_INSTALLER = RobloxInstallManager(
     logger=flog,
 )
 
+
+_EXECUTOR_RESUME_AFTER_UPDATE = False
+
+
+def _executor_transition(event: str, payload: dict) -> None:
+    """Keep the farm safe around known executor incompatibility transitions."""
+    global _EXECUTOR_RESUME_AFTER_UPDATE
+    latest = str(payload.get("latest_version") or "").strip().lower()
+    auto_update = bool(cfg_mgr.get("roblox_auto_update_enabled", False))
+    installed = ROBLOX_INSTALLER.list_installed() + ROBLOX_INSTALLER.list_exploitstrap_installed()
+    needs_update = bool(latest and any(str(item.get("version") or "").strip().lower() != latest for item in installed))
+    if auto_update and needs_update and event not in {"api_error", "disabled"}:
+        _EXECUTOR_RESUME_AFTER_UPDATE = bool(farm.running)
+        try:
+            if farm.running:
+                farm.stop()
+            farm.close_all_roblox(reason="roblox_version_update")
+            ROBLOX_INSTALLER.start_update_both(latest)
+        except Exception as exc:
+            flog_kv("EXECUTOR", "auto_update_start_failed", "warning", error=exc)
+        return
+    if event == "incompatible":
+        try:
+            if farm.running:
+                farm.stop()
+            farm.close_all_roblox(reason="executor_incompatible")
+        except Exception as exc:
+            flog_kv("EXECUTOR", "incompatible_shutdown_failed", "warning", error=exc)
+    elif event == "compatible" and _EXECUTOR_RESUME_AFTER_UPDATE:
+        _EXECUTOR_RESUME_AFTER_UPDATE = False
+        try:
+            farm.start()
+        except Exception as exc:
+            flog_kv("EXECUTOR", "auto_resume_failed", "warning", error=exc)
+
+
+EXECUTOR_TRACKER = ExecutorCompatibilityService(
+    cfg_mgr,
+    on_transition=_executor_transition,
+    get_installed_versions=lambda: [
+        *(item.get("version", "") for item in ROBLOX_INSTALLER.list_installed()),
+        *(item.get("version", "") for item in ROBLOX_INSTALLER.list_exploitstrap_installed()),
+    ],
+    logger=flog,
+)
+EXECUTOR_RELAUNCHER = ExecutorRelaunchService(cfg_mgr, farm, EXECUTOR_TRACKER, logger=flog_kv)
+farm.set_executor_start_guard(EXECUTOR_RELAUNCHER.ensure_started)
+
+# Relaunch only on a WEAO compatibility edge or an observed WEAO executor-version change.
+_previous_compatibility_payload = {}
+_tracker_transition = _executor_transition
+def _executor_transition(event: str, payload: dict) -> None:
+    global _previous_compatibility_payload
+    _tracker_transition(event, payload)
+    if event == "compatible" and (payload.get("became_compatible") or payload.get("executor_version_changed")):
+        EXECUTOR_RELAUNCHER.request_relaunch("weao_compatibility_or_executor_version_changed")
+    _previous_compatibility_payload = dict(payload)
+
+EXECUTOR_TRACKER.on_transition = _executor_transition
+
 app = FastAPI(title=APP_NAME, docs_url=None, redoc_url=None)
 app.mount("/assets", StaticFiles(directory=resource_path("assets")), name="assets")
 app.mount("/ui", StaticFiles(directory=resource_path("ui")), name="ui")
@@ -203,7 +258,9 @@ api_context = ApiContext(
     cfg_mgr=cfg_mgr,
     farm=farm,
     roblox_installer=ROBLOX_INSTALLER,
-    html_ui=HTML_UI,
+    executor_tracker=EXECUTOR_TRACKER,
+    executor_relauncher=EXECUTOR_RELAUNCHER,
+    html_ui=get_html_ui,
     instance_token=INSTANCE_TOKEN,
     shutdown_requested=SHUTDOWN_REQUESTED,
     clear_instance_state=clear_instance_state,
@@ -223,4 +280,6 @@ if __name__ == "__main__":
         idx = sys.argv.index("--multi-roblox-guard")
         sys.argv = [sys.argv[0], *sys.argv[idx + 1:]]
         raise SystemExit(multi_roblox_guard.main())
+    start_update_checker()
+    EXECUTOR_TRACKER.start()
     run_desktop(app, farm)

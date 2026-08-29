@@ -2,8 +2,6 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any
-
 from core import AccountState, GlobalLaunchLimiter, SmartQueue, StateManager, flog, flog_kv
 from services.network_monitor import NetworkMonitor
 from services.process_service import ProcessManager, ProcessService
@@ -16,6 +14,7 @@ from runtime.launch_controller import LaunchController
 from runtime.recovery_engine import RecoveryEngine
 from runtime.runtime_scheduler import RuntimeScheduler
 from runtime.system_maintenance import SystemMaintenance
+from typing import Any
 
 
 def _clear_manual_start_failure_gate(acc: Any, runtime_state: Any, max_fail_count: int) -> bool:
@@ -89,7 +88,6 @@ class FarmLifecycleService:
                 acc._vip_tracker = VipTracker(acc.vip_links)
                 flog(f"[FARM] VipTracker initialized for {acc.display_name}")
 
-        farm._sync_accounts_from_ram(persist=True)
         farm.cfg_mgr.restore_runtime(farm._accounts)
 
         reset_failure_gate = False

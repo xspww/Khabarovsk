@@ -9,7 +9,6 @@ from typing import Any, Dict, List
 
 from app_paths import APP_DATA_DIR
 from config_validation import CONFIG_SCHEMA_VERSION, validate_config_payload
-from config_sections import CronusConfigSections, build_config_sections
 from domain.account_state import RuntimeState
 
 
@@ -31,6 +30,15 @@ RUNTIME_TEXT_FILE = os.path.join(APP_DATA_DIR, "cronus_rt12_runtime.txt")
 
 DEFAULTS: Dict[str, Any] = {
     "auto_rejoin":              True,
+    "executor_monitor_enabled": False,
+    "executor_selected":        "",
+    "executor_check_interval_seconds": 30,
+    "roblox_auto_update_enabled": False,
+    "executor_relaunch_enabled": True,
+    "executor_path_volt": "",
+    "executor_path_potassium": "",
+    "executor_path_real": "",
+    "executor_path_madium": "",
     "rejoin_delay":             5,
     "max_retry":                10,
     "max_fail_count":           5,
@@ -44,8 +52,8 @@ DEFAULTS: Dict[str, Any] = {
     "queue_delay_seconds":      15,
     "queue_duration_seconds":   15,
     "max_concurrent_accounts":  40,
-    "use_lua":                  True,
-    "lua_wait_timeout":         60,
+    "lua_enabled":             True,
+    "lua_timeout_seconds":      60,
     "machine_supervisor_enabled": True,
     "machine_supervisor_max_launching_accounts": 1,
     "machine_supervisor_cpu_high_percent": 96.0,
@@ -158,9 +166,21 @@ class ConfigManager:
 
     def load(self):
         raw = self._read_text_json(CONFIG_FILE, {})
+        # Capture legacy keys before validation (they are not in DEFAULTS anymore)
+        had_lua_enabled = "lua_enabled" in raw
+        had_lua_timeout = "lua_timeout_seconds" in raw
+        legacy_use_lua = raw.get("use_lua")
+        legacy_lua_wait_timeout = raw.get("lua_wait_timeout")
         raw = validate_config_payload(raw, DEFAULTS)
 
         # Migration from old config filenames/keys
+        if not had_lua_enabled and legacy_use_lua is not None:
+            raw["lua_enabled"] = bool(legacy_use_lua)
+        if not had_lua_timeout and legacy_lua_wait_timeout is not None:
+            try:
+                raw["lua_timeout_seconds"] = max(1, min(300, int(float(legacy_lua_wait_timeout))))
+            except Exception:
+                raw["lua_timeout_seconds"] = 60
         if "zombie_timeout" in raw and "not_responding_timeout" not in raw:
             raw["not_responding_timeout"] = raw["zombie_timeout"]
         if "auto_close_minutes" not in raw and "auto_close_seconds" in raw:
@@ -171,7 +191,6 @@ class ConfigManager:
                 raw["auto_close_minutes"] = 0
         with self._lock:
             self._cfg = {k: raw.get(k, v) for k, v in DEFAULTS.items()}
-            self._cfg["use_lua"] = True
             self._cfg["schema_version"] = int(raw.get("schema_version") or CONFIG_SCHEMA_VERSION)
 
     def save(self):
@@ -188,17 +207,11 @@ class ConfigManager:
 
     def update(self, updates: Dict[str, Any]):
         with self._lock:
-            self._cfg = validate_config_payload({**self._cfg, **updates, "use_lua": True}, DEFAULTS)
-            self._cfg["use_lua"] = True
+            self._cfg = validate_config_payload({**self._cfg, **updates}, DEFAULTS)
 
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
             return dict(self._cfg)
-
-    def sections(self) -> CronusConfigSections:
-        with self._lock:
-            return build_config_sections(dict(self._cfg))
-
     def _read_text_json(self, path: str, fallback):
         if not os.path.exists(path):
             return fallback
@@ -249,26 +262,6 @@ class ConfigManager:
                     os.remove(tmp_path)
             except Exception:
                 pass
-
-    def save_cookies(self, accounts: List[Account]):
-        records: List[Dict[str, Any]] = []
-        for acc in accounts:
-            username = str(acc.username or "").strip().lower()
-            cookie = str(acc.cookie or "").strip()
-            if username and cookie:
-                item = acc.to_dict()
-                item["cookie"] = cookie
-                records.append(item)
-        if not records:
-            return
-        try:
-            from account_hybrid import ACCOUNT_STORE
-
-            ACCOUNT_STORE.upsert_records(records)
-            _flog_kv("CONFIG", "cookies_saved_to_account_data", "info", accounts=len(records))
-        except Exception as exc:
-            _flog_kv("CONFIG", "cookies_save_to_account_data_failed", "warning", error=exc)
-
     def get_accounts(self) -> List["Account"]:
         from core import Account
 

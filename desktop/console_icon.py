@@ -3,10 +3,9 @@ from __future__ import annotations
 import atexit
 import ctypes
 import os
-from typing import List
-
 from app_paths import CACHE_DIR, ensure_cache_dir, move_app_data_file, resource_path
 from core import flog_kv
+from typing import List
 
 
 APP_ICON_FILE = "cronus_icon.png"

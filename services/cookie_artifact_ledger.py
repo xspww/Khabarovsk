@@ -6,7 +6,6 @@ import os
 import threading
 import time
 from typing import Any, Dict, List, Optional
-
 from app_paths import APP_DATA_DIR
 
 

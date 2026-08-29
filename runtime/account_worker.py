@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import threading
 import time
@@ -7,10 +7,7 @@ import urllib.request
 from typing import Any, Dict, List, Optional
 
 from core import (
-    Account,
     AccountState,
-    EventBus,
-    StateManager,
     cookie_identity_block_reason,
     flog,
     flog_kv,
@@ -25,9 +22,12 @@ from services.captcha_guard import (
     is_captcha_text,
     set_account_captcha_hold,
 )
-from runtime.supervisor_runtime import SupervisorRuntime
 from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
 from runtime.recovery_support import RECOVERY_REASON_MESSAGES, _set_account_cookie_block, compute_backoff
+from runtime.supervisor_runtime import SupervisorRuntime
+from core import StateManager
+from core import EventBus
+from core import Account
 
 
 class AccountWorker(threading.Thread):
@@ -69,10 +69,6 @@ class AccountWorker(threading.Thread):
 
     def update_config(self, cfg: dict) -> None:
         self.cfg = cfg
-
-    def connection_recovery_active(self) -> bool:
-        return self._connection_error_since is not None
-
     def report_fault(
         self,
         reason_key: str,

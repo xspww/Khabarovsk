@@ -264,21 +264,6 @@ class RuntimeStore:
                 except sqlite3.DatabaseError:
                     pass
                 raise
-
-    def get_account_snapshot(self, account_id: str) -> Optional[Dict[str, Any]]:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT snapshot_json, updated_at FROM account_runtime_state WHERE account_id=?",
-                (str(account_id or ""),),
-            ).fetchone()
-        if not row:
-            return None
-        snapshot = self._decode_json(row["snapshot_json"])
-        if isinstance(snapshot, dict):
-            snapshot["updated_at"] = float(row["updated_at"] or 0.0)
-            return snapshot
-        return None
-
     def list_recent_events(
         self,
         account_id: str = "",
@@ -325,44 +310,6 @@ class RuntimeStore:
             }
             events.append(item)
         return events
-
-    def list_recent_transactions(self, account_id: str = "", limit: int = 50) -> List[Dict[str, Any]]:
-        safe_limit = max(1, min(int(limit or 50), 200))
-        params: tuple
-        if account_id:
-            sql = (
-                "SELECT * FROM rejoin_transactions WHERE account_id=? "
-                "ORDER BY updated_at DESC, created_at DESC LIMIT ?"
-            )
-            params = (str(account_id or ""), safe_limit)
-        else:
-            sql = "SELECT * FROM rejoin_transactions ORDER BY updated_at DESC, created_at DESC LIMIT ?"
-            params = (safe_limit,)
-        with self._lock:
-            rows = list(self._conn.execute(sql, params).fetchall())
-        transactions: List[Dict[str, Any]] = []
-        for row in rows:
-            transactions.append({
-                "transaction_id": str(row["transaction_id"] or ""),
-                "account_id": str(row["account_id"] or ""),
-                "session_id": str(row["session_id"] or ""),
-                "account_runtime_id": str(row["account_runtime_id"] or ""),
-                "launch_nonce": str(row["launch_nonce"] or ""),
-                "runtime_generation": int(row["runtime_generation"] or 0),
-                "recovery_generation": int(row["recovery_generation"] or 0),
-                "command_generation": int(row["command_generation"] or 0),
-                "status": str(row["status"] or ""),
-                "step": str(row["step"] or ""),
-                "reason": str(row["reason"] or ""),
-                "failure_reason": str(row["failure_reason"] or ""),
-                "launch_intent": self._decode_json(row["launch_intent_json"]),
-                "destination_evidence": self._decode_json(row["destination_evidence_json"]),
-                "created_at": float(row["created_at"] or 0.0),
-                "updated_at": float(row["updated_at"] or 0.0),
-                "completed_at": float(row["completed_at"] or 0.0),
-            })
-        return transactions
-
     def rollback_open_transactions(self, reason: str = "backend_restart") -> int:
         now = time.time()
         open_statuses = ("pending", "launching", "process_bound", "verifying", "binding_verified")

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Optional
-
 from core import AccountState
 from services.process_service import ProcessService
 from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
 from runtime.recovery_support import RECOVERY_REASON_MESSAGES, compute_backoff
+from typing import Any, Optional
 
 
 class RecoveryEvaluator:
@@ -84,12 +83,17 @@ class RecoveryEvaluator:
             return
 
         max_fail = int(r._cfg.get("max_fail_count", 5))
-        if fail_count >= max_fail:
-            r.fail_account(acc, "max_fail", RECOVERY_REASON_MESSAGES["max_fail"])
-            return
-        retry_exceeded = r._retry_bucket_exceeded(acc)
-        if retry_exceeded:
-            r.fail_account(acc, "max_retry", retry_exceeded)
+        if fail_count >= max_fail or r._retry_bucket_exceeded(acc):
+            # The "Finished" mechanism is removed: exceeding retry limits never
+            # terminates an account. Reset the counters and keep the farm active.
+            with acc._lock:
+                acc.fail_count = 0
+                acc.retry_count = 0
+                acc.crash_retry_count = 0
+                acc.launch_fail_count = 0
+                acc.network_retry_count = 0
+                acc.session_retry_count = 0
+            r._log_hold(acc, trigger, "retry_limits_reset_keep_active")
             return
 
         if has_cookie and not session_checked:

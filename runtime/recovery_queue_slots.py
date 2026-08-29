@@ -1,8 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Iterable, Optional
-
 from core import AccountState
+from typing import Any, Iterable, Optional
 
 
 ACTIVE_SLOT_STATES = {

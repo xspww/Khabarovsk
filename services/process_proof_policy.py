@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
-
 from services.browser_tracker import tracker_matches
 
 

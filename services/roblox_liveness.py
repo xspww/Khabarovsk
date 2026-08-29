@@ -2,10 +2,8 @@ from __future__ import annotations
 
 import time
 from typing import Any, Dict, Optional
-
-from core import Account
 from runtime.runtime_state_manager import RuntimeStateManager
-from core import flog_kv
+from core import flog_kv, Account
 from services.captcha_guard import CAPTCHA_REASON
 from services.roblox_log_evidence import CachedLogEvidenceCollector, collect_recent_log_evidence
 

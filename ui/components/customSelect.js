@@ -1,8 +1,8 @@
 const SELECTORS = [
-  "#window-grid-preset",
   "#process-priority",
   "#cpu-mode",
   "#ram-limit-preset",
+  "#executor-selected",
 ];
 const enhanced = new WeakMap();
 
@@ -31,6 +31,11 @@ function closeOthers(current) {
 function syncSelect(select) {
   const state = enhanced.get(select);
   if (!state) return;
+  const nativeOptions = Array.from(select.options).map(optionLabel);
+  const customOptions = state.options.map((button) => String(button.textContent || "").trim());
+  if (nativeOptions.length !== customOptions.length || nativeOptions.some((label, index) => label !== customOptions[index])) {
+    buildOptions(select, state);
+  }
   const option = selectedOption(select);
   state.label.textContent = optionLabel(option);
   state.options.forEach((button) => {

@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple
-
+from typing import Any, Dict, Optional, Tuple, Iterable, List
 
 def _text(value: Any) -> str:
     return str(value or "").strip()

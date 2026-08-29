@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from typing import Any, List
-
-from core import Account, AccountState, flog, flog_kv
+from core import AccountState, flog, flog_kv, Account
 from runtime.lua_liveness_policy import mark_waiting_for_lua
 from services.process_service import ProcessManager, ProcessService
+from typing import Any, List
 
 
 def initial_state_sync(accounts: List[Account], state_mgr: Any, lua_required: bool = False, runtime_state: Any = None) -> None:

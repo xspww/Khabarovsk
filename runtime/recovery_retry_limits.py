@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
-
+from typing import Optional, Any
 
 def retry_bucket_exceeded(cfg: dict, acc: Any) -> Optional[str]:
     max_retry = max(1, int(cfg.get("max_retry", 10) or 10))

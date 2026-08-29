@@ -7,7 +7,6 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional, Tuple
 
-
 _ERROR_CODE_RE = re.compile(r"error\s*code[:\s]+(\d+)", re.IGNORECASE)
 _DISCONNECT_KEYWORDS = (
     "disconnected",

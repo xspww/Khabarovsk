@@ -94,7 +94,7 @@ def flog_struct(scope: str, event: str, level: str = "info", **fields):
 
 def flog(msg: str, level: str = "info"):
     getattr(_logger, level, _logger.info)(msg)
-    emit_console_text(msg, level)
+    emit_console_text(msg)
 
 
 def _kv_value(value: Any) -> str:
@@ -110,7 +110,7 @@ def _kv_value(value: Any) -> str:
 
 def flog_kv(scope: str, name: str, level: str = "info", **fields):
     flog_struct(scope, name, level, **fields)
-    emit_console_activity(scope, name, level, **fields)
+    emit_console_activity(scope, name, **fields)
     parts = " ".join(f"{key}={_kv_value(_redact_value(key, value))}" for key, value in fields.items())
     suffix = f" {parts}" if parts else ""
     flog(f"[{scope}] {name}{suffix}", level)

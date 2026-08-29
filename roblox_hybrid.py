@@ -11,8 +11,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List, Optional, Tuple
-
+from typing import Any, Dict, List, Tuple, Optional
 from app_paths import EXECUTABLE_PATH, IS_COMPILED
 from account_hybrid import ACCOUNT_STORE, decrypt_cookie
 from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, captcha_detail, is_captcha_text
@@ -27,14 +26,12 @@ from domain.roblox_private_servers import (
     list_my_private_servers,
     list_private_servers_for_place,
     parse_launch_destination_from_cmdline,
-    parse_vip_access_code_html,
     parse_vip_components,
     parse_vip_link,
     private_servers_enabled_for_universe,
     resolve_vip_access_code,
     universe_id_for_place,
 )
-
 
 USER_AGENT = "CronusLauncherHybrid/1.0"
 _MULTI_ROBLOX_LOCK = threading.RLock()
@@ -49,6 +46,70 @@ _MULTI_ROBLOX_GUARD_MODE = "mutex"
 ROBLOX_HOME = "https://www.roblox.com/"
 AUTH_BASE = "https://auth.roblox.com/"
 USERS_BASE = "https://users.roblox.com/"
+
+_SELECTED_ROBLOX_VERSION = ""
+
+
+def set_selected_roblox_version(version: str = "") -> None:
+    """Pin launches to a specific installed Roblox version ('' = OS default)."""
+    global _SELECTED_ROBLOX_VERSION
+    _SELECTED_ROBLOX_VERSION = str(version or "").strip()
+
+
+def _roblox_version_exe(version: str) -> str:
+    name = str(version or "").strip()
+    if not name:
+        return ""
+    exploitstrap_prefix = "exploitstrap:"
+    if name.lower().startswith(exploitstrap_prefix):
+        name = name[len(exploitstrap_prefix):].strip()
+        local = os.environ.get("LOCALAPPDATA", "").strip()
+        if local:
+            candidate = os.path.join(local, "ExploitStrap", "Versions", name, "RobloxPlayerBeta.exe")
+            if os.path.isfile(candidate):
+                return candidate
+    roots = []
+    for env_name in ("LOCALAPPDATA", "ProgramFiles(x86)", "ProgramFiles"):
+        value = os.environ.get(env_name, "").strip()
+        if value:
+            roots.append(os.path.join(value, "Roblox"))
+    target_l = name.lower()
+    for root in roots:
+        versions_dir = os.path.join(root, "Versions")
+        if not os.path.isdir(versions_dir):
+            continue
+        try:
+            entries = os.listdir(versions_dir)
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.lower() != target_l:
+                continue
+            exe = os.path.join(versions_dir, entry, "RobloxPlayerBeta.exe")
+            if os.path.isfile(exe):
+                return exe
+    return ""
+
+
+def open_roblox_uri(uri: str) -> None:
+    """Open a Roblox URI, pinned to the selected version when one is set."""
+    exe = _roblox_version_exe(_SELECTED_ROBLOX_VERSION)
+    if exe:
+        try:
+            subprocess.Popen([exe, uri], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+        except Exception:
+            pass
+    try:
+        os.startfile(uri)  # type: ignore[attr-defined]
+    except Exception:
+        subprocess.Popen(
+            f'start "" "{uri}"',
+            shell=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
 
 
 class RobloxHTTP:
@@ -180,19 +241,15 @@ class RobloxHTTP:
 
 def ensure_owned_private_server(
     client: RobloxHTTP,
-    username: str,
     owner_user_id: str,
     place_id: str,
-    name_template: str = "",
     free_only: bool = True,
     known_servers: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     return _ensure_owned_private_server(
         client,
-        username,
         owner_user_id,
         place_id,
-        name_template=name_template,
         free_only=free_only,
         known_servers=known_servers,
         universe_lookup=universe_id_for_place,
@@ -510,7 +567,7 @@ class HybridLauncher:
         return pids
 
     @classmethod
-    def kill_duplicate_instances(cls, browser_tracker_id: str, graceful: bool = True) -> Dict[str, Any]:
+    def kill_duplicate_instances(cls, browser_tracker_id: str) -> Dict[str, Any]:
         try:
             from services.process_service import ProcessManager
         except Exception as exc:
@@ -566,7 +623,7 @@ class HybridLauncher:
             guard_ok, guard_detail = ensure_multi_roblox_guard()
             if not guard_ok:
                 return {"ok": False, "fatal": True, "msg": f"Multi Roblox guard failed: {guard_detail}"}
-            close_result = cls.kill_duplicate_instances(browser_tracker_id, graceful=True)
+            close_result = cls.kill_duplicate_instances(browser_tracker_id)
         else:
             release_multi_roblox_guard()
             from services.process_service import ProcessManager
@@ -637,7 +694,6 @@ class HybridLauncher:
                 )
             private_result = ensure_owned_private_server(
                 client,
-                username=username or str(identity.get("cookie_username") or ""),
                 owner_user_id=str(identity.get("cookie_user_id") or data.get("cookie_user_id") or ""),
                 place_id=place_id,
                 free_only=free_only,
@@ -734,16 +790,7 @@ class HybridLauncher:
             vip_link_code=str(vip_resolution.get("link_code") or ""),
         )
         uri = build_roblox_player_uri(ticket, launcher_url, browser_tracker_id)
-        try:
-            os.startfile(uri)  # type: ignore[attr-defined]
-        except Exception:
-            subprocess.Popen(
-                f'start "" "{uri}"',
-                shell=True,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-            )
+        open_roblox_uri(uri)
         ACCOUNT_STORE.update_record(
             str(data.get("username") or ""),
             {

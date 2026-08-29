@@ -2,17 +2,16 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional, List
 
-from core import Account, AccountState, EventBus, EventName, SmartQueue, StateManager, flog, flog_kv
-from services.network_monitor import NetworkMonitor
+from core import AccountState, EventName, flog, flog_kv, Account, EventBus, SmartQueue, StateManager
 from services.process_service import ProcessManager, ProcessService
 from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
 from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_captcha_status_text, set_account_captcha_hold
 from runtime.runtime_state_manager import RuntimeStateManager
 from runtime.runtime_orchestrator import RuntimeOrchestrator
-from runtime.runtime_scheduler import RuntimeScheduledJob, RuntimeScheduler
-from runtime.recovery_context import RecoveryAttemptContext, reason_for_category
+from runtime.runtime_scheduler import RuntimeScheduler, RuntimeScheduledJob
+from runtime.recovery_context import reason_for_category, RecoveryAttemptContext
 from runtime.recovery_budget import record_recovery_budget_attempt
 from runtime.recovery_evaluator import RecoveryEvaluator
 from runtime.recovery_owner import RecoveryOwnerRegistry
@@ -31,6 +30,7 @@ from runtime.recovery_scheduling import (
 from runtime.recovery_signal_router import RecoverySignalRouter
 from runtime.recovery_support import RECOVERY_REASON_MESSAGES, compute_backoff
 from runtime.lua_liveness_policy import lua_liveness_required, mark_waiting_for_lua
+from services.network_monitor import NetworkMonitor
 
 
 _SPECIFIC_PROCESS_RECOVERY_REASONS = {
@@ -749,8 +749,21 @@ class RecoveryCoordinator:
             self._schedule_cooldown(acc, loop_cooldown, "relaunch_loop", "recover:relaunch_loop")
             return
         if fail_count >= max_fail:
-            self.fail_account(acc, "max_fail", RECOVERY_REASON_MESSAGES["max_fail"])
-            return
+            # The "Finished" mechanism is removed: exceeding fail limits never
+            # terminates an account. Reset the counters and keep rejoining.
+            with acc._lock:
+                acc.fail_count = 0
+                acc.retry_count = 0
+                acc.crash_retry_count = 0
+                acc.launch_fail_count = 0
+                acc.network_retry_count = 0
+                acc.session_retry_count = 0
+            self._log_recovery_decision(
+                "max_fail_reset_keep_active",
+                acc,
+                "max_fail",
+                reason_msg=f"fail limit {max_fail} reached - counters reset, account stays active",
+            )
 
         if not self._cfg.get("auto_rejoin", True):
             self._clear_recovery(acc, status="disabled", reason=canonical, inflight=False)

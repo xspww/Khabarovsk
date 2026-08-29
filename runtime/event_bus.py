@@ -3,8 +3,7 @@ from __future__ import annotations
 import queue
 import threading
 import time
-from typing import Any, Callable, Dict, List, Set, Tuple
-
+from typing import Dict, Set, Any, Callable, List, Tuple
 from core_logging import flog_kv
 
 
@@ -70,11 +69,6 @@ class EventBus:
     def on(self, event: str, handler: Callable):
         with self._lock:
             self._handlers.setdefault(event, []).append(handler)
-
-    def off(self, event: str, handler: Callable):
-        with self._lock:
-            if event in self._handlers:
-                self._handlers[event] = [h for h in self._handlers[event] if h is not handler]
 
     def _run_worker(self):
         while True:

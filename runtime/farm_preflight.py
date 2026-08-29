@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Dict, Any, List
 
-from core import Account, AccountState, flog_kv
+from core import AccountState, flog_kv, Account
 from runtime.recovery_support import _clear_account_cookie_block
 from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
 

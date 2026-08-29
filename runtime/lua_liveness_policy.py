@@ -11,13 +11,21 @@ LUA_WAITING_REASON = "lua_required"
 
 
 def lua_liveness_required(cfg: Dict[str, Any] | None) -> bool:
-    return True
+    # Lua is the internal (executor/script) confirmation path. When disabled,
+    # the farm falls back to the external process-detection based verification.
+    data = cfg or {}
+    if "lua_enabled" in data:
+        return bool(data.get("lua_enabled", True))
+    return bool(data.get("use_lua", True))
 
 
 def lua_wait_timeout_seconds(cfg: Dict[str, Any] | None) -> float:
     data = cfg or {}
     try:
-        raw = data.get("lua_wait_timeout", data.get("heartbeat_timeout", 60))
+        raw = data.get(
+            "lua_timeout_seconds",
+            data.get("lua_wait_timeout", data.get("heartbeat_timeout", 60)),
+        )
         value = 60.0 if raw in (None, "") else float(raw)
     except Exception:
         value = 60.0

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, Mapping, Tuple
 
-
 CONFIG_SCHEMA_VERSION = 2
 
 _INT_RANGES: Dict[str, Tuple[int, int]] = {
@@ -10,11 +9,12 @@ _INT_RANGES: Dict[str, Tuple[int, int]] = {
     "max_fail_count": (1, 100),
     "crash_timeout": (1, 3600),
     "heartbeat_timeout": (1, 3600),
-    "lua_wait_timeout": (1, 300),
+    "lua_timeout_seconds": (1, 300),
     "launch_verify_window": (1, 3600),
     "queue_delay_seconds": (0, 3600),
     "queue_duration_seconds": (0, 86400),
     "max_concurrent_accounts": (1, 200),
+    "executor_check_interval_seconds": (30, 3600),
     "machine_supervisor_max_launching_accounts": (1, 200),
     "auto_close_minutes": (0, 1440),
     "auto_minimize_seconds": (1, 3600),

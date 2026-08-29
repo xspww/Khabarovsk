@@ -708,37 +708,6 @@ class RuntimeStateManager:
             ),
         )
 
-    def set_process_proof(
-        self,
-        acc: Any,
-        level: str,
-        reason: str = "",
-        confidence: Optional[float] = None,
-        status: str = "",
-    ) -> None:
-        acc.process_proof_level = normalize_process_proof_level(level)
-        if confidence is not None:
-            acc.process_binding_confidence = float(confidence or 0.0)
-            acc.ownership_confidence = float(confidence or 0.0)
-            acc.last_signal_confidence = float(confidence or 0.0)
-        if status:
-            acc.process_binding_status = str(status)
-            acc.binding_decision = "verified" if acc.process_proof_level == PROOF_STRONG else str(status)
-        if acc.process_proof_level == PROOF_STRONG:
-            acc.process_reject_reason = ""
-        acc.sync_runtime(reason or "process_proof")
-        self._emit(
-            "STATE",
-            "process_proof_updated",
-            **self._runtime_log_fields(
-                acc,
-                reason=reason or "process_proof",
-                process_proof_level=acc.process_proof_level,
-                process_binding_confidence=acc.process_binding_confidence,
-                status=acc.process_binding_status,
-            ),
-        )
-
     def forced_reset(self, acc: Any, desired: AccountState = AccountState.IDLE, reason: str = "forced_reset") -> None:
         self.clear_process_binding(acc, reason, increment_generation=False)
         acc.desired_state = desired

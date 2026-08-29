@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Tuple
-
+from typing import Tuple, Any, Dict
 from runtime.recovery_policy import policy_for
 
 

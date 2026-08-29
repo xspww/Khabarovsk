@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 import threading
 from typing import Any, Dict, List
-
 from account_hybrid import redact_secret
 from core import AccountState, account_launch_block_reason, flog_kv
 from services.network_monitor import NET_ONLINE
@@ -14,7 +13,7 @@ from runtime.account_worker import AccountWorker
 from runtime.account_selection import runtime_account_filter_reason
 from runtime.runtime_health import account_health_flags, build_runtime_health
 from runtime.runtime_truth import TRUTH_SUSPECT, build_account_truth
-from runtime.lua_liveness_policy import LUA_WAITING_STATUS, account_lua_online, lua_liveness_required
+from runtime.lua_liveness_policy import LUA_WAITING_STATUS, account_lua_online, lua_liveness_required, lua_wait_timeout_seconds
 
 
 IMPORTANT_RUNTIME_EVENTS = {
@@ -172,7 +171,7 @@ class RuntimeViewModelBuilder:
         any_command_inflight = farm._command_tracker.any_inflight()
         cfg_snapshot = farm.cfg_mgr.snapshot()
         lua_required = lua_liveness_required(cfg_snapshot)
-        lua_timeout = float(cfg_snapshot.get("heartbeat_timeout", 60) or 60)
+        lua_timeout = lua_wait_timeout_seconds(cfg_snapshot)
         queue_snapshot = farm._queue.snapshot() if farm._queue else {
             "size": 0,
             "pending": 0,

@@ -3,33 +3,23 @@ from __future__ import annotations
 import os
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple, List
 
 from account_hybrid import ACCOUNT_STORE, audit_event
 from core import (
     Account,
     AccountState,
     APP_DATA_DIR,
-    ConfigManager,
     EventBus,
     EventName,
-    SmartQueue,
     StateManager,
     flog,
     flog_kv,
 )
-from domain.session_identity import build_launch_intent
-from services.network_monitor import NetworkMonitor, NET_ONLINE
-from services.vip_tracker import VipTracker
+from services.network_monitor import NET_ONLINE, NetworkMonitor
 from services.process_service import ProcessManager, ProcessService
-from services.resource_monitor import get_rt_monitor
-from services.roblox_log_evidence import collect_recent_log_evidence
 from services.captcha_guard import (
-    CAPTCHA_BLOCK_REASON,
-    CAPTCHA_REASON,
     clear_account_captcha_hold,
-    is_captcha_text,
-    set_account_captcha_hold,
 )
 from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
 from runtime.farm_health import (
@@ -42,24 +32,7 @@ from runtime.farm_health import (
     get_runtime_health as get_runtime_health_payload,
     get_runtime_telemetry as get_runtime_telemetry_payload,
 )
-from runtime.account_runtime_controller import AccountRuntimeController
 from runtime.command_tracker import RuntimeCommandTracker
-from runtime.recovery_context import (
-    RecoveryAttemptContext,
-    SESSION_CONFLICT,
-    reason_for_category,
-)
-from runtime.recovery_policy import (
-    RecoveryDedupeTracker,
-    SessionConflictTracker,
-    active_recovery_block_reason,
-    adaptive_recovery_delay,
-    build_recovery_log_payload,
-    canonical_reason,
-    context_from_signal,
-    kill_local_duplicate_for_session_conflict,
-    policy_for,
-)
 from runtime.runtime_store import RuntimeStore
 from runtime.runtime_state_manager import RuntimeStateManager
 from runtime.runtime_timeline import RuntimeTimeline
@@ -70,17 +43,19 @@ from runtime.farm_lifecycle import FarmLifecycleService
 from runtime.lua_server_detection import LuaServerDetection, detect_lua_server
 from runtime.recovery_view import recovery_step_for_account
 from runtime.supervisor_runtime import SupervisorRuntime
-from runtime.system_maintenance import SystemMaintenance
 from runtime.config_snapshot import apply_runtime_config_snapshot
-from runtime.recovery_engine import RecoveryCoordinator, RecoveryEngine
 from runtime.account_worker import AccountWorker
 from runtime.command_rate_limit import FORCE_REJOIN_INTERVAL_SECONDS, PerAccountRateLimiter
-from runtime.dispatcher import Dispatcher
 from runtime.farm_initial_sync import initial_state_sync
 from runtime.lua_rejoin_events import handle_lua_rejoin_event as _handle_lua_rejoin_event
 from runtime.farm_preflight import preflight_cookie_blocks
 from runtime.lua_identity import resolve_lua_account
 from runtime.lua_event_guard import lua_event_handler_error_response, validate_lua_event_payload
+from runtime.system_maintenance import SystemMaintenance
+from core import SmartQueue
+from runtime.recovery_engine import RecoveryEngine
+from runtime.dispatcher import Dispatcher
+from core import ConfigManager
 
 
 class FarmController:
@@ -93,6 +68,7 @@ class FarmController:
         self._stop = threading.Event()
         self.running = False
         self.start_ts: Optional[float] = None
+        self._executor_start_guard = None
 
         self._accounts: List[Account] = []
         self._workers: Dict[str, AccountWorker] = {}
@@ -321,7 +297,13 @@ class FarmController:
         return preflight_cookie_blocks(self._accounts, self._recovery, self._state_mgr, self._runtime_state)
 
     def start(self):
+        if not self.running and self._executor_start_guard is not None:
+            if not self._executor_start_guard():
+                raise RuntimeError("Selected Roblox Executor could not be started")
         return self._lifecycle.start()
+
+    def set_executor_start_guard(self, guard):
+        self._executor_start_guard = guard
 
     def stop(self):
         return self._lifecycle.stop()
@@ -335,7 +317,6 @@ class FarmController:
         except Exception:
             pass
         self._machine_supervisor.set_accounts(self._accounts)
-        self._sync_accounts_from_ram(persist=False)
         if self._recovery:
             self._recovery._accounts = self._accounts
         for acc in self._accounts:
@@ -365,9 +346,6 @@ class FarmController:
         except Exception as e:
             flog_kv("CONFIG", "runtime_config_snapshot_failed", "warning", error=e)
         self._bump_status_revision()
-
-    def _sync_accounts_from_ram(self, persist: bool = False):
-        return
 
     def _check_force_rejoin_rate_limit(self, account_key: str) -> Tuple[bool, str]:
         limiter = getattr(self, "_force_rejoin_limiter", None)
@@ -437,23 +415,6 @@ class FarmController:
         )
         self._push_event("system", f"Kill PID requested: {acc.display_name} (PID {pid})", account=acc, severity="warn", reason=reason)
         return True, f"Killed PID for {username}" if killed else f"Released stale PID for {username}"
-
-    def verify_account(self, username: str) -> Tuple[bool, str]:
-        acc = self._find_account(username)
-        if not acc:
-            return False, "Account not found"
-        now = time.time()
-        result = self._runtime_orchestrator.request_verify_finished(
-            acc,
-            self._state_mgr or self._runtime_state,
-            reason="manual_verify_finished",
-        )
-        killed = bool(result.get("killed"))
-        self.cfg_mgr.save_accounts(self._accounts)
-        self._bump_status_revision()
-        flog_kv("COMMAND", "verify_finished", account=acc.display_name, killed=killed, finished_at=f"{now:.3f}")
-        self._push_event("system", f"Verified finished: {acc.display_name}", account=acc, severity="success", reason="manual_verify_finished")
-        return True, f"Verified finished: {username}" + (" (PID killed)" if killed else "")
 
     def _set_lua_account_description(self, acc: Account, description: str) -> Tuple[bool, str]:
         text = str(description or "").strip()
@@ -684,7 +645,7 @@ class FarmController:
             event=event_name,
             error=error,
         )
-        return lua_event_handler_error_response(acc, event_name, error)
+        return lua_event_handler_error_response(acc, event_name)
 
     def handle_lua_rejoin_event(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         return _handle_lua_rejoin_event(

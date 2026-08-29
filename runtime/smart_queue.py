@@ -21,10 +21,6 @@ class SmartQueue:
         self._closed = False
         self._stale_rejections = 0
         self._sequence = 0
-
-    def is_busy(self) -> bool:
-        return self._busy.is_set()
-
     def mark_busy(self):
         self._busy.set()
 
@@ -139,7 +135,7 @@ class SmartQueue:
         boost = -1000.0 if boosted else 0.0
         return base + retry_penalty + boost
 
-    def _entry_score(self, entry: Dict[str, Any], now: float) -> float:
+    def _entry_score(self, entry: Dict[str, Any]) -> float:
         try:
             return float(entry.get("score"))
         except (TypeError, ValueError):
@@ -157,7 +153,7 @@ class SmartQueue:
         queued_at = float(entry.get("queued_at") or now)
         sequence = int(entry.get("sequence") or 0)
         ready_rank = 0 if due_at <= now else 1
-        score_at_due = self._entry_score(entry, max(now, due_at))
+        score_at_due = self._entry_score(entry)
         return (ready_rank, due_at if ready_rank else 0.0, score_at_due, sequence, queued_at)
 
     def pop(self, timeout: float = 1.0) -> Optional[Any]:
@@ -214,7 +210,7 @@ class SmartQueue:
                 best_key, best_entry = min(
                     ready,
                     key=lambda item: (
-                        self._entry_score(item[1], now),
+                        self._entry_score(item[1]),
                         int(item[1].get("sequence") or 0),
                         float(item[1].get("queued_at") or now),
                     ),
@@ -229,7 +225,7 @@ class SmartQueue:
                     runtime_generation=best_entry.get("runtime_generation", 0),
                     recovery_generation=best_entry.get("recovery_generation", best_entry.get("generation", 0)),
                     size=len(self._entries),
-                    score=f"{self._entry_score(best_entry, now):.1f}",
+                    score=f"{self._entry_score(best_entry):.1f}",
                 )
                 return acc
 
@@ -247,16 +243,6 @@ class SmartQueue:
                 int(entry.get("recovery_generation", entry.get("generation", 0)) or 0) == int(getattr(acc, "recovery_generation", 0) or 0)
                 and int(entry.get("runtime_generation", 0) or 0) == int(getattr(acc, "runtime_generation", 0) or 0)
             )
-
-    def cancel_account(self, acc_or_key: Any, reason: str = "cancel_account") -> int:
-        key = str(getattr(acc_or_key, "_config_username", acc_or_key) or "")
-        with self._cond:
-            removed = 1 if self._entries.pop(key, None) else 0
-            if removed:
-                self._cond.notify_all()
-                flog_kv("QUEUE", "cancel_account", account=key, reason=reason, size=len(self._entries))
-            return removed
-
     def cancel_all(self, reason: str = "cancel_all") -> int:
         with self._cond:
             count = len(self._entries)
@@ -278,7 +264,7 @@ class SmartQueue:
             for position, (key, entry) in enumerate(ordered_entries, start=1):
                 acc = entry.get("acc")
                 due_at = self._entry_due_at(entry)
-                score = self._entry_score(entry, now)
+                score = self._entry_score(entry)
                 entries.append({
                     "account": key,
                     "display": getattr(acc, "display_name", key),

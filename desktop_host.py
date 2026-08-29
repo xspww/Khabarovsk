@@ -10,7 +10,7 @@ import traceback
 import urllib.error
 import urllib.request
 import webbrowser
-from typing import Any, Optional, Tuple
+from typing import Any, Tuple, Optional
 
 import uvicorn
 
@@ -20,8 +20,6 @@ from desktop import console_output
 from core import LOG_FILE, flog, flog_kv
 from desktop.console_icon import (
     APP_ICON_FILE,
-    destroy_console_icon_handles as _destroy_console_icon_handles,
-    ensure_console_icon_file as _ensure_console_icon_file,
     set_console_window_icon as _set_console_window_icon,
 )
 from desktop.instance_guard import (
@@ -29,17 +27,9 @@ from desktop.instance_guard import (
     _acquire_instance_socket,
     _acquire_single_instance_mutex,
     _clear_instance_state,
-    _cmdline_targets_this_app,
-    _find_existing_dashboard,
     _find_free_port,
-    _has_older_main_process,
-    _is_pid_alive,
-    _is_same_cronus_process,
-    _read_instance_state,
-    _request_instance_shutdown,
     _stop_previous_instance,
     _stop_same_app_processes,
-    _terminate_instance_tree,
     _write_instance_state,
     clear_instance_state,
     prepare_backend_single_instance,
@@ -228,7 +218,7 @@ def _console_status(label: str, detail: str) -> None:
     return
 
 
-def _console_header(mode: str) -> None:
+def _console_header() -> None:
     os.environ.setdefault("CRONUS_CONSOLE_ACTIVITY", "1")
     os.environ.setdefault("CRONUS_CONSOLE_COLOR", "1")
     try:
@@ -400,6 +390,14 @@ def _run_desktop_window() -> bool:
             self._active_icon = self._idle_icon
             self.setObjectName("CronusTitleBar")
             self.setFixedHeight(32)
+            # Centered title overlay: it fills the whole bar and is drawn behind
+            # the logo (left) and window controls (right), which stay in place.
+            self._title_label = QLabel(self)
+            self._title_label.setObjectName("CronusTitle")
+            self._title_label.setTextFormat(Qt.TextFormat.RichText)
+            self._title_label.setText('<span>Cronus Launcher</span> <span style="color: #42495d;">- 1.0</span>')
+            self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
             layout = QHBoxLayout(self)
             layout.setContentsMargins(12, 0, 10, 0)
             layout.setSpacing(6)
@@ -410,10 +408,6 @@ def _run_desktop_window() -> bool:
             if not self._idle_icon.isNull():
                 self._status_icon.setPixmap(self._idle_icon)
             layout.addWidget(self._status_icon)
-            title_label = QLabel(self)
-            title_label.setText(title)
-            title_label.setObjectName("CronusTitle")
-            layout.addWidget(title_label)
             layout.addStretch(1)
             min_btn = self._button("WinMinButton", "Minimize", "minimize")
             max_btn = self._button("WinMaxButton", "Maximize", "maximize")
@@ -427,14 +421,14 @@ def _run_desktop_window() -> bool:
             self.setStyleSheet(
                 """
                 #CronusTitleBar {
-                    background-color: #0b1120;
-                    border-bottom: 1px solid #1c2940;
+                    background-color: #0d0e12;
+                    border-bottom: 1px solid #1d1f26;
                     border-top-left-radius: 10px;
                     border-top-right-radius: 10px;
                 }
                 #CronusTitle {
-                    font-family: "Kanit";
-                    color: #cbd7ef;
+                    font-family: "Kanit", "Segoe UI", sans-serif;
+                    color: #7f838c;
                     font-size: 12px;
                     font-weight: 500;
                 }
@@ -444,23 +438,27 @@ def _run_desktop_window() -> bool:
                 QPushButton#WinMinButton, QPushButton#WinMaxButton, QPushButton#WinCloseButton {
                     width: 34px; height: 22px; min-width: 34px; max-width: 34px;
                     min-height: 22px; max-height: 22px; border-radius: 9px;
-                    border: 1px solid #17243a;
-                    background-color: #0b1424;
-                    color: #5f6f84;
+                    border: 1px solid #232529;
+                    background-color: #15161b;
+                    color: #53565e;
                     padding: 0px;
                 }
                 QPushButton#WinMinButton:hover, QPushButton#WinMaxButton:hover {
-                    background-color: #101c31;
-                    border-color: #284366;
-                    color: #e7f0ff;
+                    background-color: #1b1c22;
+                    border-color: #32343d;
+                    color: #ffffff;
                 }
                 QPushButton#WinCloseButton:hover {
-                    background-color: #2a1420;
-                    border-color: #713247;
-                    color: #ff8b98;
+                    background-color: #26161b;
+                    border-color: #4c1d24;
+                    color: #f87171;
                 }
                 """
             )
+
+        def resizeEvent(self, event):
+            super().resizeEvent(event)
+            self._title_label.setGeometry(0, 0, self.width(), self.height())
 
         def set_running(self, running: bool):
             running = bool(running)
@@ -552,8 +550,8 @@ def _run_desktop_window() -> bool:
     container.setStyleSheet(
         """
         QWidget#CronusWindowShell {
-            background: #080d18;
-            border: 1px solid #1c2940;
+            background: #0b0c10;
+            border: 1px solid #1d1f26;
             border-radius: 10px;
         }
         """
@@ -644,7 +642,7 @@ def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
     if fastapi_app is not None or farm_controller is not None:
         configure(fastapi_app, farm_controller)
     global PORT
-    _console_header("Desktop")
+    _console_header()
     _console_status("startup", "Preparing single-instance guard")
     _stop_previous_instance()
     _stop_same_app_processes()
@@ -689,118 +687,6 @@ def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
             farm.stop()
         _clear_instance_state()
         sys.exit(0)
-
-def run_with_tray(fastapi_app: Any = None, farm_controller: Any = None):
-    if fastapi_app is not None or farm_controller is not None:
-        configure(fastapi_app, farm_controller)
-    global PORT
-    if _has_older_main_process():
-        existing_port = _find_existing_dashboard(7777)
-        if existing_port is not None:
-            flog(f"[MAIN] Older main.py process detected on http://{HOST}:{existing_port}")
-            try:
-                webbrowser.open(f"http://{HOST}:{existing_port}")
-            except Exception:
-                pass
-            return
-
-    if (not _acquire_single_instance_mutex()) or (not _acquire_instance_socket()):
-        existing_port = _find_existing_dashboard(7777)
-        if existing_port is not None:
-            flog(f"[MAIN] Another instance is already running on http://{HOST}:{existing_port}")
-            try:
-                webbrowser.open(f"http://{HOST}:{existing_port}")
-            except Exception:
-                pass
-            return
-
-    existing_port = _find_existing_dashboard(7777)
-    if existing_port is not None:
-        flog(f"[MAIN] Existing dashboard detected on http://{HOST}:{existing_port} - reusing instance")
-        try:
-            webbrowser.open(f"http://{HOST}:{existing_port}")
-        except Exception:
-            pass
-        return
-
-    PORT = _find_free_port(7777)
-
-    server_thread = _start_backend_thread()
-    ready, detail = _wait_for_backend_ready(server_thread)
-    if ready:
-        flog(f"[MAIN] FastAPI ready on http://{HOST}:{PORT}")
-    else:
-        flog_kv("MAIN", "fastapi_not_ready", "error", port=PORT, detail=detail)
-
-    try:
-        import pystray
-        from pystray import MenuItem as Item
-
-        icon_img = _make_tray_icon()
-        if icon_img is None:
-            raise ImportError("PIL not available")
-
-        def open_browser():
-            webbrowser.open(f"http://{HOST}:{PORT}")
-
-        def exit_app(icon, _=None):
-            farm = _require_configured()[1]
-            if farm.running:
-                farm.stop()
-            icon.stop()
-            os._exit(0)
-
-        menu = pystray.Menu(
-            Item("Open Cronus Launcher", lambda: open_browser()),
-            Item("Start Farm",        lambda: (_require_configured()[1].start() if not _require_configured()[1].running else None)),
-            Item("Stop Farm",         lambda: (_require_configured()[1].stop() if _require_configured()[1].running else None)),
-            Item("Restart Farm",      lambda: (_require_configured()[1].stop() or time.sleep(0.5) or _require_configured()[1].start())),
-            pystray.Menu.SEPARATOR,
-            Item("Exit",              lambda i, _: exit_app(i)),
-        )
-
-        icon = pystray.Icon("CronusLauncher", icon_img, APP_NAME, menu)
-        threading.Thread(target=open_browser, daemon=True).start()
-        flog("[MAIN] Tray icon running")
-        icon.run()
-
-    except ImportError:
-        flog("[MAIN] pystray not available - running as console")
-        webbrowser.open(f"http://{HOST}:{PORT}")
-        print(f"""
-+-----------------------------------------------+
-|            Cronus Launcher Console           |
-+-----------------------------------------------+
-|  Web UI: http://{HOST}:{PORT}
-|  Stop  : Ctrl+C
-+-----------------------------------------------+
-""")
-        try:
-            while True:
-                time.sleep(1)
-        except KeyboardInterrupt:
-            farm = _require_configured()[1]
-            if farm.running:
-                farm.stop()
-            sys.exit(0)
-
-def run_without_tray(fastapi_app: Any = None, farm_controller: Any = None):
-    if fastapi_app is not None or farm_controller is not None:
-        configure(fastapi_app, farm_controller)
-    global PORT
-    _stop_previous_instance()
-    _stop_same_app_processes()
-
-    PORT = _find_free_port(7777)
-    _write_instance_state(PORT)
-    flog(f"[MAIN] Starting console mode on http://{HOST}:{PORT}")
-    threading.Thread(target=lambda: webbrowser.open(f"http://{HOST}:{PORT}"), daemon=True).start()
-    try:
-        uvicorn.run(_require_configured()[0], host=HOST, port=PORT, log_level="warning", access_log=False, log_config=None)
-    finally:
-        _clear_instance_state()
-
-
 INSTANCE_TOKEN = _INSTANCE_TOKEN
 SHUTDOWN_REQUESTED = _SHUTDOWN_REQUESTED
 clear_instance_state = _clear_instance_state

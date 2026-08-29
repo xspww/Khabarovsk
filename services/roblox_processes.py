@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import getpass
 import os
@@ -6,7 +6,7 @@ import subprocess
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
-from core import Account, flog, flog_kv
+from core import flog, flog_kv
 from runtime.runtime_state_manager import RuntimeStateManager
 from services.browser_tracker import extract_browser_tracker_id, tracker_matches
 from services.resource_monitor import get_rt_monitor

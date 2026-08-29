@@ -3,10 +3,8 @@ from __future__ import annotations
 import threading
 import time
 import urllib.request
+from core import flog, EventBus
 from typing import Optional
-
-from core import EventBus, flog
-
 NET_ONLINE   = "ONLINE"
 NET_DEGRADED = "DEGRADED"
 NET_OFFLINE  = "OFFLINE"
@@ -117,9 +115,5 @@ class NetworkMonitor:
 
             first_run = False
             self._stop.wait(timeout=self._interval)
-
-    def status_dict(self) -> dict:
-        with self._lock:
-            return {"state": self._state, "since": self._state_since}
 
 __all__ = ["NET_ONLINE", "NET_DEGRADED", "NET_OFFLINE", "NetworkState", "NetworkMonitor"]

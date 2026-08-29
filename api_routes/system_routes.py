@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import secrets
+import subprocess
 import threading
 import time
 from typing import Any, Dict, List
@@ -15,9 +16,9 @@ from core import flog_kv
 from roblox_hybrid import release_multi_roblox_guard
 
 from .auth import require_api_token
-from .context import ApiContext
 from .idempotency import begin_idempotent_request, begin_idempotent_request_sync, finish_idempotent_request
 from .settings_state import _int_setting
+from .context import ApiContext
 
 _COOKIE_RE = re.compile(r'(_\|WARNING:[^\s\'"<>]+|\.ROBLOSECURITY[^\s\'"<>]*)', re.IGNORECASE)
 _KV_SECRET_RE = re.compile(r"(?i)\b(cookie|roblosecurity|password)=([^\s]+)")
@@ -196,6 +197,157 @@ def register(app, ctx: ApiContext) -> None:
     def api_roblox_install_status():
         return roblox_installer.status()
 
+    @app.get("/api/troubleshoot/executor")
+    def api_executor_status():
+        return ctx.executor_tracker.status()
+
+    @app.post("/api/troubleshoot/executor/check")
+    def api_executor_check():
+        return ctx.executor_tracker.refresh()
+
+    @app.get("/api/troubleshoot/executor/relaunch")
+    def api_executor_relaunch_status():
+        return ctx.executor_relauncher.status()
+
+    @app.post("/api/troubleshoot/executor/relaunch")
+    def api_executor_relaunch():
+        return {"ok": ctx.executor_relauncher.retry(), **ctx.executor_relauncher.status()}
+
+    @app.post("/api/troubleshoot/executor/browse")
+    def api_executor_browse(request: Request):
+        if getattr(ctx.farm, "running", False):
+            raise HTTPException(409, "Stop Auto Rejoin before changing Executor path")
+        # FastAPI executes sync endpoints in a worker thread. tkinter requires
+        # its Tcl interpreter to run on the main thread, so use the native
+        # Windows common dialog instead.
+        selected = ""
+        if os.name == "nt":
+            import ctypes
+            from ctypes import wintypes
+
+            class OpenFileName(ctypes.Structure):
+                _fields_ = [
+                    ("lStructSize", wintypes.DWORD),
+                    ("hwndOwner", wintypes.HWND),
+                    ("hInstance", wintypes.HINSTANCE),
+                    ("lpstrFilter", wintypes.LPCWSTR),
+                    ("lpstrCustomFilter", wintypes.LPWSTR),
+                    ("nMaxCustFilter", wintypes.DWORD),
+                    ("nFilterIndex", wintypes.DWORD),
+                    ("lpstrFile", wintypes.LPWSTR),
+                    ("nMaxFile", wintypes.DWORD),
+                    ("lpstrFileTitle", wintypes.LPWSTR),
+                    ("nMaxFileTitle", wintypes.DWORD),
+                    ("lpstrInitialDir", wintypes.LPCWSTR),
+                    ("lpstrTitle", wintypes.LPCWSTR),
+                    ("Flags", wintypes.DWORD),
+                    ("nFileOffset", wintypes.WORD),
+                    ("nFileExtension", wintypes.WORD),
+                    ("lpstrDefExt", wintypes.LPCWSTR),
+                    ("lCustData", wintypes.LPARAM),
+                    ("lpfnHook", wintypes.LPVOID),
+                    ("lpTemplateName", wintypes.LPCWSTR),
+                    ("pvReserved", wintypes.LPVOID),
+                    ("dwReserved", wintypes.DWORD),
+                    ("FlagsEx", wintypes.DWORD),
+                ]
+
+            buffer = ctypes.create_unicode_buffer(32768)
+            dialog = OpenFileName()
+            dialog.lStructSize = ctypes.sizeof(OpenFileName)
+            dialog.lpstrFilter = "Executable (*.exe)\0*.exe\0All files\0*.*\0\0"
+            dialog.nFilterIndex = 1
+            # OPENFILENAMEW expects an LPWSTR pointer.  Assigning the ctypes
+            # array directly raises TypeError on Python 3.14 before the dialog
+            # can be shown.
+            dialog.lpstrFile = ctypes.cast(buffer, wintypes.LPWSTR)
+            dialog.nMaxFile = len(buffer)
+            dialog.lpstrTitle = "Select Roblox Executor"
+            dialog.Flags = 0x00001000 | 0x00000800 | 0x00000004  # FILEMUSTEXIST | PATHMUSTEXIST | EXPLORER
+            if ctypes.windll.comdlg32.GetOpenFileNameW(ctypes.byref(dialog)):
+                selected = buffer.value
+        else:
+            raise HTTPException(500, "Native Executor file picker is only supported on Windows")
+        if not selected:
+            return {"ok": False, "cancelled": True}
+        return {"ok": True, "path": selected}
+
+
+    @app.get("/api/troubleshoot/roblox-install/versions")
+    def api_roblox_install_versions():
+        versions = roblox_installer.list_installed()
+        exploitstrap_versions = roblox_installer.list_exploitstrap_installed()
+        latest_status = roblox_installer._latest_version_status()
+        latest_version = str(latest_status.get("version") or "").strip().lower()
+        items = []
+        for index, item in enumerate(versions):
+            version = str(item.get("version") or "").strip()
+            is_latest = bool(
+                (latest_version and version.lower() == latest_version)
+                or (not latest_version and index == 0)
+            )
+            items.append({
+                "version": version,
+                "path": str(item.get("path") or ""),
+                "root": str(item.get("root") or ""),
+                "modified": float(item.get("modified") or 0),
+                "is_latest": is_latest,
+                "source": str(item.get("source") or "roblox"),
+                "launcher": str(item.get("launcher") or "Roblox"),
+                "launcher_path": str(item.get("launcher_path") or ""),
+                "launcher_version": str(item.get("launcher_version") or ""),
+            })
+        for item in exploitstrap_versions:
+            items.append({
+                "version": str(item.get("version") or ""),
+                "path": str(item.get("path") or ""),
+                "root": str(item.get("root") or ""),
+                "modified": float(item.get("modified") or 0),
+                "is_latest": False,
+                "source": "exploitstrap",
+                "launcher": "ExploitStrap",
+                "launcher_path": str(item.get("launcher_path") or ""),
+                "launcher_version": str(item.get("launcher_version") or ""),
+            })
+        return {
+            "ok": True,
+            "latest_version": str(latest_status.get("version") or ""),
+            "latest_version_error": str(latest_status.get("error") or ""),
+            "versions": items,
+        }
+
+    @app.post("/api/troubleshoot/roblox-install/open-location")
+    async def api_roblox_install_open_location(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Expected object")
+        requested_version = str(body.get("version") or "").strip().lower()
+        requested_source = str(body.get("source") or "roblox").strip().lower()
+        if not requested_version or requested_source not in {"roblox", "exploitstrap"}:
+            raise HTTPException(400, "Invalid version selection")
+        candidates = (
+            roblox_installer.list_exploitstrap_installed()
+            if requested_source == "exploitstrap"
+            else roblox_installer.list_installed()
+        )
+        match = next(
+            (item for item in candidates if str(item.get("version") or "").strip().lower() == requested_version),
+            None,
+        )
+        if not match:
+            raise HTTPException(404, "Version not found")
+        location = str(match.get("root") or "").strip()
+        if not location or not os.path.isdir(location):
+            raise HTTPException(404, "Version folder not found")
+        try:
+            # Passing the folder as a plain Explorer argument is reliable on Windows.
+            # The /select form can fall back to This PC when the path is not quoted
+            # exactly as Explorer expects.
+            subprocess.Popen(["explorer.exe", location], close_fds=True)
+        except OSError as exc:
+            raise HTTPException(500, f"Could not open location: {exc}")
+        return {"ok": True, "location": location, "version": match.get("version"), "source": requested_source}
+
 
     @app.post("/api/troubleshoot/roblox-install/uninstall")
     def api_roblox_install_uninstall(request: Request):
@@ -232,7 +384,7 @@ def register(app, ctx: ApiContext) -> None:
 
     @app.get("/", response_class=HTMLResponse)
     def serve_ui():
-        html_ui = str(ctx.html_ui or "").replace("__CRONUS_API_TOKEN__", str(ctx.instance_token or ""))
+        html_ui = str(ctx.html_ui() or "").replace("__CRONUS_API_TOKEN__", str(ctx.instance_token or ""))
         return HTMLResponse(
             html_ui,
             headers={

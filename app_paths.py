@@ -69,10 +69,6 @@ def resource_path(*parts: str) -> str:
     return os.path.join(RESOURCE_ROOT, *parts)
 
 
-def bundle_path(*parts: str) -> str:
-    return os.path.join(BUNDLE_DIR, *parts)
-
-
 def _norm(path: str) -> str:
     return os.path.normcase(os.path.abspath(path))
 

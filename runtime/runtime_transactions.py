@@ -10,7 +10,6 @@ from __future__ import annotations
 import threading
 import time
 from typing import Any, Callable, Dict, Optional
-
 from domain.session_identity import create_rejoin_transaction, create_session_identity
 
 

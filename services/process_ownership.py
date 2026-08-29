@@ -3,7 +3,6 @@ from __future__ import annotations
 import os
 from typing import Any, Dict, Optional
 
-
 def _lower_path(value: Any) -> str:
     return os.path.normcase(os.path.abspath(str(value or ""))) if value else ""
 

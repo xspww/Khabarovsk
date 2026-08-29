@@ -5,8 +5,7 @@ import re
 import sys
 import threading
 import time
-from typing import Any, Dict, Optional
-
+from typing import Optional, Any, Dict
 from desktop import console_output
 
 _LOCK = threading.Lock()
@@ -192,20 +191,12 @@ def _pid(fields: Dict[str, Any]) -> str:
     )
 
 
-def _pid_value(value: Any, default: str = "unknown") -> str:
-    return _paint(_text(value, default), _COLOR_GRAY)
-
-
 def _pid_paren(value: Any, default: str = "unknown") -> str:
     return _paint(f"(PID: {_text(value, default)})", _COLOR_GRAY)
 
 
 def _username_paren(value: Any, *, color: str = _COLOR_USERNAME) -> str:
     return _paint(f"({_text(value, 'Account')})", color)
-
-
-def _gray_text(value: str) -> str:
-    return _paint(value, _COLOR_GRAY)
 
 
 def _server_kind(fields: Dict[str, Any]) -> str:
@@ -253,12 +244,7 @@ def _reload_all_line(count: Any) -> str:
     return _line(_ICON_TELEPORT, f"Reload All Roblox ( {account_count} Accounts )", stamp_color=_COLOR_RELOAD_STAMP)
 
 
-def _teleport_state_text(fields: Dict[str, Any]) -> str:
-    state = _text(fields.get("teleport_state") or fields.get("state") or fields.get("detail"))
-    return state.rsplit(".", 1)[-1] if state else ""
-
-
-def _teleport_line(account: str, fields: Dict[str, Any]) -> Optional[str]:
+def _teleport_line(account: str) -> Optional[str]:
     key = _account_key(account)
     now = time.monotonic()
     previous = float(_LAST_TELEPORT_AT_BY_ACCOUNT.get(key) or 0.0)
@@ -306,7 +292,7 @@ def format_console_line(icon: str, message: str, *, indent: bool = False) -> str
     return _line(_normalize_icon(icon), _text(message), indent=indent)
 
 
-def _disconnect_line(account: str, reason: str = "", delay: str = "", action: str = "restart") -> Optional[str]:
+def _disconnect_line(account: str, reason: str = "") -> Optional[str]:
     now = time.monotonic()
     key = _text(account, "Account").lower()
     previous = float(_LAST_DISCONNECT_AT.get(key) or 0.0)
@@ -318,7 +304,7 @@ def _disconnect_line(account: str, reason: str = "", delay: str = "", action: st
     return _line(_ICON_WARN, f"{status}{suffix}", stamp_color=_COLOR_DISCONNECT_STAMP)
 
 
-def _captcha_line(account: str, pid: str = "", detail: str = "") -> Optional[str]:
+def _captcha_line(account: str, pid: str = "") -> Optional[str]:
     now = time.monotonic()
     key = _text(account, "Account").lower()
     previous = float(_LAST_CAPTCHA_AT.get(key) or 0.0)
@@ -436,7 +422,7 @@ def _format_state(name: str, fields: Dict[str, Any]) -> Optional[str]:
         if _reason(fields) == "auto_close_cycle":
             return None
         if _reason(fields) == "captcha_required":
-            return _captcha_line(account, pid, _text(fields.get("detail")))
+            return _captcha_line(account, pid)
         if new == "IN_GAME":
             if pid:
                 _LAST_PID_BY_ACCOUNT[_account_key(account)] = pid
@@ -456,14 +442,12 @@ def _format_recovery(name: str, fields: Dict[str, Any]) -> Optional[str]:
     account = _account(fields)
     reason = _reason(fields, "recovery")
     if name == "captcha_hold" or reason == "captcha_required":
-        return _captcha_line(account, _pid(fields), _text(fields.get("detail") or fields.get("captcha_detail")))
+        return _captcha_line(account, _pid(fields))
     if name == "network_lost":
-        return _disconnect_line(account, _disconnect_reason(fields, "network_lost"), action="reconnect")
+        return _disconnect_line(account, _disconnect_reason(fields, "network_lost"))
     if name == "cooldown":
         display_reason = _disconnect_reason(fields, reason)
-        delay = _duration_text(fields.get("delay") or fields.get("delay_seconds"))
-        action = "reconnect" if display_reason in {"network_drop", "connection_error", "network_lost"} else "restart"
-        return _disconnect_line(account, display_reason, delay, action)
+        return _disconnect_line(account, display_reason)
     return None
 
 
@@ -473,11 +457,11 @@ def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]
     if scope == "RUNTIME" and name == "suspect_process_check":
         return _suspect_process_line(account)
     if scope in {"LUA", "LUA_EVENT"} and name == "teleport_detected":
-        return _teleport_line(account, fields)
+        return _teleport_line(account)
     if scope == "QUEUE" and name == "auto_close_cycle":
         return _reload_all_line(fields.get("killed"))
     if scope == "CAPTCHA" or name == "captcha_dialog_hold" or (name == "account_hold" and _reason(fields) == "captcha_required"):
-        return _captcha_line(account, pid, _text(fields.get("detail") or fields.get("captcha_detail")))
+        return _captcha_line(account, pid)
     if scope == "WORKER" and name in {"visible_process_adopted", "rebind_refreshed"} and pid:
         _LAST_PID_BY_ACCOUNT[_account_key(account)] = pid
         if not _LUA_LIVENESS_REQUIRED:
@@ -496,7 +480,7 @@ def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]
     return None
 
 
-def _format_structured(scope: str, name: str, level: str, fields: Dict[str, Any]) -> Optional[str]:
+def _format_structured(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]:
     if scope == "STATUS":
         return None
     if scope == "STATE":
@@ -506,7 +490,7 @@ def _format_structured(scope: str, name: str, level: str, fields: Dict[str, Any]
     return _format_misc(scope, name, fields)
 
 
-def emit_structured(scope: str, name: str, level: str = "info", **fields: Any) -> None:
+def emit_structured(scope: str, name: str, **fields: Any) -> None:
     if not _enabled():
         return
     scope_text = _text(scope).upper()
@@ -517,7 +501,7 @@ def emit_structured(scope: str, name: str, level: str = "info", **fields: Any) -
         if scope_text == "RUNTIME" and name_text == "suspect_process_check":
             _emit_suspect_process_check(data)
         else:
-            line = _format_structured(scope_text, name_text, level, data)
+            line = _format_structured(scope_text, name_text, data)
             if line:
                 if " disconnected" in line:
                     _emit_check_before_disconnect(_account(data))
@@ -525,7 +509,7 @@ def emit_structured(scope: str, name: str, level: str = "info", **fields: Any) -
         _set_title_locked()
 
 
-def _format_text(message: str, level: str = "info") -> Optional[str]:
+def _format_text(message: str) -> Optional[str]:
     msg = message.strip()
     if not msg or _KV_LINE_RE.match(msg):
         return None
@@ -534,8 +518,7 @@ def _format_text(message: str, level: str = "info") -> Optional[str]:
 
     match = re.match(r"^\[WORKER\]\s+(.+?)\s+disconnect dialog detected - will recover in\s+([0-9.]+)s\b", msg)
     if match:
-        delay = _duration_text(match.group(2))
-        return _disconnect_line(match.group(1).strip(), "disconnect_dialog", delay)
+        return _disconnect_line(match.group(1).strip(), "disconnect_dialog")
 
     match = re.match(r"^\[WORKER\]\s+(.+?)\s+Not Responding\b", msg)
     if match:
@@ -548,11 +531,11 @@ def _format_text(message: str, level: str = "info") -> Optional[str]:
     return None
 
 
-def emit_text(message: str, level: str = "info") -> None:
+def emit_text(message: str) -> None:
     if not _enabled():
         return
     msg = str(message or "")
-    line = _format_text(msg, level)
+    line = _format_text(msg)
     if not line:
         return
     account = ""

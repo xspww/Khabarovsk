@@ -1,14 +1,12 @@
 from __future__ import annotations
 
-import os
 import random
 import re
-import subprocess
 import time
 import urllib.parse
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple, Optional
 
-from core import Account, ServerType, account_launch_block_reason, flog, flog_kv
+from core import ServerType, account_launch_block_reason, flog, flog_kv, Account
 from services.browser_tracker import tracker_label
 
 def parse_vip_link(vip_url: str) -> Tuple[str, str]:
@@ -284,29 +282,19 @@ def launch(cls, acc: Account) -> Tuple[bool, str, str]:
     )
     flog(f"[LAUNCH] {acc.display_name} → {safe_url[:120]}")
 
+    from roblox_hybrid import open_roblox_uri
+
     try:
-        os.startfile(cls.LOGIN_WARMUP_URL)
+        open_roblox_uri(cls.LOGIN_WARMUP_URL)
         flog(f"[LAUNCH] Warmup home for {acc.display_name}")
         time.sleep(cls.LOGIN_WARMUP_DELAY)
     except Exception as e:
-        flog(f"[LAUNCH] warmup startfile failed: {e}", "warning")
+        flog(f"[LAUNCH] warmup open failed: {e}", "warning")
 
     try:
-        os.startfile(url)
+        open_roblox_uri(url)
         acc.last_launch_at = time.time()
         return True, url, attempted_vip
     except Exception as e:
-        flog(f"[LAUNCH] os.startfile failed: {e} — trying subprocess fallback", "warning")
-        try:
-            subprocess.Popen(
-                f'start "" "{url}"',
-                shell=True,
-                creationflags=subprocess.CREATE_NO_WINDOW,
-                stderr=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-            )
-            acc.last_launch_at = time.time()
-            return True, url, attempted_vip
-        except Exception as e2:
-            flog(f"[LAUNCH] all methods failed for {acc.display_name}: {e2}", "warning")
-            return False, str(e2), attempted_vip
+        flog(f"[LAUNCH] all methods failed for {acc.display_name}: {e}", "warning")
+        return False, str(e), attempted_vip

@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Any, Dict, Iterable, List, Mapping, Optional
-
+from typing import Any, Dict, List, Mapping, Iterable, Optional
 
 SECRET_KEY_RE = re.compile(r"(cookie|password|token|secret|roblosecurity|private.*link|accesscode|linkcode|nonce)", re.I)
 COOKIE_RE = re.compile(r"(_\|WARNING:[^\s'\"<>]+|\.ROBLOSECURITY[^\s'\"<>]*)", re.I)

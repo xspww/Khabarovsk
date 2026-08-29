@@ -1,20 +1,20 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple, Optional
 
-from core import Account, AccountState, EventBus, SmartQueue, StateManager, flog, flog_kv
+from core import AccountState, flog, flog_kv, Account, EventBus, SmartQueue, StateManager
 from domain.session_identity import build_launch_intent
-from services.network_monitor import NetworkMonitor
 from services.process_service import ProcessManager, ProcessService
-from runtime.account_worker import AccountWorker
 from runtime.launch_controller import LaunchController
 from runtime.recovery_engine import RecoveryEngine
 from runtime.runtime_state_manager import RuntimeStateManager
-from runtime.runtime_store import RuntimeStore
-from runtime.supervisor_runtime import SupervisorRuntime
 from runtime.maintenance_performance import _window_arrange_settings_from_config, _window_resize_target_from_config
+from runtime.supervisor_runtime import SupervisorRuntime
+from runtime.runtime_store import RuntimeStore
+from services.network_monitor import NetworkMonitor
+from runtime.account_worker import AccountWorker
 
 
 class Dispatcher(threading.Thread):

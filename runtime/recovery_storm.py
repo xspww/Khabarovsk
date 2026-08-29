@@ -5,7 +5,6 @@ import time
 import zlib
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List
-
 from core import AccountState
 
 

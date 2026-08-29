@@ -1,11 +1,11 @@
 from __future__ import annotations
 
+import os
 from fastapi import HTTPException, Request
-
 from performance_settings import normalize_fps_limit, normalize_graphics_quality, normalize_process_priority
 from roblox_hybrid import release_multi_roblox_guard
+from services.executor_relauncher import EXECUTOR_NAMES
 
-from .context import ApiContext
 from .settings_state import (
     _apply_game_defaults,
     _cpu_limiter_settings_from_config,
@@ -13,6 +13,7 @@ from .settings_state import (
     _normalize_window_size_settings,
 )
 from runtime.account_selection import runtime_account_allowlist
+from .context import ApiContext
 
 
 def _float_setting(value, default: float, min_value: float, max_value: float) -> float:
@@ -40,10 +41,13 @@ def register(app, ctx: ApiContext) -> None:
             raise HTTPException(400, "Expected object")
         allowed = {
             "auto_rejoin", "rejoin_delay", "max_retry", "max_fail_count",
+            "executor_monitor_enabled", "executor_selected", "executor_check_interval_seconds",
+            "roblox_auto_update_enabled", "executor_relaunch_enabled",
+            "executor_path_volt", "executor_path_potassium", "executor_path_real", "executor_path_madium",
             "crash_timeout", "heartbeat_timeout", "launch_verify_window", "login_warmup_delay",
             "anti_spam_window", "launch_rate_interval", "account_switch_cooldown",
             "queue_delay_seconds", "queue_duration_seconds", "max_concurrent_accounts",
-            "use_lua", "lua_wait_timeout",
+            "lua_enabled", "lua_timeout_seconds",
             "game_private_server_url", "game_place_id",
             "auto_create_private_server_enabled", "auto_create_private_server_free_only",
             "auto_close_enabled", "auto_close_minutes",
@@ -77,6 +81,42 @@ def register(app, ctx: ApiContext) -> None:
             "runtime_account_allowlist",
         }
         updates = {k: v for k, v in body.items() if k in allowed}
+        if "executor_monitor_enabled" in updates:
+            updates["executor_monitor_enabled"] = bool(updates["executor_monitor_enabled"])
+        if "executor_selected" in updates:
+            selected = str(updates["executor_selected"] or "").strip()
+            allowed_executors = {"", "Volt", "Potassium", "Real", "Madium"}
+            if selected not in allowed_executors:
+                raise HTTPException(400, "Unsupported Roblox Executor")
+            updates["executor_selected"] = selected
+        if "executor_check_interval_seconds" in updates:
+            updates["executor_check_interval_seconds"] = _int_setting(updates["executor_check_interval_seconds"], 30, 30, 3600)
+        if "roblox_auto_update_enabled" in updates:
+            updates["roblox_auto_update_enabled"] = bool(updates["roblox_auto_update_enabled"])
+        if "executor_relaunch_enabled" in updates:
+            updates["executor_relaunch_enabled"] = bool(updates["executor_relaunch_enabled"])
+            if updates["executor_relaunch_enabled"]:
+                selected = str(updates.get("executor_selected", cfg_mgr.get("executor_selected", "")) or "").strip()
+                path_key = f"executor_path_{selected.lower()}"
+                path = str(updates.get(path_key, cfg_mgr.get(path_key, "")) or "").strip()
+                if selected not in EXECUTOR_NAMES:
+                    raise HTTPException(400, "Auto Relaunch is unavailable: select a supported Roblox Executor")
+                if not path or not path.lower().endswith(".exe") or not os.path.isfile(path):
+                    raise HTTPException(400, "Auto Relaunch is unavailable: Browse the selected Executor .exe first")
+        path_keys = {"executor_path_volt", "executor_path_potassium", "executor_path_real", "executor_path_madium"}
+        if path_keys.intersection(updates) or "executor_selected" in updates:
+            if getattr(farm, "running", False):
+                raise HTTPException(409, "Stop Auto Rejoin before changing Executor selection or path")
+            for key in path_keys.intersection(updates):
+                value = str(updates[key] or "").strip()
+                if value and (not value.lower().endswith(".exe") or not os.path.isfile(value)):
+                    raise HTTPException(400, f"Invalid Executor .exe path: {value}")
+                updates[key] = value
+            if updates.get("executor_relaunch_enabled", cfg_mgr.get("executor_relaunch_enabled", False)):
+                selected = str(updates.get("executor_selected", cfg_mgr.get("executor_selected", "")) or "").strip()
+                selected_path = str(updates.get(f"executor_path_{selected.lower()}", cfg_mgr.get(f"executor_path_{selected.lower()}", "")) or "").strip()
+                if selected not in EXECUTOR_NAMES or not selected_path or not os.path.isfile(selected_path):
+                    updates["executor_relaunch_enabled"] = False
         if "queue_delay_seconds" in updates:
             delay = _int_setting(updates["queue_delay_seconds"], 15, 0, 3600)
             updates["queue_delay_seconds"] = delay
@@ -86,9 +126,10 @@ def register(app, ctx: ApiContext) -> None:
             updates["queue_duration_seconds"] = _int_setting(updates["queue_duration_seconds"], 15, 0, 86400)
         if "max_concurrent_accounts" in updates:
             updates["max_concurrent_accounts"] = _int_setting(updates["max_concurrent_accounts"], 40, 1, 500)
-        updates["use_lua"] = True
-        if "lua_wait_timeout" in updates:
-            updates["lua_wait_timeout"] = _int_setting(updates["lua_wait_timeout"], 60, 1, 300)
+        if "lua_enabled" in updates:
+            updates["lua_enabled"] = bool(updates["lua_enabled"])
+        if "lua_timeout_seconds" in updates:
+            updates["lua_timeout_seconds"] = _int_setting(updates["lua_timeout_seconds"], 60, 1, 300)
         if "auto_close_minutes" in updates:
             updates["auto_close_minutes"] = _int_setting(updates["auto_close_minutes"], 0, 0, 1440)
         if "auto_close_enabled" in updates:

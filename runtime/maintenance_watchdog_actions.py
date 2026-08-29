@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Dict
-
 from core import flog_kv
 from services.log_rate_limiter import LogRateLimiter
+from typing import Any, Dict
 
 
 WATCHDOG_LOG_RATE_LIMITER = LogRateLimiter()

@@ -5,12 +5,10 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, Optional
-
-from core import AccountState
 from domain.runtime_signals import RuntimeSignal
 from runtime.account_runtime_controller import AccountRuntimeController
-from runtime.runtime_state_manager import RuntimeStateManager
 from services.process_service import ProcessService
+from runtime.runtime_state_manager import RuntimeStateManager
 
 
 Logger = Callable[..., None]
@@ -310,57 +308,6 @@ class RuntimeOrchestrator:
             acc=acc,
         )
         return result
-
-    def request_verify_finished(self, acc: Any, state_manager: Any = None, reason: str = "manual_verify_finished") -> Dict[str, Any]:
-        now = time.time()
-        with acc._lock:
-            pid = acc.pid
-            runtime_generation = acc.runtime_generation
-            acc.manual_status = "finished"
-            acc.finished_at = now
-            acc.last_state_reason = reason
-            acc.last_state_change_at = now
-            self._state_manager.set_desired(acc, AccountState.IDLE, reason=reason)
-        command = self._command(acc, "verify_finished", reason, {"pid": pid})
-        killed = False
-        kill_result: Dict[str, Any] = {}
-        if pid:
-            kill_result = ProcessService.safe_kill_bound_process(
-                acc,
-                state_manager or self._state_manager,
-                reason=reason,
-                expected_runtime_generation=runtime_generation,
-            )
-            killed = bool(kill_result.get("killed"))
-        if state_manager:
-            state_manager.transition(acc, AccountState.IDLE, reason=reason, force=True)
-        else:
-            with acc._lock:
-                self._state_manager.forced_reset(acc, desired=AccountState.IDLE, reason=reason)
-        self.emit_event(
-            RuntimeEvent(
-                event_type="runtime_process_action",
-                account_id=command.account_id,
-                reason=reason,
-                payload={
-                    "action": command.action,
-                    "accepted": True,
-                    "command_id": command.command_id,
-                    "process_action": "verify_finished",
-                    "pid": pid or "",
-                    "killed": killed,
-                    "process_reason": kill_result.get("reason", ""),
-                },
-                runtime_generation=command.runtime_generation,
-                recovery_generation=command.recovery_generation,
-                command_generation=command.command_generation,
-                session_id=command.session_id,
-                launch_nonce=command.launch_nonce,
-                transaction_id=command.transaction_id,
-            ),
-            acc=acc,
-        )
-        return {"ok": True, "killed": killed, "pid": pid, "finished_at": now, "kill_result": kill_result}
 
     def request_close_all_roblox(
         self,

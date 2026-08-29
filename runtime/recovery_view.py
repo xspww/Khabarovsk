@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import Any, Tuple
-
-from core import AccountState
+from typing import Tuple, Any
 from services.network_monitor import NET_ONLINE
+from core import AccountState
 
 
 def recovery_step_for_account(acc: Any, display_state: AccountState, network_state: str = NET_ONLINE) -> Tuple[str, int, float]:
@@ -20,6 +19,35 @@ def recovery_step_for_account(acc: Any, display_state: AccountState, network_sta
     ).lower()
     recovery_status = str(acc.recovery_status or "").strip().lower()
     state_name = display_state.name
+    recovery_markers = (
+        "rejoin",
+        "disconnect",
+        "session_conflict",
+        "273",
+        "network_drop",
+        "connection_error",
+        "visual_disconnect",
+        "popup",
+        "kill",
+        "crash",
+    )
+    last_launch_at = float(getattr(acc, "last_launch_at", 0.0) or 0.0)
+    last_recovery_at = max(
+        float(getattr(acc, "last_recovery_at", 0.0) or 0.0),
+        float(getattr(acc, "recovery_scheduled_at", 0.0) or 0.0),
+    )
+    has_current_recovery_marker = bool(
+        any(marker in reason_text for marker in recovery_markers)
+        and last_recovery_at > 0.0
+        and last_recovery_at >= last_launch_at
+    )
+    # VERIFY/JOINING are also used by the first launch. Do not label the
+    # initial Start flow as Rejoining unless a real recovery signal exists.
+    if (
+        state_name in {"LAUNCHING", "STARTING", "VERIFY", "JOINING"}
+        and not has_current_recovery_marker
+    ):
+        return "Launching", 3, float(acc.last_launch_at or acc.last_state_change_at or 0.0)
     if state_name == "COOLDOWN":
         return "Cooldown", 7, float(acc.recovery_scheduled_at or acc.cooldown_until or acc.last_state_change_at or 0.0)
     if state_name == "IN_GAME" and not acc.recovery_inflight and str(acc.liveness_state or "").lower() in {"alive", "idle"}:
@@ -30,15 +58,15 @@ def recovery_step_for_account(acc: Any, display_state: AccountState, network_sta
         return "Disconnected", 4, float(acc.last_recovery_at or acc.last_state_change_at or 0.0)
     if state_name == "IN_GAME" and recovery_status in {"", "in_game"}:
         return "Recovery Complete", 8, float(acc.in_game_since or acc.last_state_change_at or 0.0)
-    if state_name == "VERIFY" or "verify" in reason_text:
+    if state_name == "VERIFY" and has_current_recovery_marker:
         return "Rejoining", 6, float(acc.last_state_change_at or acc.last_launch_at or 0.0)
-    if "session_conflict" in reason_text or "273" in reason_text:
+    if has_current_recovery_marker and ("session_conflict" in reason_text or "273" in reason_text):
         return "Rejoining", 5, float(acc.recovery_scheduled_at or acc.last_recovery_at or 0.0)
-    if "popup" in reason_text or "disconnect_dialog" in reason_text:
+    if has_current_recovery_marker and ("popup" in reason_text or "disconnect_dialog" in reason_text):
         return "Disconnected", 4, float(acc.last_recovery_at or acc.last_state_change_at or 0.0)
-    if "network_drop" in reason_text:
+    if has_current_recovery_marker and "network_drop" in reason_text:
         return "Rejoining", 5, float(acc.recovery_scheduled_at or acc.last_recovery_at or 0.0)
-    if "connection_error" in reason_text or "visual_disconnect" in reason_text or "rejoin" in reason_text or state_name == "JOINING":
+    if has_current_recovery_marker and ("connection_error" in reason_text or "visual_disconnect" in reason_text or "rejoin" in reason_text or state_name == "JOINING"):
         return "Rejoining", 5, float(acc.recovery_scheduled_at or acc.last_recovery_at or 0.0)
     if state_name in {"LAUNCHING", "STARTING"} or "launch" in reason_text:
         return "Launching", 3, float(acc.last_launch_at or acc.last_state_change_at or 0.0)

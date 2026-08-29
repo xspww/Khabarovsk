@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Dict
-
 from core import AccountState, flog_kv
 from services.captcha_guard import CAPTCHA_REASON
 from services.process_service import ProcessManager
 from runtime.lua_liveness_policy import account_lua_online, lua_liveness_required, lua_wait_timeout_seconds
 from runtime.maintenance_captcha import detect_and_hold_captcha
+from typing import Any, Dict
 
 
 def handle_in_game_lua_wait_timeout(owner: Any, acc: Any, cfg: Dict[str, Any], now: float) -> bool:

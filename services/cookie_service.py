@@ -287,10 +287,6 @@ class IsolationManager:
             return True, f"Injected to {len(written)} targets"
         return False, "ไม่สามารถ inject cookie ได้"
 
-    @classmethod
-    def scrub_cookie_artifacts(cls, username: str = "") -> dict:
-        return CookieArtifactLedger().scrub_json_cookie_artifacts(username or None)
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 #  VIP ROTATION TRACKER

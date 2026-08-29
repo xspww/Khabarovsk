@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 import time
+from core import AccountState, EventName, flog_kv, Account
 from typing import Any
-
-from core import Account, AccountState, EventName, flog_kv
 from runtime.runtime_scheduler import RuntimeScheduledJob
-
-
 def schedule_cooldown(
     recovery: Any,
     acc: Account,

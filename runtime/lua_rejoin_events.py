@@ -185,34 +185,19 @@ def handle_lua_rejoin_event(
             "msg": "Description updated",
         }
     if event_name in {"finished", "mark_finished"}:
-        raw_description = str(payload.get("description") or "").strip()
-        description_persisted = False
-        if raw_description:
-            description_persisted, _ = farm._set_lua_account_description(acc, raw_description)
-        try:
-            result = farm._runtime_orchestrator.request_verify_finished(
-                acc,
-                farm._state_mgr or farm._runtime_state,
-                reason=reason,
-            )
-        except Exception as e:
-            return farm._lua_event_handler_error(acc, event_name, e)
-        try:
-            farm.cfg_mgr.save_accounts(farm._accounts)
-        except Exception as e:
-            log("ACCOUNT_DATA", "lua_finished_save_failed", "warning", account=acc.display_name, error=e)
+        # The "Finished" mechanism is removed: accounts never terminate. Accept
+        # the event as a no-op so the Lua helper call still succeeds, but do not
+        # kill the process and do not mark the account finished.
         farm._bump_status_revision()
         farm._push_event(
             "lua",
-            f"Lua helper: finished - {acc.display_name}",
+            f"Lua helper: finished ignored - {acc.display_name}",
             account=acc,
-            severity="success",
+            severity="info",
             reason=reason,
             lua_event=event_name,
-            signal="verify_finished",
+            signal="finished_ignored",
             accepted=True,
-            killed=bool(result.get("killed")),
-            description_persisted=description_persisted,
         )
         return {
             "ok": True,
@@ -221,11 +206,8 @@ def handle_lua_rejoin_event(
             "account": acc._config_username,
             "matched_pid": resolution.bound_pid,
             "identity_match": resolution.match_reason,
-            "signal": "verify_finished",
-            "killed": bool(result.get("killed")),
-            "finished_at": result.get("finished_at", 0.0),
-            "description_persisted": description_persisted,
-            "msg": "Account marked finished",
+            "signal": "finished_ignored",
+            "msg": "Finished events are disabled; account keeps running",
         }
     signal = ""
     accepted = True

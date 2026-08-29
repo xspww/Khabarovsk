@@ -2,16 +2,15 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Callable, Dict, Optional, Tuple
-
+from typing import Optional, Any, Callable, Dict, Tuple
 from domain.runtime_signals import RuntimeSignal, is_recovery_signal, normalize_runtime_signal
 from runtime.recovery_context import SESSION_CONFLICT
 from runtime.recovery_policy import canonical_reason, context_from_signal
 from runtime.recovery_support import _enrich_visual_disconnect_payload_with_log
-from runtime.runtime_state_manager import RuntimeStateManager
 from runtime.lua_liveness_policy import lua_event_source
 from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
 from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_captcha_status_text, set_account_captcha_hold
+from runtime.runtime_state_manager import RuntimeStateManager
 
 
 class RecoverySignalRouter:

@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Iterable, List
-
+from typing import Any, Dict, List, Iterable
 from services.captcha_guard import is_captcha_window_texts
 
 

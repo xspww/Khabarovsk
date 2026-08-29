@@ -3,8 +3,6 @@ from __future__ import annotations
 import threading
 import time
 from typing import Optional
-
-
 class GlobalLaunchLimiter:
     def __init__(self, interval: float = 6.0):
         self.interval = interval

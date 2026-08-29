@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Optional
 
 from core import Account, AccountState, flog_kv
 from services.auth_gate import (
-    AuthGateDecision,
     evaluate_account_auth_gate,
     mark_account_auth_quarantined,
 )
@@ -14,6 +13,7 @@ from services.captcha_guard import (
     is_account_captcha_required,
     set_account_captcha_hold,
 )
+from services.auth_gate import AuthGateDecision
 
 
 class AccountReconciliationError(ValueError):

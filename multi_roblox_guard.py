@@ -7,8 +7,7 @@ import signal
 import sys
 import time
 from ctypes import wintypes
-from typing import List, Optional, Tuple
-
+from typing import List, Tuple, Optional
 
 KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
 KERNEL32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]

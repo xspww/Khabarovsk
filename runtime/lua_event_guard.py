@@ -47,7 +47,7 @@ def validate_lua_event_payload(payload: Any) -> Tuple[bool, str]:
     return check(payload, 0, "payload")
 
 
-def lua_event_handler_error_response(acc: Any, event_name: str, error: Exception) -> Dict[str, Any]:
+def lua_event_handler_error_response(acc: Any, event_name: str) -> Dict[str, Any]:
     return {
         "ok": False,
         "status_code": 500,

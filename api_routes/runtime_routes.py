@@ -12,8 +12,8 @@ from desktop import console_output
 from runtime.account_selection import runtime_account_filter_reason
 from runtime.popup_detector.popup_sampler import PopupWindowSampler
 from .auth import require_api_token
-from .context import ApiContext
 from .settings_state import _apply_game_defaults
+from .context import ApiContext
 
 
 def register(app, ctx: ApiContext) -> None:
@@ -142,7 +142,19 @@ def register(app, ctx: ApiContext) -> None:
         return data
 
     @app.post("/api/start")
-    def api_start(request: Request):
+    async def api_start(request: Request):
+        body = {}
+        try:
+            raw = await request.json()
+            if isinstance(raw, dict):
+                body = raw
+        except Exception:
+            body = {}
+        try:
+            from roblox_hybrid import set_selected_roblox_version
+            set_selected_roblox_version(str(body.get("roblox_version") or "").strip())
+        except Exception:
+            pass
         accepted, command = _begin_runtime_command(request, "global", "start", ttl=60.0)
         if not accepted:
             return _command_rejected_payload(command, "Start unavailable")
@@ -285,6 +297,38 @@ def register(app, ctx: ApiContext) -> None:
         finally:
             farm.finish_command("global", command["command_id"], ok=ok, error=error, response=result)
 
+    @app.post("/api/roblox/close-selected")
+    async def api_close_selected_roblox(request: Request):
+        body = await request.json()
+        usernames = body.get("usernames", []) if isinstance(body, dict) else []
+        if not isinstance(usernames, list):
+            raise HTTPException(400, "usernames must be a list")
+        closed = []
+        missing = []
+        for raw_username in usernames:
+            username = str(raw_username or "").strip()
+            if not username:
+                continue
+            ok, message = farm.kill_account_pid(username, reason="api_close_selected_roblox")
+            if ok:
+                closed.append(username)
+            elif message == "No active PID":
+                missing.append(username)
+        flog_kv(
+            "API",
+            "close_selected_roblox",
+            account=",".join(closed) or "*",
+            closed=len(closed),
+            requested=len(usernames),
+        )
+        return {
+            "ok": True,
+            "closed": closed,
+            "closed_count": len(closed),
+            "no_active_roblox": missing,
+            "msg": f"Closed Roblox for {len(closed)} account(s)",
+        }
+
     @app.post("/api/account/{username}/rejoin")
     def api_rejoin(username: str, request: Request):
         key = f"account:{username}"
@@ -387,30 +431,6 @@ def register(app, ctx: ApiContext) -> None:
         except Exception as e:
             error = str(e)
             flog_kv("API", "kill_failed", "error", command_id=command["command_id"], account=username, error=e)
-            raise
-        finally:
-            farm.finish_command(key, command["command_id"], ok=ok, error=error, response=result)
-
-    @app.post("/api/account/{username}/verify")
-    def api_verify(username: str, request: Request):
-        key = f"account:{username}"
-        accepted, command = _begin_runtime_command(request, key, "verify_finished", account=username, ttl=20.0)
-        if not accepted:
-            if command.get("msg") == "Account not found":
-                raise HTTPException(404, "Account not found")
-            return _command_rejected_payload(command, f"Verify unavailable: {username}")
-        ok = False
-        error = ""
-        result = None
-        try:
-            ok, msg = farm.verify_account(username)
-            if msg == "Account not found":
-                raise HTTPException(404, "Account not found")
-            result = {"ok": ok, "accepted": ok, "command_id": command["command_id"], "msg": msg}
-            return result
-        except Exception as e:
-            error = str(e)
-            flog_kv("API", "verify_failed", "error", command_id=command["command_id"], account=username, error=e)
             raise
         finally:
             farm.finish_command(key, command["command_id"], ok=ok, error=error, response=result)

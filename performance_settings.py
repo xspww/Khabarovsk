@@ -163,10 +163,6 @@ def read_fps_settings(path: Optional[str] = None) -> Dict[str, Any]:
     return payload
 
 
-def apply_fps_limiter_file(enabled: bool, fps_limit: Any, path: Optional[str] = None) -> Dict[str, Any]:
-    return apply_performance_settings_file(enabled, fps_limit, False, path)
-
-
 def apply_graphics_settings_file(
     graphics_low_enabled: bool,
     path: Optional[str] = None,

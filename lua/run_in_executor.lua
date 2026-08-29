@@ -1,1 +1,131 @@
-local function a(b,c)local d,e=pcall(function()if getgenv then local f=getgenv()if f and f[b]~=nil then return f[b]end end;if _G and _G[b]~=nil then return _G[b]end;return c end)if d and e~=nil then return e end;return c end;local g=tostring(a("CRONUS_HOST","127.0.0.1"))local h=tonumber(a("CRONUS_PORT",7777))or 7777;local i=tostring(a("CRONUS_ACCOUNT",""))local j=syn and syn.request or http and http.request or http_request or request;local k=loadstring or load;local function l(m,n)local o="[Cronus] "..tostring(m or"")if rconsoleprint then pcall(rconsoleprint,o.."\n")end;if n=="warn"and warn then pcall(warn,o)elseif print then pcall(print,o)end end;local function p(m)l(m,"info")end;local function q(m)l(m,"warn")end;local function r(s)q(s or"Rejoin helper failed to load")return nil end;local function t(e)e=tostring(e or"")e=e:gsub("\n","\r\n")e=e:gsub("([^%w%-_%.~])",function(u)return string.format("%%%02X",string.byte(u))end)return e end;local function v()local d,w=pcall(function()return game:GetService("Players")end)return d and w and w.LocalPlayer or nil end;local function x()if tostring(i or"")~=""then return i end;local y=v()return y and tostring(y.Name or"")or""end;local function z()local y=v()return y and tostring(y.UserId or"")or""end;local function A()local B={rawget(_G,"getprocessid"),rawget(_G,"get_process_id"),rawget(_G,"getpid"),rawget(_G,"get_pid")}for C,D in ipairs(B)do if type(D)=="function"then local d,E=pcall(D)local F=tonumber(E)if d and F and F>0 then return tostring(math.floor(F))end end end;return""end;local function G(H)local B={queue_on_teleport,queueonteleport,queueonTeleport,rawget(_G,"queue_on_teleport"),rawget(_G,"queueonteleport"),rawget(_G,"queueonTeleport")}if syn then table.insert(B,syn.queue_on_teleport)end;if fluxus then table.insert(B,fluxus.queue_on_teleport)end;for C,D in ipairs(B)do if type(D)=="function"then local d,I=pcall(D,H)if d then p("Rejoin helper restored")return true end;q("Executor does not support auto-run")end end;q("Executor does not support auto-run")return false end;local J=x()local K=("http://%s:%s/api/lua/rejoin-helper?bootstrap=1&account=%s&username=%s&user_id=%s&pid=%s"):format(g,tostring(h),t(J),t(J),t(z()),t(A()))local L=nil;if j then p("Loading rejoin helper...")local M=j({Method="GET",Url=K,Headers={["User-Agent"]="CronusRejoinLoader/1.0"}})L=M and(M.Body or M.body or M.Data or M.data)elseif game.HttpGet then p("Loading rejoin helper...")L=game:HttpGet(K)end;if type(L)~="string"or#L<=0 then return r("Rejoin helper failed to load")end;if type(k)~="function"then return r("Rejoin helper failed to load")end;if L:sub(1,1)=="{"then return nil end;if not L:find("CronusRejoin",1,true)then return r("Rejoin helper failed to load")end;if not L:find("CronusRejoin:QueueOnTeleport",1,true)then G(L)end;local N,I=k(L)if not N then return r("Rejoin helper failed to load")end;p("Rejoin helper loaded")return N()
+-- Cronus Lua bootstrap loader.
+-- Wait for LocalPlayer before requesting the session-scoped helper.
+local function env_value(key, fallback)
+    local ok, value = pcall(function()
+        if getgenv then
+            local env = getgenv()
+            if env and env[key] ~= nil then return env[key] end
+        end
+        if _G and _G[key] ~= nil then return _G[key] end
+        return fallback
+    end)
+    return ok and value ~= nil and value or fallback
+end
+
+local host = tostring(env_value("CRONUS_HOST", "127.0.0.1"))
+local port = tonumber(env_value("CRONUS_PORT", 7777)) or 7777
+local configured_account = tostring(env_value("CRONUS_ACCOUNT", ""))
+local request = syn and syn.request or http and http.request or http_request or request
+local load_source = loadstring or load
+
+local function log_line(message, warning)
+    local line = "[Cronus] " .. tostring(message or "")
+    if rconsoleprint then pcall(rconsoleprint, line .. "\n") end
+    if warning and warn then
+        pcall(warn, line)
+    elseif print then
+        pcall(print, line)
+    end
+end
+
+local function fail(message)
+    log_line(message or "Rejoin helper failed to load", true)
+    return nil
+end
+
+local function url_encode(value)
+    value = tostring(value or ""):gsub("\n", "\r\n")
+    return value:gsub("([^%w%-_%.~])", function(char)
+        return string.format("%%%02X", string.byte(char))
+    end)
+end
+
+local function local_player()
+    local ok, players = pcall(function()
+        return game:GetService("Players")
+    end)
+    if not ok or not players then return nil end
+    local started = os.clock()
+    while not players.LocalPlayer and os.clock() - started < 15 do
+        task.wait()
+    end
+    return players.LocalPlayer
+end
+
+local function account_name(player)
+    if configured_account ~= "" then return configured_account end
+    return player and tostring(player.Name or "") or ""
+end
+
+local function user_id(player)
+    return player and tostring(player.UserId or "") or ""
+end
+
+local function process_id()
+    local candidates = {
+        rawget(_G, "getprocessid"),
+        rawget(_G, "get_process_id"),
+        rawget(_G, "getpid"),
+        rawget(_G, "get_pid"),
+    }
+    for _, getter in ipairs(candidates) do
+        if type(getter) == "function" then
+            local ok, value = pcall(getter)
+            local pid = tonumber(value)
+            if ok and pid and pid > 0 then return tostring(math.floor(pid)) end
+        end
+    end
+    return ""
+end
+
+local player = local_player()
+local account = account_name(player)
+local uid = user_id(player)
+local pid = process_id()
+if account == "" and uid == "" and pid == "" then
+    return fail("Rejoin helper failed to load: LocalPlayer identity unavailable")
+end
+
+local helper_url = ("http://%s:%s/api/lua/rejoin-helper?bootstrap=1&account=%s&username=%s&user_id=%s&pid=%s"):
+    format(host, tostring(port), url_encode(account), url_encode(account), url_encode(uid), url_encode(pid))
+
+local source
+if request then
+    log_line("Loading rejoin helper...")
+    local response = request({
+        Method = "GET",
+        Url = helper_url,
+        Headers = { ["User-Agent"] = "CronusRejoinLoader/1.0" },
+    })
+    source = response and (response.Body or response.body or response.Data or response.data)
+elseif game.HttpGet then
+    log_line("Loading rejoin helper...")
+    source = game:HttpGet(helper_url)
+end
+
+if type(source) ~= "string" or #source <= 0 then
+    return fail("Rejoin helper failed to load")
+end
+if type(load_source) ~= "function" then
+    return fail("Rejoin helper failed to load")
+end
+if source:sub(1, 1) == "{" then
+    return fail("Rejoin helper rejected: " .. source:sub(1, 180))
+end
+if not source:find("CronusRejoin", 1, true) then
+    return fail("Rejoin helper failed to load")
+end
+
+log_line("Helper source bytes: " .. #source)
+local fn, err = load_source(source)
+if not fn then
+    return fail("Rejoin helper failed to load: " .. tostring(err))
+end
+log_line("Rejoin helper loaded")
+local ok, result = pcall(fn)
+if not ok then
+    log_line("Rejoin helper crashed: " .. tostring(result), true)
+    return nil
+end
+log_line("Rejoin helper returned: " .. type(result))
+return result

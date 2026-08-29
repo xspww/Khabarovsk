@@ -13,14 +13,15 @@ import time
 import urllib.request
 import zipfile
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Dict, List, Optional
-
+from typing import Any, Dict, List, Callable, Optional
 
 VERSION_RE = re.compile(r"^(?:version-)?[0-9a-fA-F]{16,64}$")
 LATEST_VERSION_URL = "https://clientsettingscdn.roblox.com/v2/client-version/WindowsPlayer"
 WEAO_CURRENT_VERSION_URL = "https://weao.xyz/api/versions/current"
 SETUP_BASE_URL = "https://setup.rbxcdn.com"
 ROBLOX_EXE = "RobloxPlayerBeta.exe"
+EXPLOITSTRAP_DIR_NAME = "ExploitStrap"
+EXPLOITSTRAP_EXE = "ExploitStrap.exe"
 WEAO_USER_AGENT = "WEAO-3PService"
 LATEST_VERSION_TTL_SECONDS = 300
 ROBLOX_INSTALL_BLOCKER_NAMES = {
@@ -174,6 +175,10 @@ class RobloxInstallManager:
     def start_latest(self) -> Dict[str, Any]:
         return self._start_job("latest", self._run_latest)
 
+    def start_update_both(self, version: str) -> Dict[str, Any]:
+        normalized = normalize_roblox_version(version)
+        return self._start_job("update_both", self._run_update_both, normalized)
+
     def _start_job(self, action: str, target: Callable[..., None], *args: Any) -> Dict[str, Any]:
         if self.guard_running() or self.roblox_running():
             return {"ok": False, "accepted": False, "msg": "Stop Cronus and close Roblox first"}
@@ -218,17 +223,53 @@ class RobloxInstallManager:
         self._store_latest_version(version)
         self._run_install_version(version)
 
+    def _run_update_both(self, version: str) -> None:
+        normalized = normalize_roblox_version(version)
+        local = os.environ.get("LOCALAPPDATA", "").strip()
+        if not local:
+            raise RuntimeError("LOCALAPPDATA is not available")
+        roots = [Path(local) / "Roblox", Path(local) / EXPLOITSTRAP_DIR_NAME]
+        self._set_job("Downloading", version=normalized, progress="Updating Roblox clients")
+        for root in roots:
+            target = root / "Versions" / normalized
+            target.mkdir(parents=True, exist_ok=True)
+            self._set_job("Installing", version=normalized, progress=f"Installing {root.name}")
+            self.install_from_manifest(normalized, target)
+            if root.name.lower() == "roblox":
+                self.write_app_settings(target)
+                self.register_protocols(target / ROBLOX_EXE)
+            self.validate_install(target / ROBLOX_EXE, require_protocol=root.name.lower() == "roblox")
+            versions_dir = root / "Versions"
+            for child in versions_dir.iterdir():
+                if child.is_dir() and child.name.lower().startswith("version-") and child.name.lower() != normalized.lower():
+                    shutil.rmtree(child, ignore_errors=True)
+        self._set_job("Done", version=normalized, msg=f"Updated Roblox and ExploitStrap to {normalized}", progress="Done")
+
     def _run_install_version(self, version: str) -> None:
         normalized = normalize_roblox_version(version)
-        self._set_job("Uninstalling", version=normalized, progress="Wiping Roblox")
-        self.full_wipe()
         self._set_job("Downloading", version=normalized, progress="Downloading packages")
         install_path = self.install_version(normalized)
         self._set_job("Installing", version=normalized, progress="Registering Roblox")
         self.register_protocols(install_path)
         self._set_job("Installing", version=normalized, progress="Validating")
         self.validate_install(install_path, require_protocol=True)
-        self._set_job("Done", version=normalized, msg=f"Installed {normalized}", progress="Done")
+        # Keep the previous client until the new manifest has downloaded and
+        # passed validation. Only then remove older version directories.
+        removed = 0
+        for root in self.roblox_roots():
+            versions_dir = root / "Versions"
+            if not versions_dir.is_dir():
+                continue
+            for child in versions_dir.iterdir():
+                if not child.is_dir() or not child.name.lower().startswith("version-"):
+                    continue
+                if child.name.lower() == normalized.lower():
+                    continue
+                if not self._safe_roblox_root(root):
+                    continue
+                shutil.rmtree(child, ignore_errors=False)
+                removed += 1
+        self._set_job("Done", version=normalized, removed_old_versions=removed, msg=f"Installed {normalized}", progress="Done")
 
     def roblox_roots(self) -> List[Path]:
         roots: List[Path] = []
@@ -248,7 +289,8 @@ class RobloxInstallManager:
                 unique.append(root)
         return unique
 
-    def detect_installed(self) -> Dict[str, Any]:
+    def list_installed(self) -> List[Dict[str, Any]]:
+        """Return every installed Roblox player version, newest-modified first."""
         candidates: List[Dict[str, Any]] = []
         for root in self.roblox_roots():
             versions_dir = root / "Versions"
@@ -264,10 +306,54 @@ class RobloxInstallManager:
                     modified = exe.stat().st_mtime
                 except OSError:
                     modified = 0
-                candidates.append({"version": child.name, "path": str(exe), "root": str(root), "modified": modified})
+                # `root` is the Roblox installation root; callers opening a
+                # version need the concrete version directory instead.
+                candidates.append({"version": child.name, "path": str(exe), "root": str(child), "modified": modified})
+        candidates.sort(key=lambda item: float(item.get("modified") or 0), reverse=True)
+        return candidates
+
+    def list_exploitstrap_installed(self) -> List[Dict[str, Any]]:
+        """Return Roblox versions managed by ExploitStrap, if it is installed."""
+        local = os.environ.get("LOCALAPPDATA", "").strip()
+        if not local:
+            return []
+        root = Path(local) / EXPLOITSTRAP_DIR_NAME
+        versions_dir = root / "Versions"
+        if not versions_dir.is_dir():
+            return []
+        items: List[Dict[str, Any]] = []
+        try:
+            entries = list(versions_dir.iterdir())
+        except OSError:
+            return []
+        for child in entries:
+            if not child.is_dir() or not child.name.lower().startswith("version-"):
+                continue
+            exe = child / ROBLOX_EXE
+            if not exe.is_file():
+                continue
+            try:
+                modified = max(child.stat().st_mtime, exe.stat().st_mtime)
+            except OSError:
+                modified = 0.0
+            items.append({
+                "version": child.name,
+                "path": str(exe),
+                "root": str(child),
+                "modified": modified,
+                "source": "exploitstrap",
+                "launcher": "ExploitStrap",
+                "launcher_path": str(root / EXPLOITSTRAP_EXE) if (root / EXPLOITSTRAP_EXE).is_file() else "",
+                "launcher_version": "",
+            })
+        items.sort(key=lambda item: float(item.get("modified") or 0), reverse=True)
+        return items
+
+    def detect_installed(self) -> Dict[str, Any]:
+        candidates = self.list_installed()
         if not candidates:
             return {"installed": False, "version": "", "path": "", "root": ""}
-        best = max(candidates, key=lambda item: float(item.get("modified") or 0))
+        best = dict(candidates[0])
         best["installed"] = True
         return best
 
@@ -651,14 +737,6 @@ class RobloxInstallManager:
             return False
         expected = str(Path(exe_path)).lower()
         return expected in command.lower()
-
-    def install_from_installer(self, version: str) -> None:
-        with tempfile.TemporaryDirectory(prefix="cronus-roblox-installer-") as temp_dir:
-            installer = Path(temp_dir) / f"{version}-RobloxPlayerInstaller.exe"
-            self._download_file(f"{SETUP_BASE_URL}/{version}-RobloxPlayerInstaller.exe", installer)
-            completed = subprocess.run([str(installer)], cwd=str(installer.parent), timeout=180, check=False)
-            if completed.returncode not in (0, None):
-                raise RuntimeError(f"Roblox installer exited with code {completed.returncode}")
 
     def register_protocols(self, exe_path: Path) -> None:
         if os.name != "nt":

@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from core import flog, flog_kv
 from runtime.popup_detector import DEFAULT_POPUP_OBSERVER, classify_texts, is_inspection_held
-from services.roblox_processes import ROBLOX_GAME_NAMES
 from services.window_control import (
     arrange_windows,
     minimize_windows,
@@ -56,7 +55,6 @@ def _count_visible_windows_for_pid(cls, pid: Optional[int]) -> int:
 def _visible_roblox_windows(cls) -> List[Dict[str, Any]]:
     windows: List[Dict[str, Any]] = []
     try:
-        import psutil
         proc_meta: Dict[int, Dict[str, Any]] = {}
         for proc in cls._iter_roblox_processes(game_only=True):
             try:

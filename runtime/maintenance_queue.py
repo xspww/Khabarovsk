@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 
-from core import Account, AccountState, account_launch_block_reason, flog_kv
+from core import AccountState, account_launch_block_reason, flog_kv, Account
 from runtime.account_selection import is_runtime_account_selected
 from services.process_service import ProcessService
 

@@ -1,7 +1,5 @@
 from __future__ import annotations
-
 from typing import Any, Dict, Mapping, Optional
-
 
 def _update_config(component: Any, cfg: Dict[str, Any]) -> None:
     update = getattr(component, "update_config", None)

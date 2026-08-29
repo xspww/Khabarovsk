@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Dict, Tuple
-
+from typing import Tuple, Dict
 FORCE_REJOIN_INTERVAL_SECONDS = 10.0
 
 

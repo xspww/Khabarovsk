@@ -150,19 +150,6 @@ class RuntimeScheduler:
             self._emit("runtime_schedule_cancelled", item[0], reason=reason)
         return bool(item)
 
-    def cancel_account(self, account_id: str, reason: str = "cancel_account") -> int:
-        wanted = str(account_id or "")
-        cancelled = 0
-        with self._cond:
-            keys = [key for key, (job, _callback) in self._jobs.items() if job.account_id == wanted]
-            for key in keys:
-                job, _callback = self._jobs.pop(key)
-                cancelled += 1
-                self._emit("runtime_schedule_cancelled", job, reason=reason)
-            if cancelled:
-                self._cond.notify_all()
-        return cancelled
-
     def cancel_all(self, reason: str = "cancel_all") -> int:
         with self._cond:
             items = list(self._jobs.values())

@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
-
 from core import AccountState, flog, flog_kv
 from services.process_service import ProcessManager, ProcessService
 from services.captcha_guard import CAPTCHA_REASON
 from runtime.lua_liveness_policy import LUA_WAITING_STATUS, lua_liveness_required, lua_wait_timeout_seconds
-from runtime.maintenance_captcha import detect_and_hold_captcha, handle_watchdog_captcha
+from runtime.maintenance_captcha import (
+    clear_captcha_suspicion,
+    detect_and_hold_captcha,
+    handle_watchdog_captcha,
+)
 from runtime.maintenance_lua_timeout import handle_in_game_lua_wait_timeout
 from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
 from runtime.maintenance_watchdog_actions import (
@@ -16,6 +18,10 @@ from runtime.maintenance_watchdog_actions import (
     handle_memory_pressure_rejoin,
     log_memory_pressure_hold,
 )
+from typing import Optional
+from typing import List
+from typing import Dict
+from typing import Any
 
 
 class MaintenanceLivenessMixin:
@@ -419,6 +425,12 @@ class MaintenanceLivenessMixin:
             if state == "captcha" or str(dialog.get("reason_key") or "") == CAPTCHA_REASON:
                 handle_watchdog_captcha(self, acc, pid, dialog)
                 continue
+
+            if inspect_ui and str(dialog.get("reason_key") or "") != CAPTCHA_REASON:
+                # Inspected and no captcha present -> a previous captcha
+                # suspicion (auto-passing security page) is gone; reset it so a
+                # later transient page cannot confirm against stale evidence.
+                clear_captcha_suspicion(acc)
 
             if state == "missing":
                 if worker:

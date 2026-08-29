@@ -3,7 +3,6 @@ from __future__ import annotations
 import math
 from collections import deque
 from typing import Any, Dict, List, Tuple
-
 STRUCTURAL_ANALYSIS_SIZE = (160, 120)
 MODAL_ANALYSIS_SIZE = (320, 240)
 
@@ -581,6 +580,51 @@ def _small_disconnect_panel_features(screenshot: Any) -> Dict[str, Any]:
         return {"matched": False, "score": 0.0, "source": "small_panel", "reason": f"small_panel:{exc}"}
 
 
+def _puzzle_frame_features(screenshot: Any) -> Dict[str, Any]:
+    """Detect a large centered dark puzzle frame, the signature of an
+    Arkose/FunCaptcha challenge. Roblox's auto-passing "Security Verification"
+    page is just text + a button on a white page and must NOT match."""
+    try:
+        small = _resize_luma(screenshot, MODAL_ANALYSIS_SIZE)
+        pixels = small.load()
+        width, height = small.size
+        dark_mask: List[List[bool]] = []
+        for y in range(height):
+            row: List[bool] = []
+            for x in range(width):
+                row.append(int(pixels[x, y]) <= 100)
+            dark_mask.append(row)
+        min_w = _scaled_min(width, 0.20, 44)
+        min_h = _scaled_min(height, 0.13, 26)
+        for item in _binary_components(dark_mask):
+            item_w = int(item["width"])
+            item_h = int(item["height"])
+            area = int(item["area"])
+            if item_w < min_w or item_h < min_h:
+                continue
+            center_x = int(item["x"]) + item_w / 2.0
+            center_y = int(item["y"]) + item_h / 2.0
+            if not (width * 0.22 <= center_x <= width * 0.78 and height * 0.22 <= center_y <= height * 0.78):
+                continue
+            fill = area / float(max(1, item_w * item_h))
+            # solid puzzle placeholder box or hollow frame both qualify; thin
+            # text strips do not. Dark-page modals are excluded by the caller's
+            # white_ratio requirement, so a solid box is fine here.
+            if not (0.10 <= fill <= 1.0):
+                continue
+            return {
+                "matched": True,
+                "x": int(item["x"]),
+                "y": int(item["y"]),
+                "width": item_w,
+                "height": item_h,
+                "fill": round(fill, 3),
+            }
+        return {"matched": False}
+    except Exception as exc:
+        return {"matched": False, "reason": f"puzzle_frame:{exc}"}
+
+
 def _captcha_challenge_features(screenshot: Any) -> Dict[str, Any]:
     try:
         small = _resize_luma(screenshot, MODAL_ANALYSIS_SIZE)
@@ -597,24 +641,19 @@ def _captcha_challenge_features(screenshot: Any) -> Dict[str, Any]:
 
         x_min, x_max = int(width * 0.24), int(width * 0.76)
         y_min, y_max = int(height * 0.26), int(height * 0.86)
-        dark_rows = 0
-        for y in range(int(height * 0.04), int(height * 0.62)):
-            hits = sum(1 for x in range(int(width * 0.18), int(width * 0.82)) if int(pixels[x, y]) <= 90)
-            if hits / float(max(1, int(width * 0.64))) >= 0.015:
-                dark_rows += 1
 
-        green_button_mask: List[List[bool]] = []
+        button_mask: List[List[bool]] = []
         for y in range(y_min, y_max):
             row: List[bool] = []
             for x in range(x_min, x_max):
                 value = int(pixels[x, y])
-                row.append(120 <= value <= 205)
-            green_button_mask.append(row)
+                row.append(100 <= value <= 215)
+            button_mask.append(row)
 
         button = {}
         min_button_w = _scaled_min(width, 0.10, 22)
         min_button_h = _scaled_min(height, 0.035, 6)
-        for item in _binary_components(green_button_mask):
+        for item in _binary_components(button_mask):
             item_w = int(item["width"])
             item_h = int(item["height"])
             area = int(item["area"])
@@ -627,15 +666,20 @@ def _captcha_challenge_features(screenshot: Any) -> Dict[str, Any]:
                 button = {**item, "x": x_min + int(item["x"]), "y": y_min + int(item["y"]), "fill": round(fill, 3)}
                 break
 
+        frame = _puzzle_frame_features(screenshot)
         breakdown: Dict[str, float] = {}
         if white_ratio >= 0.70:
-            breakdown["white_security_page"] = 0.35
-        if dark_rows >= _scaled_min(height, 0.025, 5):
-            breakdown["security_text_rows"] = 0.22
+            breakdown["white_security_page"] = 0.30
+        if frame.get("matched"):
+            breakdown["puzzle_frame"] = 0.40
         if button:
             breakdown["start_puzzle_button"] = 0.48
         score = round(sum(breakdown.values()), 3)
-        matched = bool(button and (white_ratio >= 0.82 or (white_ratio >= 0.70 and dark_rows >= _scaled_min(height, 0.018, 4))))
+        matched = bool(
+            button
+            and white_ratio >= 0.78
+            and frame.get("matched")
+        )
         return {
             "matched": matched,
             "score": score,
@@ -643,7 +687,7 @@ def _captcha_challenge_features(screenshot: Any) -> Dict[str, Any]:
             "source": "captcha_challenge",
             "breakdown": breakdown,
             "white_ratio": round(white_ratio, 3),
-            "dark_rows": dark_rows,
+            "frame": frame,
             "button": button,
         }
     except Exception as exc:

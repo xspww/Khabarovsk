@@ -8,7 +8,6 @@ from fastapi.responses import JSONResponse
 
 from core import flog_kv
 from .context import ApiContext
-
 _MUTATING_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
 _TOKEN_HEADERS = ("X-Cronus-Token",)
 _IDEMPOTENCY_HEADERS = ("X-Cronus-Idempotency-Key",)

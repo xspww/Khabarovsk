@@ -8,10 +8,8 @@ import os
 import re
 import secrets
 import time
-import webbrowser
 from ctypes import wintypes
-from typing import Any, Dict, Iterable, List, Optional, Tuple
-
+from typing import Any, Dict, List, Optional, Tuple, Iterable
 from app_paths import APP_DATA_DIR, LOG_DIR, move_app_data_file
 
 
@@ -533,36 +531,6 @@ class AccountDataStore:
             )
         changed, merged = self.upsert_records(records)
         return {"ok": True, "imported": changed, "errors": errors, "count": len(merged)}
-
-    def import_userpass_lines(self, lines: Iterable[str], open_browser: bool = True) -> Dict[str, Any]:
-        pending = self.load_pending_imports()
-        added = 0
-        for line in lines:
-            username, password = parse_userpass_line(line)
-            if not username:
-                continue
-            pending_id = secrets.token_hex(8)
-            pending.append(
-                {
-                    "id": pending_id,
-                    "username": username,
-                    "password_present": bool(password),
-                    "created_at": time.time(),
-                    "status": "browser_login_required",
-                }
-            )
-            added += 1
-        self.write_pending_imports(pending)
-        if added and open_browser:
-            try:
-                webbrowser.open("https://www.roblox.com/login", new=2)
-            except Exception:
-                pass
-        return {
-            "ok": True,
-            "pending": added,
-            "msg": "Browser login opened; paste/import .ROBLOSECURITY after Roblox login completes.",
-        }
 
     @staticmethod
     def load_pending_imports() -> List[Dict[str, Any]]:

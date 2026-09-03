@@ -128,7 +128,6 @@ def _run_startup_dependency_checks(
         _startup_console_write(_startup_tick_line(package, installed))
         if animate:
             time.sleep(0.035)
-    _startup_console_write(f"{_startup_paint('✓', _COLOR_GREEN)} Runtime models: none required")
     if failures:
         _startup_console_write("")
         _startup_console_write("Missing startup dependency. Run:")
@@ -164,12 +163,11 @@ from desktop_host import (
     run_desktop,
 )
 from farm import FarmController
-from services.network_fault_injector import NETWORK_FAULT_INJECTOR
 from services.process_service import ProcessManager
 from services.roblox_install_manager import RobloxInstallManager
-from services.updater import start_update_checker
 from services.executor_compatibility import ExecutorCompatibilityService
 from services.executor_relauncher import ExecutorRelaunchService
+
 from performance_settings import (
     apply_graphics_settings_file,
     apply_performance_settings_file,
@@ -193,9 +191,10 @@ ROBLOX_INSTALLER = RobloxInstallManager(
 
 
 _EXECUTOR_RESUME_AFTER_UPDATE = False
+_previous_compatibility_payload: dict = {}
 
 
-def _executor_transition(event: str, payload: dict) -> None:
+def _executor_base_transition(event: str, payload: dict) -> None:
     """Keep the farm safe around known executor incompatibility transitions."""
     global _EXECUTOR_RESUME_AFTER_UPDATE
     latest = str(payload.get("latest_version") or "").strip().lower()
@@ -227,6 +226,14 @@ def _executor_transition(event: str, payload: dict) -> None:
             flog_kv("EXECUTOR", "auto_resume_failed", "warning", error=exc)
 
 
+def _executor_transition(event: str, payload: dict) -> None:
+    global _previous_compatibility_payload
+    _executor_base_transition(event, payload)
+    if event == "compatible" and (payload.get("became_compatible") or payload.get("executor_version_changed")):
+        EXECUTOR_RELAUNCHER.request_relaunch("weao_compatibility_or_executor_version_changed")
+    _previous_compatibility_payload = dict(payload)
+
+
 EXECUTOR_TRACKER = ExecutorCompatibilityService(
     cfg_mgr,
     on_transition=_executor_transition,
@@ -238,18 +245,6 @@ EXECUTOR_TRACKER = ExecutorCompatibilityService(
 )
 EXECUTOR_RELAUNCHER = ExecutorRelaunchService(cfg_mgr, farm, EXECUTOR_TRACKER, logger=flog_kv)
 farm.set_executor_start_guard(EXECUTOR_RELAUNCHER.ensure_started)
-
-# Relaunch only on a WEAO compatibility edge or an observed WEAO executor-version change.
-_previous_compatibility_payload = {}
-_tracker_transition = _executor_transition
-def _executor_transition(event: str, payload: dict) -> None:
-    global _previous_compatibility_payload
-    _tracker_transition(event, payload)
-    if event == "compatible" and (payload.get("became_compatible") or payload.get("executor_version_changed")):
-        EXECUTOR_RELAUNCHER.request_relaunch("weao_compatibility_or_executor_version_changed")
-    _previous_compatibility_payload = dict(payload)
-
-EXECUTOR_TRACKER.on_transition = _executor_transition
 
 app = FastAPI(title=APP_NAME, docs_url=None, redoc_url=None)
 app.mount("/assets", StaticFiles(directory=resource_path("assets")), name="assets")
@@ -264,7 +259,6 @@ api_context = ApiContext(
     instance_token=INSTANCE_TOKEN,
     shutdown_requested=SHUTDOWN_REQUESTED,
     clear_instance_state=clear_instance_state,
-    get_network_fault_injector=lambda: NETWORK_FAULT_INJECTOR,
     get_log_file=lambda: LOG_FILE,
     get_apply_graphics_settings_file=lambda: apply_graphics_settings_file,
     get_apply_performance_settings_file=lambda: apply_performance_settings_file,
@@ -280,6 +274,5 @@ if __name__ == "__main__":
         idx = sys.argv.index("--multi-roblox-guard")
         sys.argv = [sys.argv[0], *sys.argv[idx + 1:]]
         raise SystemExit(multi_roblox_guard.main())
-    start_update_checker()
     EXECUTOR_TRACKER.start()
     run_desktop(app, farm)

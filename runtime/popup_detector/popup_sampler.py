@@ -8,9 +8,29 @@ import time
 from ctypes import wintypes
 from typing import Any, Dict, List, Optional
 from runtime.popup_detector.popup_classifier import PopupClassification, classify_popup_observation
-from runtime.popup_detector.popup_visual_detector import detect_visual_features
 from runtime.recovery_context import VISUAL_DISCONNECT
 from services.captcha_guard import CAPTCHA_REASON
+
+def _detect_visual_features_lazy(screenshot):
+    # Lazy import to avoid loading heavy PIL/visual pipeline when disabled
+    if screenshot is None:
+        return {"matched": False, "score": 0.0, "reason": "no_screenshot"}
+    # Allow disabling visual pipeline via env/config for perf
+    if not _visual_enabled():
+        return {"matched": False, "score": 0.0, "reason": "visual_disabled"}
+    try:
+        from runtime.popup_detector.popup_visual_detector import detect_visual_features
+        return detect_visual_features(screenshot)
+    except Exception as exc:
+        return {"matched": False, "score": 0.0, "reason": f"visual_import:{exc}"}
+
+def _visual_enabled() -> bool:
+    # Visual pipeline is heavy (6 screenshots + PIL). Disable by default if env flag says text-only.
+    # Keep enabled when popup_disconnected_enabled is true but can be overridden.
+    import os
+    if os.environ.get("CRONUS_POPUP_VISUAL", "").strip().lower() in {"0", "false", "off", "text"}:
+        return False
+    return True
 
 
 _HOLD_LOCK = threading.RLock()
@@ -360,7 +380,7 @@ class PopupObserver:
                     screenshot = self.sampler.capture_window_image(hwnd) if hwnd else None
                     classification = classify_popup_observation(
                         texts,
-                        detect_visual_features(screenshot),
+                        _detect_visual_features_lazy(screenshot),
                         process_idle=process_idle,
                         threshold=self.threshold,
                     )

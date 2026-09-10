@@ -204,9 +204,26 @@ def register(app, ctx: ApiContext) -> None:
                 # to the Shared Place ID for unassigned accounts.
                 _games = ensure_games_migrated(_snap) if _mode == "per_account" else []
                 _legacy_place = str(cfg.get("game_place_id", "") or "")
+                _shared_vip = str(cfg.get("game_private_server_url", "") or "")
             except Exception:
                 _games = []
                 _legacy_place = ""
+                _shared_vip = ""
+            if _mode == "shared" and not _legacy_place.strip() and not _shared_vip.strip():
+                # Shared mode with no Shared target: every account would
+                # join nothing (or a stale per-account place). Block Start
+                # with a toastable message instead of launching blindly.
+                result = {
+                    "ok": False,
+                    "accepted": False,
+                    "command_id": command["command_id"],
+                    "error_code": "missing_shared_place",
+                    "msg": "Set the Shared Place ID (Game view) before Start.",
+                    "required_action": "Set a Shared Place ID or Shared Private Server URL (Game view), then retry /api/start.",
+                    "missing_target_count": len(launchable_accounts),
+                    "missing_targets": [a.username for a in launchable_accounts[:10]],
+                }
+                return result
             for a in launchable_accounts:
                 try:
                     _game = game_for_account(

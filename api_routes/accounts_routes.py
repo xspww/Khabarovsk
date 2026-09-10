@@ -4,6 +4,7 @@ import html as html_lib
 import json
 import os
 import re
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -30,6 +31,11 @@ from .context import ApiContext
 APP_USER_AGENT = "CronusLauncher/RT"
 _AVATAR_CACHE: Dict[str, Tuple[float, str]] = {}
 _AVATAR_CACHE_TTL = 300.0
+# Place lookups hit 2-3 Roblox endpoints per call; cache successes so the
+# dashboard, game picker and Games card all resolve instantly after first.
+_PLACE_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_PLACE_CACHE_TTL = 600.0
+_PLACE_CACHE_LOCK = threading.Lock()
 
 
 def register(app, ctx: ApiContext) -> None:
@@ -58,6 +64,11 @@ def register(app, ctx: ApiContext) -> None:
         place = str(place_id or "").strip()
         if not place.isdigit():
             raise HTTPException(400, "place_id must be numeric")
+        now = time.time()
+        with _PLACE_CACHE_LOCK:
+            hit = _PLACE_CACHE.get(place)
+            if hit and now - hit[0] < _PLACE_CACHE_TTL:
+                return dict(hit[1])
 
         details: Dict[str, Any] = {}
         universe_id = ""
@@ -148,7 +159,7 @@ def register(app, ctx: ApiContext) -> None:
             except Exception as exc:
                 raise HTTPException(502, f"Roblox place lookup failed: {exc}")
 
-        return {
+        return _store_place_cache(place, {
             "ok": True,
             "place_id": place,
             "name": name or f"Place {place}",
@@ -161,7 +172,15 @@ def register(app, ctx: ApiContext) -> None:
             "universe_id": universe_id,
             "image_url": image_url,
             "url": f"https://www.roblox.com/games/{place}",
-        }
+        })
+
+    def _store_place_cache(place: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        with _PLACE_CACHE_LOCK:
+            _PLACE_CACHE[place] = (time.time(), dict(payload))
+            while len(_PLACE_CACHE) > 200:
+                oldest = min(_PLACE_CACHE.items(), key=lambda kv: kv[1][0])[0]
+                _PLACE_CACHE.pop(oldest, None)
+        return payload
 
     # Account APIs
 
@@ -204,7 +223,28 @@ def register(app, ctx: ApiContext) -> None:
 
     @app.get("/api/accounts")
     def api_get_accounts():
-        return _account_data_api_records()
+        records = _account_data_api_records()
+        # Assigned-game place for instant, flicker-free map display.
+        # The dashboard renders this first; explicit per-account place_id,
+        # observed and legacy fallbacks keep working when it is empty.
+        try:
+            from domain.games import ensure_games_migrated, game_for_account
+
+            snap = cfg_mgr.snapshot()
+            games = ensure_games_migrated(dict(snap)) if isinstance(snap, dict) else []
+            for item in records:
+                try:
+                    eff = ""
+                    if not str(item.get("place_id") or "").strip() and games:
+                        game = game_for_account(item.get("game_id"), "", games)
+                        if game:
+                            eff = str(game.get("place_id") or "").strip()
+                    item["effective_place_id"] = eff
+                except Exception:
+                    item["effective_place_id"] = ""
+        except Exception:
+            pass
+        return records
 
     @app.post("/api/account/{username}/captcha/open-login")
     def api_open_captcha_login(username: str, request: Request):

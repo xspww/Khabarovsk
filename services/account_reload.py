@@ -129,6 +129,7 @@ def _sync_existing_runtime_account(target: Account, source: Account) -> None:
         target.user_id = source.user_id
         target.priority = source.priority
         target.place_id = source.place_id
+        target.game_id = source.game_id
         target.vip_links = list(source.vip_links or [])
         target.alias = source.alias
         target.cookie = source.cookie

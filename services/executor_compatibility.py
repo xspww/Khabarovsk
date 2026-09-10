@@ -9,11 +9,16 @@ from typing import Any, Callable, Dict, Iterable, Optional
 
 WEAO_BASE = "https://weao.xyz/api"
 WEAO_USER_AGENT = "WEAO-3PService"
+# Official Roblox source for the latest WindowsPlayer version.
+# WEAO is only used for executor status (status/exploits), never for
+# deciding which Roblox client to download/install.
+OFFICIAL_ROBLOX_VERSION_URL = "https://clientsettingscdn.roblox.com/v2/client-version/WindowsPlayer"
+OFFICIAL_USER_AGENT = "CronusLauncher/RT"
 ALLOWED_EXECUTORS = ("Volt", "Potassium", "Real", "Madium")
 
 
 class ExecutorCompatibilityService:
-    """Poll WEAO and coordinate Roblox-version compatibility decisions."""
+    """Poll executor status (WEAO) + official Roblox version for compatibility decisions."""
 
     def __init__(self, cfg_mgr: Any, *, on_transition: Optional[Callable[[str, Dict[str, Any]], None]] = None, get_installed_versions: Optional[Callable[[], Iterable[str]]] = None, logger: Optional[Callable[..., Any]] = None):
         self.cfg_mgr = cfg_mgr
@@ -46,6 +51,18 @@ class ExecutorCompatibilityService:
         with urllib.request.urlopen(request, timeout=15) as response:
             return json.loads(response.read().decode("utf-8", "replace"))
 
+    def _fetch_official_roblox_version(self) -> str:
+        request = urllib.request.Request(
+            OFFICIAL_ROBLOX_VERSION_URL,
+            headers={"User-Agent": OFFICIAL_USER_AGENT, "Accept": "application/json"},
+        )
+        with urllib.request.urlopen(request, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8", "replace"))
+        version = str((data or {}).get("clientVersionUpload") or (data or {}).get("version") or "").strip()
+        if not version:
+            raise RuntimeError("Official Roblox version missing")
+        return version
+
     def refresh(self) -> Dict[str, Any]:
         if not self.enabled():
             payload = {"ok": True, "state": "disabled", "executors": [], "latest_version": "", "error": ""}
@@ -53,8 +70,9 @@ class ExecutorCompatibilityService:
                 self._status = payload
             return payload
         try:
-            versions = self._get_json("versions/current")
-            latest = str((versions or {}).get("Windows") or "").strip()
+            # Official-only: latest Roblox version comes from Roblox CDN,
+            # not from WEAO. WEAO is only used below for executor rbxversion/status.
+            latest = self._fetch_official_roblox_version()
             raw = self._get_json("status/exploits")
             allowed = {name.lower(): name for name in ALLOWED_EXECUTORS}
             rows = []

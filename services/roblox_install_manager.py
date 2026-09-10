@@ -16,13 +16,14 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Callable, Optional
 
 VERSION_RE = re.compile(r"^(?:version-)?[0-9a-fA-F]{16,64}$")
+# Official Roblox endpoints only. Do NOT use third-party version trackers
+# (e.g. weao.xyz) to decide which client to download.
 LATEST_VERSION_URL = "https://clientsettingscdn.roblox.com/v2/client-version/WindowsPlayer"
-WEAO_CURRENT_VERSION_URL = "https://weao.xyz/api/versions/current"
 SETUP_BASE_URL = "https://setup.rbxcdn.com"
 ROBLOX_EXE = "RobloxPlayerBeta.exe"
 EXPLOITSTRAP_DIR_NAME = "ExploitStrap"
 EXPLOITSTRAP_EXE = "ExploitStrap.exe"
-WEAO_USER_AGENT = "WEAO-3PService"
+CRONUS_USER_AGENT = "CronusLauncher/RT"
 LATEST_VERSION_TTL_SECONDS = 300
 ROBLOX_INSTALL_BLOCKER_NAMES = {
     "robloxplayerbeta.exe",
@@ -595,30 +596,15 @@ class RobloxInstallManager:
         winreg.DeleteKey(hive, key_path)
 
     def fetch_latest_version(self) -> str:
-        try:
-            return self.fetch_weao_windows_version("current")
-        except Exception as exc:
-            try:
-                self.logger(f"[ROBLOX_INSTALL] WEAO current failed: {exc}")
-            except Exception:
-                pass
+        # Official-only: always ask clientsettingscdn.roblox.com directly.
         return self.fetch_official_latest_version()
 
     def fetch_weao_windows_version(self, channel: str = "current") -> str:
-        if channel != "current":
-            raise ValueError("Unsupported WEAO version channel")
-        url = WEAO_CURRENT_VERSION_URL
-        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": WEAO_USER_AGENT}), timeout=20) as response:
-            data = json.loads(response.read().decode("utf-8", "replace"))
-        version = data.get("Windows")
-        if not version and isinstance(data.get("WindowsResponse"), dict):
-            version = data["WindowsResponse"].get("clientVersionUpload")
-        if not version:
-            raise RuntimeError("WEAO current Windows version missing")
-        return normalize_roblox_version(str(version))
+        # Deprecated: kept for backward-compat, now delegates to official.
+        return self.fetch_official_latest_version()
 
     def fetch_official_latest_version(self) -> str:
-        with urllib.request.urlopen(urllib.request.Request(LATEST_VERSION_URL, headers={"User-Agent": "CronusLauncher/RT"}), timeout=20) as response:
+        with urllib.request.urlopen(urllib.request.Request(LATEST_VERSION_URL, headers={"User-Agent": CRONUS_USER_AGENT}), timeout=20) as response:
             data = json.loads(response.read().decode("utf-8", "replace"))
         version = data.get("clientVersionUpload") or data.get("version")
         return normalize_roblox_version(str(version or ""))

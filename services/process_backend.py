@@ -22,6 +22,11 @@ class ProcessManager:
     GLOBAL_VIP_LINK = ""
     AUTO_CREATE_PRIVATE_SERVER_ENABLED = False
     AUTO_CREATE_PRIVATE_SERVER_FREE_ONLY = True
+    # Read-only snapshot of the configured games list (list of dicts).
+    # Replaced wholesale on every launch attempt; per-account game
+    # resolution reads from it so concurrent launches for different
+    # games never race on GLOBAL_VIP_LINK.
+    GAMES_SNAPSHOT = []
     CONNECTION_ERROR_KEYWORDS = (
         "connection error",
         "lost connection",

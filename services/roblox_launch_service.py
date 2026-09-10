@@ -40,8 +40,83 @@ class AccountLaunchService:
     """
 
     @staticmethod
+    def _resolve_game(record: Dict[str, Any], body: Dict[str, Any], cfg_mgr: Any):
+        """Find the game entry for a launch.
+
+        Returns (game_or_None, games_list). Empty games list means the
+        legacy single-game mode where global keys still apply.
+        """
+        try:
+            from domain.games import ensure_games_migrated, game_for_account
+        except Exception:
+            return None, []
+        try:
+            snap = cfg_mgr.snapshot() if hasattr(cfg_mgr, "snapshot") else {}
+        except Exception:
+            snap = {}
+        if not isinstance(snap, dict):
+            snap = {}
+        try:
+            games = ensure_games_migrated(snap)
+        except Exception:
+            games = []
+        if not games:
+            return None, []
+        game_id = str((body or {}).get("game_id") or (record or {}).get("game_id") or "")
+        place_hint = str((body or {}).get("place_id") or (record or {}).get("place_id") or "")
+        try:
+            return game_for_account(game_id, place_hint, games), games
+        except Exception:
+            return None, games
+
+    @staticmethod
     def build_target(body: Dict[str, Any], record: Dict[str, Any], cfg_mgr: Any) -> Dict[str, Any]:
         target = dict(body or {})
+        game, games = AccountLaunchService._resolve_game(record, target, cfg_mgr)
+        try:
+            from domain.games import effective_auto_flags, effective_global_vip, effective_place
+        except Exception:
+            game, games = None, []
+        if games:
+            # Multi-game mode: explicit per-account values win; the legacy
+            # global keys are NOT a fallback (they only feed game-1 via
+            # migration) so an account can never silently join another map.
+            place_id = str(
+                target.get("place_id")
+                or effective_place(record.get("place_id"), game, "")
+            ).strip()
+            vip_links = list(record.get("vip_links") or [])
+            if place_id:
+                vip_links = [
+                    link for link in vip_links
+                    if not parse_vip_link(str(link or "").strip())[0]
+                    or parse_vip_link(str(link or "").strip())[0] == place_id
+                ]
+            target.setdefault("vip_links", vip_links)
+            target["place_id"] = place_id
+            flags = effective_auto_flags(
+                game,
+                cfg_mgr.get("auto_create_private_server_enabled", False),
+                cfg_mgr.get("auto_create_private_server_free_only", True),
+            )
+            # In multi-game mode an unmatched account gets no global VIP:
+            # it stays target-less so START blocks it with a warning.
+            global_vip = effective_global_vip(
+                game,
+                "",
+                place_id,
+                parse_vip_place=lambda url: parse_vip_link(url)[0],
+            )
+            # Multi-game mode: the game's own VIP/flags are authoritative.
+            # The dashboard still sends legacy global values in the body, so
+            # overwrite them instead of setdefault — otherwise game-1's VIP
+            # would leak into every other game's manual launch.
+            target["global_vip_link"] = global_vip
+            if game is not None:
+                target["game_id"] = game.get("id")
+            target["auto_create_private_server_enabled"] = flags["enabled"]
+            target["auto_create_private_server_free_only"] = flags["free_only"]
+            return target
         place_id = str(target.get("place_id") or cfg_mgr.get("game_place_id", "") or record.get("place_id") or "").strip()
         vip_links = list(record.get("vip_links") or [])
         if place_id:
@@ -149,8 +224,22 @@ class AccountLaunchService:
         return result
 
 def build_launch_url(cls, acc: Account) -> Tuple[str, ServerType, str]:
+    try:
+        from domain.games import effective_place, game_for_account
+
+        _game = game_for_account(
+            getattr(acc, "game_id", ""), getattr(acc, "place_id", ""),
+            list(getattr(cls, "GAMES_SNAPSHOT", []) or []),
+        )
+    except Exception:
+        _game = None
+    _place = ""
+    try:
+        _place = str(effective_place(getattr(acc, "place_id", ""), _game)).strip()
+    except Exception:
+        _place = str(getattr(acc, "place_id", "") or "")
     use_public_fallback = bool(
-        acc.place_id and
+        _place and
         acc.vip_links and
         int(acc.launch_fail_count or 0) >= 2
     )
@@ -163,8 +252,8 @@ def build_launch_url(cls, acc: Account) -> Tuple[str, ServerType, str]:
 
     if vip_url and not use_public_fallback:
         place_id, link_code = cls.parse_vip_link(vip_url)
-        if not place_id and link_code and acc.place_id:
-            place_id = acc.place_id
+        if not place_id and link_code and _place:
+            place_id = _place
         if place_id and link_code:
             url = (
                 f"roblox://experiences/start"
@@ -186,8 +275,8 @@ def build_launch_url(cls, acc: Account) -> Tuple[str, ServerType, str]:
     else:
         acc.launch_strategy = "public_only"
 
-    if acc.place_id:
-        url = f"roblox://experiences/start?placeId={acc.place_id}"
+    if _place:
+        url = f"roblox://experiences/start?placeId={_place}"
         return url, ServerType.PUBLIC, ""
 
     return "", ServerType.UNKNOWN, ""
@@ -202,8 +291,29 @@ def launch(cls, acc: Account) -> Tuple[bool, str, str]:
         try:
             from roblox_hybrid import HybridLauncher
 
-            target_place = str(acc.place_id or "")
-            auto_private_enabled = bool(cls.AUTO_CREATE_PRIVATE_SERVER_ENABLED)
+            from domain.games import (
+                effective_auto_flags,
+                effective_global_vip,
+                effective_place,
+                game_for_account,
+            )
+
+            game = None
+            try:
+                games = list(getattr(cls, "GAMES_SNAPSHOT", []) or [])
+                game = game_for_account(
+                    getattr(acc, "game_id", ""), getattr(acc, "place_id", ""), games
+                )
+            except Exception:
+                game = None
+            target_place = str(effective_place(getattr(acc, "place_id", ""), game)).strip()
+            if game is not None:
+                flags = effective_auto_flags(game)
+                auto_private_enabled = bool(flags["enabled"])
+                auto_private_free_only = bool(flags["free_only"])
+            else:
+                auto_private_enabled = bool(cls.AUTO_CREATE_PRIVATE_SERVER_ENABLED)
+                auto_private_free_only = bool(cls.AUTO_CREATE_PRIVATE_SERVER_FREE_ONLY)
             active_vip = str(acc.active_vip or "") if auto_private_enabled else ""
             if target_place and active_vip:
                 active_place, _active_code = cls.parse_vip_link(active_vip)
@@ -216,7 +326,20 @@ def launch(cls, acc: Account) -> Tuple[bool, str, str]:
                     if not cls.parse_vip_link(str(link or "").strip())[0]
                     or cls.parse_vip_link(str(link or "").strip())[0] == target_place
                 ]
-            global_vip = cls.GLOBAL_VIP_LINK if auto_private_enabled else ""
+            global_vip = ""
+            if auto_private_enabled:
+                if game is not None:
+                    try:
+                        global_vip = effective_global_vip(
+                            game,
+                            str(cls.GLOBAL_VIP_LINK or ""),
+                            target_place,
+                            parse_vip_place=lambda url: cls.parse_vip_link(url)[0],
+                        )
+                    except Exception:
+                        global_vip = ""
+                else:
+                    global_vip = cls.GLOBAL_VIP_LINK
             global_place = cls.parse_vip_link(global_vip)[0] if global_vip else ""
             if target_place and global_place and global_place != target_place:
                 global_vip = ""
@@ -227,18 +350,19 @@ def launch(cls, acc: Account) -> Tuple[bool, str, str]:
                 "global_vip_link": global_vip,
                 "browser_tracker_id": getattr(acc, "browser_tracker_id", ""),
                 "auto_create_private_server_enabled": auto_private_enabled,
-                "auto_create_private_server_free_only": bool(cls.AUTO_CREATE_PRIVATE_SERVER_FREE_ONLY),
+                "auto_create_private_server_free_only": bool(auto_private_free_only),
             }
             record = {
                 "username": acc.username,
                 "alias": acc.alias,
                 "cookie": acc.cookie,
                 "place_id": target_place,
+                "game_id": str((game or {}).get("id") or getattr(acc, "game_id", "") or ""),
                 "vip_links": vip_links,
                 "global_vip_link": global_vip,
                 "browser_tracker_id": getattr(acc, "browser_tracker_id", ""),
                 "auto_create_private_server_enabled": auto_private_enabled,
-                "auto_create_private_server_free_only": bool(cls.AUTO_CREATE_PRIVATE_SERVER_FREE_ONLY),
+                "auto_create_private_server_free_only": bool(auto_private_free_only),
             }
             result = HybridLauncher.launch_record(record, target=target, multi_roblox=bool(cls.MULTI_ROBLOX_ENABLED))
             if result.get("ok"):

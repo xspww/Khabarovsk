@@ -35,6 +35,7 @@ class Account:
     user_id:    str  = ""
     priority:   int  = 50
     place_id:   str  = ""
+    game_id:    str  = ""
     vip_links:  List[str] = field(default_factory=list)
     alias:      str  = ""
     cookie:     str  = ""
@@ -278,6 +279,7 @@ class Account:
             "user_id":   self.user_id,
             "priority":  self.priority,
             "place_id":  self.place_id,
+            "game_id":   self.game_id,
             "vip_links": self.vip_links,
             "alias":     self.alias,
             "cookie":    self.cookie,
@@ -298,6 +300,7 @@ class Account:
             user_id   = str(d.get("user_id", d.get("userId", ""))),
             priority  = int(d.get("priority", 50)),
             place_id  = str(d.get("place_id", "")),
+            game_id   = str(d.get("game_id", d.get("gameId", ""))),
             vip_links = list(d.get("vip_links", [])),
             alias     = str(d.get("alias", "")),
             cookie    = str(d.get("cookie", "")),

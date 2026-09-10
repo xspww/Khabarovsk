@@ -60,6 +60,8 @@ DEFAULTS: Dict[str, Any] = {
     "machine_supervisor_memory_high_percent": 96.0,
     "game_private_server_url":  "",
     "game_place_id":            "",
+    "games":                    [],
+    "games_migrated":           False,
     "auto_create_private_server_enabled": False,
     "auto_create_private_server_free_only": True,
     "auto_close_enabled":       False,
@@ -192,6 +194,13 @@ class ConfigManager:
         with self._lock:
             self._cfg = {k: raw.get(k, v) for k, v in DEFAULTS.items()}
             self._cfg["schema_version"] = int(raw.get("schema_version") or CONFIG_SCHEMA_VERSION)
+            try:
+                from domain.games import ensure_games_migrated
+
+                ensure_games_migrated(self._cfg)
+            except Exception:
+                if not isinstance(self._cfg.get("games"), list):
+                    self._cfg["games"] = []
 
     def save(self):
         with self._lock:

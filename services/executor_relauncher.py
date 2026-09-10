@@ -243,7 +243,7 @@ class ExecutorRelaunchService:
                             self._set_status(state="ready", message="Executor relaunched and Lua loader loaded")
                             return
                         time.sleep(1)
-                    self._set_status(state="retrying", message="Lua loader timeout; checking WEAO version again")
+                    self._set_status(state="retrying", message="Lua loader timeout; checking Official Roblox version again")
                     self.tracker.refresh()
                 except Exception as exc:
                     self.logger("EXECUTOR relaunch attempt failed", "warning", error=exc, attempt=attempt, reason=reason)

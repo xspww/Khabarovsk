@@ -40,6 +40,13 @@ class LaunchAttempt:
             ProcessManager.GLOBAL_VIP_LINK = str(controller._cfg.get("game_private_server_url", "") or "").strip()
             ProcessManager.AUTO_CREATE_PRIVATE_SERVER_ENABLED = bool(controller._cfg.get("auto_create_private_server_enabled", False))
             ProcessManager.AUTO_CREATE_PRIVATE_SERVER_FREE_ONLY = bool(controller._cfg.get("auto_create_private_server_free_only", True))
+            try:
+                from domain.games import ensure_games_migrated
+
+                _snap = dict(controller._cfg or {})
+                ProcessManager.GAMES_SNAPSHOT = ensure_games_migrated(_snap)
+            except Exception:
+                pass
             warmup_delay = max(0.0, float(controller._cfg.get("login_warmup_delay", 6) or 0))
             attempted_vip = ""
             restart_reasons = {"watchdog_timeout", "loading_freeze", "teleport_timeout", "render_freeze"}

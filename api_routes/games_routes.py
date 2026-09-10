@@ -58,9 +58,17 @@ def register(app, ctx: ApiContext) -> None:
     @app.get("/api/games")
     def api_list_games():
         games = _games_snapshot(ctx)
+        try:
+            from domain.games import normalize_game_mode
+
+            snap = ctx.cfg_mgr.snapshot()
+            mode = normalize_game_mode((snap or {}).get("game_mode", "shared"))
+        except Exception:
+            mode = "shared"
         return {
             "ok": True,
             "games": games,
+            "game_mode": mode,
             "default_game_id": str((games[0].get("id") if games else "") or ""),
             "count": len(games),
         }

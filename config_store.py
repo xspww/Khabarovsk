@@ -60,6 +60,7 @@ DEFAULTS: Dict[str, Any] = {
     "machine_supervisor_memory_high_percent": 96.0,
     "game_private_server_url":  "",
     "game_place_id":            "",
+    "game_mode":                "shared",
     "games":                    [],
     "games_migrated":           False,
     "auto_create_private_server_enabled": False,

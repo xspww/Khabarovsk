@@ -45,10 +45,10 @@
 .accounts-table-card .num{width:44px;color:#53565e;font:700 12px var(--mono)}
 .accounts-table-card .actions-col{width:124px}
 .accounts-table-card .user{gap:10px;display:flex;align-items:center}
-.accounts-table-card .user-main{min-width:0;cursor:text;-webkit-user-select:text;user-select:text}
+.accounts-table-card .user-main{min-width:0;cursor:default;-webkit-user-select:none;user-select:none}
 .accounts-table-card .avatar,.accounts-table-card .avatar-wrap{width:27px;height:27px;flex-basis:27px;border-radius:6px;background:#16171c;border-color:#25272e;display:inline-flex;align-items:center;justify-content:center}
-.accounts-table-card .name{font-size:12px;font-weight:800;color:#f2f3f5;line-height:1.15;cursor:text;-webkit-user-select:text;user-select:text}
-.accounts-table-card .handle{margin-top:2px;color:#53565e;font:700 10px var(--mono);line-height:1.1;cursor:text;-webkit-user-select:text;user-select:text}
+.accounts-table-card .name{font-size:12px;font-weight:800;color:#f2f3f5;line-height:1.15;cursor:default;-webkit-user-select:none;user-select:none}
+.accounts-table-card .handle{margin-top:2px;color:#53565e;font:700 10px var(--mono);line-height:1.1;cursor:default;-webkit-user-select:none;user-select:none}
 
 .accounts-table-card .status{height:22px;border:1px solid transparent;border-radius:999px;padding:0 9px;background:#18191e;color:#8d9099;font:800 11px var(--font);gap:6px;display:inline-flex;align-items:center}
 .accounts-table-card .status:before{width:6px;height:6px;display:inline-block}

@@ -266,7 +266,7 @@ def _migrate_account_games(ctx: ApiContext, accounts_to_update: List[Account]) -
 
 def _apply_game_defaults(ctx: ApiContext, accounts_to_update: List[Account], persist: bool = False) -> int:
     try:
-        from domain.games import ensure_games_migrated, game_for_account
+        from domain.games import ensure_games_migrated, game_for_account, normalize_game_mode
     except Exception:
         return _apply_legacy_game_defaults(ctx, accounts_to_update, persist)
     try:
@@ -275,6 +275,15 @@ def _apply_game_defaults(ctx: ApiContext, accounts_to_update: List[Account], per
         cfg = {}
     if not isinstance(cfg, dict):
         cfg = {}
+    try:
+        mode = normalize_game_mode(cfg.get("game_mode", "shared"))
+    except Exception:
+        mode = "shared"
+    if mode != "per_account":
+        # Shared GAME mode: the pool is ignored at launch, so there is
+        # nothing to sync. Accounts keep their assignments untouched for
+        # when the user switches back to Per-account.
+        return 0
     try:
         games = ensure_games_migrated(dict(cfg))
     except Exception:

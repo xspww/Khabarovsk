@@ -257,6 +257,57 @@ def _set_app_user_model_id():
     except Exception:
         pass
 
+def _bundled_kanit_candidates() -> list:
+    candidates: list = []
+    for name in ("Kanit-Regular.ttf", "Kanit-Medium.ttf"):
+        for base in {
+            resource_path("assets", "fonts", name),
+            os.path.join(APP_ROOT_DIR, "assets", "fonts", name),
+        }:
+            if base and base not in candidates:
+                candidates.append(base)
+    return candidates
+
+def _load_bundled_kanit_fonts() -> bool:
+    """Zero-install Kanit for Qt widgets (TitleBar). Web UI uses @font-face separately.
+
+    Qt cannot use woff2/web @font-face, so ship converted TTFs under assets/fonts/
+    and register them with QFontDatabase. No system install, no admin needed.
+    Returns True when the 'Kanit' family is usable (bundled or pre-installed).
+    """
+    try:
+        from PySide6.QtGui import QFontDatabase
+    except Exception as exc:
+        flog_kv("MAIN", "desktop_font_qt_unavailable", "debug", error=str(exc))
+        return False
+    try:
+        if "Kanit" in QFontDatabase.families():
+            return True
+    except Exception:
+        pass
+    loaded_any = False
+    for path in _bundled_kanit_candidates():
+        try:
+            if not path or not os.path.exists(path):
+                continue
+            font_id = QFontDatabase.addApplicationFont(path)
+            if int(font_id) >= 0:
+                loaded_any = True
+            else:
+                flog_kv("MAIN", "desktop_font_load_failed", "warning", path=path, font_id=font_id)
+        except Exception as exc:
+            flog_kv("MAIN", "desktop_font_load_failed", "warning", path=path, error=str(exc))
+    try:
+        if "Kanit" in QFontDatabase.families():
+            if loaded_any:
+                flog("[MAIN] Bundled Kanit fonts loaded for Qt widgets")
+            return True
+    except Exception:
+        pass
+    if not loaded_any:
+        flog_kv("MAIN", "desktop_font_missing", "warning", hint="assets/fonts/Kanit-*.ttf not found; Qt falls back to system fonts")
+    return False
+
 def _run_backend_server() -> None:
     global _BACKEND_THREAD_ERROR
     try:
@@ -427,7 +478,7 @@ def _run_desktop_window() -> bool:
                     border-top-right-radius: 10px;
                 }
                 #CronusTitle {
-                    font-family: "Kanit", "Segoe UI", sans-serif;
+                    font-family: "Kanit", "Segoe UI", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif;
                     color: #7f838c;
                     font-size: 12px;
                     font-weight: 500;
@@ -524,6 +575,13 @@ def _run_desktop_window() -> bool:
 
     _set_app_user_model_id()
     app_qt = QApplication.instance() or QApplication(sys.argv[:1])
+    _kanit_ok = _load_bundled_kanit_fonts()
+    try:
+        if _kanit_ok:
+            from PySide6.QtGui import QFont
+            app_qt.setFont(QFont("Kanit", 9))
+    except Exception as exc:
+        flog_kv("MAIN", "desktop_font_apply_failed", "debug", error=str(exc))
     icon_path = resource_path("assets", APP_ICON_FILE)
     icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon()
     if not icon.isNull():

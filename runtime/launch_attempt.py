@@ -40,6 +40,13 @@ class LaunchAttempt:
             ProcessManager.GLOBAL_VIP_LINK = str(controller._cfg.get("game_private_server_url", "") or "").strip()
             ProcessManager.AUTO_CREATE_PRIVATE_SERVER_ENABLED = bool(controller._cfg.get("auto_create_private_server_enabled", False))
             ProcessManager.AUTO_CREATE_PRIVATE_SERVER_FREE_ONLY = bool(controller._cfg.get("auto_create_private_server_free_only", True))
+            ProcessManager.SHARED_PLACE_ID = str(controller._cfg.get("game_place_id", "") or "").strip()
+            try:
+                from domain.games import normalize_game_mode
+
+                ProcessManager.GAME_MODE = normalize_game_mode(controller._cfg.get("game_mode", "shared"))
+            except Exception:
+                ProcessManager.GAME_MODE = "shared"
             try:
                 from domain.games import ensure_games_migrated
 

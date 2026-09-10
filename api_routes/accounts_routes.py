@@ -228,10 +228,14 @@ def register(app, ctx: ApiContext) -> None:
         # The dashboard renders this first; explicit per-account place_id,
         # observed and legacy fallbacks keep working when it is empty.
         try:
-            from domain.games import ensure_games_migrated, game_for_account
+            from domain.games import ensure_games_migrated, game_for_account, normalize_game_mode
 
             snap = cfg_mgr.snapshot()
-            games = ensure_games_migrated(dict(snap)) if isinstance(snap, dict) else []
+            try:
+                _mode = normalize_game_mode((snap or {}).get("game_mode", "shared"))
+            except Exception:
+                _mode = "shared"
+            games = ensure_games_migrated(dict(snap)) if isinstance(snap, dict) and _mode == "per_account" else []
             for item in records:
                 try:
                     eff = ""

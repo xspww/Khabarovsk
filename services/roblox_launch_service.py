@@ -62,6 +62,17 @@ class AccountLaunchService:
             games = []
         if not games:
             return None, []
+        try:
+            from domain.games import normalize_game_mode
+        except Exception:
+            return None, []
+        # Shared GAME mode: the pool is ignored entirely so every account
+        # joins the Shared Place ID (legacy branch in build_target).
+        try:
+            if normalize_game_mode(snap.get("game_mode", "shared")) != "per_account":
+                return None, []
+        except Exception:
+            return None, []
         game_id = str((body or {}).get("game_id") or (record or {}).get("game_id") or "")
         place_hint = str((body or {}).get("place_id") or (record or {}).get("place_id") or "")
         try:
@@ -77,10 +88,9 @@ class AccountLaunchService:
             from domain.games import effective_auto_flags, effective_global_vip, effective_place
         except Exception:
             game, games = None, []
-        if games:
-            # Multi-game mode: explicit per-account values win; the legacy
-            # global keys are NOT a fallback (they only feed game-1 via
-            # migration) so an account can never silently join another map.
+        if games and game is not None:
+            # Per-account mode with an assigned game: explicit per-account
+            # values win and the game's own VIP/flags are authoritative.
             place_id = str(
                 target.get("place_id")
                 or effective_place(record.get("place_id"), game, "")
@@ -99,8 +109,9 @@ class AccountLaunchService:
                 cfg_mgr.get("auto_create_private_server_enabled", False),
                 cfg_mgr.get("auto_create_private_server_free_only", True),
             )
-            # In multi-game mode an unmatched account gets no global VIP:
-            # it stays target-less so START blocks it with a warning.
+            # Assigned game only here (game is not None): unmatched accounts
+            # fall through to the Shared keys below instead of staying
+            # target-less.
             global_vip = effective_global_vip(
                 game,
                 "",
@@ -116,6 +127,32 @@ class AccountLaunchService:
                 target["game_id"] = game.get("id")
             target["auto_create_private_server_enabled"] = flags["enabled"]
             target["auto_create_private_server_free_only"] = flags["free_only"]
+            return target
+        if games:
+            # Per-account mode, unassigned account: explicit per-account
+            # values still win, then the Shared keys fill the gap (this is
+            # the only path where `games` is non-empty but `game` is None,
+            # because Shared mode returns no games at all).
+            place_id = str(
+                target.get("place_id")
+                or record.get("place_id")
+                or cfg_mgr.get("game_place_id", "")
+                or ""
+            ).strip()
+            vip_links = list(record.get("vip_links") or [])
+            if place_id:
+                vip_links = [
+                    link for link in vip_links
+                    if not parse_vip_link(str(link or "").strip())[0]
+                    or parse_vip_link(str(link or "").strip())[0] == place_id
+                ]
+            target.setdefault("vip_links", vip_links)
+            target["place_id"] = place_id
+            global_vip = str(cfg_mgr.get("game_private_server_url", "") or "").strip()
+            global_place = parse_vip_link(global_vip)[0] if global_vip else ""
+            target.setdefault("global_vip_link", global_vip if (not place_id or not global_place or global_place == place_id) else "")
+            target.setdefault("auto_create_private_server_enabled", cfg_mgr.get("auto_create_private_server_enabled", False))
+            target.setdefault("auto_create_private_server_free_only", cfg_mgr.get("auto_create_private_server_free_only", True))
             return target
         place_id = str(target.get("place_id") or cfg_mgr.get("game_place_id", "") or record.get("place_id") or "").strip()
         vip_links = list(record.get("vip_links") or [])
@@ -225,17 +262,25 @@ class AccountLaunchService:
 
 def build_launch_url(cls, acc: Account) -> Tuple[str, ServerType, str]:
     try:
-        from domain.games import effective_place, game_for_account
+        from domain.games import effective_place, game_for_account, normalize_game_mode
 
+        _mode = "shared"
+        try:
+            _mode = normalize_game_mode(getattr(cls, "GAME_MODE", "shared"))
+        except Exception:
+            _mode = "shared"
+        _snap = list(getattr(cls, "GAMES_SNAPSHOT", []) or []) if _mode == "per_account" else []
         _game = game_for_account(
             getattr(acc, "game_id", ""), getattr(acc, "place_id", ""),
-            list(getattr(cls, "GAMES_SNAPSHOT", []) or []),
+            _snap,
         )
+        _shared = str(getattr(cls, "SHARED_PLACE_ID", "") or "").strip() if _game is None else ""
     except Exception:
         _game = None
+        _shared = ""
     _place = ""
     try:
-        _place = str(effective_place(getattr(acc, "place_id", ""), _game)).strip()
+        _place = str(effective_place(getattr(acc, "place_id", ""), _game, _shared)).strip()
     except Exception:
         _place = str(getattr(acc, "place_id", "") or "")
     use_public_fallback = bool(
@@ -296,17 +341,31 @@ def launch(cls, acc: Account) -> Tuple[bool, str, str]:
                 effective_global_vip,
                 effective_place,
                 game_for_account,
+                normalize_game_mode,
             )
 
             game = None
             try:
-                games = list(getattr(cls, "GAMES_SNAPSHOT", []) or [])
+                _mode = "shared"
+                try:
+                    _mode = normalize_game_mode(getattr(cls, "GAME_MODE", "shared"))
+                except Exception:
+                    _mode = "shared"
+                _snap = list(getattr(cls, "GAMES_SNAPSHOT", []) or []) if _mode == "per_account" else []
                 game = game_for_account(
-                    getattr(acc, "game_id", ""), getattr(acc, "place_id", ""), games
+                    getattr(acc, "game_id", ""), getattr(acc, "place_id", ""), _snap
                 )
             except Exception:
                 game = None
-            target_place = str(effective_place(getattr(acc, "place_id", ""), game)).strip()
+            # Unmatched (or Shared-mode) accounts fall back to the Shared
+            # Place ID instead of staying target-less.
+            _shared_fb = ""
+            if game is None:
+                try:
+                    _shared_fb = str(getattr(cls, "SHARED_PLACE_ID", "") or "").strip()
+                except Exception:
+                    _shared_fb = ""
+            target_place = str(effective_place(getattr(acc, "place_id", ""), game, _shared_fb)).strip()
             if game is not None:
                 flags = effective_auto_flags(game)
                 auto_private_enabled = bool(flags["enabled"])

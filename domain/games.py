@@ -18,9 +18,14 @@ into the first game exactly once (see :func:`ensure_games_migrated`).
 Resolution order for an account (never silently join the wrong map):
 
 1. explicit per-account ``place_id`` / ``vip_links`` always win,
-2. otherwise the account's ``game_id`` entry supplies place + VIP + flags,
-3. otherwise the legacy global keys apply (only when no games exist),
+2. otherwise the account's ``game_id`` entry supplies place + VIP + flags
+   (only when ``game_mode`` is ``"per_account"``),
+3. otherwise the legacy global keys apply (Shared Place ID fallback),
 4. otherwise the account has no target and must be blocked with a warning.
+
+In ``"shared"`` mode (default) step 2 is skipped: every account joins
+the Shared Place ID and pool assignments are ignored (but kept, so
+switching back to ``"per_account"`` restores them).
 """
 
 from __future__ import annotations
@@ -33,6 +38,9 @@ LEGACY_PLACE_KEY = "game_place_id"
 LEGACY_VIP_KEY = "game_private_server_url"
 LEGACY_AUTO_KEY = "auto_create_private_server_enabled"
 LEGACY_AUTO_FREE_KEY = "auto_create_private_server_free_only"
+
+GAME_MODE_SHARED = "shared"
+GAME_MODE_PER_ACCOUNT = "per_account"
 
 
 def _text(value: Any) -> str:
@@ -169,6 +177,19 @@ def game_for_account(
             if item["place_id"] and item["place_id"] == place:
                 return item
     return None
+
+
+def normalize_game_mode(value: Any) -> str:
+    """Clean the GAME card mode switch.
+
+    ``"per_account"`` enables the Games pool (unassigned accounts fall back
+    to the Shared Place ID); anything else means ``"shared"`` — every
+    account joins the Place ID above and pool assignments are ignored.
+    """
+    text = _text(value).lower().replace("-", "_")
+    if text in {"per_account", "peraccount", "per account"}:
+        return GAME_MODE_PER_ACCOUNT
+    return GAME_MODE_SHARED
 
 
 def new_game_id(games: Any) -> str:

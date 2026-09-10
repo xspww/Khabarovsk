@@ -2,6 +2,7 @@
   "use strict";
 
   let GAMES = [];
+  let GAME_MODE = "shared"; // GAME card switch; pool UI only lives in per-account
   let ACCOUNT_GAMES = {}; // lower(username) -> game_id
   let PLACE_NAMES = {}; // place_id -> name
   let PLACE_THUMBS = {}; // place_id -> image_url
@@ -87,11 +88,21 @@
     return place ? `${name} · ${place}` : name;
   }
 
+  function mapCellHtml(placeId, name, thumb) {
+    const pid = String(placeId || "").trim();
+    const label = String(name || "").trim() || (pid ? `Place ${pid}` : "—");
+    const img = thumb
+      ? `<img class="cronus-map-thumb" src="${esc(thumb)}" alt="" loading="lazy" onerror="this.remove()">`
+      : "";
+    return `${img}<span class="cronus-map-name" title="${esc(label)}">${esc(label)}</span>`;
+  }
+
   // (buttonLabel below renders the per-row picker text.)
   async function refreshGames(retry) {
     try {
       const data = await api("/games");
       GAMES = Array.isArray(data.games) ? data.games : [];
+      setGameMode(data.game_mode);
     } catch (_) {
       // Keep the last good list: a single failed tick must not wipe the UI.
       if (!retry) setTimeout(() => refreshGames(true), 4000);
@@ -99,6 +110,33 @@
     }
     renderGamesCard();
     refreshRowBadges();
+  }
+
+  function setGameMode(mode) {
+    const next = String(mode || "").trim().toLowerCase().replace("-", "_") === "per_account"
+      ? "per_account"
+      : "shared";
+    GAME_MODE = next;
+    applyGameMode();
+  }
+
+  // Shared mode: the pool is ignored, so its UI goes away entirely —
+  // pool card hidden, bulk button removed, row picker locked.
+  function applyGameMode() {
+    try {
+      document.body.dataset.gameMode = GAME_MODE;
+    } catch (_) {}
+    if (GAME_MODE !== "per_account") {
+      closePop();
+      const panel = document.querySelector("#cronus-games-panel");
+      if (panel) panel.hidden = true;
+      const bulk = document.querySelector("#cronus-bulk-game");
+      if (bulk) bulk.remove();
+      return;
+    }
+    const panel = document.querySelector("#cronus-games-panel");
+    if (panel) panel.hidden = false;
+    ensureBulkBar();
   }
 
   async function refreshAccountGames(retry) {
@@ -135,10 +173,6 @@
     return { name: PLACE_NAMES[pid], image_url: PLACE_THUMBS[pid] };
   }
 
-  async function placeName(placeId) {
-    return (await placeInfo(placeId)).name;
-  }
-
   // ── Games CRUD card in the Game view ──────────────────────────────
   function renderGamesCard() {
     const view = document.querySelector("#view-game");
@@ -150,14 +184,35 @@
       card.id = "cronus-games-panel";
       card.innerHTML = `
         <style>
-          #cronus-games-card .cronus-game-item{border:1px solid var(--border,#2a2d36);border-radius:10px;padding:10px;margin-bottom:10px}
-          #cronus-games-card .cronus-game-head{display:flex;gap:8px;align-items:center;margin-bottom:8px}
-          #cronus-games-card .cronus-game-head .input{flex:1;min-width:0}
-          #cronus-games-card .cronus-game-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-          #cronus-games-card .cronus-game-grid .full{grid-column:1/-1}
+          #cronus-games-card .cronus-game-item{border:1px solid #23252d;border-radius:12px;padding:14px 16px;margin-bottom:12px;background:#101116;box-shadow:inset 0 1px 0 rgba(255,255,255,.03);transition:border-color .15s ease}
+          #cronus-games-card .cronus-game-item:hover{border-color:#2e313b}
+          #cronus-games-card .cronus-game-head{display:flex;gap:8px;align-items:center;margin-bottom:12px}
+          #cronus-games-card .cronus-game-glyph{width:32px;height:32px;flex:none;display:grid;place-items:center;border-radius:9px;background:rgba(99,102,241,.14);border:1px solid rgba(99,102,241,.35);color:#a5b4fc;font-size:14px;font-weight:800}
+          #cronus-games-card .cronus-game-head .input{flex:1;min-width:0;font-weight:700}
+          #cronus-games-card .cronus-game-head .btn.good{padding:7px 16px;font-size:12px;flex:none}
+          #cronus-games-card .cronus-game-head .icon-btn{flex:none}
+          #cronus-games-card .cronus-game-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px 14px}
+          #cronus-games-card .cronus-game-field{display:grid;gap:6px;align-content:start;min-width:0}
+          #cronus-games-card .cronus-game-field.full{grid-column:1/-1}
+          #cronus-games-card .cronus-game-field>label{font-size:11px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;color:#6c7079}
+          #cronus-games-card .cronus-game-field>label span{font-weight:400;text-transform:none;letter-spacing:0;color:#53565e}
+          #cronus-games-card .cronus-game-grid .input{width:100%;font-size:12.5px}
+          #cronus-games-card .cronus-game-grid .input.mono{font-family:var(--mono,monospace);font-size:12px}
+          #cronus-games-card .cronus-game-grid .input:focus{border-color:#6366f1!important;box-shadow:0 0 0 3px rgba(99,102,241,.22);outline:none}
+          #cronus-games-card .cronus-game-map{display:flex;gap:10px;align-items:center;min-width:0;padding:1px 0}
+          #cronus-games-card .cronus-map-thumb{width:40px;height:40px;flex:none;border-radius:8px;object-fit:cover;background:#0b0c10;border:1px solid #22242b}
+          #cronus-games-card .cronus-map-name{font-size:12.5px;font-weight:600;color:#e6e7eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+          #cronus-games-card .cronus-map-loading{font-size:12px;color:#53565e}
+          #cronus-games-card .cronus-game-auto{display:flex;gap:10px;align-items:flex-start;grid-column:1/-1;margin-top:2px;padding-top:12px;border-top:1px solid rgba(140,144,156,.12);cursor:pointer;color:#caccd2;font-size:12.5px}
+          #cronus-games-card .cronus-game-auto input{width:15px;height:15px;margin:1px 0 0;accent-color:#6366f1;cursor:pointer;flex:none}
+          #cronus-games-card .cronus-game-auto strong{font-weight:700}
+          #cronus-games-card .cronus-game-auto em{font-style:normal;color:#53565e}
+          @media(max-width:560px){#cronus-games-card .cronus-game-grid{grid-template-columns:1fr}}
           #cronus-games-card .cronus-game-meta{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:8px}
           #cronus-games-card .cronus-game-count{font-size:12px;opacity:.75}
           #accounts-table .game-cell{cursor:pointer}
+          body[data-game-mode="shared"] #accounts-table .game-cell{cursor:default}
+          body[data-game-mode="shared"] #cronus-games-panel,body[data-game-mode="shared"] #cronus-bulk-game{display:none!important}
           .cronus-game-pop{padding:10px}
           .cronus-game-pop .cronus-gpop-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 4px 8px;font-size:12px;font-weight:700;color:#f2f3f5}
           .cronus-game-pop .cronus-gpop-head button{background:none;border:none;color:#8d9099;cursor:pointer;font-size:14px;line-height:1;padding:2px 6px}
@@ -190,6 +245,10 @@
       if (anchor) anchor.insertAdjacentElement("afterend", card);
       else view.appendChild(card);
       card.querySelector("#cronus-game-add").addEventListener("click", onAddGame);
+      // Sync visibility at creation: on cold start applyGameMode() already
+      // ran before this card existed, so without this it stays visible
+      // until the next poll.
+      card.hidden = (GAME_MODE !== "per_account");
     }
     const list = card.querySelector("#cronus-games-list");
     const count = card.querySelector("#cronus-games-count");
@@ -208,23 +267,26 @@
       item.dataset.gameId = String(game.id || "");
       item.innerHTML = `
         <div class="cronus-game-head">
+          <span class="cronus-game-glyph" data-role="glyph" aria-hidden="true">?</span>
           <input class="input" data-field="name" value="${esc(game.name || "")}" placeholder="Game name">
-          <button type="button" class="btn ghost" data-action="save">Save</button>
-          <button type="button" class="btn ghost" data-action="delete" title="Delete game">✕</button>
+          <button type="button" class="btn good" data-action="save">Save</button>
+          <button type="button" class="icon-btn" data-action="delete" title="Delete game">✕</button>
         </div>
         <div class="cronus-game-grid">
-          <div><label class="hint">Place ID</label><input class="input" data-field="place_id" value="${esc(game.place_id || "")}" placeholder="123456789"></div>
-          <div><label class="hint">Map</label><div class="hint" data-role="map-name">—</div></div>
-          <div class="full"><label class="hint">Private Server URL (optional, per-game VIP)</label><input class="input" data-field="private_server_url" value="${esc(game.private_server_url || "")}" placeholder="Private server URL"></div>
-          <label class="hint full"><input type="checkbox" data-field="auto_create_private_server_enabled" ${game.auto_create_private_server_enabled ? "checked" : ""}> Auto Create Private Server (this game)</label>
+          <div class="cronus-game-field"><label>Place ID</label><input class="input mono" data-field="place_id" value="${esc(game.place_id || "")}" placeholder="123456789" inputmode="numeric"></div>
+          <div class="cronus-game-field"><label>Map</label><div class="cronus-game-map" data-role="map-name">—</div></div>
+          <div class="cronus-game-field full"><label>Private Server URL <span>optional · per-game VIP</span></label><input class="input" data-field="private_server_url" value="${esc(game.private_server_url || "")}" placeholder="Private server URL" inputmode="url"></div>
+          <label class="cronus-game-auto"><input type="checkbox" data-field="auto_create_private_server_enabled" ${game.auto_create_private_server_enabled ? "checked" : ""}><span><strong>Auto Create Private Server</strong> <em>(this game)</em></span></label>
         </div>`;
       list.appendChild(item);
+      const glyphEl = item.querySelector('[data-role="glyph"]');
+      if (glyphEl) glyphEl.textContent = String(game.name || "?").trim().charAt(0).toUpperCase() || "?";
       const mapEl = item.querySelector('[data-role="map-name"]');
       if (game.place_id) {
-        placeName(game.place_id).then((name) => {
-          if (document.contains(mapEl)) mapEl.textContent = name || `Place ${game.place_id}`;
+        placeInfo(game.place_id).then(({ name, image_url }) => {
+          if (document.contains(mapEl)) mapEl.innerHTML = mapCellHtml(game.place_id, name, image_url);
         });
-        mapEl.textContent = "Loading…";
+        mapEl.innerHTML = `<span class="cronus-map-loading">Loading…</span>`;
       }
       item.querySelector('[data-action="save"]').addEventListener("click", () => onSaveGame(item));
       item.querySelector('[data-action="delete"]').addEventListener("click", () => onDeleteGame(item));
@@ -332,6 +394,11 @@
   }
 
   function ensureBulkBar() {
+    // Shared mode has no per-account assignment: never (re)create the
+    // button here. The MutationObserver calls decorateRows() after every
+    // DOM write, so without this gate it would resurrect the button right
+    // after applyGameMode() removes it.
+    if (GAME_MODE !== "per_account") return;
     const tools = document.querySelector(".account-tools");
     if (!tools || document.querySelector("#cronus-bulk-game")) return;
     const bar = document.createElement("div");
@@ -449,6 +516,7 @@
   }
 
   function openBulkPop(anchor) {
+    if (GAME_MODE !== "per_account") return;
     const users = selectedUsernames();
     if (!users.length) {
       toast("Select accounts first (click rows)", "info");
@@ -494,6 +562,13 @@
       const tr = cell.closest("tr[data-user]");
       if (!tr || !tr.dataset.user) return;
       e.stopPropagation();
+      if (GAME_MODE !== "per_account") {
+        if (type === "click") {
+          e.preventDefault();
+          toast("Shared game mode — switch Game Mode to Per-account to assign games", "info");
+        }
+        return;
+      }
       if (type === "click") {
         e.preventDefault();
         openPop(tr.dataset.user, cell);
@@ -543,6 +618,18 @@
   refreshGames();
   refreshAccountGames();
   decorateRows();
+  // Instant reaction to the GAME card mode switch (saveGamePanel
+  // dispatches this); the 30s poll below stays as the fallback.
+  try {
+    document.addEventListener("cronus:game-mode", (e) => {
+      const mode = e && e.detail && e.detail.mode;
+      if (!mode) {
+        refreshGames();
+        return;
+      }
+      setGameMode(mode);
+    });
+  } catch (_) {}
   setInterval(() => {
     refreshGames();
     refreshAccountGames();

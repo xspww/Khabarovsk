@@ -22,6 +22,11 @@ class ProcessManager:
     GLOBAL_VIP_LINK = ""
     AUTO_CREATE_PRIVATE_SERVER_ENABLED = False
     AUTO_CREATE_PRIVATE_SERVER_FREE_ONLY = True
+    # Shared GAME card fallback: place every account joins unless a
+    # per-account game/override supplies its own target.
+    SHARED_PLACE_ID = ""
+    # GAME card mode switch: "shared" (pool ignored) or "per_account".
+    GAME_MODE = "shared"
     # Read-only snapshot of the configured games list (list of dicts).
     # Replaced wholesale on every launch attempt; per-account game
     # resolution reads from it so concurrent launches for different

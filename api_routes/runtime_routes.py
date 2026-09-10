@@ -191,13 +191,22 @@ def register(app, ctx: ApiContext) -> None:
                 }
                 return result
             missing_targets = []
+            _mode = "shared"
             try:
-                from domain.games import effective_place, ensure_games_migrated, game_for_account
+                from domain.games import effective_place, ensure_games_migrated, game_for_account, normalize_game_mode
 
                 _snap = dict(cfg) if isinstance(cfg, dict) else {}
-                _games = ensure_games_migrated(_snap)
+                try:
+                    _mode = normalize_game_mode(_snap.get("game_mode", "shared"))
+                except Exception:
+                    _mode = "shared"
+                # Shared GAME mode ignores the pool; Per-account falls back
+                # to the Shared Place ID for unassigned accounts.
+                _games = ensure_games_migrated(_snap) if _mode == "per_account" else []
+                _legacy_place = str(cfg.get("game_place_id", "") or "")
             except Exception:
                 _games = []
+                _legacy_place = ""
             for a in launchable_accounts:
                 try:
                     _game = game_for_account(
@@ -210,7 +219,7 @@ def register(app, ctx: ApiContext) -> None:
                         effective_place(
                             getattr(a, "place_id", ""),
                             _game,
-                            "" if _games else str(cfg.get("game_place_id", "") or ""),
+                            _legacy_place if _game is None else "",
                         )
                     ).strip()
                 except Exception:
@@ -231,9 +240,52 @@ def register(app, ctx: ApiContext) -> None:
                     "command_id": command["command_id"],
                     "error_code": "missing_launch_target",
                     "msg": f"Missing game assignment for: {shown}{suffix}",
-                    "required_action": "Assign a game to each account (Games list), or set a per-account place_id / VIP link before /api/start.",
+                    "required_action": "Set a Shared Place ID (Game view), assign a game to each account (Games list), or set a per-account place_id / VIP link before /api/start.",
                     "missing_target_count": len(missing_targets),
                     "missing_targets": missing_targets[:10],
+                }
+                return result
+            # START-time Auto Create Private Server preflight: attempt the
+            # creation once per place up front. Disabled/paid games fail
+            # here so those accounts are skipped (the rest still run) and
+            # the UI can toast instead of failing mid-run.
+            preflight: dict = {"created": [], "failures": [], "skipped_usernames": []}
+            try:
+                from services.private_server_preflight import run_private_server_preflight
+
+                _pf = run_private_server_preflight(
+                    cfg, launchable_accounts, _games, _mode, ctx.cfg_mgr
+                )
+                if isinstance(_pf, dict):
+                    preflight = _pf
+            except Exception as exc:
+                flog_kv("API", "start_preflight_error", "warning", error=exc)
+            skipped_names = {
+                str(name or "").strip().lower()
+                for name in (preflight.get("skipped_usernames") or [])
+                if str(name or "").strip()
+            }
+            preflight_skipped: list = []
+            if skipped_names:
+                kept = []
+                for a in launchable_accounts:
+                    if str(a.username or "").strip().lower() in skipped_names:
+                        preflight_skipped.append(a.username)
+                    else:
+                        kept.append(a)
+                launchable_accounts = kept
+            if not launchable_accounts:
+                shown = ", ".join(preflight_skipped[:3])
+                suffix = "" if len(preflight_skipped) <= 3 else " ..."
+                result = {
+                    "ok": False,
+                    "accepted": False,
+                    "command_id": command["command_id"],
+                    "error_code": "private_server_preflight_blocked",
+                    "msg": f"Private server unavailable for: {shown}{suffix}",
+                    "required_action": "Disable Auto Create Private Server for that game, paste a VIP link, or pick a game with free private servers.",
+                    "private_server_preflight": preflight,
+                    "preflight_skipped": preflight_skipped[:10],
                 }
                 return result
             farm.start()
@@ -241,6 +293,8 @@ def register(app, ctx: ApiContext) -> None:
             msg = f"Farm started: {len(launchable_accounts)}/{len(farm._accounts)} accounts launchable"
             if blocked:
                 msg += f"; {_blocked_summary(blocked)}"
+            if preflight_skipped:
+                msg += f"; {len(preflight_skipped)} skipped (private server unavailable)"
             result = {
                 "ok": True,
                 "accepted": True,
@@ -249,6 +303,8 @@ def register(app, ctx: ApiContext) -> None:
                 "launchable_count": len(launchable_accounts),
                 "blocked_count": len(blocked),
                 "blocked": blocked,
+                "private_server_preflight": preflight,
+                "preflight_skipped": preflight_skipped[:10],
             }
             return result
         except Exception as e:

@@ -208,3 +208,30 @@
   padding: 0;
   gap: 10px;
 }
+
+.seg-toggle{
+  display: inline-flex;
+  gap: 4px;
+  padding: 3px;
+  background: #0d0e12;
+  border: 1px solid #232529;
+  border-radius: 9px;
+}
+.seg-toggle button{
+  border: 1px solid transparent;
+  background: transparent;
+  color: #8d9099;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.seg-toggle button:hover{
+  color: #ffffff;
+}
+.seg-toggle button.active{
+  background: #1d1f25;
+  border-color: #32343d;
+  color: #ffffff;
+}

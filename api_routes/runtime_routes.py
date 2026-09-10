@@ -190,10 +190,38 @@ def register(app, ctx: ApiContext) -> None:
                     "blocked": blocked,
                 }
                 return result
-            missing_targets = [
-                a.username for a in launchable_accounts
-                if not str(a.place_id or "").strip() and not list(a.vip_links or [])
-            ]
+            missing_targets = []
+            try:
+                from domain.games import effective_place, ensure_games_migrated, game_for_account
+
+                _snap = dict(cfg) if isinstance(cfg, dict) else {}
+                _games = ensure_games_migrated(_snap)
+            except Exception:
+                _games = []
+            for a in launchable_accounts:
+                try:
+                    _game = game_for_account(
+                        getattr(a, "game_id", ""), getattr(a, "place_id", ""), _games
+                    )
+                except Exception:
+                    _game = None
+                try:
+                    _place = str(
+                        effective_place(
+                            getattr(a, "place_id", ""),
+                            _game,
+                            "" if _games else str(cfg.get("game_place_id", "") or ""),
+                        )
+                    ).strip()
+                except Exception:
+                    _place = str(getattr(a, "place_id", "") or "").strip()
+                _links = list(getattr(a, "vip_links", []) or [])
+                if _game is not None and not _links:
+                    _gvip = str((_game or {}).get("private_server_url") or "").strip()
+                    if _gvip:
+                        _links = [_gvip]
+                if not _place and not _links:
+                    missing_targets.append(a.username)
             if missing_targets:
                 shown = ", ".join(missing_targets[:3])
                 suffix = "" if len(missing_targets) <= 3 else " ..."
@@ -202,8 +230,8 @@ def register(app, ctx: ApiContext) -> None:
                     "accepted": False,
                     "command_id": command["command_id"],
                     "error_code": "missing_launch_target",
-                    "msg": f"Missing Place ID or VIP link for: {shown}{suffix}",
-                    "required_action": "Set game_place_id, game_private_server_url, per-account place_id, or a VIP link before /api/start.",
+                    "msg": f"Missing game assignment for: {shown}{suffix}",
+                    "required_action": "Assign a game to each account (Games list), or set a per-account place_id / VIP link before /api/start.",
                     "missing_target_count": len(missing_targets),
                     "missing_targets": missing_targets[:10],
                 }

@@ -212,10 +212,138 @@ def _cpu_limiter_status(ctx: ApiContext) -> Dict[str, Any]:
     return CPU_LIMITER.snapshot(getattr(ctx.farm, "_accounts", []), settings)
 
 
+def _migrate_account_games(ctx: ApiContext, accounts_to_update: List[Account]) -> int:
+    """One-time linking of existing accounts to games. Returns linked count.
+
+    Links by id when present, otherwise by matching place_id. Accounts with
+    no target at all are assigned the default game so farms configured
+    before multi-game keep working. Runs only until ``games_migrated`` is
+    set; accounts added afterwards without a game stay unassigned and are
+    blocked at START with a warning (never silently join a wrong map).
+    """
+    try:
+        from domain.games import default_game, ensure_games_migrated, game_for_account
+    except Exception:
+        return 0
+    try:
+        cfg = ctx.cfg_mgr.snapshot()
+    except Exception:
+        return 0
+    if not isinstance(cfg, dict):
+        return 0
+    if bool(cfg.get("games_migrated", False)):
+        return 0
+    try:
+        games = ensure_games_migrated(dict(cfg))
+    except Exception:
+        games = []
+    if not games:
+        return 0
+    fallback = default_game(games)
+    linked = 0
+    for acc in accounts_to_update or []:
+        try:
+            if str(getattr(acc, "game_id", "") or "").strip():
+                continue
+            game = game_for_account("", getattr(acc, "place_id", ""), games)
+            if game is None and not str(getattr(acc, "place_id", "") or "").strip() and not list(
+                getattr(acc, "vip_links", []) or []
+            ):
+                game = fallback
+            if game is not None:
+                acc.game_id = str(game.get("id") or "")
+                linked += 1
+        except Exception:
+            continue
+    if linked:
+        try:
+            ctx.cfg_mgr.update({"games_migrated": True})
+            ctx.cfg_mgr.save()
+        except Exception:
+            pass
+    return linked
+
+
 def _apply_game_defaults(ctx: ApiContext, accounts_to_update: List[Account], persist: bool = False) -> int:
-    cfg = ctx.cfg_mgr.snapshot()
-    vip_url = str(cfg.get("game_private_server_url", "") or "").strip()
-    place_id = str(cfg.get("game_place_id", "") or "").strip()
+    try:
+        from domain.games import ensure_games_migrated, game_for_account
+    except Exception:
+        return _apply_legacy_game_defaults(ctx, accounts_to_update, persist)
+    try:
+        cfg = ctx.cfg_mgr.snapshot()
+    except Exception:
+        cfg = {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    try:
+        games = ensure_games_migrated(dict(cfg))
+    except Exception:
+        games = []
+    if not games:
+        return _apply_legacy_game_defaults(ctx, accounts_to_update, persist, cfg=cfg)
+
+    linked = _migrate_account_games(ctx, accounts_to_update)
+
+    changed = 0
+    for acc in accounts_to_update:
+        try:
+            game = game_for_account(
+                getattr(acc, "game_id", ""), getattr(acc, "place_id", ""), games
+            )
+        except Exception:
+            game = None
+        if game is None:
+            # Unassigned account: leave alone so START blocks it with a
+            # warning instead of joining the wrong map.
+            continue
+        account_changed = False
+        if not str(getattr(acc, "game_id", "") or "").strip():
+            acc.game_id = str(game.get("id") or "")
+            account_changed = True
+        place_id = str(game.get("place_id") or "").strip()
+        game_vip = str(game.get("private_server_url") or "").strip()
+        if place_id:
+            filtered_links = [
+                link for link in list(acc.vip_links or [])
+                if not ProcessManager.parse_vip_link(str(link or "").strip())[0]
+                or ProcessManager.parse_vip_link(str(link or "").strip())[0] == place_id
+            ]
+            active_place = ProcessManager.parse_vip_link(str(acc.active_vip or "").strip())[0]
+            if active_place and active_place != place_id:
+                acc.active_vip = ""
+                account_changed = True
+            if filtered_links != list(acc.vip_links or []):
+                acc.vip_links = filtered_links
+                account_changed = True
+            # Per-account VIP links win; the game's VIP is only a default
+            # when the account has none of its own.
+            if game_vip and not list(acc.vip_links or []):
+                acc.vip_links = [game_vip]
+                account_changed = True
+        elif game_vip and not list(acc.vip_links or []):
+            acc.vip_links = [game_vip]
+            account_changed = True
+        if account_changed:
+            changed += 1
+    if (changed or linked) and persist:
+        ctx.cfg_mgr.save_accounts(ctx.farm._accounts)
+        flog_kv("API", "game_defaults_applied", accounts=changed, migrated=linked)
+    return changed + linked
+
+
+def _apply_legacy_game_defaults(
+    ctx: ApiContext,
+    accounts_to_update: List[Account],
+    persist: bool = False,
+    cfg: Optional[Dict[str, Any]] = None,
+) -> int:
+    if cfg is None:
+        try:
+            cfg = ctx.cfg_mgr.snapshot()
+        except Exception:
+            cfg = {}
+    vip_url = str((cfg or {}).get("game_private_server_url", "") or "").strip()
+    place_id = str((cfg or {}).get("game_place_id", "") or "").strip()
     if vip_url:
         parsed_place, _link_code = ProcessManager.parse_vip_link(vip_url)
         if parsed_place and not place_id:

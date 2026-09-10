@@ -49,6 +49,7 @@ def register(app, ctx: ApiContext) -> None:
             "queue_delay_seconds", "queue_duration_seconds", "max_concurrent_accounts",
             "lua_enabled", "lua_timeout_seconds",
             "game_private_server_url", "game_place_id",
+            "games", "games_migrated",
             "auto_create_private_server_enabled", "auto_create_private_server_free_only",
             "auto_close_enabled", "auto_close_minutes",
             "auto_minimize_enabled", "auto_minimize_seconds",
@@ -238,10 +239,62 @@ def register(app, ctx: ApiContext) -> None:
             updates["rt_rotation_enabled"] = bool(updates["rt_rotation_enabled"])
         if "runtime_account_allowlist" in updates:
             updates["runtime_account_allowlist"] = runtime_account_allowlist(updates)
+        if "games" in updates:
+            try:
+                from domain.games import ensure_games_migrated, normalize_games
+
+                snap = cfg_mgr.snapshot()
+                snap["games"] = updates["games"]
+                updates["games"] = normalize_games(snap["games"])
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
+            except Exception:
+                updates["games"] = []
+        if "games_migrated" in updates:
+            updates["games_migrated"] = bool(updates["games_migrated"])
         if "game_place_id" in updates:
             updates["game_place_id"] = str(updates["game_place_id"] or "").strip()
         if "game_private_server_url" in updates:
             updates["game_private_server_url"] = str(updates["game_private_server_url"] or "").strip()
+        if "game_place_id" in updates or "game_private_server_url" in updates:
+            # Keep the legacy single-game keys and the default game entry in
+            # sync so old UIs and the games list never disagree.
+            try:
+                from domain.games import DEFAULT_GAME_ID, ensure_games_migrated
+
+                snap = cfg_mgr.snapshot()
+                snap["game_place_id"] = updates.get("game_place_id", snap.get("game_place_id", ""))
+                snap["game_private_server_url"] = updates.get(
+                    "game_private_server_url", snap.get("game_private_server_url", "")
+                )
+                if "auto_create_private_server_enabled" in updates:
+                    snap["auto_create_private_server_enabled"] = updates["auto_create_private_server_enabled"]
+                if "auto_create_private_server_free_only" in updates:
+                    snap["auto_create_private_server_free_only"] = updates["auto_create_private_server_free_only"]
+                games = ensure_games_migrated(snap)
+                if not games:
+                    games = [
+                        {
+                            "id": DEFAULT_GAME_ID,
+                            "name": "Game 1",
+                            "place_id": str(snap.get("game_place_id") or ""),
+                            "private_server_url": str(snap.get("game_private_server_url") or ""),
+                            "auto_create_private_server_enabled": bool(
+                                snap.get("auto_create_private_server_enabled", False)
+                            ),
+                            "auto_create_private_server_free_only": bool(
+                                snap.get("auto_create_private_server_free_only", True)
+                            ),
+                        }
+                    ]
+                else:
+                    games[0]["place_id"] = str(snap.get("game_place_id") or games[0].get("place_id") or "")
+                    games[0]["private_server_url"] = str(
+                        snap.get("game_private_server_url") or games[0].get("private_server_url") or ""
+                    )
+                updates["games"] = games
+            except Exception:
+                pass
         if "auto_create_private_server_enabled" in updates:
             updates["auto_create_private_server_enabled"] = bool(updates["auto_create_private_server_enabled"])
         if "auto_create_private_server_free_only" in updates:

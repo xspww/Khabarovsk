@@ -132,6 +132,7 @@ def _render_requeue_source(account: str, port: int, shutdown_delay: float, token
             "return nil",
             "end",
             f"local url={_lua_literal(helper_url)}",
+            'warnCronus("TPR begin")',
             "local source=nil",
             "if Request then",
             f'local response=Request({{Method="GET",Url=url,Headers={{["User-Agent"]="CronusRejoinTeleport/1.0"}}}})',
@@ -139,10 +140,12 @@ def _render_requeue_source(account: str, port: int, shutdown_delay: float, token
             "elseif game.HttpGet then",
             "source=game:HttpGet(url)",
             "end",
+            'warnCronus("TPR fetched "..tostring(source and#source or-1))',
             'if type(source)~="string"or#source<=0 then return warnCronus("Rejoin helper failed to load")end',
             'if source:sub(1,1)=="{"then return nil end',
             "local fn,err=Load(source)",
             'if not fn then return warnCronus("Rejoin helper failed to load")end',
+            'warnCronus("TPR run")',
             "return fn()",
         ]
     )

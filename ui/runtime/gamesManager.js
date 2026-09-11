@@ -184,7 +184,7 @@
       card.id = "cronus-games-panel";
       card.innerHTML = `
         <style>
-          #cronus-games-card .cronus-game-item{border:1px solid #23252d;border-radius:12px;padding:14px 16px;margin-bottom:12px;background:#101116;box-shadow:inset 0 1px 0 rgba(255,255,255,.03);transition:border-color .15s ease}
+          #cronus-games-card .cronus-game-item{border:1px solid #23252d;border-radius:12px;padding:14px 16px;margin-bottom:12px;background:#101116;box-shadow:inset 0 1px 0 rgba(255,255,255,.03);}
           #cronus-games-card .cronus-game-item:hover{border-color:#2e313b}
           #cronus-games-card .cronus-game-head{display:flex;gap:8px;align-items:center;margin-bottom:12px}
           #cronus-games-card .cronus-game-glyph{width:32px;height:32px;flex:none;display:grid;place-items:center;border-radius:9px;background:rgba(99,102,241,.14);border:1px solid rgba(99,102,241,.35);color:#a5b4fc;font-size:14px;font-weight:800}
@@ -204,7 +204,10 @@
           #cronus-games-card .cronus-map-name{font-size:12.5px;font-weight:600;color:#e6e7eb;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
           #cronus-games-card .cronus-map-loading{font-size:12px;color:#53565e}
           #cronus-games-card .cronus-game-auto{display:flex;gap:10px;align-items:flex-start;grid-column:1/-1;margin-top:2px;padding-top:12px;border-top:1px solid rgba(140,144,156,.12);cursor:pointer;color:#caccd2;font-size:12.5px}
-          #cronus-games-card .cronus-game-auto input{width:15px;height:15px;margin:1px 0 0;accent-color:#6366f1;cursor:pointer;flex:none}
+          #cronus-games-card .cronus-game-auto input{appearance:none;-webkit-appearance:none;width:17px;height:17px;margin:1px 0 0;border-radius:6px;border:1.5px solid #434653;background:transparent;cursor:pointer;flex:none;display:grid;place-items:center}
+          #cronus-games-card .cronus-game-auto input:checked{background:#5855ea;border-color:#6366f1}
+          #cronus-games-card .cronus-game-auto input:checked::after{content:"";width:11px;height:11px;background:#fff;-webkit-mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat;mask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M5 12.5l4.5 4.5L19 7.5' fill='none' stroke='black' stroke-width='3.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center/contain no-repeat}
+          #cronus-games-card .cronus-game-auto input:focus-visible{outline:2px solid #818cf8;outline-offset:2px}
           #cronus-games-card .cronus-game-auto strong{font-weight:700}
           #cronus-games-card .cronus-game-auto em{font-style:normal;color:#53565e}
           @media(max-width:560px){#cronus-games-card .cronus-game-grid{grid-template-columns:1fr}}
@@ -229,9 +232,14 @@
           #view-accounts .account-tools{grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px}
           .cronus-bulkbar{display:flex;gap:8px;align-items:center;min-width:0}
           #cronus-bulk-btn{height:33px;white-space:nowrap;flex:none}
+          .cronus-game-map{min-height:40px}
+          .cronus-game-assign{font-size:11.5px;color:#7f838c;margin-top:10px}
+          .cronus-game-item.is-dirty{border-color:rgba(99,102,241,.5)}
+          .cronus-game-item.is-dirty [data-action="save"]{box-shadow:0 0 0 3px rgba(99,102,241,.18)}
+          #cronus-games-card [data-action="delete"].armed{background:#4c1d24;border-color:#f43f5e;color:#fda4af}
         </style>
         <div class="settings-card cards-mode"><section class="queue-card" id="cronus-games-card">
-          <div class="queue-card-head"><div class="queue-card-title">Games<div class="hint">Multiple Place IDs — assign accounts to a game</div></div></div>
+          <div class="queue-card-head"><div class="queue-card-title">Game Collection<div class="hint">Multiple Place IDs — assign accounts to a game</div></div></div>
           <div class="queue-card-body">
             <div id="cronus-games-list"></div>
             <div class="cronus-game-meta">
@@ -277,19 +285,45 @@
           <div class="cronus-game-field"><label>Map</label><div class="cronus-game-map" data-role="map-name">—</div></div>
           <div class="cronus-game-field full"><label>Private Server URL <span>optional · per-game VIP</span></label><input class="input" data-field="private_server_url" value="${esc(game.private_server_url || "")}" placeholder="Private server URL" inputmode="url"></div>
           <label class="cronus-game-auto"><input type="checkbox" data-field="auto_create_private_server_enabled" ${game.auto_create_private_server_enabled ? "checked" : ""}><span><strong>Auto Create Private Server</strong> <em>(this game)</em></span></label>
-        </div>`;
+        </div><div class="cronus-game-assign" data-role="assign"></div>`;
       list.appendChild(item);
       const glyphEl = item.querySelector('[data-role="glyph"]');
-      if (glyphEl) glyphEl.textContent = String(game.name || "?").trim().charAt(0).toUpperCase() || "?";
+      const paintGlyph = () => {
+        if (glyphEl) glyphEl.textContent = String(item.querySelector('[data-field="name"]')?.value || "?").trim().charAt(0).toUpperCase() || "?";
+      };
+      paintGlyph();
       const mapEl = item.querySelector('[data-role="map-name"]');
-      if (game.place_id) {
-        placeInfo(game.place_id).then(({ name, image_url }) => {
-          if (document.contains(mapEl)) mapEl.innerHTML = mapCellHtml(game.place_id, name, image_url);
+      const paintMap = (pid) => {
+        placeInfo(pid).then(({ name, image_url }) => {
+          if (!document.contains(mapEl)) return;
+          if (String(item.querySelector('[data-field="place_id"]')?.value || "").trim() !== pid) return;
+          if (document.contains(mapEl)) mapEl.innerHTML = mapCellHtml(pid, name, image_url);
         });
+      };
+      if (game.place_id) {
+        paintMap(String(game.place_id));
         mapEl.innerHTML = `<span class="cronus-map-loading">Loading…</span>`;
+      } else {
+        mapEl.innerHTML = `<span class="cronus-map-loading">Enter a Place ID</span>`;
       }
+      const markDirty = () => item.classList.add("is-dirty");
+      item.querySelector('[data-field="name"]')?.addEventListener("input", () => { paintGlyph(); markDirty(); });
+      item.querySelector('[data-field="place_id"]')?.addEventListener("input", () => {
+        markDirty();
+        clearTimeout(item._previewTimer);
+        item._previewTimer = setTimeout(() => {
+          const pid = String(item.querySelector('[data-field="place_id"]')?.value || "").trim();
+          if (!pid) { mapEl.innerHTML = `<span class="cronus-map-loading">Enter a Place ID</span>`; return; }
+          if (!/^\d+$/.test(pid)) { mapEl.innerHTML = `<span class="cronus-map-loading">Place ID must be numeric</span>`; return; }
+          mapEl.innerHTML = `<span class="cronus-map-loading">Loading…</span>`;
+          paintMap(pid);
+        }, 600);
+      });
+      item.querySelector('[data-field="private_server_url"]')?.addEventListener("input", markDirty);
+      item.querySelector('[data-field="auto_create_private_server_enabled"]')?.addEventListener("change", markDirty);
       item.querySelector('[data-action="save"]').addEventListener("click", () => onSaveGame(item));
       item.querySelector('[data-action="delete"]').addEventListener("click", () => onDeleteGame(item));
+      refreshAssignCounts();
     });
   }
 
@@ -355,31 +389,39 @@
       renderGamesCard();
       return;
     }
+    const arm = (msg) => {
+      const btn = item.querySelector('[data-action="delete"]');
+      item.dataset.armed = "1";
+      if (btn) { btn.classList.add("armed"); btn.title = msg; }
+      notice(msg, true);
+      clearTimeout(item._armTimer);
+      item._armTimer = setTimeout(() => {
+        delete item.dataset.armed;
+        delete item.dataset.force;
+        const live = item.querySelector('[data-action="delete"]');
+        if (live && document.contains(live)) { live.classList.remove("armed"); live.title = "Delete game"; }
+      }, 4000);
+    };
     const game = gameById(id);
-    if (!confirm(`Delete "${game ? game.name : id}"? Accounts on this game become unassigned.`)) return;
+    const label = game ? game.name : id;
+    if (!item.dataset.armed) {
+      arm(`Click ✕ again to delete "${label}"`);
+      return;
+    }
+    const reqBody = { id };
+    if (item.dataset.force) reqBody.force = true;
     try {
-      const payload = await api("/games/delete", "POST", { id });
+      const payload = await api("/games/delete", "POST", reqBody);
       GAMES = Array.isArray(payload.games) ? payload.games : GAMES;
       if (document.activeElement) document.activeElement.blur();
       renderGamesCard();
       refreshAccountGames();
       toast("Game deleted");
+      notice("");
     } catch (error) {
-      if (/assigned to \d+ account/.test(String(error.message || ""))) {
-        if (confirm(error.message + "\n\nForce delete and unassign them?")) {
-          try {
-            const payload = await api("/games/delete", "POST", { id, force: true });
-            GAMES = Array.isArray(payload.games) ? payload.games : GAMES;
-            if (document.activeElement) document.activeElement.blur();
-            renderGamesCard();
-            refreshAccountGames();
-            toast("Game deleted");
-            return;
-          } catch (inner) {
-            notice(inner.message, true);
-            return;
-          }
-        }
+      if (!item.dataset.force && /assigned to \d+ account/.test(String(error.message || ""))) {
+        item.dataset.force = "1";
+        arm(`${error.message} — click ✕ again to force delete and unassign them`);
         return;
       }
       notice(error.message, true);
@@ -596,6 +638,25 @@
   // Kept as a function because refresh paths call it after every fetch.
   function refreshRowBadges() {
     updateBulkLabel();
+    refreshAssignCounts();
+  }
+
+  // Per-game account counts under each Games-card entry.
+  function refreshAssignCounts() {
+    const counts = {};
+    Object.values(ACCOUNT_GAMES).forEach((id) => {
+      const key = String(id || "").trim().toLowerCase();
+      if (key) counts[key] = (counts[key] || 0) + 1;
+    });
+    document.querySelectorAll('#cronus-games-list .cronus-game-item').forEach((item) => {
+      const slot = item.querySelector('[data-role="assign"]');
+      if (!slot) return;
+      const gid = String(item.dataset.gameId || "").trim().toLowerCase();
+      const text = !gid
+        ? "Not saved yet"
+        : (counts[gid] ? `${counts[gid]} account${counts[gid] > 1 ? "s" : ""} assigned` : "No accounts assigned");
+      if (slot.textContent !== text) slot.textContent = text;
+    });
   }
 
   // Debounced + self-muted: dashboard re-renders the table on every status

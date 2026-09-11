@@ -1,48 +1,7 @@
 /* Custom UI enhancements - extracted from ui_dashboard.py for cache/perf.
    Optimized: reduced polling intervals, use MutationObserver where possible */
 (() => {
-  const icons = [
-    ['#nav [data-nav-group="launcher"] .nav-group-icon', '/assets/nav-launcher.png'],
-    ['#nav button[data-view="accounts"]', '/assets/nav-dashboard.png'],
-    ['#nav [data-nav-group="performance"] .nav-group-icon', '/assets/nav-performance.png'],
-    ['#nav [data-nav-group="tool"] .nav-group-icon', '/assets/nav-tool.png'],
-  ];
-  if (!document.getElementById('nav-image-icon-style')) {
-    const style = document.createElement('style');
-    style.id = 'nav-image-icon-style';
-    style.textContent = '.nav-image-icon{width:18px;height:18px;flex:0 0 18px;display:block;object-fit:contain;filter:invert(1) opacity(.58)}.nav button:hover .nav-image-icon,.nav button.active .nav-image-icon{filter:invert(1) opacity(1)}.guard-start-image,.guard-stop-image{width:15px;height:15px;display:block;background:#818cf8;mask:url("/assets/nav-start.png") center/contain no-repeat;-webkit-mask:url("/assets/nav-start.png") center/contain no-repeat}.guard-stop-image{background:#f43f5e;mask-image:url("/assets/nav-stop.png");-webkit-mask-image:url("/assets/nav-stop.png")}';
-    document.head.appendChild(style);
-  }
-  icons.forEach(([selector, src]) => {
-    const root = document.querySelector(selector);
-    const old = root?.querySelector('svg, img');
-    if (!root || !old || old.classList.contains('nav-image-icon')) return;
-    const image = document.createElement('img');
-    image.className = 'nav-image-icon';
-    image.src = src;
-    image.alt = '';
-    image.setAttribute('aria-hidden', 'true');
-    old.replaceWith(image);
-  });
-
-  const applyGuardIcon = () => {
-    const button = document.getElementById('guard-btn');
-    if (!button) return;
-    const stopping = button.classList.contains('danger');
-    const iconClass = stopping ? 'guard-stop-image' : 'guard-start-image';
-    const old = button.querySelector('svg, img, .guard-start-image, .guard-stop-image');
-    if (!old || old.classList.contains(iconClass)) return;
-    const image = document.createElement('span');
-    image.className = iconClass;
-    image.setAttribute('aria-hidden', 'true');
-    old.replaceWith(image);
-  };
-  applyGuardIcon();
-  const guardButton = document.getElementById('guard-btn');
-  if (guardButton) {
-    new MutationObserver(applyGuardIcon).observe(guardButton, { childList: true, subtree: true, attributes: true, attributeFilter: ['class'] });
-  }
-
+  // NOTE: nav/guard icons are inline SVG (icons.js + currentColor) — no image files.
   const initGridPicker = () => {
     const select = document.getElementById('window-grid-preset');
     if (!select) return;
@@ -136,32 +95,16 @@
     if (node.nodeType === Node.TEXT_NODE && node.textContent.includes('Currently installed:')) node.textContent = 'Current Version: ';
   });
 
-  const replaceMaskedIcon = (selector, src, className) => {
-    const root = document.querySelector(selector);
-    const old = root?.querySelector('svg, img');
-    if (!root || !old || old.classList.contains(className)) return;
-    const icon = document.createElement('span');
-    icon.className = className;
-    icon.style.setProperty('--icon-mask', `url("${src}")`);
-    icon.setAttribute('aria-hidden', 'true');
-    old.replaceWith(icon);
-  };
-  if (!document.getElementById('custom-ui-icon-style')) {
-    const style = document.createElement('style');
-    style.id = 'custom-ui-icon-style';
-    style.textContent = '.custom-search-icon,.custom-running-icon,.custom-logo-icon{display:block;background:#cdced4;mask:var(--icon-mask) center/contain no-repeat;-webkit-mask:var(--icon-mask) center/contain no-repeat}.custom-search-icon{position:absolute;left:14px;top:50%;width:15px;height:15px;transform:translateY(-50%);background:#696d76;pointer-events:none}.custom-running-icon{width:15px;height:15px;background:#696d76}.status-running svg{stroke:#696d76}.custom-logo-icon{width:15px;height:15px;background:#656972}.app-started .custom-logo-icon{background:#2596be}';
-    document.head.appendChild(style);
-  }
-  replaceMaskedIcon('.search-wrap', '/assets/icon-search.png', 'custom-search-icon');
-  replaceMaskedIcon('.status-running', '/assets/icon-running.png', 'custom-running-icon');
+  // Search + running indicators are inline SVG (magnifer icon, status clock) — no image files.
   const favicon = document.querySelector('link[rel="icon"]');
   if (favicon) favicon.href = '/assets/cronus_icon.png';
-  const syncAppState = () => document.documentElement.classList.toggle('app-started', document.getElementById('guard-btn')?.classList.contains('danger'));
-  syncAppState();
-  const guard = document.getElementById('guard-btn');
-  if (guard) new MutationObserver(syncAppState).observe(guard, { attributes: true, attributeFilter: ['class'] });
 
   const closeButton = document.getElementById('close-all-roblox-btn');
+  const escPick = (value) => {
+    const node = document.createElement('span');
+    node.textContent = String(value || '');
+    return node.innerHTML;
+  };
   if (closeButton && closeButton.dataset.selectedCloseReady !== '1') {
     closeButton.dataset.selectedCloseReady = '1';
     closeButton.addEventListener('click', (event) => {
@@ -173,12 +116,38 @@
       const foot = document.getElementById('modal-foot');
       if (!backdrop || !title || !body || !foot) return;
       const rows = Array.from(document.querySelectorAll('#accounts-table tr[data-user]'));
+      const statusOf = (row) => {
+        const pill = row.querySelector('.status');
+        const label = pill?.textContent?.trim() || 'Unknown';
+        const cls = String(pill?.className || '').toLowerCase();
+        const key = ['online', 'captcha', 'invalid', 'blocked', 'queued', 'launching', 'rejoining', 'cooldown', 'lua', 'checking', 'disconnected'].find((k) => cls.includes(k)) || (/idle/.test(cls) ? 'idle' : 'unknown');
+        return { label, key };
+      };
+      // Pre-check accounts that actually have a live client (less clicking).
+      const isRunning = (key) => key === 'online' || key === 'lua';
       title.textContent = 'Close Roblox';
-      body.innerHTML = `<div class="v-sub">Select the accounts whose Roblox clients should close.</div><div class="selected-close-list">${rows.length ? rows.map((row) => `<label class="selected-close-row"><input type="checkbox" data-close-user="${row.dataset.user}"><span>${row.querySelector('.name')?.textContent?.trim() || row.dataset.user}</span></label>`).join('') : '<div class="v-empty">No accounts found.</div>'}</div>`;
-      foot.innerHTML = '<button class="btn ghost" id="close-select-all">Select All</button><button class="btn ghost" id="close-clear">Clear</button><button class="btn danger" id="close-selected-confirm">Close Selected</button>';
+      body.innerHTML = `<div class="v-sub">Select the accounts whose Roblox clients should close.</div><div class="selected-close-list">${rows.length ? rows.map((row) => {
+        const user = row.dataset.user;
+        const st = statusOf(row);
+        const checked = isRunning(st.key) ? ' checked' : '';
+        return `<label class="close-pick${checked ? ' is-checked' : ''}"><input type="checkbox" data-close-user="${user}"${checked}><span class="close-check" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="close-name">${escPick(row.querySelector('.name')?.textContent?.trim() || user)}</span><span class="close-st st-${st.key}">${escPick(st.label)}</span></label>`;
+      }).join('') : '<div class="v-empty">No accounts found.</div>'}</div>`;
+      foot.innerHTML = '<div class="close-pick-foot"><div class="close-pick-tools"><button class="btn ghost" id="close-select-all">Select All</button><button class="btn ghost" id="close-clear">Clear</button></div><button class="btn danger" id="close-selected-confirm">Close Selected</button></div>';
       backdrop.hidden = false;
-      document.getElementById('close-select-all')?.addEventListener('click', () => body.querySelectorAll('[data-close-user]').forEach((input) => { input.checked = true; }));
-      document.getElementById('close-clear')?.addEventListener('click', () => body.querySelectorAll('[data-close-user]').forEach((input) => { input.checked = false; }));
+      const confirmBtn = document.getElementById('close-selected-confirm');
+      const syncPick = () => {
+        const boxes = Array.from(body.querySelectorAll('[data-close-user]'));
+        const n = boxes.filter((input) => input.checked).length;
+        boxes.forEach((input) => input.closest('.close-pick')?.classList.toggle('is-checked', input.checked));
+        if (confirmBtn) {
+          confirmBtn.textContent = n ? `Close Selected (${n})` : 'Close Selected';
+          confirmBtn.disabled = !n;
+        }
+      };
+      body.querySelector('.selected-close-list')?.addEventListener('change', syncPick);
+      document.getElementById('close-select-all')?.addEventListener('click', () => { body.querySelectorAll('[data-close-user]').forEach((input) => { input.checked = true; }); syncPick(); });
+      document.getElementById('close-clear')?.addEventListener('click', () => { body.querySelectorAll('[data-close-user]').forEach((input) => { input.checked = false; }); syncPick(); });
+      syncPick();
       document.getElementById('close-selected-confirm')?.addEventListener('click', async () => {
         const usernames = Array.from(body.querySelectorAll('[data-close-user]:checked')).map((input) => input.dataset.closeUser).filter(Boolean);
         if (!usernames.length) return;
@@ -205,13 +174,6 @@
   setInterval(refreshCurrentVersion, 30000);
   document.querySelector('#roblox-latest span')?.replaceChildren('Update to Latest');
   const latestOnly = () => {
-    document.querySelectorAll('#modal-backdrop .vchoice:not(.exploitstrap-choice) .rb-logo').forEach((logo) => {
-      const rb = document.createElement('div');
-      rb.className = 'choice-icon roblox-rb-icon';
-      rb.textContent = 'RB';
-      rb.setAttribute('aria-label', 'Roblox');
-      logo.replaceWith(rb);
-    });
     document.querySelectorAll('#modal-backdrop .vchoice').forEach((choice) => {
       const old = choice.querySelector('.vbadge.old');
       if (old) choice.remove();

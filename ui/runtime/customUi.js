@@ -79,6 +79,41 @@
     return token ? { 'X-Cronus-Token': token } : {};
   };
 
+  // Same look as the feedback toast (icon + auto type), without importing it.
+  const showResultToast = (message) => {
+    const host = document.getElementById('toast');
+    if (!host) return;
+    const text = String(message || '');
+    const lower = text.toLowerCase();
+    let type = 'success';
+    if (lower.includes('error') || lower.includes('failed') || lower.includes('invalid')
+      || lower.includes('cannot') || lower.includes('blocked') || lower.includes('denied')
+      || lower.includes('missing') || lower.includes('not found') || lower.includes('required')) {
+      type = 'error';
+    }
+    while (host.children.length >= 4) host.firstElementChild?.remove();
+    const icons = {
+      success: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#6366f1"/><path d="M8.2 12.2l2.6 2.6 4.5-5" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+      error: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#f87171"/><path d="M15 9l-6 6M9 9l6 6" stroke="white" stroke-width="1.9" stroke-linecap="round"/></svg>',
+    };
+    const item = document.createElement('div');
+    item.className = `toast-item toast-${type}`;
+    const icon = document.createElement('span');
+    icon.className = 'toast-icon';
+    icon.innerHTML = icons[type] || icons.success;
+    const label = document.createElement('span');
+    label.className = 'toast-text';
+    label.textContent = text;
+    item.append(icon, label);
+    host.appendChild(item);
+    requestAnimationFrame(() => item.classList.add('show'));
+    setTimeout(() => {
+      item.classList.remove('show');
+      item.classList.add('hide');
+      setTimeout(() => item.remove(), 200);
+    }, 3200);
+  };
+
   const moveWindowControlsTop = () => {
     const rows = document.querySelector('#window-settings-card .queue-rows');
     if (!rows) return;
@@ -154,8 +189,7 @@
         const response = await fetch('/api/roblox/close-selected', { method: 'POST', headers: { ...apiHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames }) });
         const result = await response.json();
         backdrop.hidden = true;
-        document.getElementById('toast').textContent = result.msg || 'Roblox closed';
-        document.getElementById('toast').classList.add('show');
+        showResultToast(result.msg || 'Roblox closed');
       });
     }, true);
   }

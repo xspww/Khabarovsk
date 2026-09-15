@@ -111,6 +111,9 @@
 .desc-textarea:focus{border-color:#4338ca;box-shadow:0 0 0 2px rgba(67,56,202,.3);background:#111218}
 .desc-textarea::placeholder{color:#454854}
 
+.desc-editor.desc-floating{position:fixed;width:360px;max-width:calc(100vw - 24px);z-index:95;background:#12131a;border:1px solid #2a2d36;border-radius:10px;box-shadow:0 16px 38px rgba(0,0,0,.55);padding:10px 12px;margin:0}
+.desc-editor.desc-floating .desc-textarea{min-height:96px}
+
 .accounts-table-card .row-actions{gap:6px;display:flex;align-items:center}
 .accounts-table-card .captcha-resume{height:23px;border-radius:999px;background:rgba(234,179,8,.1);border-color:rgba(234,179,8,.22);color:#fcd34d;font:800 10px var(--font);padding:0 9px}
 .accounts-table-card .captcha-resume:hover:not(:disabled){background:rgba(234,179,8,.18);border-color:rgba(234,179,8,.38);color:#fef08a}

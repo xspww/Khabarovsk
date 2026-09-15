@@ -246,4 +246,49 @@
   // Replaced 100ms polling with MutationObserver (perf)
   const _limiterRoot = document.getElementById('limiter-save')?.closest('.card') || document.body;
   new MutationObserver(syncLimiterActions).observe(_limiterRoot, { attributes: true, subtree: true, attributeFilter: ['class'] });
+
+  // Floating description editor: the dashboard renders the editor inline in
+  // the row and handles save/cancel/toolbar itself. We only lift the editor
+  // node visually (position:fixed) so it looks like a popup menu.
+  // Dashboard handlers stopPropagation on the table, so listen in capture.
+  const FLOAT_W = 360;
+  const FLOAT_H = 320;
+  const floatDescEditor = (x, y) => {
+    const editor = document.querySelector('#accounts-table .desc-editor');
+    if (!editor) return;
+    editor.classList.add('desc-floating');
+    const left = Math.max(8, Math.min(Math.round(x) + 8, window.innerWidth - FLOAT_W - 8));
+    let top = Math.round(y) + 8;
+    if (top + FLOAT_H > window.innerHeight - 8) top = Math.max(8, Math.round(y) - FLOAT_H - 8);
+    editor.style.left = `${left}px`;
+    editor.style.top = `${top}px`;
+  };
+  const refocusDescTextarea = () => {
+    const ta = document.querySelector('#accounts-table .desc-editor.desc-floating .desc-textarea');
+    if (ta && document.activeElement !== ta) {
+      try { ta.focus({ preventScroll: true }); } catch (_) { ta.focus(); }
+    }
+  };
+  document.addEventListener('click', (event) => {
+    if (!(event.target instanceof Element)) return;
+    if (event.target.closest('[data-action="edit-desc"]')) {
+      const x = event.clientX || 0, y = event.clientY || 0;
+      setTimeout(() => floatDescEditor(x, y), 0);
+      return;
+    }
+    if (event.target.closest('.desc-editor.desc-floating .desc-tool-btn')
+      || event.target.closest('.desc-editor.desc-floating .desc-color-dot')) {
+      // Keep focus in the textarea so live re-renders skip the editor.
+      try { refocusDescTextarea(); } catch (_) {}
+    }
+  }, true);
+  document.addEventListener('click', (event) => {
+    // Neutral clicks outside the floating editor cancel it via its own button.
+    if (!(event.target instanceof Element)) return;
+    const floating = document.querySelector('#accounts-table .desc-editor.desc-floating');
+    if (!floating) return;
+    if (event.target.closest('.desc-editor')) return;
+    const cancel = floating.querySelector('[data-action="cancel-desc"]');
+    cancel?.click();
+  });
 })();

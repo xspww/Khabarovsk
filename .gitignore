@@ -47,6 +47,7 @@ dist/
 build/
 guard_out.txt
 assets/cronus_icon.ico
+build_info.py
 
 # Temporary and editor files
 .freebuff/

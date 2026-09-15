@@ -15,7 +15,7 @@ from typing import Any, Tuple, Optional
 import uvicorn
 
 from app_paths import APP_NAME, APP_ROOT_DIR, resource_path
-from version import APP_VERSION
+from version import app_display_version
 from console_activity import format_console_line
 from desktop import console_output
 from core import LOG_FILE, flog, flog_kv
@@ -447,7 +447,7 @@ def _run_desktop_window() -> bool:
             self._title_label = QLabel(self)
             self._title_label.setObjectName("CronusTitle")
             self._title_label.setTextFormat(Qt.TextFormat.RichText)
-            self._title_label.setText(f'<span>{APP_NAME}</span> <span style="color: #42495d;">- {APP_VERSION}</span>')
+            self._title_label.setText(f'<span>{APP_NAME}</span> <span style="color: #42495d;">- {app_display_version()}</span>')
             self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
             self._title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
             layout = QHBoxLayout(self)

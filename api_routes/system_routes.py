@@ -268,10 +268,14 @@ def register(app, ctx: ApiContext) -> None:
     def serve_ui():
         html_ui = str(ctx.html_ui() or "").replace("__CRONUS_API_TOKEN__", str(ctx.instance_token or ""))
         try:
-            from version import APP_VERSION as _APP_VERSION
+            from version import app_display_version as _display_version
         except Exception:
-            _APP_VERSION = ""
-        html_ui = html_ui.replace("__CRONUS_APP_VERSION__", str(_APP_VERSION or ""))
+            _display_version = lambda: ""
+        try:
+            _version_text = str(_display_version() or "")
+        except Exception:
+            _version_text = ""
+        html_ui = html_ui.replace("__CRONUS_APP_VERSION__", _version_text)
         return HTMLResponse(
             html_ui,
             headers={

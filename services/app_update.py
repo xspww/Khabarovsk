@@ -12,8 +12,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from app_paths import APP_DATA_DIR, EXECUTABLE_PATH, IS_COMPILED
 from version import (
-    APP_VERSION,
     CHECKSUMS_ASSET,
+    app_display_version,
     exe_asset_name,
     is_newer_version,
     portable_asset_name,
@@ -24,7 +24,7 @@ from version import (
     strip_tag_prefix,
 )
 
-UPDATE_USER_AGENT = f"CronusLauncher-Update/{APP_VERSION}"
+UPDATE_USER_AGENT = f"CronusLauncher-Update/{app_display_version()}"
 STAGE_DIRNAME = "update_stage"
 RESULT_FILENAME = "update_result.json"
 UPDATER_FILENAME = "cronus_updater.cmd"
@@ -203,7 +203,7 @@ class AppUpdateService:
         self._state: Dict[str, Any] = {
             "state": "idle",
             "channel": "stable",
-            "current_version": APP_VERSION,
+            "current_version": app_display_version(),
             "latest_version": "",
             "latest_tag": "",
             "latest_notes": "",
@@ -268,7 +268,7 @@ class AppUpdateService:
         snap["compiled"] = bool(IS_COMPILED)
         snap["farm_running"] = self._farm_running()
         snap["update_available"] = bool(
-            snap.get("latest_version") and is_newer_version(str(snap["latest_version"]), APP_VERSION)
+            snap.get("latest_version") and is_newer_version(str(snap["latest_version"]), app_display_version())
         )
         snap["can_install"] = bool(
             snap["update_available"]
@@ -285,7 +285,7 @@ class AppUpdateService:
         snap = self.status_snapshot()
         return {
             "state": snap.get("state", "idle"),
-            "current_version": snap.get("current_version", APP_VERSION),
+            "current_version": snap.get("current_version", app_display_version()),
             "latest_version": snap.get("latest_version", ""),
             "update_available": snap.get("update_available", False),
             "progress_percent": round(float(snap.get("progress_percent") or 0.0), 1),
@@ -317,14 +317,14 @@ class AppUpdateService:
                     if not isinstance(item, dict) or item.get("draft"):
                         continue
                     tag = str(item.get("tag_name") or "").strip()
-                    if tag and is_newer_version(tag, APP_VERSION):
+                    if tag and is_newer_version(tag, app_display_version()):
                         return item
                 return None
             payload = self._api_get_json(releases_api_latest())
             if not isinstance(payload, dict) or payload.get("draft"):
                 return None
             tag = str(payload.get("tag_name") or "").strip()
-            if tag and is_newer_version(tag, APP_VERSION):
+            if tag and is_newer_version(tag, app_display_version()):
                 return payload
             return None
         except urllib.error.HTTPError as exc:
@@ -394,7 +394,7 @@ class AppUpdateService:
                 self._bump_status()
                 snap = self.status_snapshot()
                 snap["ok"] = True
-                snap["msg"] = f"Up to date (v{APP_VERSION})"
+                snap["msg"] = f"Up to date (v{app_display_version()})"
                 return snap
             tag = str(payload.get("tag_name") or "").strip()
             latest_version = strip_tag_prefix(tag)
@@ -417,7 +417,7 @@ class AppUpdateService:
                 error="",
                 checked_at=time.time(),
             )
-            _log_kv("UPDATE", "available", current=APP_VERSION, latest=latest_version, channel=channel)
+            _log_kv("UPDATE", "available", current=app_display_version(), latest=latest_version, channel=channel)
             self._bump_status()
             snap = self.status_snapshot()
             snap["ok"] = True

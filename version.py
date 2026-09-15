@@ -9,6 +9,22 @@ from typing import Tuple
 APP_VERSION = "1.0.0"
 TAG_PREFIX = "v"
 
+# Build tag baked in at release time (e.g. "v1.0.0-beta.3").
+# The release workflow generates build_info.py before building the exe.
+# Source runs have no such file and fall back to APP_VERSION.
+try:
+    from build_info import BUILD_TAG as _BUILD_TAG
+except Exception:
+    _BUILD_TAG = ""
+BUILD_TAG = str(_BUILD_TAG or "").strip()
+
+
+def app_display_version() -> str:
+    """Version shown in the title bar and API. Prefers the baked build tag."""
+    if BUILD_TAG:
+        return strip_tag_prefix(BUILD_TAG)
+    return APP_VERSION
+
 # GitHub Releases location used by the in-app updater.
 GITHUB_OWNER = "q0HtHHftAS"
 GITHUB_REPO = "Roblox-Auto-Rejoin-windown"

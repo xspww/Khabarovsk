@@ -5,7 +5,7 @@ import threading
 from typing import Any, Dict, List
 from account_hybrid import redact_secret
 from core import AccountState, account_launch_block_reason, flog_kv
-from version import APP_VERSION
+from version import app_display_version
 from services.network_monitor import NET_ONLINE
 from services.process_service import ProcessManager
 from services.resource_monitor import get_rt_monitor
@@ -452,7 +452,7 @@ class RuntimeViewModelBuilder:
             "running": farm.running,
             "status_revision": status_revision,
             "status_updated_at": time.time(),
-            "app_version": APP_VERSION,
+            "app_version": app_display_version(),
             "update": update_summary,
             "uptime": f"{h:02d}:{m:02d}:{s:02d}",
             "total_accounts": len(farm._accounts),

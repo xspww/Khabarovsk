@@ -16,6 +16,7 @@ _INT_RANGES: Dict[str, Tuple[int, int]] = {
     "max_concurrent_accounts": (1, 200),
     "executor_check_interval_seconds": (30, 3600),
     "machine_supervisor_max_launching_accounts": (1, 200),
+    "update_check_interval_hours": (1, 168),
     "auto_close_minutes": (0, 1440),
     "auto_minimize_seconds": (1, 3600),
     "network_check_interval": (1, 3600),

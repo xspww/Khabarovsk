@@ -5,6 +5,7 @@ import threading
 from typing import Any, Dict, List
 from account_hybrid import redact_secret
 from core import AccountState, account_launch_block_reason, flog_kv
+from version import APP_VERSION
 from services.network_monitor import NET_ONLINE
 from services.process_service import ProcessManager
 from services.resource_monitor import get_rt_monitor
@@ -440,10 +441,19 @@ class RuntimeViewModelBuilder:
         recovery_storm = {}
         if include_diagnostics and getattr(getattr(farm, "_recovery", None), "_storm", None):
             recovery_storm = farm._recovery._storm.snapshot()
+        try:
+            app_updater = getattr(farm, "_app_updater", None)
+            update_summary = app_updater.status_summary() if app_updater else {}
+            if not isinstance(update_summary, dict):
+                update_summary = {}
+        except Exception:
+            update_summary = {}
         payload = {
             "running": farm.running,
             "status_revision": status_revision,
             "status_updated_at": time.time(),
+            "app_version": APP_VERSION,
+            "update": update_summary,
             "uptime": f"{h:02d}:{m:02d}:{s:02d}",
             "total_accounts": len(farm._accounts),
             "launchable_count": launchable_count,

@@ -9,6 +9,7 @@ class ApiContext:
     roblox_installer: Any
     executor_tracker: Any
     executor_relauncher: Any
+    app_updater: Any
     html_ui: Callable[[], str]
     instance_token: str
     shutdown_requested: Any

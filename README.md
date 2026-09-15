@@ -22,7 +22,34 @@ The host must meet the requirements below:
 - Run Python 3.11 or later.
 - Have Roblox installed on the host.
 
-## Quick Start
+## Install
+
+The easy way is the compiled build from the Releases page.
+No Python is needed for this option.
+
+1. Open `https://github.com/q0HtHHftAS/Roblox-Auto-Rejoin-windown/releases`.
+2. Download `CronusLauncher-<version>.exe` and run it.
+3. The portable build `CronusLauncher-<version>-portable.zip` holds the same exe plus the Lua loader.
+
+Windows SmartScreen may warn because the exe is not code signed.
+The builds come only from the Releases page above.
+Press More info, then Run anyway when the file name matches the release.
+Verify the download with `checksums.txt` from the same release when unsure:
+
+```powershell
+(Get-FileHash CronusLauncher-1.0.0.exe -Algorithm SHA256).Hash
+```
+
+## Update
+
+The launcher checks GitHub Releases quietly after startup and shows a badge in the sidebar when a new version exists.
+Click the version number to check by hand.
+When an update is downloaded and verified, press Restart to install.
+Installing stops Auto Rejoin and closes all Roblox windows first, so it is only offered while the farm is stopped.
+Settings: `auto_check_update`, `update_check_interval_hours`, `update_channel` (`stable` or `beta`).
+Beta builds are prereleases. Test them before stable when possible.
+
+## Quick Start (from source)
 
 Complete the steps below:
 
@@ -54,6 +81,18 @@ python main.py
 
 The launcher starts the local service on 127.0.0.1 and opens the desktop dashboard window.
 
+## Build the exe
+
+```powershell
+python -m pip install -r requirements.txt pyinstaller
+python -c "from PIL import Image; Image.open('assets/cronus_icon.png').save('assets/cronus_icon.ico')"
+pyinstaller cronus_launcher.spec
+```
+
+The output is `dist/CronusLauncher.exe`.
+Releases are built the same way by GitHub Actions when a `v*` tag is pushed.
+The tag must match `APP_VERSION` in `version.py`.
+
 ## In-Game Lua Script
 
 A loader script (small program that loads telemetry code into the game) speeds up rejoin events.
@@ -74,3 +113,4 @@ The launcher stores runtime configuration and account state on the host at the p
 The launcher encrypts account cookies with Windows DPAPI on the host.
 The launcher never sends cookies to external servers.
 The launcher never commits cookies to the repository.
+Self updates replace only the exe file. The data folder above is never touched.

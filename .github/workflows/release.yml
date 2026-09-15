@@ -30,7 +30,7 @@ jobs:
           $line = Select-String -Path version.py -Pattern '^APP_VERSION\s*=\s*"([^"]+)"'
           if (-not $line) { Write-Error "APP_VERSION not found in version.py"; exit 1 }
           $ver = $line.Matches[0].Groups[1].Value
-          if ($tag -ne "v$ver") {
+          if ($tag -ne "v$ver" -and $tag -notlike "v$ver-*") {
             Write-Error "Tag $tag does not match version.py APP_VERSION $ver"
             exit 1
           }

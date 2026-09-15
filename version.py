@@ -44,16 +44,48 @@ def parse_version_tuple(value: str) -> Tuple[int, ...]:
     return tuple(parts or [0])
 
 
+def _split_prerelease(value: str) -> Tuple[str, str]:
+    text = strip_tag_prefix(value)
+    head, sep, tail = text.partition("-")
+    if sep and tail.strip():
+        return head.strip() or text, tail.strip()
+    return text, ""
+
+
 def compare_versions(left: str, right: str) -> int:
-    """Return -1/0/1 when left is older/same/newer than right."""
-    left_tuple = parse_version_tuple(strip_tag_prefix(left))
-    right_tuple = parse_version_tuple(strip_tag_prefix(right))
+    """Return -1/0/1 when left is older/same/newer than right.
+
+    A prerelease suffix (e.g. 1.0.0-beta.1) is older than the plain
+    release with the same numbers, and two prereleases compare by
+    their numeric parts first, then by suffix text.
+    """
+    left_head, left_pre = _split_prerelease(left)
+    right_head, right_pre = _split_prerelease(right)
+    left_tuple = parse_version_tuple(left_head)
+    right_tuple = parse_version_tuple(right_head)
     width = max(len(left_tuple), len(right_tuple))
     left_padded = tuple(list(left_tuple) + [0] * (width - len(left_tuple)))
     right_padded = tuple(list(right_tuple) + [0] * (width - len(right_tuple)))
     if left_padded < right_padded:
         return -1
     if left_padded > right_padded:
+        return 1
+    if left_pre == right_pre:
+        return 0
+    if not left_pre:
+        return 1
+    if not right_pre:
+        return -1
+    left_pre_tuple = parse_version_tuple(left_pre)
+    right_pre_tuple = parse_version_tuple(right_pre)
+    pre_width = max(len(left_pre_tuple), len(right_pre_tuple))
+    left_pre_padded = tuple(list(left_pre_tuple) + [0] * (pre_width - len(left_pre_tuple)))
+    right_pre_padded = tuple(list(right_pre_tuple) + [0] * (pre_width - len(right_pre_tuple)))
+    if left_pre_padded != right_pre_padded:
+        return 1 if left_pre_padded > right_pre_padded else -1
+    if left_pre < right_pre:
+        return -1
+    if left_pre > right_pre:
         return 1
     return 0
 

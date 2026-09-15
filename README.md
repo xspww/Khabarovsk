@@ -37,7 +37,7 @@ Press More info, then Run anyway when the file name matches the release.
 Verify the download with `checksums.txt` from the same release when unsure:
 
 ```powershell
-(Get-FileHash CronusLauncher-1.0.0.exe -Algorithm SHA256).Hash
+(Get-FileHash CronusLauncher-1.0.5.exe -Algorithm SHA256).Hash
 ```
 
 ## Update

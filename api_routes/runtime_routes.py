@@ -422,12 +422,19 @@ def register(app, ctx: ApiContext) -> None:
             closed=len(closed),
             requested=len(usernames),
         )
+        closed_count = len(closed)
+        if closed_count == 0:
+            close_msg = "No running Roblox clients to close"
+        elif closed_count == 1:
+            close_msg = "Closed Roblox for 1 account"
+        else:
+            close_msg = f"Closed Roblox for {closed_count} accounts"
         return {
             "ok": True,
             "closed": closed,
-            "closed_count": len(closed),
+            "closed_count": closed_count,
             "no_active_roblox": missing,
-            "msg": f"Closed Roblox for {len(closed)} account(s)",
+            "msg": close_msg,
         }
 
     @app.post("/api/account/{username}/rejoin")

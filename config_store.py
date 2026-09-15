@@ -125,6 +125,7 @@ DEFAULTS: Dict[str, Any] = {
     # ── Self update (RT.1.1) ──
     "auto_check_update":        True,   # เช็คเวอร์ชันใหม่เงียบหลังเปิดแอป
     "auto_download_update":     True,   # โหลดไฟล์อัปเดตอัตโนมัติเมื่อเจอเวอร์ชันใหม่
+    "auto_install_update":      False,  # Product: True = พร้อมแล้วแจ้ง Restart ทันที (ไม่แอบปิดเองขณะ farm รัน)
     "update_check_interval_hours": 6,   # เช็คซ้ำทุกกี่ชั่วโมง (1-168)
     "update_channel":           "stable",  # stable | beta
     "roblox_memory_guard_enabled": True,

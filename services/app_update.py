@@ -33,6 +33,17 @@ INITIAL_CHECK_DELAY_SECONDS = 5.0
 ROLLBACK_PROBE_TIMEOUT_SECONDS = 60
 DOWNLOAD_CHUNK_BYTES = 1024 * 256
 
+# Product-grade hooks. Backward compatible: old releases have no .sig asset
+# and keep working on SHA256 only. When a pubkey is configured AND the
+# release publishes checksums.txt.sig, the signature becomes mandatory.
+SIGNATURE_ASSET = "checksums.txt.sig"
+PUBKEY_ENV_VAR = "CRONUS_UPDATE_PUBKEY"
+PUBKEY_FILENAME = "update_pubkey.hex"
+
+# Release notes markers that make an update mandatory (case-insensitive).
+# Maintainer writes one of these lines in the GitHub release body to force it.
+MANDATORY_MARKERS = ("!mandatory", "[mandatory]", "[force]", "mandatory:true")
+
 
 def _log_kv(scope: str, name: str, level: str = "info", **fields: Any) -> None:
     try:
@@ -82,6 +93,104 @@ def _sha256_file(path: str, progress=None) -> str:
                 except Exception:
                     pass
     return digest.hexdigest()
+
+
+def is_mandatory_release(notes: Any) -> bool:
+    """True when the release body carries a mandatory-update marker."""
+    text = str(notes or "").lower()
+    if not text.strip():
+        return False
+    return any(marker in text for marker in MANDATORY_MARKERS)
+
+
+def load_update_pubkey_hex() -> str:
+    """Ed25519 public key (32 bytes, hex) for checksums.txt verification.
+
+    Order: env CRONUS_UPDATE_PUBKEY -> %LOCALAPPDATA%/Cronus Launcher/data/update_pubkey.hex
+    -> <exe dir>/update_pubkey.hex -> ./update_pubkey.hex.
+    Empty string means 'not configured' -> signature check stays optional.
+    """
+    try:
+        env_key = str(os.environ.get(PUBKEY_ENV_VAR, "") or "").strip().lower()
+        if env_key:
+            return env_key
+    except Exception:
+        pass
+    candidates: List[str] = []
+    try:
+        candidates.append(os.path.join(APP_DATA_DIR, PUBKEY_FILENAME))
+    except Exception:
+        pass
+    try:
+        if EXECUTABLE_PATH:
+            candidates.append(os.path.join(os.path.dirname(os.path.abspath(EXECUTABLE_PATH)), PUBKEY_FILENAME))
+    except Exception:
+        pass
+    try:
+        candidates.append(os.path.join(os.getcwd(), PUBKEY_FILENAME))
+    except Exception:
+        pass
+    for path in candidates:
+        try:
+            if path and os.path.isfile(path):
+                with open(path, "r", encoding="utf-8") as handle:
+                    text = str(handle.read() or "").strip().lower()
+                # Allow "hex" with whitespace/newlines; take first 64-hex token.
+                for token in text.split():
+                    token = token.strip().lower()
+                    if len(token) == 64 and all(c in "0123456789abcdef" for c in token):
+                        return token
+                cleaned = "".join(c for c in text if c in "0123456789abcdef")
+                if len(cleaned) == 64:
+                    return cleaned
+        except Exception:
+            continue
+    return ""
+
+
+def verify_checksums_signature(checksums_text: str, signature_hex: str, pubkey_hex: str) -> bool:
+    """Verify Ed25519(sig) over the exact checksums.txt bytes (utf-8).
+
+    Returns False on any error (caller decides fail-open vs fail-closed).
+    """
+    try:
+        sig = str(signature_hex or "").strip().lower()
+        pub = str(pubkey_hex or "").strip().lower()
+        if len(sig) != 128 or len(pub) != 64:
+            return False
+        try:
+            from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+        except Exception:
+            return False
+        public_key = Ed25519PublicKey.from_public_bytes(bytes.fromhex(pub))
+        public_key.verify(bytes.fromhex(sig), str(checksums_text or "").encode("utf-8"))
+        return True
+    except Exception:
+        return False
+
+
+def target_exe_writable(path: str) -> bool:
+    """Product check: single-download story only works when the exe dir is writable
+    without UAC (per-user install). Program Files installs must fall back to manual."""
+    try:
+        if not path:
+            return False
+        directory = os.path.dirname(os.path.abspath(path)) or "."
+        if not os.path.isdir(directory):
+            return False
+        probe = os.path.join(directory, f".cronus_write_test_{os.getpid()}.tmp")
+        try:
+            with open(probe, "wb") as handle:
+                handle.write(b"ok")
+            return True
+        finally:
+            try:
+                if os.path.exists(probe):
+                    os.remove(probe)
+            except Exception:
+                pass
+    except Exception:
+        return False
 
 
 def build_updater_script(
@@ -186,10 +295,12 @@ def build_updater_script(
 class AppUpdateService:
     """Self-update for the launcher itself via GitHub Releases.
 
+    Product model: download once, update forever.
     Stable channel reads /releases/latest (GitHub excludes prereleases
     there). Beta channel lists /releases and accepts prereleases too.
-    Install is only allowed while the farm is stopped, because replacing
-    the exe requires this process to exit and farm.stop() closes Roblox.
+    One-click install stops the farm itself (closing Roblox), swaps the
+    exe, probes the new version, and rolls back to .bak on failure.
+    Data in %LOCALAPPDATA%/Cronus Launcher/data is never touched.
     """
 
     def __init__(self, cfg_mgr: Any = None, farm: Any = None):
@@ -208,6 +319,7 @@ class AppUpdateService:
             "latest_tag": "",
             "latest_notes": "",
             "latest_url": "",
+            "mandatory": False,
             "asset_name": "",
             "asset_size": 0,
             "progress_percent": 0.0,
@@ -215,6 +327,8 @@ class AppUpdateService:
             "total_bytes": 0,
             "staged_file": "",
             "verified": False,
+            "signature_verified": False,
+            "pending_restart": False,
             "error": "",
             "checked_at": 0.0,
             "last_install": {},
@@ -265,20 +379,53 @@ class AppUpdateService:
     def status_snapshot(self) -> Dict[str, Any]:
         with self._lock:
             snap = dict(self._state)
+        target_exe = self._target_exe()
+        writable = target_exe_writable(target_exe) if target_exe else False
         snap["compiled"] = bool(IS_COMPILED)
         snap["farm_running"] = self._farm_running()
+        snap["target_exe"] = target_exe
+        snap["target_writable"] = bool(writable)
+        snap["auto_install_update"] = bool(self._cfg("auto_install_update", False))
         snap["update_available"] = bool(
             snap.get("latest_version") and is_newer_version(str(snap["latest_version"]), app_display_version())
         )
-        snap["can_install"] = bool(
-            snap["update_available"]
-            and snap.get("verified")
+        staged_ok = bool(
+            snap.get("verified")
             and snap.get("staged_file")
             and os.path.isfile(str(snap.get("staged_file") or ""))
+        )
+        # Product: one-click install even while the farm runs — the install
+        # route stops the farm itself. Only block on binary state, not on
+        # farm_running. UI warns that Roblox windows will close.
+        snap["can_install"] = bool(
+            snap["update_available"]
+            and staged_ok
             and IS_COMPILED
-            and not snap["farm_running"]
+            and writable
             and not self._downloading
         )
+        if snap["can_install"]:
+            snap["install_blocked_reason"] = ""
+        elif not IS_COMPILED:
+            snap["install_blocked_reason"] = "source_run"
+        elif not snap.get("update_available"):
+            snap["install_blocked_reason"] = ""
+        elif not staged_ok:
+            snap["install_blocked_reason"] = "not_downloaded"
+        elif not writable:
+            snap["install_blocked_reason"] = "target_not_writable"
+        elif self._downloading:
+            snap["install_blocked_reason"] = "downloading"
+        else:
+            snap["install_blocked_reason"] = ""
+        snap["needs_manual_install"] = bool(
+            snap.get("update_available")
+            and IS_COMPILED
+            and not writable
+        )
+        # pending_restart = downloaded + verified, waiting for user to press Restart.
+        # auto_install_update=True only highlights it, never force-exits the app.
+        snap["pending_restart"] = bool(snap["can_install"])
         return snap
 
     def status_summary(self) -> Dict[str, Any]:
@@ -288,8 +435,15 @@ class AppUpdateService:
             "current_version": snap.get("current_version", app_display_version()),
             "latest_version": snap.get("latest_version", ""),
             "update_available": snap.get("update_available", False),
+            "mandatory": bool(snap.get("mandatory", False)),
             "progress_percent": round(float(snap.get("progress_percent") or 0.0), 1),
             "can_install": snap.get("can_install", False),
+            "pending_restart": bool(snap.get("pending_restart", False)),
+            "auto_install_update": bool(snap.get("auto_install_update", False)),
+            "needs_manual_install": bool(snap.get("needs_manual_install", False)),
+            "install_blocked_reason": str(snap.get("install_blocked_reason") or ""),
+            "latest_url": str(snap.get("latest_url") or ""),
+            "last_install": snap.get("last_install") if isinstance(snap.get("last_install"), dict) else {},
             "error": snap.get("error", ""),
         }
 
@@ -387,6 +541,7 @@ class AppUpdateService:
                     latest_tag="",
                     latest_notes="",
                     latest_url="",
+                    mandatory=False,
                     asset_name="",
                     asset_size=0,
                     error="",
@@ -404,14 +559,17 @@ class AppUpdateService:
                 previous_asset = str(self._state.get("asset_name") or "")
                 previous_tag = str(self._state.get("latest_tag") or "")
                 if previous_tag != tag or previous_asset != asset_name:
-                    self._state.update({"staged_file": "", "verified": False, "progress_percent": 0.0,
+                    self._state.update({"staged_file": "", "verified": False, "signature_verified": False,
+                                        "pending_restart": False, "progress_percent": 0.0,
                                         "downloaded_bytes": 0, "total_bytes": 0})
+            notes = str(payload.get("body") or "")
             self._set_state(
                 state="available",
                 latest_version=latest_version,
                 latest_tag=tag,
-                latest_notes=str(payload.get("body") or ""),
+                latest_notes=notes,
                 latest_url=str(payload.get("html_url") or release_tag_url(tag)),
+                mandatory=bool(is_mandatory_release(notes)),
                 asset_name=asset_name,
                 asset_size=int(asset_size or 0),
                 asset_url=asset_url,
@@ -477,23 +635,41 @@ class AppUpdateService:
         try:
             stage_dir = self._stage_dir()
             target_path = os.path.join(stage_dir, asset_name)
+            tmp_path = target_path + ".part"
             self._set_state(state="downloading", progress_percent=0.0, downloaded_bytes=0,
                             total_bytes=int(self._state.get("asset_size") or 0), error="")
             self._bump_status()
             try:
-                request = urllib.request.Request(asset_url, headers={"User-Agent": UPDATE_USER_AGENT})
+                # Product: resume interrupted downloads with HTTP Range when possible.
+                resume_from = 0
+                try:
+                    if os.path.isfile(tmp_path):
+                        resume_from = max(0, int(os.path.getsize(tmp_path)))
+                except Exception:
+                    resume_from = 0
+                headers = {"User-Agent": UPDATE_USER_AGENT}
+                if resume_from > 0:
+                    headers["Range"] = f"bytes={resume_from}-"
+                request = urllib.request.Request(asset_url, headers=headers)
                 with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+                    status = int(getattr(response, "status", 200) or 200)
+                    # Server ignored Range -> restart from zero.
+                    if status != 206 and resume_from > 0:
+                        resume_from = 0
                     try:
-                        total = int(response.headers.get("Content-Length") or 0)
+                        content_len = int(response.headers.get("Content-Length") or 0)
                     except Exception:
-                        total = 0
+                        content_len = 0
+                    total = 0
+                    if content_len > 0:
+                        total = content_len + (resume_from if status == 206 else 0)
                     if total <= 0:
                         total = int(self._state.get("asset_size") or 0)
                     self._set_state(total_bytes=total)
-                    tmp_path = target_path + ".part"
-                    downloaded = 0
+                    downloaded = resume_from
                     last_emit = 0.0
-                    with open(tmp_path, "wb") as handle:
+                    mode = "ab" if (resume_from > 0 and status == 206) else "wb"
+                    with open(tmp_path, mode) as handle:
                         while True:
                             chunk = response.read(DOWNLOAD_CHUNK_BYTES)
                             if not chunk:
@@ -516,7 +692,8 @@ class AppUpdateService:
                 checksums_url = (
                     f"https://github.com/{_owner_repo_path()}/releases/download/{latest_tag}/{CHECKSUMS_ASSET}"
                 )
-                checksums = _parse_checksums(self._download_text(checksums_url))
+                checksums_text = self._download_text(checksums_url)
+                checksums = _parse_checksums(checksums_text)
             except Exception as exc:
                 _log_kv("UPDATE", "checksum_fetch_failed", "warning", error=str(exc))
                 self._set_state(state="error", verified=False, error=f"checksum fetch failed: {exc}")
@@ -534,11 +711,50 @@ class AppUpdateService:
                     os.remove(target_path)
                 except Exception:
                     pass
-                self._set_state(state="error", verified=False, staged_file="", error="checksum mismatch")
+                self._set_state(state="error", verified=False, signature_verified=False,
+                                staged_file="", pending_restart=False, error="checksum mismatch")
                 self._bump_status()
                 return {"ok": False, "msg": "Checksum mismatch, file removed", **self.status_snapshot()}
-            self._set_state(state="downloaded", staged_file=target_path, verified=True, error="")
-            _log_kv("UPDATE", "downloaded_verified", asset=asset_name, version=self._state.get("latest_version"))
+            # Product: optional Ed25519 signature over checksums.txt.
+            # Old releases have no .sig -> keep working (fail-open, logged).
+            # New releases with .sig + configured pubkey -> must verify (fail-closed).
+            signature_verified = False
+            try:
+                pubkey_hex = load_update_pubkey_hex()
+                sig_url = (
+                    f"https://github.com/{_owner_repo_path()}/releases/download/{latest_tag}/{SIGNATURE_ASSET}"
+                )
+                sig_text = ""
+                try:
+                    sig_text = str(self._download_text(sig_url) or "").strip().split()[0]
+                except Exception:
+                    sig_text = ""
+                if sig_text and pubkey_hex:
+                    signature_verified = bool(verify_checksums_signature(checksums_text, sig_text, pubkey_hex))
+                    if not signature_verified:
+                        _log_kv("UPDATE", "signature_mismatch", "warning", asset=asset_name)
+                        try:
+                            os.remove(target_path)
+                        except Exception:
+                            pass
+                        self._set_state(state="error", verified=False, signature_verified=False,
+                                        staged_file="", pending_restart=False, error="update signature mismatch")
+                        self._bump_status()
+                        return {"ok": False, "msg": "Update signature mismatch, file removed", **self.status_snapshot()}
+                elif sig_text and not pubkey_hex:
+                    _log_kv("UPDATE", "signature_skipped_no_pubkey", "info", asset=asset_name)
+                elif pubkey_hex and not sig_text:
+                    _log_kv("UPDATE", "signature_missing", "warning", asset=asset_name)
+                    self._set_state(state="error", verified=False, signature_verified=False,
+                                    staged_file="", pending_restart=False, error="update signature missing")
+                    self._bump_status()
+                    return {"ok": False, "msg": "Update signature missing for this release", **self.status_snapshot()}
+            except Exception as exc:
+                _log_kv("UPDATE", "signature_check_failed", "warning", error=str(exc))
+            self._set_state(state="downloaded", staged_file=target_path, verified=True,
+                            signature_verified=bool(signature_verified), pending_restart=True, error="")
+            _log_kv("UPDATE", "downloaded_verified", asset=asset_name, version=self._state.get("latest_version"),
+                    signature_verified=bool(signature_verified))
             self._bump_status()
             snap = self.status_snapshot()
             snap["ok"] = True
@@ -560,8 +776,16 @@ class AppUpdateService:
                 "manual_url": snap.get("latest_url") or releases_page_url(),
                 **snap,
             }
-        if self._farm_running():
-            return {"ok": False, "msg": "Stop Auto Rejoin before installing the update", **snap}
+        current_exe = self._target_exe()
+        if not target_exe_writable(current_exe):
+            # Product single-download fallback: per-user install is writable,
+            # Program Files is not. Never fail silently — point to manual file.
+            return {
+                "ok": False,
+                "msg": "Install folder is not writable (Program Files?). Download the new exe manually",
+                "manual_url": snap.get("latest_url") or releases_page_url(),
+                **snap,
+            }
         staged = str(snap.get("staged_file") or "")
         if not snap.get("verified") or not staged or not os.path.isfile(staged):
             return {"ok": False, "msg": "Download and verify the update first", **snap}
@@ -585,12 +809,14 @@ class AppUpdateService:
             return {"ok": False, "msg": f"Could not write updater: {exc}", **snap}
         self._set_state(state="installing", error="")
         self._bump_status()
-        _log_kv("UPDATE", "install_prepared", version=snap.get("latest_version"))
+        will_stop = bool(self._farm_running())
+        _log_kv("UPDATE", "install_prepared", version=snap.get("latest_version"), will_stop_farm=will_stop)
         result = self.status_snapshot()
         result["ok"] = True
         result["msg"] = "Updater ready, app will exit now"
         result["updater"] = updater_path
         result["target"] = current_exe
+        result["will_stop_farm"] = will_stop
         return result
 
     @staticmethod

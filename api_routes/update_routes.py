@@ -47,8 +47,16 @@ def register(app, ctx: ApiContext) -> None:
             return idem.response
         result = updater.prepare_install()
         if not result.get("ok"):
-            status = 409 if "Stop Auto Rejoin" in str(result.get("msg") or "") else 400
-            raise HTTPException(status, str(result.get("msg") or "Install unavailable"))
+            # Product: install auto-stops the farm itself, so no 409 for
+            # farm_running anymore. 409 only when target is not writable and
+            # the user must install manually.
+            reason = str(result.get("install_blocked_reason") or "")
+            status = 409 if reason == "target_not_writable" else 400
+            detail = str(result.get("msg") or "Install unavailable")
+            manual = str(result.get("manual_url") or result.get("latest_url") or "")
+            if manual:
+                detail = f"{detail} — {manual}"
+            raise HTTPException(status, detail)
         updater_path = str(result.get("updater") or "")
         if not updater_path or not os.path.isfile(updater_path):
             raise HTTPException(500, "Updater script missing")

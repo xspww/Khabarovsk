@@ -42,12 +42,31 @@ Verify the download with `checksums.txt` from the same release when unsure:
 
 ## Update
 
-The launcher checks GitHub Releases quietly after startup and shows a badge in the sidebar when a new version exists.
-Click the version number to check by hand.
-When an update is downloaded and verified, press Restart to install.
-Installing stops Auto Rejoin and closes all Roblox windows first, so it is only offered while the farm is stopped.
-Settings: `auto_check_update`, `update_check_interval_hours`, `update_channel` (`stable` or `beta`).
+Product model: download once, update forever. Install the exe per-user
+(recommended: `%LOCALAPPDATA%\Cronus Launcher\`) so one-click updates work
+without UAC. Program Files installs fall back to a manual download link.
+
+The launcher checks GitHub Releases quietly after startup (5s delay, then
+every `update_check_interval_hours`) and auto-downloads in the background
+(`auto_check_update`, `auto_download_update`). When verified, press
+Restart to install: the app stops Auto Rejoin itself, swaps the exe,
+probes `/api/status` for the new version, and rolls back to `.bak` on
+failure. Settings and accounts in `%LOCALAPPDATA%\Cronus Launcher\data`
+are never touched. Resume is supported for interrupted downloads.
+
+Settings: `auto_check_update`, `auto_download_update`, `auto_install_update`,
+`update_check_interval_hours`, `update_channel` (`stable` or `beta`).
 Beta builds are prereleases. Test them before stable when possible.
+
+Mandatory updates: add one line (`!mandatory`, `[mandatory]`, `[force]`,
+or `mandatory:true`) to the release body. The client shows a required
+banner and prioritizes the Restart button until the user installs.
+
+Signed releases (optional, recommended): set repo secret `UPDATE_SIGNING_KEY`
+(32-byte Ed25519 private key, hex). The workflow signs `checksums.txt` to
+`checksums.txt.sig`. Ship the public key to clients as `update_pubkey.hex`
+(next to the exe or in the data folder) or via env `CRONUS_UPDATE_PUBKEY`.
+Old signature-less releases keep working on SHA256 when no pubkey is set.
 
 ## Quick Start (from source)
 

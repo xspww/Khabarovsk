@@ -7,7 +7,7 @@ _STATIC_SCRIPTS = (
     '<script src="/ui/runtime/executorCompatibility.js?v=7"></script>'
     '<script src="/ui/runtime/gamesManager.js?v=8"></script>'
     '<script src="/ui/runtime/customUi.js?v=9"></script>'
-    '<script src="/ui/runtime/autoUpdate.js?v=1"></script>'
+    '<script src="/ui/runtime/autoUpdate.js?v=2"></script>'
 )
 
 

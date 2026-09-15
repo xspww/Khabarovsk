@@ -253,16 +253,58 @@
   // Dashboard handlers stopPropagation on the table, so listen in capture.
   const FLOAT_W = 360;
   const FLOAT_H = 320;
-  const floatDescEditor = (x, y) => {
-    const editor = document.querySelector('#accounts-table .desc-editor');
-    if (!editor) return;
-    editor.classList.add('desc-floating');
+  const descDrafts = {};
+  let floatingDescUser = "";
+  let floatingDescPos = { x: 0, y: 0 };
+  let restoringDesc = false;
+  const descKey = (user) => String(user || "").toLowerCase();
+  const placeDescEditor = (editor, x, y) => {
     const left = Math.max(8, Math.min(Math.round(x) + 8, window.innerWidth - FLOAT_W - 8));
     let top = Math.round(y) + 8;
     if (top + FLOAT_H > window.innerHeight - 8) top = Math.max(8, Math.round(y) - FLOAT_H - 8);
-    editor.style.left = `${left}px`;
-    editor.style.top = `${top}px`;
+    const wantLeft = `${left}px`, wantTop = `${top}px`;
+    if (editor.style.left !== wantLeft) editor.style.left = wantLeft;
+    if (editor.style.top !== wantTop) editor.style.top = wantTop;
   };
+  const floatDescEditor = (x, y) => {
+    const editor = document.querySelector('#accounts-table .desc-editor');
+    if (!editor) return;
+    const ta = editor.querySelector('.desc-textarea');
+    const user = editor.dataset?.user || ta?.dataset.user || "";
+    floatingDescUser = user;
+    floatingDescPos = { x: x || 0, y: y || 0 };
+    if (user && ta) descDrafts[descKey(user)] = ta.value;
+    editor.classList.add('desc-floating');
+    placeDescEditor(editor, floatingDescPos.x, floatingDescPos.y);
+  };
+  // A table re-render (row select, filter, live refresh while unfocused)
+  // recreates the editor inline. Float it again and restore typed text.
+  const refloatDescEditor = () => {
+    if (restoringDesc || !floatingDescUser) return;
+    if (document.querySelector('#accounts-table .desc-editor.desc-floating')) return;
+    const editor = document.querySelector('#accounts-table .desc-editor');
+    if (!editor) { floatingDescUser = ""; return; }
+    const ta = editor.querySelector('.desc-textarea');
+    const user = editor.dataset?.user || ta?.dataset.user || floatingDescUser;
+    floatingDescUser = user;
+    restoringDesc = true;
+    try {
+      editor.classList.add('desc-floating');
+      placeDescEditor(editor, floatingDescPos.x, floatingDescPos.y);
+      const stash = descDrafts[descKey(user)];
+      if (ta && stash !== undefined && ta.value !== stash) {
+        ta.value = stash;
+        const count = editor.querySelector('.desc-char-count');
+        if (count) count.textContent = String(stash.length);
+      }
+    } finally { restoringDesc = false; }
+  };
+  document.addEventListener('input', (event) => {
+    const ta = event.target instanceof Element ? event.target.closest('.desc-textarea') : null;
+    if (ta?.dataset.user) descDrafts[descKey(ta.dataset.user)] = ta.value;
+  }, true);
+  new MutationObserver(() => { try { refloatDescEditor(); } catch (_) {} })
+    .observe(document.body, { childList: true, subtree: true });
   const refocusDescTextarea = () => {
     const ta = document.querySelector('#accounts-table .desc-editor.desc-floating .desc-textarea');
     if (ta && document.activeElement !== ta) {

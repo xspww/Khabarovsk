@@ -141,6 +141,12 @@ if sys.platform != "win32":
     print(f"{APP_NAME} requires Windows.")
     sys.exit(1)
 
+if "--version" in sys.argv:
+    from version import app_display_version
+
+    print(f"{APP_NAME} {app_display_version()}")
+    sys.exit(0)
+
 if __name__ == "__main__":
     if not IS_COMPILED:
         _run_startup_dependency_checks()

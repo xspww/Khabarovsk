@@ -359,6 +359,7 @@ class AppUpdateService:
                 snap["msg"] = "Update check already in progress"
                 return snap
             self._checking = True
+        trigger_download = False
         try:
             if not manual and not bool(self._cfg("auto_check_update", True)):
                 self._set_state(state="idle", error="")
@@ -422,10 +423,40 @@ class AppUpdateService:
             snap = self.status_snapshot()
             snap["ok"] = True
             snap["msg"] = f"Update available: v{latest_version}"
+            trigger_download = True
             return snap
         finally:
             with self._lock:
                 self._checking = False
+            if trigger_download:
+                self._maybe_auto_download()
+
+    def _maybe_auto_download(self) -> None:
+        """Start a background download right after an update is found."""
+        try:
+            if not IS_COMPILED:
+                return
+            if not bool(self._cfg("auto_download_update", True)):
+                return
+            with self._lock:
+                if self._downloading or self._checking:
+                    return
+                if str(self._state.get("state") or "") != "available":
+                    return
+                if self._state.get("verified") and self._state.get("staged_file"):
+                    return
+        except Exception:
+            return
+        thread = threading.Thread(daemon=True, name="AppUpdateDownload", target=self._auto_download_run)
+        thread.start()
+
+    def _auto_download_run(self) -> None:
+        try:
+            result = self.download_release()
+            _log_kv("UPDATE", "auto_download_finished", ok=bool(result.get("ok")),
+                    version=str(result.get("latest_version") or ""))
+        except Exception as exc:
+            _log_kv("UPDATE", "auto_download_failed", "warning", error=str(exc))
 
     # -- download + verify ----------------------------------------------
     def _download_text(self, url: str) -> str:

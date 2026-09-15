@@ -124,6 +124,7 @@ DEFAULTS: Dict[str, Any] = {
     "watchdog_hold_time":       60,    # วิ รอยืนยันก่อน kill+rejoin
     # ── Self update (RT.1.1) ──
     "auto_check_update":        True,   # เช็คเวอร์ชันใหม่เงียบหลังเปิดแอป
+    "auto_download_update":     True,   # โหลดไฟล์อัปเดตอัตโนมัติเมื่อเจอเวอร์ชันใหม่
     "update_check_interval_hours": 6,   # เช็คซ้ำทุกกี่ชั่วโมง (1-168)
     "update_channel":           "stable",  # stable | beta
     "roblox_memory_guard_enabled": True,

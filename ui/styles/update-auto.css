@@ -1,0 +1,55 @@
+.cronus-update-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: calc(100% - 20px);
+  margin: 6px 10px 0;
+  height: 30px;
+  border-radius: 8px;
+  border: 1px solid #1d4ed8;
+  background: #1d4ed8;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.cronus-update-btn:hover:not(:disabled) { background: #2563eb; }
+.cronus-update-btn:disabled {
+  background: #15161b;
+  border-color: #232529;
+  color: #7f838c;
+  cursor: default;
+}
+.cu-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+}
+.cu-modal {
+  background: #12131a;
+  border: 1px solid #2a2d36;
+  border-radius: 10px;
+  padding: 18px 20px;
+  max-width: 380px;
+  width: calc(100% - 40px);
+  color: #d5d9e2;
+}
+.cu-modal h3 { margin: 0 0 10px; font-size: 15px; }
+.cu-modal p { margin: 0 0 12px; font-size: 13px; color: #aab0bd; }
+.cu-modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.cu-btn {
+  background: #15161b;
+  border: 1px solid #232529;
+  color: #aab0bd;
+  border-radius: 6px;
+  font-size: 11px;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+.cu-btn:hover { background: #1b1c22; border-color: #32343d; color: #fff; }
+.cu-btn.primary { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
+.cu-btn.primary:hover { background: #2563eb; }

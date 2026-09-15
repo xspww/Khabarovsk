@@ -53,7 +53,7 @@ jobs:
           $ready = $false
           for ($i = 0; $i -lt 90; $i++) {
             Start-Sleep -Seconds 1
-            if (Test-Path guard_out.txt -and (Select-String -Path guard_out.txt -Pattern "multi_roblox_guard_ready" -Quiet)) { $ready = $true; break }
+            if ((Test-Path guard_out.txt) -and (Select-String -Path guard_out.txt -Pattern "multi_roblox_guard_ready" -Quiet)) { $ready = $true; break }
             if ($proc.HasExited) { break }
           }
           try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}

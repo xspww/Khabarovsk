@@ -42,6 +42,12 @@ account_tools_audit.jsonl
 *.db-wal
 debug_popup_live_*.png
 
+# Build outputs (PyInstaller exe is published via GitHub Releases)
+dist/
+build/
+guard_out.txt
+assets/cronus_icon.ico
+
 # Temporary and editor files
 .freebuff/
 .vscode/

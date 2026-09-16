@@ -1,4 +1,32 @@
-# Cronus Launcher
+<p align="center">
+  <img src="assets/cronus_icon.png" width="120" alt="Cronus Launcher logo" />
+</p>
+
+<h1 align="center">Cronus Launcher</h1>
+
+<p align="center">Roblox account manager with auto-rejoin.</p>
+
+<p align="center">
+  <a href="https://github.com/q0HtHHftAS/Roblox-Auto-Rejoin-windown/releases"><img src="https://img.shields.io/github/v/release/q0HtHHftAS/Roblox-Auto-Rejoin-windown?label=release" alt="release" /></a>
+  <a href="https://github.com/q0HtHHftAS/Roblox-Auto-Rejoin-windown/actions/workflows/release.yml"><img src="https://github.com/q0HtHHftAS/Roblox-Auto-Rejoin-windown/actions/workflows/release.yml/badge.svg" alt="build" /></a>
+  <img src="https://img.shields.io/badge/platform-Windows-blue" alt="platform" />
+  <img src="https://img.shields.io/badge/python-3.11+-blue" alt="python" />
+</p>
+
+<p align="center">
+  <a href="README.md">English</a> | <a href="README.th.md">ไทย</a>
+</p>
+
+<p align="center">
+  <a href="#functions">Features</a> •
+  <a href="#requirements">Requirements</a> •
+  <a href="#install">Install</a> •
+  <a href="#update">Update</a> •
+  <a href="#quick-start-from-source">Quick Start</a> •
+  <a href="#build-the-exe">Build</a> •
+  <a href="#in-game-lua-script">Lua</a> •
+  <a href="#data-and-privacy">Privacy</a>
+</p>
 
 Cronus Launcher is a local launcher for Roblox on Windows.
 The launcher manages more than one account and rejoins games after disconnects.
@@ -8,11 +36,11 @@ A watchdog (program that watches for faults and restarts work) provides the rejo
 
 The launcher provides the functions below:
 
-- Manage more than one account: you can add, organize, and launch more than one Roblox account at the same time.
-- Rejoin after faults: if Roblox disconnects, shows an error popup, or crashes, the launcher restarts the account.
-- Reduce system load: you can limit CPU use and lower graphics load during sessions with more than one instance.
-- Work with executors: the launcher works with supported Roblox executors and sends telemetry data from the game.
-- Protect secrets: the launcher encrypts account cookies and credentials on the host with Windows DPAPI.
+- 👥 Manage more than one account: you can add, organize, and launch more than one Roblox account at the same time.
+- 🔄 Rejoin after faults: if Roblox disconnects, shows an error popup, or crashes, the launcher restarts the account.
+- ⚡ Reduce system load: you can limit CPU use and lower graphics load during sessions with more than one instance.
+- 🧩 Work with executors: the launcher works with supported Roblox executors and sends telemetry data from the game.
+- 🔒 Protect secrets: the launcher encrypts account cookies and credentials on the host with Windows DPAPI.
 
 ## Requirements
 

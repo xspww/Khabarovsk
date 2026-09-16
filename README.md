@@ -21,25 +21,23 @@
   <a href="#functions">Features</a> •
   <a href="#requirements">Requirements</a> •
   <a href="#install">Install</a> •
-  <a href="#update">Update</a> •
   <a href="#quick-start-from-source">Quick Start</a> •
   <a href="#build-the-exe">Build</a> •
   <a href="#in-game-lua-script">Lua</a> •
-  <a href="#data-and-privacy">Privacy</a>
+  <a href="#data-and-privacy">Privacy</a> •
+  <a href="#intention">Intention</a>
 </p>
 
-Cronus Launcher is a local launcher for Roblox on Windows.
-The launcher manages more than one account and rejoins games after disconnects.
-A watchdog (program that watches for faults and restarts work) provides the rejoin function.
+<p align="center">Cronus Launcher is a helper for AFK farmers and multi-instance players. If the game disconnects, it rejoins automatically — no need to stay up watching your accounts.</p>
 
 ## Functions
 
 The launcher provides the functions below:
 
-- 👥 Manage more than one account: you can add, organize, and launch more than one Roblox account at the same time.
-- 🔄 Rejoin after faults: if Roblox disconnects, shows an error popup, or crashes, the launcher restarts the account.
+- 👥 Manage more than one account: like a Roblox account manager.
+- 🔄 Automatic rejoin: the program rejoins the game for you, even while you sleep.
 - ⚡ Reduce system load: you can limit CPU use and lower graphics load during sessions with more than one instance.
-- 🧩 Work with executors: the launcher works with supported Roblox executors and sends telemetry data from the game.
+- 🧩 Work with executors: restarts the Roblox script executor for you when the executor updates, and pauses rejoining when Roblox itself updates.
 - 🔒 Protect secrets: the launcher encrypts account cookies and credentials on the host with Windows DPAPI.
 
 ## Requirements
@@ -67,34 +65,6 @@ Verify the download with `checksums.txt` from the same release when unsure:
 ```powershell
 (Get-FileHash CronusLauncher-1.0.5.exe -Algorithm SHA256).Hash
 ```
-
-## Update
-
-Product model: download once, update forever. Install the exe per-user
-(recommended: `%LOCALAPPDATA%\Cronus Launcher\`) so one-click updates work
-without UAC. Program Files installs fall back to a manual download link.
-
-The launcher checks GitHub Releases quietly after startup (5s delay, then
-every `update_check_interval_hours`) and auto-downloads in the background
-(`auto_check_update`, `auto_download_update`). When verified, press
-Restart to install: the app stops Auto Rejoin itself, swaps the exe,
-probes `/api/status` for the new version, and rolls back to `.bak` on
-failure. Settings and accounts in `%LOCALAPPDATA%\Cronus Launcher\data`
-are never touched. Resume is supported for interrupted downloads.
-
-Settings: `auto_check_update`, `auto_download_update`, `auto_install_update`,
-`update_check_interval_hours`, `update_channel` (`stable` or `beta`).
-Beta builds are prereleases. Test them before stable when possible.
-
-Mandatory updates: add one line (`!mandatory`, `[mandatory]`, `[force]`,
-or `mandatory:true`) to the release body. The client shows a required
-banner and prioritizes the Restart button until the user installs.
-
-Signed releases (optional, recommended): set repo secret `UPDATE_SIGNING_KEY`
-(32-byte Ed25519 private key, hex). The workflow signs `checksums.txt` to
-`checksums.txt.sig`. Ship the public key to clients as `update_pubkey.hex`
-(next to the exe or in the data folder) or via env `CRONUS_UPDATE_PUBKEY`.
-Old signature-less releases keep working on SHA256 when no pubkey is set.
 
 ## Quick Start (from source)
 
@@ -161,3 +131,6 @@ The launcher encrypts account cookies with Windows DPAPI on the host.
 The launcher never sends cookies to external servers.
 The launcher never commits cookies to the repository.
 Self updates replace only the exe file. The data folder above is never touched.
+
+## Intention
+This program was built for AFK farmers to save costs. It is open source — feel free to modify it however you like.

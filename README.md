@@ -1,10 +1,10 @@
 <p align="center">
-  <img src="assets/cronus_icon.png" width="120" alt="Cronus Launcher logo" />
+  <img src="assets/cronus_icon.png" width="120" alt="โลโก้ Cronus Launcher" />
 </p>
 
 <h1 align="center">Cronus Launcher</h1>
 
-<p align="center">Roblox account manager with auto-rejoin.</p>
+<p align="center">ตัวจัดการหลายบัญชี Roblox พร้อมรีจอยอัตโนมัติ</p>
 
 <p align="center">
   <a href="https://github.com/q0HtHHftAS/Roblox-Auto-Rejoin-windown/releases"><img src="https://img.shields.io/github/v/release/q0HtHHftAS/Roblox-Auto-Rejoin-windown?label=release" alt="release" /></a>
@@ -14,91 +14,86 @@
 </p>
 
 <p align="center">
-  <a href="README.md">English</a> | <a href="README.th.md">ไทย</a>
+  <a href="README.en.md">English</a> | <a href="README.md">ไทย</a>
 </p>
 
 <p align="center">
-  <a href="#functions">Features</a> •
-  <a href="#requirements">Requirements</a> •
-  <a href="#install">Install</a> •
-  <a href="#quick-start-from-source">Quick Start</a> •
-  <a href="#build-the-exe">Build</a> •
-  <a href="#in-game-lua-script">Lua</a> •
-  <a href="#data-and-privacy">Privacy</a> •
-  <a href="#intention">Intention</a>
+  <a href="#ฟีเจอร์">ฟีเจอร์</a> •
+  <a href="#สิ่งที่ต้องมี">สิ่งที่ต้องมี</a> •
+  <a href="#ติดตั้ง">ติดตั้ง</a> •
+  <a href="#เริ่มใช้จากซอร์ส">เริ่มใช้</a> •
+  <a href="#สร้างไฟล์-exe">สร้าง exe</a> •
+  <a href="#สคริปต์-lua-ในเกม">Lua</a> •
+  <a href="#ข้อมูลและความเป็นส่วนตัว">ความเป็นส่วนตัว</a> •
+  <a href="#ความตั้งใจ">ความตั้งใจ</a>
 </p>
 
-<p align="center">Cronus Launcher is a helper for AFK farmers and multi-instance players. If the game disconnects, it rejoins automatically — no need to stay up watching your accounts.</p>
+<p align="center">Cronus Launcher คือ โปรแกรมช่วยสำหรับคนทำไก่ตัน และเปิดหลายจอ เข้าเกมใหม่ให้ถ้าเกมหลุด ไม่ต้องเสียเวลาตื่นมานั่งดูว่ารหัสจะหลุดตอนไหน</p>
 
-## Functions
+## ฟีเจอร์
 
-The launcher provides the functions below:
+มีอะไรให้ใช้บ้าง:
 
-- 👥 Manage more than one account: like a Roblox account manager.
-- 🔄 Automatic rejoin: the program rejoins the game for you, even while you sleep.
-- ⚡ Reduce system load: you can limit CPU use and lower graphics load during sessions with more than one instance.
-- 🧩 Work with executors: restarts the Roblox script executor for you when the executor updates, and pauses rejoining when Roblox itself updates.
-- 🔒 Protect secrets: the launcher encrypts account cookies and credentials on the host with Windows DPAPI.
+- 👥 จัดการหลายบัญชีพร้อมกัน: เหมือน Roblox account manager
+- 🔄 ตัวโปรแกรมจะเข้าเกมให้อัตโนมัติ: นอนอยู่มันก็เข้าเกมให้
+- ⚡ ลดโหลดเครื่อง: จำกัด CPU กับลดกราฟิกลงได้ พอเปิดหลายจอเครื่องก็ยังไหว
+- 🧩 ต่อกับ executor ได้: รีตัวรันสคริปต์ Roblox ให้ถ้าตัวรันอัพเดท หยุดเข้าเกมให้หาก Roblox อัพเดท
+- 🔒 เก็บความลับไว้บนเครื่อง: เข้ารหัส cookie กับรหัสผ่านด้วย Windows DPAPI บนเครื่องตัวเอง ไม่ส่งออกไปไหน
 
-## Requirements
+## สิ่งที่ต้องมี
 
-The host must meet the requirements below:
+เครื่องต้องพร้อมตามนี้:
 
-- Run Windows 10 or Windows 11 64-bit.
-- Run Python 3.11 or later.
-- Have Roblox installed on the host.
+- Windows 10 หรือ Windows 11 64-bit
+- Python 3.11 ขึ้นไป
+- ลง Roblox ไว้บนเครื่องแล้ว
 
-## Install
+## ติดตั้ง
 
-The easy way is the compiled build from the Releases page.
-No Python is needed for this option.
+วิธีง่ายสุดคือโหลดตัว build สำเร็จจากหน้า Releases ไม่ต้องลง Python เพิ่ม
 
-1. Open `https://github.com/q0HtHHftAS/Roblox-Auto-Rejoin-windown/releases`.
-2. Download `CronusLauncher-<version>.exe` and run it.
-3. The portable build `CronusLauncher-<version>-portable.zip` holds the same exe plus the Lua loader.
+1. เปิด `https://github.com/q0HtHHftAS/Roblox-Auto-Rejoin-windown/releases`
+2. โหลด `CronusLauncher-<version>.exe` แล้วรันได้เลย
+3. ตัว portable `CronusLauncher-<version>-portable.zip` ข้างในมี exe ตัวเดียวกันพร้อม Lua loader
 
-Windows SmartScreen may warn because the exe is not code signed.
-The builds come only from the Releases page above.
-Press More info, then Run anyway when the file name matches the release.
-Verify the download with `checksums.txt` from the same release when unsure:
+พอรันครั้งแรก Windows SmartScreen อาจเตือนเพราะ exe ยังไม่มีลายเซ็น โหลดจากหน้า Releases ด้านบนเท่านั้น ถ้าชื่อไฟล์ตรงกับ release ก็กด More info แล้ว Run anyway ได้เลย ไม่แน่ใจก็เช็ค SHA256 เทียบกับ `checksums.txt` ใน release เดียวกัน
 
 ```powershell
 (Get-FileHash CronusLauncher-1.0.5.exe -Algorithm SHA256).Hash
 ```
 
-## Quick Start (from source)
+## เริ่มใช้จากซอร์ส
 
-Complete the steps below:
+ทำตามนี้:
 
-1. Clone the repository:
+1. Clone repo:
 
 ```powershell
 git clone https://github.com/q0HtHHftAS/Roblox-Auto-Rejoin-windown.git
 cd Roblox-Auto-Rejoin-windown
 ```
 
-2. Install dependencies:
+2. ลง dependencies:
 
 ```powershell
 python -m pip install -r requirements.txt
 ```
 
-3. Start the launcher with one of the methods below.
-To use the batch runner, run the command below:
+3. เปิด launcher เลือกวิธีใดวิธีหนึ่ง ถ้าใช้ batch runner รันคำสั่งนี้:
 
 ```powershell
 .\Run.cmd
 ```
 
-To use Python, run the command below:
+ถ้าใช้ Python รันคำสั่งนี้:
 
 ```powershell
 python main.py
 ```
 
-The launcher starts the local service on 127.0.0.1 and opens the desktop dashboard window.
+พอรันแล้ว service ก็ขึ้นที่ 127.0.0.1 พร้อมเปิดหน้าจอ dashboard ให้เอง
 
-## Build the exe
+## สร้างไฟล์ exe
 
 ```powershell
 python -m pip install -r requirements.txt pyinstaller
@@ -106,31 +101,25 @@ python -c "from PIL import Image; Image.open('assets/cronus_icon.png').save('ass
 pyinstaller cronus_launcher.spec
 ```
 
-The output is `dist/CronusLauncher.exe`.
-Releases are built the same way by GitHub Actions when a `v*` tag is pushed.
-The tag must match `APP_VERSION` in `version.py`.
+ผลลัพธ์อยู่ที่ `dist/CronusLauncher.exe` ฝั่ง Releases ก็ build ด้วยวิธีเดียวกันผ่าน GitHub Actions ทุกครั้งที่ดัน tag `v*` ชื่อ tag ต้องตรงกับ `APP_VERSION` ใน `version.py`
 
-## In-Game Lua Script
+## สคริปต์ Lua ในเกม
 
-A loader script (small program that loads telemetry code into the game) speeds up rejoin events.
-To send telemetry data and rejoin faster, run the file below in the Roblox executor:
+สคริปต์ loader (ตัวโหลดโค้ด telemetry เข้าเกม) ช่วยให้รีจอยไวขึ้น อยากส่ง telemetry แล้วรีจอยเร็วขึ้นก็เอาไฟล์นี้ไปรันใน executor ของ Roblox:
 
 ```text
 lua/run_in_executor.lua
 ```
 
-## Data and Privacy
+## ข้อมูลและความเป็นส่วนตัว
 
-The launcher stores runtime configuration and account state on the host at the path below:
+config กับสถานะบัญชีเก็บไว้บนเครื่องตรงนี้:
 
 ```text
 %LOCALAPPDATA%\Cronus Launcher\data
 ```
 
-The launcher encrypts account cookies with Windows DPAPI on the host.
-The launcher never sends cookies to external servers.
-The launcher never commits cookies to the repository.
-Self updates replace only the exe file. The data folder above is never touched.
+cookie ของบัญชีเข้ารหัสด้วย Windows DPAPI บนเครื่องตัวเอง ไม่ส่ง cookie ออกไปเซิร์ฟเวอร์ข้างนอก ไม่ commit cookie ลง repo อัปเดตตัวเองเปลี่ยนแค่ไฟล์ exe โฟลเดอร์ data ด้านบนไม่แตะเลย
 
-## Intention
-This program was built for AFK farmers to save costs. It is open source — feel free to modify it however you like.
+## ความตั้งใจ
+โปรแกรมนี้สร้างขึ้นเพื่อ คนทำไก่ตัน จะได้ประหยัดต้นทุน เป็นโปรแกรม opensource จะนำโปรแกรมไปดัดแปลงอะไรก็ได้

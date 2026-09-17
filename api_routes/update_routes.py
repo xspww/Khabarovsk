@@ -66,7 +66,7 @@ def register(app, ctx: ApiContext) -> None:
         if not updater.launch_updater_detached(updater_path):
             raise HTTPException(500, "Could not start updater")
 
-        def _shutdown_for_update():
+        def _shutdown_steps():
             ctx.shutdown_requested.set()
             try:
                 if getattr(farm, "running", False):
@@ -82,6 +82,16 @@ def register(app, ctx: ApiContext) -> None:
             except Exception:
                 pass
             time.sleep(0.5)
+
+        def _shutdown_for_update():
+            # Guarantee: the updater's wait_parent must observe this PID gone.
+            # A hanging stop/cleanup must never trap us here, so bound the
+            # whole sequence and always os._exit afterwards.
+            worker = threading.Thread(target=_shutdown_steps, daemon=True, name="CronusUpdateShutdownSteps")
+            worker.start()
+            worker.join(timeout=25.0)
+            if worker.is_alive():
+                flog_kv("UPDATE", "install_shutdown_steps_timeout", "warning")
             os._exit(0)
 
         threading.Thread(target=_shutdown_for_update, daemon=True, name="CronusUpdateInstall").start()

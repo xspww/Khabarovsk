@@ -205,9 +205,11 @@ def build_updater_script(
 ) -> str:
     """Windows batch that swaps the launcher exe after this process exits.
 
-    Steps: wait parent exit -> backup current -> move staged in place ->
-    launch new -> probe /api/status for the expected version -> on failure
-    kill new, restore backup, relaunch old, and always write a result file.
+    Steps: wait parent exit (bounded: 30s, then force-kill the parent PID
+    after verifying it is still our exe, else abort) -> backup current ->
+    move staged in place -> launch new -> probe /api/status for the
+    expected version -> on failure kill new, restore backup, relaunch old,
+    and always write a result file.
     """
     probe_endpoints = " ".join(f"http://127.0.0.1:{port}/api/status" for port in range(7777, 7797))
     lines = [
@@ -223,9 +225,29 @@ def build_updater_script(
         'for %%F in ("%CURRENT_EXE%") do set "CURRENT_NAME=%%~nxF"',
         'for %%F in ("%BACKUP_EXE%") do set "BACKUP_NAME=%%~nxF"',
         "",
+        "set /a WAIT_N=0",
         ":wait_parent",
         'tasklist /FI "PID eq %PARENT_PID%" 2>nul | findstr /I /C:"%PARENT_PID%" >nul',
-        "if %errorlevel%==0 ( timeout /t 1 /nobreak >nul & goto wait_parent )",
+        "if not %errorlevel%==0 goto parent_gone",
+        "set /a WAIT_N+=1",
+        "if %WAIT_N% GEQ 30 goto parent_force",
+        "timeout /t 1 /nobreak >nul & goto wait_parent",
+        ":parent_force",
+        'tasklist /FI "PID eq %PARENT_PID%" /FO TABLE /NH 2>nul | findstr /I /C:"%CURRENT_NAME%" >nul',
+        "if not %errorlevel%==0 goto parent_reused",
+        'taskkill /F /PID %PARENT_PID% >nul 2>&1',
+        "set /a WAIT_N+=1",
+        'tasklist /FI "PID eq %PARENT_PID%" 2>nul | findstr /I /C:"%PARENT_PID%" >nul',
+        "if not %errorlevel%==0 goto parent_gone",
+        "if %WAIT_N% GEQ 40 goto parent_stuck",
+        "timeout /t 1 /nobreak >nul & goto parent_force",
+        ":parent_reused",
+        '>"%RESULT_FILE%" echo {"ok":false,"action":"parent_reused","version":"%EXPECTED%"}',
+        "exit /b 4",
+        ":parent_stuck",
+        '>"%RESULT_FILE%" echo {"ok":false,"action":"parent_stuck","version":"%EXPECTED%"}',
+        "exit /b 3",
+        ":parent_gone",
         "timeout /t 2 /nobreak >nul",
         "",
         'if exist "%BACKUP_EXE%" del /f /q "%BACKUP_EXE%"',

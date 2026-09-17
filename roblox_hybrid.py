@@ -656,6 +656,25 @@ class HybridLauncher:
         if not auto_private_enabled and not explicit_vip_link:
             links = []
             global_vip_link = ""
+        # Shared-direct VIP: Shared mode with a complete shared link joins
+        # that exact room for every account (no per-owner ensure/create).
+        # Validated again here so a stale/mismatched value can never sneak in.
+        shared_direct = str(target.get("shared_direct_vip") or data.get("shared_direct_vip") or "").strip()
+        if shared_direct:
+            try:
+                _scomp = parse_vip_components(shared_direct)
+            except Exception:
+                _scomp = {}
+            _splace = str((_scomp or {}).get("place_id") or "").strip()
+            _scode = str((_scomp or {}).get("link_code") or "").strip() or str((_scomp or {}).get("access_code") or "").strip()
+            if _splace and _scode and (not place_id or _splace == place_id):
+                place_id = place_id or _splace
+                vip_link = shared_direct
+                vip_resolved = False
+                vip_resolution = {}
+                auto_private_enabled = False
+            else:
+                shared_direct = ""
         if auto_private_enabled:
             link_candidates = [str(vip_link or "").strip()] + [str(link or "").strip() for link in links] + [global_vip_link]
             for candidate in link_candidates:

@@ -402,11 +402,27 @@ def launch(cls, acc: Account) -> Tuple[bool, str, str]:
             global_place = cls.parse_vip_link(global_vip)[0] if global_vip else ""
             if target_place and global_place and global_place != target_place:
                 global_vip = ""
+            # Shared-direct VIP: Shared mode (game is None) with a complete
+            # shared link (place + link/access code) joins that exact room
+            # for every account, regardless of the auto-create toggle.
+            shared_direct_vip = ""
+            if game is None:
+                try:
+                    from domain.roblox_private_servers import parse_vip_components as _parse_shared_vip
+                    _candidate = str(cls.GLOBAL_VIP_LINK or "").strip()
+                    _comp = _parse_shared_vip(_candidate) if _candidate else {}
+                    _cplace = str(_comp.get("place_id") or "").strip()
+                    _ccode = str(_comp.get("link_code") or "").strip() or str(_comp.get("access_code") or "").strip()
+                    if _cplace and _ccode and (not target_place or _cplace == target_place):
+                        shared_direct_vip = _candidate
+                except Exception:
+                    shared_direct_vip = ""
             target = {
                 "place_id": target_place,
                 "vip_links": vip_links,
                 "vip_link": active_vip,
                 "global_vip_link": global_vip,
+                "shared_direct_vip": shared_direct_vip,
                 "browser_tracker_id": getattr(acc, "browser_tracker_id", ""),
                 "auto_create_private_server_enabled": auto_private_enabled,
                 "auto_create_private_server_free_only": bool(auto_private_free_only),
@@ -419,6 +435,7 @@ def launch(cls, acc: Account) -> Tuple[bool, str, str]:
                 "game_id": str((game or {}).get("id") or getattr(acc, "game_id", "") or ""),
                 "vip_links": vip_links,
                 "global_vip_link": global_vip,
+                "shared_direct_vip": shared_direct_vip,
                 "browser_tracker_id": getattr(acc, "browser_tracker_id", ""),
                 "auto_create_private_server_enabled": auto_private_enabled,
                 "auto_create_private_server_free_only": bool(auto_private_free_only),

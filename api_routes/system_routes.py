@@ -81,6 +81,26 @@ def register(app, ctx: ApiContext) -> None:
         # Notify-only (opencode-style): just report, never download/install.
         return check_app_update()
 
+    @app.post("/api/update/open")
+    def api_update_open():
+        # QWebEngineView (the desktop window) drops window.open() silently,
+        # so opening the Releases page must happen here via the OS browser.
+        snap = check_app_update()
+        url = str(snap.get("latest_url") or "").strip()
+        if not snap.get("update_available") or not url:
+            return {"ok": False, "msg": "No update available", **snap}
+        try:
+            import threading
+            import webbrowser
+
+            threading.Thread(
+                target=webbrowser.open, args=(url,), daemon=True,
+                name="CronusOpenReleases",
+            ).start()
+        except Exception as exc:
+            return {"ok": False, "msg": f"Could not open browser: {exc}", **snap}
+        return {"ok": True, "opened": True, "url": url, **snap}
+
     @app.get("/api/troubleshoot/roblox-install")
     def api_roblox_install_status():
         return roblox_installer.status()

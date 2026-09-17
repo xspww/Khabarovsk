@@ -42,6 +42,19 @@
     });
   }
 
+  function openReleases(fallbackUrl) {
+    // The desktop window (QWebEngineView) ignores window.open(), so ask the
+    // backend to open the OS browser (it re-checks the URL itself, the
+    // client-supplied value is only a fallback for real-browser mode).
+    var opt = { method: "POST", headers: { "Content-Type": "application/json" } };
+    var t = token();
+    if (t) opt.headers["X-Cronus-Token"] = t;
+    fetch("/api/update/open", opt).catch(function () {});
+    if (fallbackUrl) {
+      try { window.open(fallbackUrl, "_blank", "noopener"); } catch (e) {}
+    }
+  }
+
   function render(snap) {
     if (!snap || !snap.update_available || !snap.latest_version || !snap.latest_url) {
       removeButton();
@@ -52,7 +65,7 @@
     b.innerHTML = "<span>&#8659; v" + esc(snap.latest_version) + "</span>";
     b.title = "Open the Releases page to download v" + snap.latest_version;
     b.onclick = function () {
-      try { window.open(snap.latest_url, "_blank", "noopener"); } catch (e) {}
+      openReleases(snap.latest_url);
     };
   }
 

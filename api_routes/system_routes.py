@@ -161,6 +161,28 @@ def register(app, ctx: ApiContext) -> None:
         exploitstrap_versions = roblox_installer.list_exploitstrap_installed()
         latest_status = roblox_installer._latest_version_status()
         latest_version = str(latest_status.get("version") or "").strip().lower()
+        # Defensive dedup: same version hash can appear under multiple install
+        # roots. The picker only shows version+source, so identical rows would
+        # look like duplicated "Roblox LAST" entries and flicker when the
+        # frontend tries to clean them up after paint.
+        seen_keys = set()
+        deduped_versions = []
+        for item in versions:
+            key = ("roblox", str(item.get("version") or "").strip().lower())
+            if not key[1] or key in seen_keys:
+                continue
+            seen_keys.add(key)
+            deduped_versions.append(item)
+        versions = deduped_versions
+        seen_es = set()
+        deduped_es = []
+        for item in exploitstrap_versions:
+            key = ("exploitstrap", str(item.get("version") or "").strip().lower())
+            if not key[1] or key in seen_es:
+                continue
+            seen_es.add(key)
+            deduped_es.append(item)
+        exploitstrap_versions = deduped_es
         items = []
         for index, item in enumerate(versions):
             version = str(item.get("version") or "").strip()

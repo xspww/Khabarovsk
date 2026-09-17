@@ -3,10 +3,10 @@ from __future__ import annotations
 from app_paths import resource_path
 
 _STATIC_SCRIPTS = (
-    '<script src="/ui/runtime/exploitstrapVersionPicker.js?v=6"></script>'
+    '<script src="/ui/runtime/exploitstrapVersionPicker.js?v=7"></script>'
     '<script src="/ui/runtime/executorCompatibility.js?v=7"></script>'
     '<script src="/ui/runtime/gamesManager.js?v=8"></script>'
-    '<script src="/ui/runtime/customUi.js?v=9"></script>'
+    '<script src="/ui/runtime/customUi.js?v=10"></script>'
     '<script src="/ui/runtime/autoUpdate.js?v=2"></script>'
 )
 

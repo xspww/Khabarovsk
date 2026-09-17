@@ -207,14 +207,10 @@
   // Poll latest version every 30s instead of 5s (reduces API load)
   setInterval(refreshCurrentVersion, 30000);
   document.querySelector('#roblox-latest span')?.replaceChildren('Update to Latest');
-  const latestOnly = () => {
-    document.querySelectorAll('#modal-backdrop .vchoice').forEach((choice) => {
-      const old = choice.querySelector('.vbadge.old');
-      if (old) choice.remove();
-    });
-  };
-  const modalBody = document.getElementById('modal-body');
-  if (modalBody) new MutationObserver(latestOnly).observe(modalBody, { childList: true, subtree: true });
+  // NOTE: do NOT post-filter `.vchoice` rows here. An earlier revision removed
+  // `.vbadge.old` rows via MutationObserver after paint, which made the Join
+  // game picker flash "2 Roblox rows then 1 disappears". The version list is
+  // already deduplicated by the backend and rendered once by dashboard.js.
 
   const syncLimiterActions = () => {
     const limiterSave = document.getElementById('limiter-save');

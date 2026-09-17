@@ -291,7 +291,13 @@ class RobloxInstallManager:
         return unique
 
     def list_installed(self) -> List[Dict[str, Any]]:
-        """Return every installed Roblox player version, newest-modified first."""
+        """Return every installed Roblox player version, newest-modified first.
+
+        Deduplicated by version hash: the same ``version-xxxx`` folder can
+        exist under multiple roots (LocalAppData vs Program Files). Without
+        dedup the Join-game picker renders two identical "Roblox LAST" rows,
+        which then flicker when post-render JS tries to remove the duplicate.
+        """
         candidates: List[Dict[str, Any]] = []
         for root in self.roblox_roots():
             versions_dir = root / "Versions"
@@ -311,7 +317,15 @@ class RobloxInstallManager:
                 # version need the concrete version directory instead.
                 candidates.append({"version": child.name, "path": str(exe), "root": str(child), "modified": modified})
         candidates.sort(key=lambda item: float(item.get("modified") or 0), reverse=True)
-        return candidates
+        deduped: List[Dict[str, Any]] = []
+        seen_versions = set()
+        for item in candidates:
+            key = str(item.get("version") or "").strip().lower()
+            if not key or key in seen_versions:
+                continue
+            seen_versions.add(key)
+            deduped.append(item)
+        return deduped
 
     def list_exploitstrap_installed(self) -> List[Dict[str, Any]]:
         """Return Roblox versions managed by ExploitStrap, if it is installed."""
@@ -348,7 +362,15 @@ class RobloxInstallManager:
                 "launcher_version": "",
             })
         items.sort(key=lambda item: float(item.get("modified") or 0), reverse=True)
-        return items
+        deduped: List[Dict[str, Any]] = []
+        seen = set()
+        for item in items:
+            key = str(item.get("version") or "").strip().lower()
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+        return deduped
 
     def detect_installed(self) -> Dict[str, Any]:
         candidates = self.list_installed()

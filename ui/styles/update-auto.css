@@ -1,26 +1,50 @@
 .cronus-update-btn {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: calc(100% - 20px);
-  margin: 6px 10px 0;
-  height: 30px;
+  justify-content: flex-start;
+  gap: 7px;
+  width: 100%;
+  margin: 0 0 10px;
+  height: 32px;
+  padding: 0 12px;
   border-radius: 8px;
-  border: 1px solid #1d4ed8;
-  background: #1d4ed8;
-  color: #fff;
-  font-size: 12px;
-  font-weight: 700;
+  border: 1px solid #43456e;
+  background: rgba(99, 102, 241, 0.16);
+  color: #a5b4fc;
+  font: 700 11px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
   cursor: pointer;
 }
-.cronus-update-btn:hover:not(:disabled) { background: #2563eb; }
-.cronus-update-btn.is-mandatory {
-  border-color: #b45309;
-  background: #92400e;
+.cronus-update-btn > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
-.cronus-update-btn.is-mandatory:hover:not(:disabled) { background: #b45309; }
+.cronus-update-btn:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.26);
+  border-color: #4a4c6e;
+  color: #c7d2fe;
+}
+.cronus-update-btn.is-mandatory {
+  border-color: #6b5416;
+  background: rgba(234, 179, 8, 0.12);
+  color: #fbbf24;
+}
+.cronus-update-btn.is-mandatory:hover:not(:disabled) {
+  background: rgba(234, 179, 8, 0.2);
+  border-color: #8a6d1c;
+  color: #fde047;
+}
 .cronus-update-btn.is-manual {
+  background: transparent;
   border-style: dashed;
+  border-color: #43456e;
+  color: #818cf8;
+}
+.cronus-update-btn.is-manual:hover:not(:disabled) {
+  background: rgba(99, 102, 241, 0.1);
+  color: #a5b4fc;
 }
 .cronus-update-btn:disabled {
   background: #15161b;
@@ -75,5 +99,5 @@
   cursor: pointer;
 }
 .cu-btn:hover { background: #1b1c22; border-color: #32343d; color: #fff; }
-.cu-btn.primary { background: #1d4ed8; border-color: #1d4ed8; color: #fff; }
-.cu-btn.primary:hover { background: #2563eb; }
+.cu-btn.primary { background: #5855ea; border-color: #6366f1; color: #fff; }
+.cu-btn.primary:hover { background: #6865f3; border-color: #7b78ff; }

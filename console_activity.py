@@ -21,6 +21,8 @@ _LAST_PID_BY_ACCOUNT: Dict[str, str] = {}
 _SERVER_TYPE_BY_ACCOUNT: Dict[str, str] = {}
 _LAST_FOUND_AT_BY_KEY: Dict[str, float] = {}
 _LAST_TELEPORT_AT_BY_ACCOUNT: Dict[str, float] = {}
+_LAST_JOB_BY_ACCOUNT: Dict[str, str] = {}
+_LAST_PLACE_BY_ACCOUNT: Dict[str, str] = {}
 _LUA_LIVENESS_REQUIRED = False
 _DISCONNECT_DEDUP_SECONDS = 3.0
 _CAPTCHA_DEDUP_SECONDS = 3.0
@@ -191,6 +193,27 @@ def _pid(fields: Dict[str, Any]) -> str:
     )
 
 
+def _job_id(fields: Dict[str, Any]) -> str:
+    for key in ("job_id", "observed_job_id", "new_job_id", "server_job_id", "jobId"):
+        value = _text(fields.get(key))
+        if value and value != "0":
+            return value
+    return ""
+
+
+def _place_id(fields: Dict[str, Any]) -> str:
+    for key in ("place_id", "observed_place_id", "teleport_place_id", "placeId"):
+        value = _text(fields.get(key))
+        if value and value != "0":
+            return value
+    return ""
+
+
+def _short_job(value: Any) -> str:
+    text = _text(value)
+    return text[:8] if len(text) > 8 else text
+
+
 def _pid_paren(value: Any, default: str = "unknown") -> str:
     return _paint(f"(PID: {_text(value, default)})", _COLOR_GRAY)
 
@@ -224,8 +247,15 @@ def _found_process_line(account: str, pid: Any, fields: Dict[str, Any] | None = 
     key = _account_key(account_text)
     if pid_text:
         _LAST_PID_BY_ACCOUNT[key] = pid_text
-    kind = _server_kind(fields or {}) or _SERVER_TYPE_BY_ACCOUNT.get(key, "")
-    dedupe_key = f"{key}:{pid_text}:{kind}"
+    data = fields or {}
+    job = _job_id(data)
+    place = _place_id(data)
+    if job:
+        _LAST_JOB_BY_ACCOUNT[key] = job
+    if place:
+        _LAST_PLACE_BY_ACCOUNT[key] = place
+    kind = _server_kind(data) or _SERVER_TYPE_BY_ACCOUNT.get(key, "")
+    dedupe_key = f"{key}:{pid_text}:{kind}:{job}"
     now = time.monotonic()
     previous = float(_LAST_FOUND_AT_BY_KEY.get(dedupe_key) or 0.0)
     if previous and now - previous < _FOUND_DEDUP_SECONDS:
@@ -252,6 +282,26 @@ def _teleport_line(account: str) -> Optional[str]:
         return None
     _LAST_TELEPORT_AT_BY_ACCOUNT[key] = now
     return _line(_ICON_TELEPORT, f"{_username_paren(account)} Teleporting")
+
+
+def _server_moved_line(account: str, old_job: str, new_job: str, place: str = "") -> Optional[str]:
+    key = _account_key(account)
+    now = time.monotonic()
+    previous = float(_LAST_TELEPORT_AT_BY_ACCOUNT.get(key) or 0.0)
+    if previous and now - previous < _TELEPORT_DEDUP_SECONDS:
+        return None
+    _LAST_TELEPORT_AT_BY_ACCOUNT[key] = now
+    old_short = _short_job(old_job)
+    new_short = _short_job(new_job)
+    if old_short and new_short:
+        detail = f"Moved server {old_short} -> {new_short}"
+    elif new_short:
+        detail = f"Moved server -> {new_short}"
+    else:
+        detail = "Moved server"
+    if place:
+        detail = f"{detail} (place {place})"
+    return _line(_ICON_TELEPORT, f"{_username_paren(account)} {detail}")
 
 
 def _duration_text(value: Any) -> str:
@@ -457,6 +507,13 @@ def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]
     if scope == "RUNTIME" and name == "suspect_process_check":
         return _suspect_process_line(account)
     if scope in {"LUA", "LUA_EVENT"} and name == "teleport_detected":
+        job = _job_id(fields)
+        place = _place_id(fields)
+        key = _account_key(account)
+        if job:
+            _LAST_JOB_BY_ACCOUNT[key] = job
+        if place:
+            _LAST_PLACE_BY_ACCOUNT[key] = place
         return _teleport_line(account)
     if scope == "QUEUE" and name == "auto_close_cycle":
         return _reload_all_line(fields.get("killed"))
@@ -471,9 +528,26 @@ def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]
         return None
     if scope in {"VIP", "VIP_DETECTOR"} and name in {"server_detected", "detected", "server_status"}:
         kind = _server_kind(fields)
+        key = _account_key(account)
         if kind:
-            _SERVER_TYPE_BY_ACCOUNT[_account_key(account)] = kind
-        last_pid = pid or _LAST_PID_BY_ACCOUNT.get(_account_key(account), "")
+            _SERVER_TYPE_BY_ACCOUNT[key] = kind
+        job = _job_id(fields)
+        place = _place_id(fields)
+        prev_job = _LAST_JOB_BY_ACCOUNT.get(key, "")
+        if job and prev_job and job != prev_job:
+            _LAST_JOB_BY_ACCOUNT[key] = job
+            if place:
+                _LAST_PLACE_BY_ACCOUNT[key] = place
+            moved = _server_moved_line(account, prev_job, job, place)
+            if moved:
+                if pid:
+                    _LAST_PID_BY_ACCOUNT[key] = _text(pid, _LAST_PID_BY_ACCOUNT.get(key, ""))
+                return moved
+        elif job and not prev_job:
+            _LAST_JOB_BY_ACCOUNT[key] = job
+            if place:
+                _LAST_PLACE_BY_ACCOUNT[key] = place
+        last_pid = pid or _LAST_PID_BY_ACCOUNT.get(key, "")
         if kind and last_pid:
             return _found_process_line(account, last_pid, fields)
         return None

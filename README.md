@@ -28,7 +28,7 @@
   <a href="#ความตั้งใจ">ความตั้งใจ</a>
 </p>
 
-<p align="center">Cronus Launcher คือ โปรแกรมช่วยสำหรับคนทำไก่ตัน และเปิดหลายจอ เข้าเกมใหม่ให้ถ้าเกมหลุด ไม่ต้องเสียเวลาตื่นมานั่งดูว่ารหัสจะหลุดตอนไหน</p>
+<img width="1280" height="820" alt="r1" src="https://github.com/user-attachments/assets/7220bb7b-d29b-42db-8c08-cbf61e2b48f5" />
 
 ## ฟีเจอร์
 

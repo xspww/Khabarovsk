@@ -9,7 +9,6 @@ from .accounts_routes import register as register_accounts_routes
 from .games_routes import register as register_games_routes
 from .system_routes import register as register_system_routes
 from .lua_routes import register as register_lua_routes
-from .update_routes import register as register_update_routes
 
 
 def register_api_routes(app, ctx: ApiContext) -> None:
@@ -20,6 +19,5 @@ def register_api_routes(app, ctx: ApiContext) -> None:
     register_accounts_routes(app, ctx)
     register_games_routes(app, ctx)
     register_lua_routes(app, ctx)
-    register_update_routes(app, ctx)
     register_system_routes(app, ctx)
 

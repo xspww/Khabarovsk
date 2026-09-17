@@ -6,7 +6,7 @@ from typing import Tuple
 # Single source of truth for the launcher version.
 # Release tags must match: tag "v1.0.0" <-> APP_VERSION "1.0.0".
 # The release workflow fails the build when they differ.
-APP_VERSION = "1.1.2"
+APP_VERSION = "1.2.0"
 TAG_PREFIX = "v"
 
 # Build tag baked in at release time (e.g. "v1.0.0-beta.3").
@@ -25,20 +25,9 @@ def app_display_version() -> str:
         return strip_tag_prefix(BUILD_TAG)
     return APP_VERSION
 
-# GitHub Releases location used by the in-app updater.
+# GitHub Releases location used by the update check.
 GITHUB_OWNER = "q0HtHHftAS"
 GITHUB_REPO = "Roblox-Auto-Rejoin-windown"
-
-# Asset names published by .github/workflows/release.yml. Keep in sync.
-CHECKSUMS_ASSET = "checksums.txt"
-
-
-def exe_asset_name(version: str = APP_VERSION) -> str:
-    return f"CronusLauncher-{version}.exe"
-
-
-def portable_asset_name(version: str = APP_VERSION) -> str:
-    return f"CronusLauncher-{version}-portable.zip"
 
 
 def tag_for_version(version: str = APP_VERSION) -> str:

@@ -1,0 +1,28 @@
+.cronus-update-btn {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  width: 100%;
+  margin: 0 0 10px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid #43456e;
+  background: rgba(99, 102, 241, 0.16);
+  color: #a5b4fc;
+  font: 700 11px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+}
+.cronus-update-btn > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cronus-update-btn:hover {
+  background: rgba(99, 102, 241, 0.26);
+  border-color: #4a4c6e;
+  color: #c7d2fe;
+}

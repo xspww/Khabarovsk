@@ -122,12 +122,6 @@ DEFAULTS: Dict[str, Any] = {
     "watchdog_cpu_low":         0.9,   # % CPU ต่ำกว่านี้ = ผิดปกติ
     "watchdog_ram_low":         90.0,  # MB RAM ต่ำกว่านี้ = ผิดปกติ
     "watchdog_hold_time":       60,    # วิ รอยืนยันก่อน kill+rejoin
-    # ── Self update (RT.1.1) ──
-    "auto_check_update":        True,   # เช็คเวอร์ชันใหม่เงียบหลังเปิดแอป
-    "auto_download_update":     True,   # โหลดไฟล์อัปเดตอัตโนมัติเมื่อเจอเวอร์ชันใหม่
-    "auto_install_update":      False,  # Product: True = พร้อมแล้วแจ้ง Restart ทันที (ไม่แอบปิดเองขณะ farm รัน)
-    "update_check_interval_hours": 6,   # เช็คซ้ำทุกกี่ชั่วโมง (1-168)
-    "update_channel":           "stable",  # stable | beta
     "roblox_memory_guard_enabled": True,
     "roblox_memory_guard_mb":    6144.0,
     "roblox_memory_guard_hold_seconds": 30.0,

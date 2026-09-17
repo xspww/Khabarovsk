@@ -170,7 +170,7 @@ from desktop_host import (
 )
 from farm import FarmController
 from services.process_service import ProcessManager
-from services.app_update import AppUpdateService
+from services.app_version_check import cleanup_legacy_update_stage
 from services.roblox_install_manager import RobloxInstallManager
 from services.executor_compatibility import ExecutorCompatibilityService
 from services.executor_relauncher import ExecutorRelaunchService
@@ -252,8 +252,7 @@ EXECUTOR_TRACKER = ExecutorCompatibilityService(
 )
 EXECUTOR_RELAUNCHER = ExecutorRelaunchService(cfg_mgr, farm, EXECUTOR_TRACKER, logger=flog_kv)
 farm.set_executor_start_guard(EXECUTOR_RELAUNCHER.ensure_started)
-APP_UPDATER = AppUpdateService(cfg_mgr, farm=farm)
-farm._app_updater = APP_UPDATER
+cleanup_legacy_update_stage()
 
 app = FastAPI(title=APP_NAME, docs_url=None, redoc_url=None)
 app.mount("/assets", StaticFiles(directory=resource_path("assets")), name="assets")
@@ -264,7 +263,6 @@ api_context = ApiContext(
     roblox_installer=ROBLOX_INSTALLER,
     executor_tracker=EXECUTOR_TRACKER,
     executor_relauncher=EXECUTOR_RELAUNCHER,
-    app_updater=APP_UPDATER,
     html_ui=get_html_ui,
     instance_token=INSTANCE_TOKEN,
     shutdown_requested=SHUTDOWN_REQUESTED,
@@ -285,5 +283,4 @@ if __name__ == "__main__":
         sys.argv = [sys.argv[0], *sys.argv[idx + 1:]]
         raise SystemExit(multi_roblox_guard.main())
     EXECUTOR_TRACKER.start()
-    APP_UPDATER.start()
     run_desktop(app, farm)

@@ -69,51 +69,24 @@ jobs:
           }
           Write-Host "Smoke test passed"
 
-      - name: Package portable zip and checksums
+      - name: Package exe and checksums
         shell: powershell
         run: |
           $ver = "${{ env.APP_VERSION }}"
           $exeName = "CronusLauncher-$ver.exe"
-          $zipName = "CronusLauncher-$ver-portable.zip"
           Copy-Item "dist/CronusLauncher.exe" $exeName
-          Compress-Archive -Path $exeName, "README.md", "lua/run_in_executor.lua" -DestinationPath $zipName -Force
-          $lines = foreach ($f in @($exeName, $zipName)) {
-            $h = (Get-FileHash $f -Algorithm SHA256).Hash.ToLower()
-            "$h  $f"
-          }
+          $h = (Get-FileHash $exeName -Algorithm SHA256).Hash.ToLower()
           # WriteAllLines defaults to UTF-8 without BOM. Out-File -Encoding utf8
           # on Windows PowerShell 5.1 writes a BOM, which breaks sha256sum parsing.
-          [System.IO.File]::WriteAllLines("$pwd/checksums.txt", $lines)
+          [System.IO.File]::WriteAllLines("$pwd/checksums.txt", @("$h  $exeName"))
           Get-Content checksums.txt
-
-      - name: Sign checksums (optional Ed25519)
-        shell: python
-        env:
-          UPDATE_SIGNING_KEY: ${{ secrets.UPDATE_SIGNING_KEY }}
-        run: |
-          import os
-          sk_hex = (os.environ.get("UPDATE_SIGNING_KEY") or "").strip().lower()
-          if not sk_hex:
-              print("UPDATE_SIGNING_KEY not set; skipping checksums.txt.sig (SHA256-only release).")
-              raise SystemExit(0)
-          assert len(sk_hex) == 64 and all(c in "0123456789abcdef" for c in sk_hex), "UPDATE_SIGNING_KEY must be 32-byte hex"
-          from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
-          sk = Ed25519PrivateKey.from_private_bytes(bytes.fromhex(sk_hex))
-          data = open("checksums.txt", "rb").read()
-          sig = sk.sign(data).hex()
-          open("checksums.txt.sig", "w", encoding="utf-8", newline="\n").write(sig + "\n")
-          pub = sk.public_key().public_bytes_raw().hex()
-          print(f"checksums.txt.sig written; pubkey={pub}")
-          print("Ship this pubkey to clients via update_pubkey.hex or CRONUS_UPDATE_PUBKEY.")
 
       - name: Publish to GitHub Releases
         uses: softprops/action-gh-release@v2
         with:
           files: |
             CronusLauncher-${{ env.APP_VERSION }}.exe
-            CronusLauncher-${{ env.APP_VERSION }}-portable.zip
             checksums.txt
-            checksums.txt.sig
           fail_on_unmatched_files: false
           prerelease: ${{ contains(github.ref_name, 'beta') }}
           generate_release_notes: true

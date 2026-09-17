@@ -14,6 +14,7 @@ from fastapi.responses import HTMLResponse
 from account_hybrid import audit_event
 from core import flog_kv
 from roblox_hybrid import release_multi_roblox_guard
+from services.app_version_check import check_app_update
 
 from .auth import require_api_token
 from .idempotency import begin_idempotent_request, begin_idempotent_request_sync, finish_idempotent_request
@@ -74,6 +75,11 @@ def register(app, ctx: ApiContext) -> None:
         finish_idempotent_request(idem, result)
         return result
 
+
+    @app.get("/api/update/check")
+    def api_update_check():
+        # Notify-only (opencode-style): just report, never download/install.
+        return check_app_update()
 
     @app.get("/api/troubleshoot/roblox-install")
     def api_roblox_install_status():

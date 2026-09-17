@@ -81,7 +81,6 @@ def register(app, ctx: ApiContext) -> None:
             "roblox_window_arrange_gap", "roblox_window_arrange_margin",
             "multi_roblox_enabled", "rt_rotation_enabled",
             "runtime_account_allowlist",
-            "auto_check_update", "auto_download_update", "auto_install_update", "update_check_interval_hours", "update_channel",
         }
         updates = {k: v for k, v in body.items() if k in allowed}
         if "executor_monitor_enabled" in updates:
@@ -239,17 +238,6 @@ def register(app, ctx: ApiContext) -> None:
             )
         if "rt_rotation_enabled" in updates:
             updates["rt_rotation_enabled"] = bool(updates["rt_rotation_enabled"])
-        if "auto_check_update" in updates:
-            updates["auto_check_update"] = bool(updates["auto_check_update"])
-        if "auto_download_update" in updates:
-            updates["auto_download_update"] = bool(updates["auto_download_update"])
-        if "auto_install_update" in updates:
-            updates["auto_install_update"] = bool(updates["auto_install_update"])
-        if "update_check_interval_hours" in updates:
-            updates["update_check_interval_hours"] = _int_setting(updates["update_check_interval_hours"], 6, 1, 168)
-        if "update_channel" in updates:
-            channel = str(updates["update_channel"] or "").strip().lower()
-            updates["update_channel"] = channel if channel in {"stable", "beta"} else "stable"
         if "runtime_account_allowlist" in updates:
             updates["runtime_account_allowlist"] = runtime_account_allowlist(updates)
         if "games" in updates:

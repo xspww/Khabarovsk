@@ -130,7 +130,7 @@ The launcher stores runtime configuration and account state on the host at the p
 The launcher encrypts account cookies with Windows DPAPI on the host.
 The launcher never sends cookies to external servers.
 The launcher never commits cookies to the repository.
-Self updates replace only the exe file. The data folder above is never touched.
+When a new version is out, the launcher shows a button that opens the Releases page so you can download the new exe yourself. The data folder above is never touched.
 
 ## Intention
 This program was built for AFK farmers to save costs. It is open source — feel free to modify it however you like.

@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 from typing import Optional, Any, Callable, Dict, Tuple
-from domain.runtime_signals import RuntimeSignal, is_recovery_signal, normalize_runtime_signal
+from domain.states import RuntimeSignal, is_recovery_signal, normalize_runtime_signal
 from runtime.recovery_context import SESSION_CONFLICT
 from runtime.recovery_policy import canonical_reason, context_from_signal
 from runtime.recovery_support import _enrich_visual_disconnect_payload_with_log

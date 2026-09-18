@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Dict, Set
-from .account_state import AccountState, RuntimeState
+from .states import AccountState, RuntimeState
 
 
 class RuntimeLifecycleState(str, Enum):

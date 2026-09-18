@@ -5,8 +5,7 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
-from domain.account_state import AccountState
-from domain.public_state_mapper import LIFECYCLE_STATE, runtime_state_for_public
+from domain.states import LIFECYCLE_STATE, AccountState, runtime_state_for_public
 from domain.runtime_lifecycle import lifecycle_for_public
 from domain.runtime_models import AccountRuntime
 

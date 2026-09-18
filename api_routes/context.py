@@ -7,6 +7,7 @@ class ApiContext:
     cfg_mgr: Any
     farm: Any
     roblox_installer: Any
+    app_updater: Any
     executor_tracker: Any
     executor_relauncher: Any
     html_ui: Callable[[], str]

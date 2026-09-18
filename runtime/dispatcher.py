@@ -43,7 +43,10 @@ class Dispatcher(threading.Thread):
         self._recovery = recovery
         self._runtime_owner = getattr(recovery, "runtime_orchestrator", recovery)
         self._net = net
-        self._stop = stop
+        # NOTE: must not be named `self._stop` — it shadows
+        # threading.Thread._stop() and breaks join() on Python <=3.13
+        # ("TypeError: 'Event' object is not callable").
+        self._stop_event = stop
         self._cfg = cfg or {}
         self._runtime_state = runtime_state or RuntimeStateManager(logger=flog_kv)
         self._runtime_store = runtime_store
@@ -295,13 +298,13 @@ class Dispatcher(threading.Thread):
 
     def run(self):
         flog("[DISPATCHER] started")
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             if not self._net.is_online():
                 self._net.wait_until_online(timeout=5)
                 continue
 
-            self._queue.wait_until_free(self._stop)
-            if self._stop.is_set():
+            self._queue.wait_until_free(self._stop_event)
+            if self._stop_event.is_set():
                 break
 
             acc = self._queue.pop(timeout=1.0)
@@ -350,13 +353,13 @@ class Dispatcher(threading.Thread):
 
             try:
                 flog(f"[DISPATCHER] launching {acc.display_name}")
-                success = self._launcher.launch(acc, self._stop)
-                if self._stop.is_set() or acc.desired_state != AccountState.IN_GAME:
+                success = self._launcher.launch(acc, self._stop_event)
+                if self._stop_event.is_set() or acc.desired_state != AccountState.IN_GAME:
                     flog_kv(
                         "DISPATCHER",
                         "launch_result_ignored",
                         account=acc.display_name,
-                        stopped=self._stop.is_set(),
+                        stopped=self._stop_event.is_set(),
                         desired=getattr(acc.desired_state, "name", acc.desired_state),
                     )
                     self._finish_transaction(

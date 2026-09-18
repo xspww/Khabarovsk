@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any, Dict
 from core import AccountState, flog_kv
-from domain.runtime_signals import RuntimeSignal
+from domain.states import RuntimeSignal
 from runtime.lua_event_guard import validate_lua_event_payload
 from runtime.lua_identity import lua_event_requires_pid_guard, resolve_lua_account
 from services.process_service import ProcessService

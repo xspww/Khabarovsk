@@ -53,12 +53,21 @@ def check_app_update() -> Dict[str, Any]:
         "latest_version": "",
         "latest_url": "",
         "update_available": False,
+        "assets": [],
     }
     try:
         payload = _api_get_json(releases_api_latest())
         if not isinstance(payload, dict) or payload.get("draft"):
             return base
         tag = str(payload.get("tag_name") or "").strip()
+        raw_assets = payload.get("assets")
+        if isinstance(raw_assets, list):
+            base["assets"] = [
+                {"name": str(item.get("name") or ""),
+                 "browser_download_url": str(item.get("browser_download_url") or "")}
+                for item in raw_assets
+                if isinstance(item, dict)
+            ]
         if not tag or not is_newer_version(tag, current):
             return base
         latest = strip_tag_prefix(tag)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 from typing import Any, Callable, Dict, Optional
 
-from domain.runtime_signals import RuntimeSignal
+from domain.states import RuntimeSignal
 from runtime.runtime_state_manager import RuntimeStateManager
 Logger = Callable[..., None]
 

@@ -26,3 +26,7 @@
   border-color: #4a4c6e;
   color: #c7d2fe;
 }
+.cronus-update-btn:disabled {
+  opacity: 0.75;
+  cursor: wait;
+}

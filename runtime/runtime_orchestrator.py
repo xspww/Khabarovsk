@@ -5,7 +5,7 @@ import time
 import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, Optional
-from domain.runtime_signals import RuntimeSignal
+from domain.states import RuntimeSignal
 from runtime.account_runtime_controller import AccountRuntimeController
 from services.process_service import ProcessService
 from runtime.runtime_state_manager import RuntimeStateManager

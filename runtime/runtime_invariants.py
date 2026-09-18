@@ -3,8 +3,7 @@ from __future__ import annotations
 import time
 from typing import Any, Callable, Dict, List, Optional
 
-from domain.account_state import AccountState, RuntimeState
-from domain.public_state_mapper import runtime_state_for_public
+from domain.states import AccountState, RuntimeState, runtime_state_for_public
 from services.process_proof_policy import PROOF_STRONG, is_at_least_process_proof
 
 

@@ -43,12 +43,11 @@ from runtime.farm_lifecycle import FarmLifecycleService
 from runtime.lua_server_detection import LuaServerDetection, detect_lua_server
 from runtime.recovery_view import recovery_step_for_account
 from runtime.supervisor_runtime import SupervisorRuntime
-from runtime.config_snapshot import apply_runtime_config_snapshot
+from runtime.recovery_support import _clear_account_cookie_block
 from runtime.account_worker import AccountWorker
 from runtime.command_rate_limit import FORCE_REJOIN_INTERVAL_SECONDS, PerAccountRateLimiter
 from runtime.farm_initial_sync import initial_state_sync
 from runtime.lua_rejoin_events import handle_lua_rejoin_event as _handle_lua_rejoin_event
-from runtime.farm_preflight import preflight_cookie_blocks
 from runtime.lua_identity import resolve_lua_account
 from runtime.lua_event_guard import lua_event_handler_error_response, validate_lua_event_payload
 from runtime.system_maintenance import SystemMaintenance
@@ -294,7 +293,37 @@ class FarmController:
         )
 
     def _preflight_cookie_blocks(self) -> Dict[str, str]:
-        return preflight_cookie_blocks(self._accounts, self._recovery, self._state_mgr, self._runtime_state)
+        blocked: Dict[str, str] = {}
+        recovery = self._recovery
+        state_mgr = self._state_mgr
+        runtime_state = self._runtime_state
+        if not recovery or not state_mgr:
+            return blocked
+        for acc in self._accounts:
+            try:
+                decision = evaluate_account_auth_gate(acc)
+            except Exception as e:
+                flog_kv("FARM", "preflight_auth_gate_error", "warning", account=acc.display_name, error=e)
+                continue
+            if decision.blocked:
+                try:
+                    mark_account_auth_quarantined(acc, decision, source="preflight", runtime_writer=runtime_state)
+                    recovery.fail_account(acc, decision.reason_key, decision.reason)
+                    blocked[acc._config_username] = decision.reason
+                    flog_kv("FARM", "account_preflight_blocked", "warning", account=acc.display_name, **decision.to_dict())
+                except Exception as e:
+                    flog_kv("FARM", "preflight_fail_account_error", "warning", account=acc.display_name, error=e)
+                continue
+            try:
+                with acc._lock:
+                    if acc.state == AccountState.FAILED and acc.last_crash_reason == "cookie_mismatch":
+                        _clear_account_cookie_block(acc)
+                        runtime_state.clear_recovery(acc, reason="cookie_mismatch_cleared", inflight=False)
+                        runtime_state.set_cooldown(acc, 0.0, reason="cookie_mismatch_cleared")
+                        state_mgr.transition(acc, AccountState.IDLE, reason="cookie_mismatch_cleared", force=True)
+            except Exception as e:
+                flog_kv("FARM", "preflight_cookie_clear_error", "warning", account=acc.display_name, error=e)
+        return blocked
 
     def start(self):
         if not self.running and self._executor_start_guard is not None:
@@ -334,18 +363,24 @@ class FarmController:
         except Exception:
             pass
         try:
-            apply_runtime_config_snapshot(
-                cfg=cfg,
-                accounts=list(self._accounts),
-                machine_supervisor=self._machine_supervisor,
-                recovery=self._recovery,
-                maintenance=self._maintenance,
-                workers=dict(self._workers),
-                dispatcher=self._dispatcher,
-            )
+            self._apply_runtime_config_snapshot(cfg)
         except Exception as e:
             flog_kv("CONFIG", "runtime_config_snapshot_failed", "warning", error=e)
         self._bump_status_revision()
+
+    def _apply_runtime_config_snapshot(self, cfg: dict) -> None:
+        accounts = list(self._accounts)
+        if self._machine_supervisor:
+            self._machine_supervisor.update_config(cfg)
+            self._machine_supervisor.set_accounts(accounts)
+        if self._recovery:
+            update = getattr(self._recovery, "update_config", None)
+            if callable(update):
+                update(cfg, accounts)
+        for component in (self._maintenance, self._dispatcher, *self._workers.values()):
+            update = getattr(component, "update_config", None)
+            if callable(update):
+                update(cfg)
 
     def _check_force_rejoin_rate_limit(self, account_key: str) -> Tuple[bool, str]:
         limiter = getattr(self, "_force_rejoin_limiter", None)

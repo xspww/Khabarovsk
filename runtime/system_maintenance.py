@@ -41,7 +41,10 @@ class SystemMaintenance(
         self._runtime_state = getattr(recovery, "_runtime_state", None)
         self._state_mgr = state_mgr
         self._cfg = cfg
-        self._stop = stop
+        # NOTE: must not be named `self._stop` — it shadows
+        # threading.Thread._stop() and breaks join() on Python <=3.13
+        # ("TypeError: 'Event' object is not callable").
+        self._stop_event = stop
         self._supervisor = supervisor
         self._last_auto_close_at = time.time()
         self._last_priority_apply_at = 0.0
@@ -76,7 +79,7 @@ class SystemMaintenance(
     def run(self):
         flog("[MAINT] started")
         self._register_periodic_jobs()
-        self._stop.wait()
+        self._stop_event.wait()
         for key in self._maintenance_job_keys:
             self._scheduler.cancel(key, reason="maintenance_stop")
         if self._owns_scheduler:

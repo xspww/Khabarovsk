@@ -56,7 +56,11 @@ class AccountWorker(threading.Thread):
         self.cfg = cfg
         self.recovery = recovery
         self.runtime_owner = getattr(recovery, "runtime_orchestrator", recovery)
-        self._stop = stop
+        # NOTE: must not be named `self._stop` — threading.Thread uses
+        # `_stop()` internally (join/_wait_for_tstate_lock on Python <=3.13),
+        # so shadowing it with an Event breaks join() with
+        # "TypeError: 'Event' object is not callable".
+        self._stop_event = stop
         self._supervisor = supervisor
         self._accounts = accounts or [acc]
         self._wake = threading.Event()
@@ -477,11 +481,11 @@ class AccountWorker(threading.Thread):
 
         if acc.cookie:
             validate_attempt = 0
-            while not self._stop.is_set():
-                while not self.recovery._net.is_online() and not self._stop.is_set():
+            while not self._stop_event.is_set():
+                while not self.recovery._net.is_online() and not self._stop_event.is_set():
                     self._wake.wait(timeout=2.0)
                     self._wake.clear()
-                if self._stop.is_set():
+                if self._stop_event.is_set():
                     return
 
                 ok, username, detail, transient = self._validate_cookie(acc.cookie)
@@ -580,7 +584,7 @@ class AccountWorker(threading.Thread):
         self.runtime_owner.request_evaluate(acc, trigger="initial_boot")
 
         crash_to = self.cfg.get("crash_timeout", 30)
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             if acc.state == AccountState.IN_GAME:
                 if not acc.pid or not ProcessManager.is_bound_game_alive(
                     acc.pid,

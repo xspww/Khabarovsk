@@ -174,6 +174,7 @@ from services.app_version_check import cleanup_legacy_update_stage
 from services.roblox_install_manager import RobloxInstallManager
 from services.executor_compatibility import ExecutorCompatibilityService
 from services.executor_relauncher import ExecutorRelaunchService
+from services.app_updater import AppUpdater
 
 from performance_settings import (
     apply_graphics_settings_file,
@@ -251,6 +252,7 @@ EXECUTOR_TRACKER = ExecutorCompatibilityService(
     logger=flog,
 )
 EXECUTOR_RELAUNCHER = ExecutorRelaunchService(cfg_mgr, farm, EXECUTOR_TRACKER, logger=flog_kv)
+APP_UPDATER = AppUpdater(farm, logger=flog_kv)
 farm.set_executor_start_guard(EXECUTOR_RELAUNCHER.ensure_started)
 cleanup_legacy_update_stage()
 
@@ -261,6 +263,7 @@ api_context = ApiContext(
     cfg_mgr=cfg_mgr,
     farm=farm,
     roblox_installer=ROBLOX_INSTALLER,
+    app_updater=APP_UPDATER,
     executor_tracker=EXECUTOR_TRACKER,
     executor_relauncher=EXECUTOR_RELAUNCHER,
     html_ui=get_html_ui,

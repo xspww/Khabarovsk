@@ -243,9 +243,20 @@ def _server_paren(kind: str) -> str:
 
 def _found_process_line(account: str, pid: Any, fields: Dict[str, Any] | None = None) -> Optional[str]:
     account_text = _text(account, "Account")
-    pid_text = _text(pid, "unknown")
     key = _account_key(account_text)
-    if pid_text:
+    # One logical "found" event reaches us through several event shapes
+    # (STATE transition with pid="bound", VIP server_detected with pid+job,
+    # WORKER rebind with pid). Key the dedup on account+pid only, resolving
+    # placeholders through the last known pid — otherwise the same second
+    # prints 2-3 identical Found lines.
+    pid_text = _text(pid, "")
+    if pid_text.lower() == "bound":
+        pid_text = ""
+    if not pid_text:
+        pid_text = _LAST_PID_BY_ACCOUNT.get(key, "")
+    if not pid_text:
+        pid_text = "unknown"
+    else:
         _LAST_PID_BY_ACCOUNT[key] = pid_text
     data = fields or {}
     job = _job_id(data)
@@ -255,7 +266,7 @@ def _found_process_line(account: str, pid: Any, fields: Dict[str, Any] | None = 
     if place:
         _LAST_PLACE_BY_ACCOUNT[key] = place
     kind = _server_kind(data) or _SERVER_TYPE_BY_ACCOUNT.get(key, "")
-    dedupe_key = f"{key}:{pid_text}:{kind}:{job}"
+    dedupe_key = f"{key}:{pid_text}"
     now = time.monotonic()
     previous = float(_LAST_FOUND_AT_BY_KEY.get(dedupe_key) or 0.0)
     if previous and now - previous < _FOUND_DEDUP_SECONDS:

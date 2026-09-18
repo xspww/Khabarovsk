@@ -18,11 +18,12 @@ from domain.account_model import (
     cookie_identity_block_reason,
     cookie_invalid_block_reason,
 )
-from domain.account_state import AccountState, RuntimeState
-from domain.public_state_mapper import (
+from domain.states import (
+    AccountState,
     LIFECYCLE_STATE,
     PUBLIC_TO_RUNTIME_STATE,
     RUNTIME_TO_DEFAULT_PUBLIC_STATE,
+    RuntimeState,
     public_state_for_runtime,
     runtime_state_for_public,
 )

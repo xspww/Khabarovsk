@@ -13,6 +13,9 @@ Safety rules (deliberate, do not soften without a product decision):
   matches the release's checksums.txt entry.
 - The swap script verifies each move. If the new exe cannot be put in
   place, it rolls back to the .bak so the app is never left with no exe.
+- The new exe is launched with retries and verified alive before the
+  .bak is removed. A failed launch keeps the backup and logs how to
+  restore it, instead of silently leaving the user with nothing open.
 """
 
 from __future__ import annotations
@@ -164,11 +167,38 @@ try {
     exit 6
   }
   Log("swapped; launching")
-  try {
-    Start-Process -FilePath $CurrentExe -WorkingDirectory (Split-Path -Parent $CurrentExe)
-  } catch {
-    Log("launch failed (new exe is in place): $($_.Exception.Message)")
+  $launchedPid = 0
+  for ($attempt = 1; $attempt -le 3; $attempt++) {
+    try {
+      $p = Start-Process -FilePath $CurrentExe -WorkingDirectory (Split-Path -Parent $CurrentExe) -PassThru
+      if ($null -eq $p) {
+        Log("launch attempt ${attempt}: no process handle returned")
+      } else {
+        Log("launch attempt $attempt started PID $($p.Id); waiting")
+        Start-Sleep -Seconds 6
+        try {
+          $alive = Get-Process -Id $p.Id -ErrorAction Stop
+          $launchedPid = $p.Id
+          Log("new version running (PID $launchedPid)")
+          break
+        } catch {
+          Log("launch attempt ${attempt}: process exited quickly")
+        }
+      }
+    } catch {
+      Log("launch attempt $attempt failed: $($_.Exception.Message)")
+    }
+    Start-Sleep -Seconds 2
+  }
+  if ($launchedPid -eq 0) {
+    Log("launch failed after retries (new exe is in place; previous exe kept at $bak)")
     exit 7
+  }
+  try {
+    if (Test-Path -LiteralPath $bak) { Remove-Item -LiteralPath $bak -Force }
+    Log("removed backup; update complete")
+  } catch {
+    Log("note: could not remove backup: $($_.Exception.Message)")
   }
   Log("done")
   exit 0

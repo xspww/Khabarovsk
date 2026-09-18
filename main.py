@@ -147,6 +147,23 @@ if "--version" in sys.argv:
     print(f"{APP_NAME} {app_display_version()}")
     sys.exit(0)
 
+if __name__ == "__main__" and "--multi-roblox-guard" not in sys.argv:
+    # Earliest visible output. The imports below (and onefile extraction
+    # before them) otherwise leave the console blank for seconds, before
+    # the startup progress paints. ASCII-only: the exe console may not be
+    # UTF-8 (Run.cmd sets it, double-click does not).
+    try:
+        from version import app_display_version as _early_version_fn
+
+        _early_version = str(_early_version_fn() or "").strip()
+    except Exception:
+        _early_version = ""
+    _early_banner = f"{APP_NAME} {_early_version} - starting...".strip()
+    try:
+        print(_early_banner, flush=True)
+    except Exception:
+        pass
+
 if __name__ == "__main__":
     if not IS_COMPILED:
         _run_startup_dependency_checks()

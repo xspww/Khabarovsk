@@ -79,7 +79,9 @@ def register(app, ctx: ApiContext) -> None:
     @app.get("/api/update/check")
     def api_update_check():
         # Notify-only (opencode-style): just report, never download/install.
-        return check_app_update()    @app.post("/api/update/open")
+        return check_app_update()
+
+    @app.post("/api/update/open")
     def api_update_open():
         # QWebEngineView (the desktop window) drops window.open() silently,
         # so opening the Releases page must happen here via the OS browser.

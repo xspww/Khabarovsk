@@ -11,6 +11,8 @@ Safety rules (deliberate, do not soften without a product decision):
   never auto-starts a farm: after the swap the user starts it themselves.
 - Only HTTPS GitHub Release assets; the exe never runs before its SHA256
   matches the release's checksums.txt entry.
+- The swap script verifies each move. If the new exe cannot be put in
+  place, it rolls back to the .bak so the app is never left with no exe.
 """
 
 from __future__ import annotations
@@ -128,10 +130,46 @@ try {
   if (-not (Test-Path -LiteralPath $StagedExe)) { Log("staged exe missing; aborting"); exit 4 }
   $bak = "$CurrentExe.bak"
   if (Test-Path -LiteralPath $bak) { Remove-Item -LiteralPath $bak -Force }
-  [System.IO.File]::Move($CurrentExe, $bak)
-  [System.IO.File]::Move($StagedExe, $CurrentExe)
+  try {
+    [System.IO.File]::Move($CurrentExe, $bak)
+  } catch {
+    Log("failed to back up current exe; aborting: $($_.Exception.Message)")
+    exit 5
+  }
+  if ((-not (Test-Path -LiteralPath $bak)) -or (Test-Path -LiteralPath $CurrentExe)) {
+    Log("backup verify failed; aborting")
+    exit 5
+  }
+  try {
+    [System.IO.File]::Move($StagedExe, $CurrentExe)
+  } catch {
+    Log("swap failed: $($_.Exception.Message); rolling back")
+    try {
+      if (Test-Path -LiteralPath $CurrentExe) { Remove-Item -LiteralPath $CurrentExe -Force }
+      [System.IO.File]::Move($bak, $CurrentExe)
+      Log("rolled back to previous exe")
+    } catch {
+      Log("ROLLBACK FAILED: $($_.Exception.Message); previous exe is at $bak")
+    }
+    exit 6
+  }
+  if (-not (Test-Path -LiteralPath $CurrentExe)) {
+    Log("swap verify failed; rolling back")
+    try {
+      [System.IO.File]::Move($bak, $CurrentExe)
+      Log("rolled back to previous exe")
+    } catch {
+      Log("ROLLBACK FAILED: $($_.Exception.Message); previous exe is at $bak")
+    }
+    exit 6
+  }
   Log("swapped; launching")
-  Start-Process -FilePath $CurrentExe -WorkingDirectory (Split-Path -Parent $CurrentExe)
+  try {
+    Start-Process -FilePath $CurrentExe -WorkingDirectory (Split-Path -Parent $CurrentExe)
+  } catch {
+    Log("launch failed (new exe is in place): $($_.Exception.Message)")
+    exit 7
+  }
   Log("done")
   exit 0
 } catch {

@@ -81,6 +81,7 @@ def register(app, ctx: ApiContext) -> None:
             "roblox_window_arrange_gap", "roblox_window_arrange_margin",
             "multi_roblox_enabled", "rt_rotation_enabled",
             "runtime_account_allowlist",
+            "ui_col_widths",
         }
         updates = {k: v for k, v in body.items() if k in allowed}
         if "executor_monitor_enabled" in updates:
@@ -240,6 +241,17 @@ def register(app, ctx: ApiContext) -> None:
             updates["rt_rotation_enabled"] = bool(updates["rt_rotation_enabled"])
         if "runtime_account_allowlist" in updates:
             updates["runtime_account_allowlist"] = runtime_account_allowlist(updates)
+        if "ui_col_widths" in updates:
+            raw_widths = updates["ui_col_widths"]
+            clean_widths = {}
+            if isinstance(raw_widths, dict):
+                for key in ("col1", "col2", "col3"):
+                    try:
+                        val = int(float(raw_widths.get(key)))
+                    except Exception:
+                        continue
+                    clean_widths[key] = max(44, min(520, val))
+            updates["ui_col_widths"] = clean_widths
         if "games" in updates:
             try:
                 from domain.games import ensure_games_migrated, normalize_games

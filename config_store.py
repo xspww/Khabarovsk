@@ -156,6 +156,7 @@ DEFAULTS: Dict[str, Any] = {
     "multi_roblox_guard_self_heal_close_all": True,
     "rt_rotation_enabled": False,
     "runtime_account_allowlist": [],
+    "ui_col_widths": {},
     "accounts":                 [],
     "runtime_state":            {},
 }

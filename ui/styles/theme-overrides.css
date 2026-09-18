@@ -106,9 +106,10 @@ button[data-view="accounts"].nav-root.active{background:#1d1f25!important;box-sh
 .accounts-table-card thead th{height:36px!important;font:700 10px var(--mono)!important;letter-spacing:.6px!important;text-transform:uppercase!important;color:#53565e!important;background:#101116!important;padding:0 14px!important;border-bottom:1px solid #1f2128!important;border-right:none!important;white-space:nowrap!important;position:relative!important;overflow:visible!important}
 .accounts-table-card td{padding:0 14px!important;border-right:1px solid #232733!important;vertical-align:middle!important;overflow:hidden!important;text-overflow:ellipsis!important}
 .accounts-table-card td:last-child{border-right:none!important}
-.col-resizer{position:absolute!important;right:-4px!important;top:0!important;width:8px!important;height:100%!important;cursor:col-resize!important;z-index:5!important;user-select:none!important;touch-action:none!important}
-.col-resizer:hover,.col-resizer.dragging{background:rgba(99,102,241,.18)!important}
-.col-resizer.dragging{background:rgba(99,102,241,.32)!important}
+.col-resizer{position:absolute!important;right:0!important;top:0!important;width:8px!important;height:100%!important;cursor:col-resize!important;z-index:5!important;user-select:none!important;touch-action:none!important}
+.col-resizer:hover,.col-resizer.dragging{background:transparent!important}
+.col-resizer::after{content:"";position:absolute;left:1px;top:50%;width:4px;height:4px;margin-top:-2px;border-radius:999px;background:#3d4250;transition:background .18s ease,box-shadow .18s ease}
+.col-resizer:hover::after,.col-resizer.dragging::after{background:#c7d2fe;box-shadow:0 0 8px rgba(199,210,254,.55)}
 .accounts-table-card tbody tr{height:44px!important;border-top:1px solid #1f2128!important}
 .accounts-table-card tbody tr:first-child{border-top:none!important}
 .accounts-table-card tbody tr,.accounts-table-card tbody tr:nth-child(odd),.accounts-table-card tbody tr:nth-child(even){background:#14151a!important;cursor:pointer!important}

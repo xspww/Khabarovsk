@@ -28,15 +28,17 @@
 .account-filter{height:31px;border:1px solid transparent;border-radius:8px;background:0 0;color:#656972;display:inline-flex;align-items:center;gap:7px;padding:0 10px;font:750 12px var(--font);white-space:nowrap}
 .account-filter:hover{background:#17181d;color:#cdced4;border-color:#232529}
 .account-filter.active{background:#212329;border-color:#32343d;color:#ffffff;box-shadow:none}
+.account-filter.col-reset{color:#4d5261;border:1px dashed #23262e;background:transparent}
+.account-filter.col-reset:hover{color:#a5b4fc;border-color:#43456e;background:rgba(99,102,241,.08)}
 .account-filter strong{min-width:14px;color:#53565e;font:800 10px var(--mono)}
 .account-filter.active strong{color:#a5b4fc}
 
 .accounts-table-card{background:#101116;border:1px solid #1f2128;border-radius:10px;overflow:hidden}
 .accounts-table-card .table-wrap{max-height:calc(100vh - 220px);border:0;border-radius:0;background:#101116;overflow-y:auto;overflow-x:auto}
 .accounts-table-card table{min-width:820px;width:100%;border-collapse:collapse}
-.accounts-table-card thead th{height:38px;background:#101116;border-bottom:none;color:#53565e;font:800 10px var(--mono);text-transform:uppercase;letter-spacing:.6px}
+.accounts-table-card thead th{height:38px;background:#101116;border-bottom:none;color:#53565e;font:800 10px var(--mono);text-transform:uppercase;letter-spacing:.6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .accounts-table-card td,.accounts-table-card th{padding:0 14px}
-.accounts-table-card tbody tr{height:48px;border-top:1px solid rgba(255,255,255,.055)}
+.accounts-table-card tbody tr{height:48px;border-top:1px solid rgba(255,255,255,.055);border-bottom:none}
 .accounts-table-card tbody tr:first-child{border-top:none}
 .accounts-table-card tbody tr.editing-desc{height:auto}
 .accounts-table-card tbody tr:nth-child(odd){background:#14151a}

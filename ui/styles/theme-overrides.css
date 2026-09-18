@@ -10,6 +10,7 @@
 #view-troubleshoot .install-version-dot{width:8px;height:8px;flex:0 0 8px;border-radius:999px;background:#eab308;box-shadow:0 0 9px rgba(234,179,8,.42)}
 #view-troubleshoot .install-version-dot.latest{background:#22c55e;box-shadow:0 0 9px rgba(34,197,94,.45)}
 #view-troubleshoot .install-version-dot.outdated{background:#eab308;box-shadow:0 0 9px rgba(234,179,8,.42)}
+#view-troubleshoot .install-version-dot.unknown{background:#6b7280;box-shadow:0 0 9px rgba(107,114,128,.35)}
 #view-troubleshoot .install-actions{border:1px solid #1f2128;background:#14151a;border-radius:8px;overflow:hidden;padding:0}
 #view-troubleshoot .install-row{min-height:64px;padding:14px 16px;border-bottom:1px solid rgba(140,144,156,.12)}
 #view-troubleshoot .install-row:last-child{border-bottom:0}

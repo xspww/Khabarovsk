@@ -6,7 +6,7 @@ from typing import Tuple
 # Single source of truth for the launcher version.
 # Release tags must match: tag "v1.0.0" <-> APP_VERSION "1.0.0".
 # The release workflow fails the build when they differ.
-APP_VERSION = "2.0.3"
+APP_VERSION = "2.0.4"
 TAG_PREFIX = "v"
 
 # Build tag baked in at release time (e.g. "v1.0.0-beta.3").

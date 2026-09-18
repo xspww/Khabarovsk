@@ -194,18 +194,10 @@
     }, true);
   }
 
-  const refreshCurrentVersion = async () => {
-    const target = document.getElementById('roblox-installed-version');
-    if (!target) return;
-    try {
-      const response = await fetch('/api/troubleshoot/roblox-install', { headers: apiHeaders() });
-      const status = await response.json();
-      target.textContent = status.latest_version || status.installed_version || 'Unknown';
-    } catch (_) {}
-  };
-  refreshCurrentVersion();
-  // Poll latest version every 30s instead of 5s (reduces API load)
-  setInterval(refreshCurrentVersion, 30000);
+  // NOTE: the installed-version text and dot are owned solely by
+  // renderTroubleshootPanel (single writer). An earlier revision overwrote
+  // the text with latest_version here every 30s, which fought the panel
+  // and could show a version that is not actually installed.
   document.querySelector('#roblox-latest span')?.replaceChildren('Update to Latest');
   // NOTE: do NOT post-filter `.vchoice` rows here. An earlier revision removed
   // `.vbadge.old` rows via MutationObserver after paint, which made the Join

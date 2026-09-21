@@ -11,6 +11,8 @@ Safety rules (deliberate, do not soften without a product decision):
   never auto-starts a farm: after the swap the user starts it themselves.
 - Only HTTPS GitHub Release assets; the exe never runs before its SHA256
   matches the release's checksums.txt entry.
+- The app only exits after the swap script proves it started (first log
+  marker). A stillborn script fails loudly instead of killing the app.
 - No .bak backup is kept: the verified staged exe overwrites the current
   exe directly (a leftover ``*.bak`` from an older version is deleted).
 - The new exe is launched with retries and a long settle wait, because a
@@ -165,7 +167,7 @@ _UPDATER_PS1 = r"""# Cronus one-click updater (generated, user-initiated only).
 # Waits for the old app PID to exit, moves the verified exe into place
 # (overwriting directly, no .bak kept), relaunches it, then deletes
 # itself. No network, no payload.
-param([int]$ParentPid, [string]$CurrentExe, [string]$StagedExe, [string]$LogFile, [string]$Version)
+param([int]$ParentPid, [string]$CurrentExe, [string]$StagedExe, [string]$LogFile, [string]$Version, [string]$OldExe)
 $ErrorActionPreference = "Stop"
 function Log([string]$m) { Add-Content -LiteralPath $LogFile ("[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $m) }
 # Loader window: the main app is dead during swap/launch, so a small
@@ -283,20 +285,23 @@ try {
   # lingering old instance trips the single-instance guard and the new
   # app would exit right away). The script itself is excluded.
   $exeBase = [System.IO.Path]::GetFileNameWithoutExtension($CurrentExe)
+  $oldBase = ""
+  if ($OldExe -and $OldExe -ne $CurrentExe) { $oldBase = [System.IO.Path]::GetFileNameWithoutExtension($OldExe) }
   Phase("> sweeping leftover processes...")
   $sweepDeadline = (Get-Date).AddSeconds(30)
   while ((Get-Date) -lt $sweepDeadline) {
     $left = @()
     try {
       $left = @(Get-Process -Name $exeBase -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID })
+    if ($oldBase) { $left += @(Get-Process -Name $oldBase -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID }) }
     } catch {}
     if ($left.Count -eq 0) { break }
-    Log("leftover same-app PIDs: $(($left | ForEach-Object { $_.Id }) -join ',')"
-      + " - waiting")
+    Log("leftover same-app PIDs: $(($left | ForEach-Object { $_.Id }) -join ',')" + " - waiting")
     WaitPump 2
   }
   try {
     $still = @(Get-Process -Name $exeBase -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID })
+    if ($oldBase) { $still += @(Get-Process -Name $oldBase -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID }) }
     if ($still.Count -gt 0) {
       Log("leftover PIDs still present after sweep: $(($still | ForEach-Object { $_.Id }) -join ',')")
     }
@@ -361,6 +366,7 @@ try {
     exit 7
   }
   Log("done ($readyUrl)")
+  if ($OldExe -and $OldExe -ne $CurrentExe) { try { if (Test-Path -LiteralPath $OldExe) { Remove-Item -LiteralPath $OldExe -Force; Log("removed previous version exe") } } catch { Log("note: could not remove previous version exe") } }
   exit 0
 } catch {
   Log("failed: $($_.Exception.Message)")
@@ -478,6 +484,11 @@ class AppUpdater:
             self._log("UPDATE", "package_verified", version=version)
 
             current_exe = os.path.abspath(app_paths.EXECUTABLE_PATH)
+            # Versioned install name: the new exe keeps its release filename
+            # (e.g. CronusLauncher-2.1.15.exe) next to the old one until the
+            # swap script removes the old file after a successful launch.
+            new_exe = os.path.join(os.path.dirname(current_exe), exe_name)
+            old_exe_arg = current_exe if os.path.normcase(new_exe) != os.path.normcase(current_exe) else ""
             script = os.path.join(stage, f"cronus_updater_{version}.ps1")
             with open(script, "w", encoding="utf-8") as handle:
                 handle.write(_UPDATER_PS1)
@@ -491,16 +502,53 @@ class AppUpdater:
             self._set_job(state="restarting", progress="restarting",
                           msg="Verified. Restarting into the new version…")
             self._log("UPDATE", "relaunching", version=version)
-            subprocess.Popen(
+            # Snapshot first: the script may log its marker within
+            # milliseconds of starting.
+            try:
+                log_pos = os.path.getsize(log_file)
+            except Exception:
+                log_pos = 0
+            proc = subprocess.Popen(
                 ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
                  "-ExecutionPolicy", "Bypass", "-File", script,
                  "-ParentPid", str(os.getpid()),
-                 "-CurrentExe", current_exe,
+                 "-CurrentExe", new_exe,
                  "-StagedExe", staged_exe,
                  "-LogFile", log_file,
-                 "-Version", version],
+                 "-Version", version,
+                 "-OldExe", old_exe_arg],
                 close_fds=True,
             )
+            # Verified handoff: a stillborn swap script (e.g. a syntax error)
+            # exits instantly and writes nothing. Never suicide the app until
+            # the script proves it started via its first log marker.
+            marker = f"waiting for PID {os.getpid()}"
+            script_started = False
+            script_exit: Optional[int] = None
+            deadline = time.time() + 15.0
+            while time.time() < deadline:
+                script_exit = proc.poll()
+                if script_exit is not None:
+                    break
+                try:
+                    with open(log_file, "rb") as handle:
+                        handle.seek(log_pos)
+                        chunk = handle.read().decode("utf-8", errors="replace")
+                        log_pos = handle.tell()
+                except Exception:
+                    chunk = ""
+                if marker in chunk:
+                    script_started = True
+                    break
+                time.sleep(0.5)
+            if not script_started:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+                if script_exit is not None:
+                    raise RuntimeError(f"updater script exited immediately (code {script_exit}) - see {log_file}")
+                raise RuntimeError(f"updater script did not start (no log marker in 15s) - see {log_file}")
             time.sleep(2.0)
             try:
                 from desktop import console_output

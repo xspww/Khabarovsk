@@ -36,6 +36,16 @@ jobs:
           }
           "APP_VERSION=$ver" >> $env:GITHUB_ENV
 
+      - name: Validate updater script syntax
+        shell: powershell
+        run: |
+          python -c "import services.app_updater as u; open('updater_check.ps1','w',encoding='utf-8').write(u._UPDATER_PS1.replace('__TIMEOUT__','90'))"
+          $errs = $null; $toks = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$pwd/updater_check.ps1", [ref]$toks, [ref]$errs)
+          Remove-Item updater_check.ps1 -Force
+          if ($errs.Count -gt 0) { $errs | ForEach-Object { Write-Error "$($_.Extent.StartLineNumber): $($_.Message)" }; exit 1 }
+          Write-Host "Updater script syntax OK"
+
       - name: Build exe icon
         run: python -c "from PIL import Image; Image.open('assets/cronus_icon.png').save('assets/cronus_icon.ico')"
 

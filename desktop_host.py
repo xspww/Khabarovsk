@@ -745,8 +745,15 @@ def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
         _console_status("startup", "Existing Cronus instance detected; requesting cleanup")
         _stop_previous_instance()
         _stop_same_app_processes()
+        mutex_ok = _acquire_single_instance_mutex()
         if not socket_ok:
             socket_ok = _acquire_instance_socket()
+    if not mutex_ok:
+        # Another live instance still holds the mutex: running a duplicate
+        # would split ports/state/logs, so refuse to boot instead.
+        flog_kv("MAIN", "duplicate_instance_refused", "error", socket_ok=socket_ok)
+        _console_status("shutdown", "Another Cronus instance is running; close it first")
+        return
     PORT = _find_free_port(7777)
     _console_status("port", f"Selected http://{HOST}:{PORT}")
     _write_instance_state(PORT)

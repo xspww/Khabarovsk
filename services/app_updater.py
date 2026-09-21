@@ -92,16 +92,35 @@ def sha256_file(path: str) -> str:
     return digest.hexdigest()
 
 
-def _download(url: str, dest: str, progress: Optional[Callable[[int, int], None]] = None) -> None:
+DOWNLOAD_RETRIES = 3
+
+
+def _download_once(url: str, dest: str, progress: Optional[Callable[[int, int], None]] = None) -> None:
     tmp = dest + ".part"
-    request = urllib.request.Request(url, headers={"User-Agent": UPDATE_USER_AGENT})
-    with urllib.request.urlopen(request, timeout=max(30.0, float(HTTP_TIMEOUT_SECONDS or 20.0))) as response:
+    resume_from = 0
+    try:
+        if os.path.exists(tmp):
+            resume_from = max(0, int(os.path.getsize(tmp)))
+    except Exception:
+        resume_from = 0
+    headers = {"User-Agent": UPDATE_USER_AGENT}
+    if resume_from > 0:
+        headers["Range"] = f"bytes={resume_from}-"
+    request = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(request, timeout=max(120.0, float(HTTP_TIMEOUT_SECONDS or 20.0))) as response:
+        try:
+            status = int(getattr(response, "status", 200) or 200)
+        except Exception:
+            status = 200
         try:
             total = int(response.headers.get("Content-Length") or 0)
         except Exception:
             total = 0
-        received = 0
-        with open(tmp, "wb") as handle:
+        mode = "ab" if (status == 206 and resume_from > 0) else "wb"
+        received = resume_from if mode == "ab" else 0
+        if mode == "ab":
+            total = total + resume_from if total > 0 else 0
+        with open(tmp, mode) as handle:
             while True:
                 chunk = response.read(_PROGRESS_CHUNK)
                 if not chunk:
@@ -113,26 +132,134 @@ def _download(url: str, dest: str, progress: Optional[Callable[[int, int], None]
                         progress(received, total)
                     except Exception:
                         pass
+        if total > 0 and received != total:
+            raise RuntimeError(f"truncated download ({received}/{total} bytes)")
     os.replace(tmp, dest)
+
+
+def _download(url: str, dest: str, progress: Optional[Callable[[int, int], None]] = None) -> None:
+    """Download with retries: a 200MB+ exe over a flaky link often drops once."""
+    last_exc: Optional[BaseException] = None
+    try:
+        part = dest + ".part"
+        if os.path.exists(part):
+            os.remove(part)
+    except Exception:
+        pass
+    for attempt in range(1, DOWNLOAD_RETRIES + 1):
+        try:
+            _download_once(url, dest, progress)
+            return
+        except Exception as exc:
+            last_exc = exc
+            if progress:
+                try:
+                    progress(0, 0)
+                except Exception:
+                    pass
+            time.sleep(2.0 * attempt)
+    raise RuntimeError(f"download failed after {DOWNLOAD_RETRIES} tries: {last_exc}")
 
 
 _UPDATER_PS1 = r"""# Cronus one-click updater (generated, user-initiated only).
 # Waits for the old app PID to exit, moves the verified exe into place
 # (overwriting directly, no .bak kept), relaunches it, then deletes
 # itself. No network, no payload.
-param([int]$ParentPid, [string]$CurrentExe, [string]$StagedExe, [string]$LogFile)
+param([int]$ParentPid, [string]$CurrentExe, [string]$StagedExe, [string]$LogFile, [string]$Version)
 $ErrorActionPreference = "Stop"
 function Log([string]$m) { Add-Content -LiteralPath $LogFile ("[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $m) }
+# Loader window: the main app is dead during swap/launch, so a small
+# splash stays on screen telling the user what is happening.
+$splash = $null
+$phaseLabel = $null
+$slideBar = $null
+$slideTimer = $null
 try {
+  Add-Type -AssemblyName System.Windows.Forms
+  Add-Type -AssemblyName System.Drawing
+  # Storm-style loader: deep navy card, indigo accent, prompt lines.
+  $bg = [System.Drawing.Color]::FromArgb(11, 14, 23)
+  $indigo = [System.Drawing.Color]::FromArgb(99, 102, 241)
+  $muted = [System.Drawing.Color]::FromArgb(141, 144, 153)
+  $splash = New-Object System.Windows.Forms.Form
+  $splash.Text = "Cronus Launcher Update"
+  $splash.Size = New-Object System.Drawing.Size(420, 196)
+  $splash.StartPosition = "CenterScreen"
+  $splash.FormBorderStyle = "None"
+  $splash.BackColor = $bg
+  $splash.TopMost = $true
+  $splash.ShowInTaskbar = $true
+  $edge = New-Object System.Windows.Forms.Panel
+  $edge.Size = New-Object System.Drawing.Size(420, 3)
+  $edge.Location = New-Object System.Drawing.Point(0, 0)
+  $edge.BackColor = $indigo
+  $splash.Controls.Add($edge)
+  $prompt = New-Object System.Windows.Forms.Label
+  $prompt.Text = "> cronus update"
+  $prompt.ForeColor = $indigo
+  $prompt.Font = New-Object System.Drawing.Font("Consolas", 9)
+  $prompt.AutoSize = $true
+  $prompt.Location = New-Object System.Drawing.Point(28, 22)
+  $splash.Controls.Add($prompt)
+  $title = New-Object System.Windows.Forms.Label
+  $title.Text = "Updating to v$Version..."
+  $title.ForeColor = [System.Drawing.Color]::White
+  $title.Font = New-Object System.Drawing.Font("Segoe UI", 13, [System.Drawing.FontStyle]::Bold)
+  $title.AutoSize = $true
+  $title.Location = New-Object System.Drawing.Point(28, 46)
+  $splash.Controls.Add($title)
+  $phaseLabel = New-Object System.Windows.Forms.Label
+  $phaseLabel.Text = "> waiting for the app to close"
+  $phaseLabel.ForeColor = $muted
+  $phaseLabel.Font = New-Object System.Drawing.Font("Consolas", 9)
+  $phaseLabel.AutoSize = $true
+  $phaseLabel.Location = New-Object System.Drawing.Point(28, 84)
+  $splash.Controls.Add($phaseLabel)
+  $track = New-Object System.Windows.Forms.Panel
+  $track.Size = New-Object System.Drawing.Size(364, 8)
+  $track.Location = New-Object System.Drawing.Point(28, 120)
+  $track.BackColor = [System.Drawing.Color]::FromArgb(35, 37, 45)
+  $splash.Controls.Add($track)
+  $slideBar = New-Object System.Windows.Forms.Panel
+  $slideBar.Size = New-Object System.Drawing.Size(90, 8)
+  $slideBar.Location = New-Object System.Drawing.Point(0, 0)
+  $slideBar.BackColor = $indigo
+  $track.Controls.Add($slideBar)
+  $slideTimer = New-Object System.Windows.Forms.Timer
+  $slideTimer.Interval = 30
+  $slideTimer.Add_Tick({
+    try {
+      $x = $slideBar.Location.X + 6
+      if ($x -gt 364) { $x = -90 }
+      $slideBar.Location = New-Object System.Drawing.Point($x, 0)
+    } catch {}
+  })
+  $slideTimer.Start()
+  $splash.Show()
+  [System.Windows.Forms.Application]::DoEvents()
+} catch {
+  $splash = $null
+}
+function Pump() { try { [System.Windows.Forms.Application]::DoEvents() } catch {} }
+function Phase([string]$m) {
+  Log($m)
+  try { if ($phaseLabel) { $phaseLabel.Text = $m; Pump } } catch {}
+}
+function WaitPump([int]$seconds) {
+  for ($w = 0; $w -lt ($seconds * 5); $w++) { Pump; Start-Sleep -Milliseconds 200 }
+}
+try {
+  Phase("> waiting for the app to close")
   Log("waiting for PID $ParentPid")
   $deadline = (Get-Date).AddSeconds(__TIMEOUT__)
   while ($true) {
-    try { $p = Get-Process -Id $ParentPid -ErrorAction Stop; Start-Sleep -Milliseconds 500 }
+    try { $p = Get-Process -Id $ParentPid -ErrorAction Stop; Pump; Start-Sleep -Milliseconds 400 }
     catch { break }
     if ((Get-Date) -gt $deadline) { Log("parent still alive; aborting"); exit 3 }
   }
-  Start-Sleep -Seconds 1
-  if (-not (Test-Path -LiteralPath $StagedExe)) { Log("staged exe missing; aborting"); exit 4 }
+  WaitPump 1
+  if (-not (Test-Path -LiteralPath $StagedExe)) { Phase("staged exe missing; aborting"); exit 4 }
+  Phase("> replacing files...")
   # Drop any leftover backup from an older updater version: no .bak is kept.
   $oldBak = "$CurrentExe.bak"
   if (Test-Path -LiteralPath $oldBak) {
@@ -149,54 +276,100 @@ try {
     } catch {
       Log("swap try $i locked: $($_.Exception.Message)")
     }
-    Start-Sleep -Seconds 2
+    WaitPump 2
   }
   if (-not $swapped) { Log("swap failed after retries; staged exe left at $StagedExe"); exit 6 }
-  Log("swapped; launching")
+  # Pre-launch sweep: make sure no same-app process is still around (a
+  # lingering old instance trips the single-instance guard and the new
+  # app would exit right away). The script itself is excluded.
+  $exeBase = [System.IO.Path]::GetFileNameWithoutExtension($CurrentExe)
+  Phase("> sweeping leftover processes...")
+  $sweepDeadline = (Get-Date).AddSeconds(30)
+  while ((Get-Date) -lt $sweepDeadline) {
+    $left = @()
+    try {
+      $left = @(Get-Process -Name $exeBase -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID })
+    } catch {}
+    if ($left.Count -eq 0) { break }
+    Log("leftover same-app PIDs: $(($left | ForEach-Object { $_.Id }) -join ',')"
+      + " - waiting")
+    WaitPump 2
+  }
+  try {
+    $still = @(Get-Process -Name $exeBase -ErrorAction SilentlyContinue | Where-Object { $_.Id -ne $PID })
+    if ($still.Count -gt 0) {
+      Log("leftover PIDs still present after sweep: $(($still | ForEach-Object { $_.Id }) -join ',')")
+    }
+  } catch {}
+  Phase("> starting the new version...")
   $workDir = Split-Path -Parent $CurrentExe
   $launchedPid = 0
+  $readyUrl = ""
+  function ProbeReady() {
+    for ($port = 7777; $port -le 7796; $port++) {
+      try {
+        $r = Invoke-WebRequest -Uri "http://127.0.0.1:${port}/api/status" -UseBasicParsing -TimeoutSec 2 -ErrorAction Stop
+        if ($r.StatusCode -eq 200) { return "http://127.0.0.1:${port}" }
+      } catch {}
+    }
+    return ""
+  }
   # A onefile cold extract plus Defender scan can take a minute, so give
   # each attempt a long settle window instead of a few seconds.
   for ($attempt = 1; $attempt -le 5; $attempt++) {
     try {
-      $p = Start-Process -FilePath $CurrentExe -WorkingDirectory $workDir -PassThru
+      Phase("> starting the new version... (attempt $attempt)")
+      $p = Start-Process -FilePath $CurrentExe -WorkingDirectory $workDir -WindowStyle Normal -ArgumentList "--post-update" -PassThru
       if ($null -eq $p) {
         Log("launch attempt ${attempt}: no process handle returned")
       } else {
         Log("launch attempt $attempt started PID $($p.Id); waiting")
-        Start-Sleep -Seconds 10
+        WaitPump 10
         try {
           $null = Get-Process -Id $p.Id -ErrorAction Stop
         } catch {
           Log("launch attempt ${attempt}: process exited within 10s")
-          Start-Sleep -Seconds 2
+          WaitPump 2
           continue
         }
-        Start-Sleep -Seconds 25
-        try {
-          $alive = Get-Process -Id $p.Id -ErrorAction Stop
-          $launchedPid = $p.Id
-          Log("new version running (PID $launchedPid)")
-          break
-        } catch {
-          Log("launch attempt ${attempt}: process gone during settle")
+        # PID alive is not enough: wait until the dashboard API answers.
+        $readyDeadline = (Get-Date).AddSeconds(75)
+        while ((Get-Date) -lt $readyDeadline) {
+          try { $null = Get-Process -Id $p.Id -ErrorAction Stop }
+          catch { Log("launch attempt ${attempt}: process gone while waiting for API"); break }
+          $readyUrl = ProbeReady
+          if ($readyUrl -ne "") { break }
+          WaitPump 3
         }
+        if ($readyUrl -ne "") {
+          $launchedPid = $p.Id
+          Phase("> new version running")
+          break
+        }
+        Log("launch attempt ${attempt}: API never answered")
       }
     } catch {
       Log("launch attempt $attempt failed: $($_.Exception.Message)")
     }
-    Start-Sleep -Seconds 3
+    WaitPump 3
   }
   if ($launchedPid -eq 0) {
-    Log("launch failed after retries, but the new exe is in place - start it manually: $CurrentExe")
+    $msg = "Could not start the new version. It is in place - start it manually: $CurrentExe (details: $LogFile)"
+    Log("launch failed after retries; " + $msg)
+    try { if ($phaseLabel) { $phaseLabel.Text = "> " + $msg } } catch {}
+    WaitPump 15
     exit 7
   }
-  Log("done")
+  Log("done ($readyUrl)")
   exit 0
 } catch {
   Log("failed: $($_.Exception.Message)")
+  try { if ($phaseLabel) { $phaseLabel.Text = "> update failed - see $LogFile" } } catch {}
+  WaitPump 10
   exit 5
 } finally {
+  try { if ($slideTimer) { $slideTimer.Stop(); $slideTimer.Dispose() } } catch {}
+  try { if ($splash) { $splash.Close(); $splash.Dispose() } } catch {}
   try { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue } catch {}
 }
 """.replace("__TIMEOUT__", str(int(SWAP_TIMEOUT_SECONDS)))
@@ -324,7 +497,8 @@ class AppUpdater:
                  "-ParentPid", str(os.getpid()),
                  "-CurrentExe", current_exe,
                  "-StagedExe", staged_exe,
-                 "-LogFile", log_file],
+                 "-LogFile", log_file,
+                 "-Version", version],
                 close_fds=True,
             )
             time.sleep(2.0)

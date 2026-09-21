@@ -116,14 +116,71 @@
     }
   }
 
+  var overlayVersion = "";
+  function setProgress(pct) {
+    // Sidebar button fill + overlay bar share one value.
+    try {
+      var b = button();
+      if (b && pct != null) {
+        b.style.setProperty("--p", pct + "%");
+        b.classList.add("is-downloading");
+      }
+      var fill = document.getElementById("cronus-updating-fill");
+      if (fill && pct != null) fill.style.width = pct + "%";
+      var pctEl = document.getElementById("cronus-updating-pct");
+      if (pctEl && pct != null) pctEl.textContent = pct + "%";
+    } catch (e) {}
+  }
+  function progressPct(job) {
+    var m = /(\d{1,3})\s*%/.exec(job.progress || "");
+    if (m) return Math.max(0, Math.min(100, parseInt(m[1], 10)));
+    if (job.state === "verifying") return 100;
+    return null;
+  }
+  function showUpdatingOverlay(version) {
+    if (version) overlayVersion = version;
+    if (document.getElementById("cronus-updating-overlay")) return;
+    try {
+      var st = document.createElement("style");
+      st.textContent = "#cronus-updating-overlay{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(11,12,16,.94);animation:cronus-ov-in .25s ease}"
+        + "@keyframes cronus-ov-in{from{opacity:0}to{opacity:1}}"
+        + "#cronus-updating-overlay .cronus-updating-box{width:min(420px,calc(100vw - 48px));background:#0f1117;border:1px solid rgba(99,102,241,.35);border-radius:14px;padding:28px 30px;animation:cronus-box-in .35s cubic-bezier(.16,1,.3,1)}"
+        + "@keyframes cronus-box-in{from{opacity:0;transform:translateY(14px) scale(.99)}to{opacity:1;transform:none}}"
+        + "#cronus-updating-overlay .cronus-updating-prompt{font-family:var(--mono,monospace);font-size:12px;color:#6366f1;margin-bottom:10px}"
+        + "#cronus-updating-overlay .cronus-updating-title{font-size:17px;font-weight:800;color:#f2f3f5;letter-spacing:-.01em}"
+        + "#cronus-updating-overlay .cronus-updating-track{position:relative;height:8px;border-radius:99px;background:#23252d;margin-top:18px;overflow:hidden}"
+        + "#cronus-updating-overlay .cronus-updating-fill{height:100%;width:0%;border-radius:99px;background:#6366f1;transition:width .4s ease;overflow:hidden;position:relative}"
+        + "#cronus-updating-overlay .cronus-updating-fill:after{content:'';position:absolute;inset:0;background:linear-gradient(100deg,transparent 20%,rgba(255,255,255,.35) 50%,transparent 80%);animation:cronus-shimmer 1.4s linear infinite}"
+        + "@keyframes cronus-shimmer{from{transform:translateX(-100%)}to{transform:translateX(100%)}}"
+        + "#cronus-updating-overlay .cronus-updating-row{display:flex;align-items:center;justify-content:space-between;margin-top:10px;font-family:var(--mono,monospace);font-size:11.5px;color:#8d9099}"
+        + "#cronus-updating-overlay .cronus-updating-dots i{display:inline-block;width:5px;height:5px;border-radius:50%;background:#6366f1;margin-left:4px;animation:cronus-blink 1.2s infinite}"
+        + "#cronus-updating-overlay .cronus-updating-dots i:nth-child(2){animation-delay:.2s}"
+        + "#cronus-updating-overlay .cronus-updating-dots i:nth-child(3){animation-delay:.4s}"
+        + "@keyframes cronus-blink{0%,100%{opacity:.25}50%{opacity:1}}"
+        + "#cronus-updating-overlay .cronus-updating-sub{font-size:12px;color:#6c7079;margin-top:12px;line-height:1.6}";
+      document.head.appendChild(st);
+      var ov = document.createElement("div");
+      ov.id = "cronus-updating-overlay";
+      ov.innerHTML = '<div class="cronus-updating-box">'
+        + '<div class="cronus-updating-prompt">&gt; cronus update</div>'
+        + '<div class="cronus-updating-title">Updating to v' + esc(overlayVersion || "") + '…</div>'
+        + '<div class="cronus-updating-track"><div class="cronus-updating-fill" id="cronus-updating-fill"></div></div>'
+        + '<div class="cronus-updating-row"><span id="cronus-updating-pct">0%</span><span class="cronus-updating-dots"><i></i><i></i><i></i></span></div>'
+        + '<div class="cronus-updating-sub">The app restarts itself when the download lands. A loader window stays on screen until it is back.</div></div>';
+      document.body.appendChild(ov);
+    } catch (e) {}
+  }
+
   function pollStatus() {
     if (statusTimer) clearTimeout(statusTimer);
     statusTimer = 0;
     get("/api/update/status").then(function (snap) {
       var job = (snap && snap.job) || {};
+      if (job.state === "restarting") showUpdatingOverlay(job.version);
       if (!job.active) {
         if (job.state === "failed") {
           setLabel("Update failed - retry", job.error || job.msg, false);
+          try { button().classList.add("is-failed"); } catch (e) {}
           working = false;
           schedule();
           return;
@@ -139,10 +196,12 @@
       }
       var label = job.progress || job.state || "updating";
       setLabel(label.charAt(0).toUpperCase() + label.slice(1) + "…", job.msg || "", true);
+      setProgress(progressPct(job));
       statusTimer = setTimeout(pollStatus, STATUS_POLL_MS);
     }).catch(function () {
       // Server gone mid-poll: either restarting into the new version (good)
-      // or something died. Assume reboot, stop polling quietly.
+      // or something died. Assume reboot, show the loader, stop polling.
+      showUpdatingOverlay("");
       setLabel("Restarting…", "The app is restarting into the new version", true);
       working = false;
     });
@@ -168,9 +227,12 @@
           return;
         }
         setLabel("Update failed - retry", res.msg || "", false);
+        try { button().classList.add("is-failed"); } catch (e) {}
         schedule();
         return;
       }
+      try { button().classList.remove("is-failed"); } catch (e) {}
+      showUpdatingOverlay(version);
       pollStatus();
     }).catch(function () {
       working = false;
@@ -205,24 +267,42 @@
     }
     var b = ensureButton();
     b.disabled = false;
+    b.classList.remove("is-downloading", "is-failed");
+    b.classList.add("is-available");
+    b.style.setProperty("--p", "0%");
     b.innerHTML = "<span>&#8659; v" + esc(snap.latest_version) + "</span>";
     b.title = "Update to v" + snap.latest_version + " (downloads and restarts the app)";
     b.onclick = function () { onButton(snap.latest_version, snap.latest_url); };
   }
 
+  var failCount = 0;
   function schedule() {
     if (timer) clearTimeout(timer);
-    timer = setTimeout(refresh, POLL_MS);
+    // A failed check used to silence the button for 6 hours. Retry soon
+    // instead (1m, 2m, ... capped at 15m); successes stay on POLL_MS.
+    var wait = failCount > 0 ? Math.min(15 * 60 * 1000, 60000 * failCount) : POLL_MS;
+    timer = setTimeout(refresh, wait);
   }
 
   function refresh() {
     get("/api/update/check").then(function (snap) {
+      failCount = 0;
       try { render(snap); } catch (e) {}
       schedule();
-    }).catch(function () { schedule(); });
+    }).catch(function () {
+      failCount++;
+      schedule();
+    });
   }
 
   document.addEventListener("DOMContentLoaded", function () {
     try { refresh(); } catch (e) {}
+  });
+  // App left open across a release: re-check when the window is focused
+  // again instead of waiting for the next poll.
+  document.addEventListener("visibilitychange", function () {
+    try {
+      if (!document.hidden && !working && !button()) refresh();
+    } catch (e) {}
   });
 })();

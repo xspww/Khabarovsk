@@ -262,6 +262,19 @@
     latestSnap = snap;
     if (working) return;
     if (!snap || !snap.update_available || !snap.latest_version) {
+      // No update: stay hidden, unless the check itself failed - then show
+      // a manual retry so the button is never silently missing for hours.
+      if (snap && snap.check_error) {
+        var b = ensureButton();
+        b.disabled = false;
+        b.classList.remove("is-downloading", "is-available");
+        b.classList.add("is-failed");
+        b.style.setProperty("--p", "0%");
+        b.innerHTML = "<span>&#8635; Check update</span>";
+        b.title = snap.check_error + " - click to retry";
+        b.onclick = function () { refresh(); };
+        return;
+      }
       removeButton();
       return;
     }

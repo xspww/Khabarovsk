@@ -703,8 +703,42 @@ def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
     global PORT
     _console_header()
     _console_status("startup", "Preparing single-instance guard")
-    _stop_previous_instance()
-    _stop_same_app_processes()
+    if "--post-update" in sys.argv:
+        # Relaunched by the updater: a lingering old process (or its stale
+        # state) would trip the guard and exit right away, so sweep until
+        # nothing same-app remains instead of stopping after one pass.
+        _console_status("startup", "Post-update boot: sweeping leftover instances")
+        flog_kv("MAIN", "post_update_boot", argv=" ".join(sys.argv[1:]))
+        try:
+            from desktop import instance_guard as _ig
+
+            def _leftover_app_process() -> Optional[int]:
+                # The updater powershell itself matches "same app" (its
+                # command line carries the exe path) - never wait on it.
+                pid = _ig._find_same_app_process()
+                if pid:
+                    try:
+                        import psutil
+
+                        cmd = " ".join(psutil.Process(int(pid)).cmdline() or []).lower()
+                        if "cronus_updater_" in cmd:
+                            return None
+                    except Exception:
+                        pass
+                    return pid
+                return None
+
+            for _ in range(40):
+                _stop_previous_instance()
+                _stop_same_app_processes()
+                if _leftover_app_process() is None and _ig._find_existing_dashboard(7777) is None:
+                    break
+                time.sleep(0.5)
+        except Exception as exc:
+            flog_kv("MAIN", "post_update_sweep_failed", "warning", error=str(exc))
+    else:
+        _stop_previous_instance()
+        _stop_same_app_processes()
     mutex_ok = _acquire_single_instance_mutex()
     socket_ok = _acquire_instance_socket()
     if (not mutex_ok) or (not socket_ok):

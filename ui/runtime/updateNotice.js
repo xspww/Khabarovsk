@@ -116,11 +116,34 @@
     }
   }
 
+  var overlayVersion = "";
+  function showUpdatingOverlay(version) {
+    if (version) overlayVersion = version;
+    if (document.getElementById("cronus-updating-overlay")) return;
+    try {
+      var st = document.createElement("style");
+      st.textContent = "#cronus-updating-overlay{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(11,12,16,.92)}"
+        + "#cronus-updating-overlay .cronus-updating-box{display:grid;gap:14px;justify-items:center;text-align:center;padding:32px}"
+        + "#cronus-updating-overlay .cronus-updating-spin{width:44px;height:44px;border-radius:50%;border:3px solid #2a2d36;border-top-color:#6366f1;animation:cronus-spin 1s linear infinite}"
+        + "@keyframes cronus-spin{to{transform:rotate(360deg)}}"
+        + "#cronus-updating-overlay .cronus-updating-title{font-size:16px;font-weight:800;color:#f2f3f5}"
+        + "#cronus-updating-overlay .cronus-updating-sub{font-size:12.5px;color:#8d9099;max-width:340px;line-height:1.6}";
+      document.head.appendChild(st);
+      var ov = document.createElement("div");
+      ov.id = "cronus-updating-overlay";
+      ov.innerHTML = '<div class="cronus-updating-box"><div class="cronus-updating-spin"></div>'
+        + '<div class="cronus-updating-title">Updating to v' + esc(overlayVersion || "") + '…</div>'
+        + '<div class="cronus-updating-sub">The app is restarting into the new version. A loader window stays on screen until it is back.</div></div>';
+      document.body.appendChild(ov);
+    } catch (e) {}
+  }
+
   function pollStatus() {
     if (statusTimer) clearTimeout(statusTimer);
     statusTimer = 0;
     get("/api/update/status").then(function (snap) {
       var job = (snap && snap.job) || {};
+      if (job.state === "restarting") showUpdatingOverlay(job.version);
       if (!job.active) {
         if (job.state === "failed") {
           setLabel("Update failed - retry", job.error || job.msg, false);
@@ -142,7 +165,8 @@
       statusTimer = setTimeout(pollStatus, STATUS_POLL_MS);
     }).catch(function () {
       // Server gone mid-poll: either restarting into the new version (good)
-      // or something died. Assume reboot, stop polling quietly.
+      // or something died. Assume reboot, show the loader, stop polling.
+      showUpdatingOverlay("");
       setLabel("Restarting…", "The app is restarting into the new version", true);
       working = false;
     });

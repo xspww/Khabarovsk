@@ -120,19 +120,68 @@ _UPDATER_PS1 = r"""# Cronus one-click updater (generated, user-initiated only).
 # Waits for the old app PID to exit, moves the verified exe into place
 # (overwriting directly, no .bak kept), relaunches it, then deletes
 # itself. No network, no payload.
-param([int]$ParentPid, [string]$CurrentExe, [string]$StagedExe, [string]$LogFile)
+param([int]$ParentPid, [string]$CurrentExe, [string]$StagedExe, [string]$LogFile, [string]$Version)
 $ErrorActionPreference = "Stop"
 function Log([string]$m) { Add-Content -LiteralPath $LogFile ("[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $m) }
+# Loader window: the main app is dead during swap/launch, so a small
+# splash stays on screen telling the user what is happening.
+$splash = $null
+$phaseLabel = $null
 try {
-  Log("waiting for PID $ParentPid")
+  Add-Type -AssemblyName System.Windows.Forms
+  Add-Type -AssemblyName System.Drawing
+  $splash = New-Object System.Windows.Forms.Form
+  $splash.Text = "Cronus Launcher Update"
+  $splash.Size = New-Object System.Drawing.Size(400, 170)
+  $splash.StartPosition = "CenterScreen"
+  $splash.FormBorderStyle = "None"
+  $splash.BackColor = [System.Drawing.Color]::FromArgb(20, 21, 26)
+  $splash.TopMost = $true
+  $splash.ShowInTaskbar = $true
+  $title = New-Object System.Windows.Forms.Label
+  $title.Text = "Updating to v$Version..."
+  $title.ForeColor = [System.Drawing.Color]::White
+  $title.Font = New-Object System.Drawing.Font("Segoe UI", 13, [System.Drawing.FontStyle]::Bold)
+  $title.AutoSize = $true
+  $title.Location = New-Object System.Drawing.Point(28, 24)
+  $splash.Controls.Add($title)
+  $phaseLabel = New-Object System.Windows.Forms.Label
+  $phaseLabel.Text = "Waiting for the app to close..."
+  $phaseLabel.ForeColor = [System.Drawing.Color]::Gray
+  $phaseLabel.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+  $phaseLabel.AutoSize = $true
+  $phaseLabel.Location = New-Object System.Drawing.Point(28, 58)
+  $splash.Controls.Add($phaseLabel)
+  $bar = New-Object System.Windows.Forms.ProgressBar
+  $bar.Style = "Marquee"
+  $bar.MarqueeAnimationSpeed = 30
+  $bar.Size = New-Object System.Drawing.Size(344, 16)
+  $bar.Location = New-Object System.Drawing.Point(28, 96)
+  $splash.Controls.Add($bar)
+  $splash.Show()
+  [System.Windows.Forms.Application]::DoEvents()
+} catch {
+  $splash = $null
+}
+function Pump() { try { [System.Windows.Forms.Application]::DoEvents() } catch {} }
+function Phase([string]$m) {
+  Log($m)
+  try { if ($phaseLabel) { $phaseLabel.Text = $m; Pump } } catch {}
+}
+function WaitPump([int]$seconds) {
+  for ($w = 0; $w -lt ($seconds * 5); $w++) { Pump; Start-Sleep -Milliseconds 200 }
+}
+try {
+  Phase("waiting for PID $ParentPid")
   $deadline = (Get-Date).AddSeconds(__TIMEOUT__)
   while ($true) {
-    try { $p = Get-Process -Id $ParentPid -ErrorAction Stop; Start-Sleep -Milliseconds 500 }
+    try { $p = Get-Process -Id $ParentPid -ErrorAction Stop; Pump; Start-Sleep -Milliseconds 400 }
     catch { break }
     if ((Get-Date) -gt $deadline) { Log("parent still alive; aborting"); exit 3 }
   }
-  Start-Sleep -Seconds 1
-  if (-not (Test-Path -LiteralPath $StagedExe)) { Log("staged exe missing; aborting"); exit 4 }
+  WaitPump 1
+  if (-not (Test-Path -LiteralPath $StagedExe)) { Phase("staged exe missing; aborting"); exit 4 }
+  Phase("replacing files...")
   # Drop any leftover backup from an older updater version: no .bak is kept.
   $oldBak = "$CurrentExe.bak"
   if (Test-Path -LiteralPath $oldBak) {
@@ -149,34 +198,35 @@ try {
     } catch {
       Log("swap try $i locked: $($_.Exception.Message)")
     }
-    Start-Sleep -Seconds 2
+    WaitPump 2
   }
   if (-not $swapped) { Log("swap failed after retries; staged exe left at $StagedExe"); exit 6 }
-  Log("swapped; launching")
+  Phase("starting the new version...")
   $workDir = Split-Path -Parent $CurrentExe
   $launchedPid = 0
   # A onefile cold extract plus Defender scan can take a minute, so give
   # each attempt a long settle window instead of a few seconds.
   for ($attempt = 1; $attempt -le 5; $attempt++) {
     try {
-      $p = Start-Process -FilePath $CurrentExe -WorkingDirectory $workDir -PassThru
+      Phase("starting the new version... (attempt $attempt)")
+      $p = Start-Process -FilePath $CurrentExe -WorkingDirectory $workDir -WindowStyle Normal -PassThru
       if ($null -eq $p) {
         Log("launch attempt ${attempt}: no process handle returned")
       } else {
         Log("launch attempt $attempt started PID $($p.Id); waiting")
-        Start-Sleep -Seconds 10
+        WaitPump 10
         try {
           $null = Get-Process -Id $p.Id -ErrorAction Stop
         } catch {
           Log("launch attempt ${attempt}: process exited within 10s")
-          Start-Sleep -Seconds 2
+          WaitPump 2
           continue
         }
-        Start-Sleep -Seconds 25
+        WaitPump 25
         try {
           $alive = Get-Process -Id $p.Id -ErrorAction Stop
           $launchedPid = $p.Id
-          Log("new version running (PID $launchedPid)")
+          Phase("new version running")
           break
         } catch {
           Log("launch attempt ${attempt}: process gone during settle")
@@ -185,18 +235,24 @@ try {
     } catch {
       Log("launch attempt $attempt failed: $($_.Exception.Message)")
     }
-    Start-Sleep -Seconds 3
+    WaitPump 3
   }
   if ($launchedPid -eq 0) {
-    Log("launch failed after retries, but the new exe is in place - start it manually: $CurrentExe")
+    $msg = "Could not start the new version. It is in place - start it manually: $CurrentExe (details: $LogFile)"
+    Log("launch failed after retries; " + $msg)
+    try { if ($phaseLabel) { $phaseLabel.Text = $msg } } catch {}
+    WaitPump 15
     exit 7
   }
   Log("done")
   exit 0
 } catch {
   Log("failed: $($_.Exception.Message)")
+  try { if ($phaseLabel) { $phaseLabel.Text = "Update failed - see $LogFile" } } catch {}
+  WaitPump 10
   exit 5
 } finally {
+  try { if ($splash) { $splash.Close(); $splash.Dispose() } } catch {}
   try { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue } catch {}
 }
 """.replace("__TIMEOUT__", str(int(SWAP_TIMEOUT_SECONDS)))
@@ -324,7 +380,8 @@ class AppUpdater:
                  "-ParentPid", str(os.getpid()),
                  "-CurrentExe", current_exe,
                  "-StagedExe", staged_exe,
-                 "-LogFile", log_file],
+                 "-LogFile", log_file,
+                 "-Version", version],
                 close_fds=True,
             )
             time.sleep(2.0)

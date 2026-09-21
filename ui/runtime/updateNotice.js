@@ -234,19 +234,34 @@
     b.onclick = function () { onButton(snap.latest_version, snap.latest_url); };
   }
 
+  var failCount = 0;
   function schedule() {
     if (timer) clearTimeout(timer);
-    timer = setTimeout(refresh, POLL_MS);
+    // A failed check used to silence the button for 6 hours. Retry soon
+    // instead (1m, 2m, ... capped at 15m); successes stay on POLL_MS.
+    var wait = failCount > 0 ? Math.min(15 * 60 * 1000, 60000 * failCount) : POLL_MS;
+    timer = setTimeout(refresh, wait);
   }
 
   function refresh() {
     get("/api/update/check").then(function (snap) {
+      failCount = 0;
       try { render(snap); } catch (e) {}
       schedule();
-    }).catch(function () { schedule(); });
+    }).catch(function () {
+      failCount++;
+      schedule();
+    });
   }
 
   document.addEventListener("DOMContentLoaded", function () {
     try { refresh(); } catch (e) {}
+  });
+  // App left open across a release: re-check when the window is focused
+  // again instead of waiting for the next poll.
+  document.addEventListener("visibilitychange", function () {
+    try {
+      if (!document.hidden && !working && !button()) refresh();
+    } catch (e) {}
   });
 })();

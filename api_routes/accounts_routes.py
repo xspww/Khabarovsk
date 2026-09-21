@@ -29,6 +29,81 @@ from .settings_state import _normalize_window_size_settings
 from .context import ApiContext
 
 APP_USER_AGENT = "CronusLauncher/RT"
+def _reset_account_runtime_for_finish(farm: Any, acc: Any) -> None:
+    """Drop pending recovery/cooldown so a Finished account stays quiet."""
+    if acc is None:
+        return
+    try:
+        runtime_state = getattr(farm, "_runtime_state", None)
+        if runtime_state is not None:
+            with acc._lock:
+                if hasattr(runtime_state, "clear_recovery"):
+                    runtime_state.clear_recovery(acc, reason="account_finished", inflight=False)
+                runtime_state.set_cooldown(acc, 0.0, reason="account_finished")
+    except Exception:
+        pass
+    try:
+        worker = (getattr(farm, "_workers", None) or {}).get(
+            getattr(acc, "_config_username", "")
+        )
+        if worker is not None:
+            worker.wake()
+    except Exception:
+        pass
+
+
+def _revive_unfinished_account(farm: Any, username: str) -> bool:
+    """Give an Unfinished account a clean relaunch while the farm runs.
+
+    Without this the account resumes a half-dead recovery (stale dead-pid
+    binding, leftover cooldown/inflight) and sticks in Rejoining forever.
+    Mirrors the proven mid-run add flow from account_reload.
+    """
+    acc = farm._find_account(username)
+    if acc is None:
+        return False
+    try:
+        from services.process_service import ProcessManager
+
+        with acc._lock:
+            pid = acc.pid
+            try:
+                alive = bool(pid) and bool(
+                    ProcessManager.is_bound_game_alive(
+                        pid,
+                        owner_key=acc._config_username,
+                        expected_identity=acc.bound_process_identity,
+                    )
+                )
+            except Exception:
+                alive = False
+            if not alive:
+                acc.pid = None
+                acc.bound_process_identity = None
+                acc.pid_missing_since = 0.0
+    except Exception:
+        pass
+    try:
+        runtime_state = getattr(farm, "_runtime_state", None)
+        if runtime_state is not None:
+            with acc._lock:
+                if hasattr(runtime_state, "clear_recovery"):
+                    runtime_state.clear_recovery(acc, reason="account_unfinished", inflight=False)
+                runtime_state.set_cooldown(acc, 0.0, reason="account_unfinished")
+    except Exception:
+        pass
+    try:
+        from services.account_reload import (
+            _prepare_added_runtime_account,
+            _start_added_worker,
+        )
+
+        _prepare_added_runtime_account(farm, acc)
+        return bool(_start_added_worker(farm, acc))
+    except Exception:
+        return False
+
+
 _AVATAR_CACHE: Dict[str, Tuple[float, str]] = {}
 _AVATAR_CACHE_TTL = 300.0
 # Place lookups hit 2-3 Roblox endpoints per call; cache successes so the
@@ -589,12 +664,26 @@ def register(app, ctx: ApiContext) -> None:
             _replace_farm_accounts_from_store()
         except Exception:
             pass
+        relaunched: List[str] = []
         if finished:
             for username in marked:
                 try:
                     ok, _msg = farm.kill_account_pid(username, reason="account_finished")
                     if ok:
                         killed.append(username)
+                except Exception:
+                    pass
+                try:
+                    _reset_account_runtime_for_finish(
+                        farm, farm._find_account(username)
+                    )
+                except Exception:
+                    continue
+        elif bool(getattr(farm, "running", False)):
+            for username in marked:
+                try:
+                    if _revive_unfinished_account(farm, username):
+                        relaunched.append(username)
                 except Exception:
                     continue
         try:
@@ -604,6 +693,7 @@ def register(app, ctx: ApiContext) -> None:
                 account=",".join(marked) or "*",
                 count=len(marked),
                 killed=len(killed),
+                relaunched=len(relaunched),
             )
         except Exception:
             pass
@@ -613,10 +703,15 @@ def register(app, ctx: ApiContext) -> None:
             "marked": marked,
             "missing": missing,
             "killed": killed,
+            "relaunched": relaunched,
             "msg": (
                 f"Marked Finished: {len(marked)}"
                 if finished
-                else f"Cleared Finished: {len(marked)}"
+                else (
+                    f"Cleared Finished, relaunching: {len(relaunched)}/{len(marked)}"
+                    if getattr(farm, "running", False)
+                    else f"Cleared Finished: {len(marked)}"
+                )
             ),
         }
     # Web UI routes

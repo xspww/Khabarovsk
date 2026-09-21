@@ -7,8 +7,8 @@
 <p align="center">Roblox account manager with auto-rejoin.</p>
 
 <p align="center">
-  <a href="https://github.com/q0HtHHftAS/Roblox-Auto-Rejoin-windown/releases"><img src="https://img.shields.io/github/v/release/q0HtHHftAS/Roblox-Auto-Rejoin-windown?label=release" alt="release" /></a>
-  <a href="https://github.com/q0HtHHftAS/Roblox-Auto-Rejoin-windown/actions/workflows/release.yml"><img src="https://github.com/q0HtHHftAS/Roblox-Auto-Rejoin-windown/actions/workflows/release.yml/badge.svg" alt="build" /></a>
+  <a href="https://github.com/Khabarovsk6000/Roblox-Auto-Rejoin-windown/releases"><img src="https://img.shields.io/github/v/release/Khabarovsk6000/Roblox-Auto-Rejoin-windown?label=release" alt="release" /></a>
+  <a href="https://github.com/Khabarovsk6000/Roblox-Auto-Rejoin-windown/actions/workflows/release.yml"><img src="https://github.com/Khabarovsk6000/Roblox-Auto-Rejoin-windown/actions/workflows/release.yml/badge.svg" alt="build" /></a>
   <img src="https://img.shields.io/badge/platform-Windows-blue" alt="platform" />
   <img src="https://img.shields.io/badge/python-3.11+-blue" alt="python" />
 </p>
@@ -53,7 +53,7 @@ The host must meet the requirements below:
 The easy way is the compiled build from the Releases page.
 No Python is needed for this option.
 
-1. Open `https://github.com/q0HtHHftAS/Roblox-Auto-Rejoin-windown/releases`.
+1. Open `https://github.com/Khabarovsk6000/Roblox-Auto-Rejoin-windown/releases`.
 2. Download `CronusLauncher-<version>.exe` and run it.
 3. The portable build `CronusLauncher-<version>-portable.zip` holds the same exe plus the Lua loader.
 
@@ -73,7 +73,7 @@ Complete the steps below:
 1. Clone the repository:
 
 ```powershell
-git clone https://github.com/q0HtHHftAS/Roblox-Auto-Rejoin-windown.git
+git clone https://github.com/Khabarovsk6000/Roblox-Auto-Rejoin-windown.git
 cd Roblox-Auto-Rejoin-windown
 ```
 

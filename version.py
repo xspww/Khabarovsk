@@ -26,7 +26,7 @@ def app_display_version() -> str:
     return APP_VERSION
 
 # GitHub Releases location used by the update check.
-GITHUB_OWNER = "q0HtHHftAS"
+GITHUB_OWNER = "Khabarovsk6000"
 GITHUB_REPO = "Roblox-Auto-Rejoin-windown"
 
 

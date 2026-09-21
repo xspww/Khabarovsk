@@ -177,7 +177,7 @@ $slideTimer = $null
 try {
   Add-Type -AssemblyName System.Windows.Forms
   Add-Type -AssemblyName System.Drawing
-  # Storm-style loader: deep navy card, indigo accent, prompt lines.
+  # Loader window: deep navy card, indigo accent, prompt lines.
   $bg = [System.Drawing.Color]::FromArgb(11, 14, 23)
   $indigo = [System.Drawing.Color]::FromArgb(99, 102, 241)
   $muted = [System.Drawing.Color]::FromArgb(141, 144, 153)

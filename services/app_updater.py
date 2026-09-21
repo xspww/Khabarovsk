@@ -92,10 +92,13 @@ def sha256_file(path: str) -> str:
     return digest.hexdigest()
 
 
-def _download(url: str, dest: str, progress: Optional[Callable[[int, int], None]] = None) -> None:
+DOWNLOAD_RETRIES = 3
+
+
+def _download_once(url: str, dest: str, progress: Optional[Callable[[int, int], None]] = None) -> None:
     tmp = dest + ".part"
     request = urllib.request.Request(url, headers={"User-Agent": UPDATE_USER_AGENT})
-    with urllib.request.urlopen(request, timeout=max(30.0, float(HTTP_TIMEOUT_SECONDS or 20.0))) as response:
+    with urllib.request.urlopen(request, timeout=max(120.0, float(HTTP_TIMEOUT_SECONDS or 20.0))) as response:
         try:
             total = int(response.headers.get("Content-Length") or 0)
         except Exception:
@@ -113,7 +116,33 @@ def _download(url: str, dest: str, progress: Optional[Callable[[int, int], None]
                         progress(received, total)
                     except Exception:
                         pass
+        if total > 0 and received != total:
+            raise RuntimeError(f"truncated download ({received}/{total} bytes)")
     os.replace(tmp, dest)
+
+
+def _download(url: str, dest: str, progress: Optional[Callable[[int, int], None]] = None) -> None:
+    """Download with retries: a 200MB+ exe over a flaky link often drops once."""
+    last_exc: Optional[BaseException] = None
+    try:
+        part = dest + ".part"
+        if os.path.exists(part):
+            os.remove(part)
+    except Exception:
+        pass
+    for attempt in range(1, DOWNLOAD_RETRIES + 1):
+        try:
+            _download_once(url, dest, progress)
+            return
+        except Exception as exc:
+            last_exc = exc
+            if progress:
+                try:
+                    progress(0, 0)
+                except Exception:
+                    pass
+            time.sleep(2.0 * attempt)
+    raise RuntimeError(f"download failed after {DOWNLOAD_RETRIES} tries: {last_exc}")
 
 
 _UPDATER_PS1 = r"""# Cronus one-click updater (generated, user-initiated only).

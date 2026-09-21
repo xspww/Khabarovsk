@@ -15,6 +15,7 @@ from account_hybrid import audit_event
 from core import flog_kv
 from roblox_hybrid import release_multi_roblox_guard
 from services.app_version_check import check_app_update
+from services import startup_manager
 
 from .auth import require_api_token
 from .idempotency import begin_idempotent_request, begin_idempotent_request_sync, finish_idempotent_request
@@ -75,6 +76,33 @@ def register(app, ctx: ApiContext) -> None:
         finish_idempotent_request(idem, result)
         return result
 
+
+    @app.get("/api/startup/status")
+    def api_startup_status():
+        import app_paths
+        exe = str(app_paths.EXECUTABLE_PATH or "")
+        status = startup_manager.shortcut_status(exe)
+        status["enabled"] = bool(ctx.cfg_mgr.get("start_on_boot", False))
+        status["compiled"] = bool(app_paths.IS_COMPILED)
+        return {"ok": True, **status}
+
+    @app.post("/api/startup/apply")
+    async def api_startup_apply(request: Request):
+        import app_paths
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        enabled = bool((body or {}).get("enabled", False))
+        if not app_paths.IS_COMPILED:
+            return {"ok": False, "msg": "Source run: startup shortcut needs the compiled exe"}
+        exe = str(app_paths.EXECUTABLE_PATH or "")
+        result = startup_manager.ensure_shortcut(exe) if enabled else startup_manager.remove_shortcut()
+        try:
+            audit_event("startup_shortcut", "ok" if result.get("ok") else "failed", f"enabled={enabled}")
+        except Exception:
+            pass
+        return result
 
     @app.get("/api/update/check")
     def api_update_check():

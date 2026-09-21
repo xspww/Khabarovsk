@@ -157,6 +157,9 @@ DEFAULTS: Dict[str, Any] = {
     "rt_rotation_enabled": False,
     "runtime_account_allowlist": [],
     "ui_col_widths": {},
+    "start_on_boot":          False,
+    "start_farming_on_boot":  False,
+    "auto_update_on_boot":    False,
     "accounts":                 [],
     "runtime_state":            {},
 }

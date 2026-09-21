@@ -81,6 +81,7 @@ def register(app, ctx: ApiContext) -> None:
             "roblox_window_arrange_gap", "roblox_window_arrange_margin",
             "multi_roblox_enabled", "rt_rotation_enabled",
             "runtime_account_allowlist",
+            "start_on_boot", "start_farming_on_boot", "auto_update_on_boot",
             "ui_col_widths",
         }
         updates = {k: v for k, v in body.items() if k in allowed}
@@ -96,6 +97,9 @@ def register(app, ctx: ApiContext) -> None:
             updates["executor_check_interval_seconds"] = _int_setting(updates["executor_check_interval_seconds"], 30, 30, 3600)
         if "roblox_auto_update_enabled" in updates:
             updates["roblox_auto_update_enabled"] = bool(updates["roblox_auto_update_enabled"])
+        for _boot_key in ("start_on_boot", "start_farming_on_boot", "auto_update_on_boot"):
+            if _boot_key in updates:
+                updates[_boot_key] = bool(updates[_boot_key])
         if "executor_relaunch_enabled" in updates:
             updates["executor_relaunch_enabled"] = bool(updates["executor_relaunch_enabled"])
             if updates["executor_relaunch_enabled"]:

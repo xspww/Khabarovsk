@@ -242,6 +242,80 @@ def _require_configured() -> Tuple[Any, Any]:
         raise RuntimeError("desktop_host is not configured")
     return _app, _farm
 
+
+BOOT_FARM_DELAY_SECONDS = 30.0
+
+
+def _autostart_api(path: str, method: str = "GET", body: Any = None) -> Any:
+    import json as _json
+    data = _json.dumps(body or {}).encode("utf-8") if body is not None else None
+    req = urllib.request.Request(
+        f"http://{HOST}:{PORT}{path}", data=data, method=method,
+        headers={"Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15.0) as resp:
+            return _json.loads(resp.read().decode("utf-8", errors="replace"))
+    except Exception as exc:
+        return {"ok": False, "msg": f"local api failed: {exc}"}
+
+
+def _run_autostart_chain() -> None:
+    """Boot maintenance: heal the Startup shortcut whenever start_on_boot
+    is enabled, then (only for --autostart launches) auto update, delayed
+    single-attempt farm start. Never prompts, only logs."""
+    try:
+        _, farm = _require_configured()
+        cfg = farm.cfg_mgr
+    except Exception as exc:
+        flog_kv("BOOT", "autostart_no_config", "warning", error=str(exc))
+        return
+    if "--autostart" in sys.argv:
+        flog_kv("BOOT", "autostart_begin")
+    else:
+        flog_kv("BOOT", "manual_boot")
+    if _SHUTDOWN_REQUESTED.is_set():
+        return
+    if bool(cfg.get("start_on_boot", False)):
+        try:
+            from services import startup_manager
+            import app_paths
+            res = startup_manager.heal_shortcut(str(app_paths.EXECUTABLE_PATH or ""))
+            flog_kv("BOOT", "startup_healed", changed=bool(res.get("changed")), msg=str(res.get("msg") or ""))
+        except Exception as exc:
+            flog_kv("BOOT", "startup_heal_failed", "warning", error=str(exc))
+    if "--autostart" not in sys.argv:
+        flog_kv("BOOT", "autostart_done", mode="manual")
+        return
+    if bool(cfg.get("auto_update_on_boot", False)):
+        try:
+            snap = _autostart_api("/api/update/check")
+            if isinstance(snap, dict) and snap.get("update_available") and snap.get("latest_version"):
+                version = str(snap.get("latest_version") or "")
+                flog_kv("BOOT", "auto_update_applying", version=version)
+                applied = _autostart_api("/api/update/apply", "POST", {"confirm_stop_farm": True})
+                if isinstance(applied, dict) and applied.get("accepted"):
+                    flog_kv("BOOT", "auto_update_restarting", version=version)
+                    return  # updater restarts us; the new process resumes the chain
+                reason = str((applied or {}).get("msg") or "not accepted") if isinstance(applied, dict) else "not accepted"
+                flog_kv("BOOT", "auto_update_skipped", "warning", msg=reason)
+            else:
+                flog_kv("BOOT", "auto_update_uptodate")
+        except Exception as exc:
+            flog_kv("BOOT", "auto_update_failed", "warning", error=str(exc))
+    if bool(cfg.get("start_farming_on_boot", False)):
+        if _SHUTDOWN_REQUESTED.wait(BOOT_FARM_DELAY_SECONDS):
+            return
+        try:
+            if getattr(farm, "running", False):
+                flog_kv("BOOT", "farm_already_running")
+                return
+            farm.start()
+            flog_kv("BOOT", "farm_started")
+        except Exception as exc:
+            flog_kv("BOOT", "farm_start_failed", "error", error=str(exc))
+    flog_kv("BOOT", "autostart_done")
+
 def _make_tray_icon():
     try:
         from PIL import Image
@@ -768,6 +842,9 @@ def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
         flog_kv("MAIN", "fastapi_not_ready", "error", port=PORT, detail=detail)
         _console_status("backend", f"Not ready: {detail}")
         _console_status("log", LOG_FILE)
+    # Boot maintenance (shortcut heal) runs on every launch; the update +
+    # farm chain inside runs only for --autostart launches.
+    threading.Thread(target=_run_autostart_chain, daemon=True, name="CronusAutostart").start()
     _console_status("desktop", "Opening desktop window")
     _console_clear_after_window_show(ready)
     if _run_desktop_window():

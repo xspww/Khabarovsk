@@ -167,7 +167,7 @@ _UPDATER_PS1 = r"""# Cronus one-click updater (generated, user-initiated only).
 # Waits for the old app PID to exit, moves the verified exe into place
 # (overwriting directly, no .bak kept), relaunches it, then deletes
 # itself. No network, no payload.
-param([int]$ParentPid, [string]$CurrentExe, [string]$StagedExe, [string]$LogFile, [string]$Version, [string]$OldExe)
+param([int]$ParentPid, [string]$CurrentExe, [string]$StagedExe, [string]$LogFile, [string]$Version, [string]$OldExe, [string]$AppArgs)
 $ErrorActionPreference = "Stop"
 function Log([string]$m) { Add-Content -LiteralPath $LogFile ("[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $m) }
 # Loader window: the main app is dead during swap/launch, so a small
@@ -321,10 +321,11 @@ try {
   }
   # A onefile cold extract plus Defender scan can take a minute, so give
   # each attempt a long settle window instead of a few seconds.
+  if (-not $AppArgs) { $AppArgs = "--post-update" }
   for ($attempt = 1; $attempt -le 5; $attempt++) {
     try {
       Phase("> starting the new version... (attempt $attempt)")
-      $p = Start-Process -FilePath $CurrentExe -WorkingDirectory $workDir -WindowStyle Normal -ArgumentList "--post-update" -PassThru
+      $p = Start-Process -FilePath $CurrentExe -WorkingDirectory $workDir -WindowStyle Normal -ArgumentList $AppArgs -PassThru
       if ($null -eq $p) {
         Log("launch attempt ${attempt}: no process handle returned")
       } else {
@@ -508,6 +509,11 @@ class AppUpdater:
                 log_pos = os.path.getsize(log_file)
             except Exception:
                 log_pos = 0
+            # Forward boot mode so an update during --autostart resumes the
+            # boot chain (auto farm) in the new process.
+            app_args = "--post-update"
+            if "--autostart" in sys.argv:
+                app_args += " --autostart"
             proc = subprocess.Popen(
                 ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
                  "-ExecutionPolicy", "Bypass", "-File", script,
@@ -516,7 +522,8 @@ class AppUpdater:
                  "-StagedExe", staged_exe,
                  "-LogFile", log_file,
                  "-Version", version,
-                 "-OldExe", old_exe_arg],
+                 "-OldExe", old_exe_arg,
+                 "-AppArgs", app_args],
                 close_fds=True,
             )
             # Verified handoff: a stillborn swap script (e.g. a syntax error)

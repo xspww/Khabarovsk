@@ -391,6 +391,14 @@ class FarmController:
 
     def force_rejoin(self, username: str):
         acc = self._find_account(username)
+        if acc:
+            try:
+                from domain.account_model import is_account_finished
+
+                if is_account_finished(acc):
+                    return False, "Account is Finished"
+            except Exception:
+                pass
         if acc and self._recovery:
             allowed, rate_msg = self._check_force_rejoin_rate_limit(acc._config_username)
             if not allowed:

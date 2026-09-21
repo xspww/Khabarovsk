@@ -537,5 +537,87 @@ def register(app, ctx: ApiContext) -> None:
         if not acc._vip_tracker:
             return {"ok": False, "msg": "No VipTracker (no VIP links)"}
         return {"ok": True, "links": acc._vip_tracker.status()}
+
+    @app.post("/api/accounts/finish")
+    async def api_mark_accounts_finished(request: Request):
+        from core import flog_kv
+
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Expected object")
+        raw_names = body.get("usernames", [])
+        if isinstance(raw_names, str):
+            raw_names = [raw_names]
+        if not isinstance(raw_names, list):
+            raise HTTPException(400, "usernames must be a list")
+        finished = bool(body.get("finished", True))
+        names = [str(n or "").strip() for n in raw_names if str(n or "").strip()]
+        if not names:
+            raise HTTPException(400, "usernames required")
+        marked: List[str] = []
+        missing: List[str] = []
+        killed: List[str] = []
+        for username in names:
+            if finished:
+                updates = {"manual_status": "Finished", "finished_at": time.time()}
+            else:
+                # Only clear a Finished mark; never wipe captcha/invalid holds.
+                try:
+                    current = _find_account_record(username, include_cookie=False) or {}
+                    was_finished = (
+                        str(current.get("manual_status") or "").strip().lower() == "finished"
+                    )
+                except Exception:
+                    was_finished = True
+                updates = {"finished_at": 0.0}
+                if was_finished:
+                    updates["manual_status"] = ""
+            updated = ACCOUNT_STORE.update_record(username, updates)
+            if updated is None:
+                missing.append(username)
+                continue
+            marked.append(username)
+            try:
+                audit_event(
+                    "finished_mark" if finished else "finished_clear",
+                    username=username,
+                    ok=True,
+                )
+            except Exception:
+                pass
+        try:
+            _replace_farm_accounts_from_store()
+        except Exception:
+            pass
+        if finished:
+            for username in marked:
+                try:
+                    ok, _msg = farm.kill_account_pid(username, reason="account_finished")
+                    if ok:
+                        killed.append(username)
+                except Exception:
+                    continue
+        try:
+            flog_kv(
+                "API",
+                "accounts_finished" if finished else "accounts_unfinished",
+                account=",".join(marked) or "*",
+                count=len(marked),
+                killed=len(killed),
+            )
+        except Exception:
+            pass
+        return {
+            "ok": True,
+            "finished": finished,
+            "marked": marked,
+            "missing": missing,
+            "killed": killed,
+            "msg": (
+                f"Marked Finished: {len(marked)}"
+                if finished
+                else f"Cleared Finished: {len(marked)}"
+            ),
+        }
     # Web UI routes
     # Cronus Launcher dashboard is served by system_routes.py.

@@ -355,7 +355,27 @@ def cookie_invalid_block_reason(*values: object) -> str:
     return ""
 
 
+FINISHED_STATUS = "Finished"
+
+
+def is_account_finished(acc: Any) -> bool:
+    """User-marked done: skip launch/rejoin/recovery and ignore Lua signals."""
+    try:
+        if str(getattr(acc, "manual_status", "") or "").strip().lower() == "finished":
+            return True
+    except Exception:
+        pass
+    try:
+        if float(getattr(acc, "finished_at", 0.0) or 0.0) > 0:
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def account_launch_block_reason(acc: Account) -> str:
+    if is_account_finished(acc):
+        return FINISHED_STATUS
     try:
         from services.captcha_guard import CAPTCHA_BLOCK_REASON, is_account_captcha_required
 

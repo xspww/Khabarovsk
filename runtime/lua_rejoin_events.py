@@ -68,6 +68,23 @@ def handle_lua_rejoin_event(
             "msg": "Account not found",
         }
     acc = resolution.account
+    try:
+        from domain.account_model import is_account_finished
+
+        if is_account_finished(acc):
+            farm._bump_status_revision()
+            return {
+                "ok": True,
+                "accepted": False,
+                "event": event_name,
+                "account": acc._config_username,
+                "matched_pid": resolution.bound_pid,
+                "identity_match": resolution.match_reason,
+                "signal": "finished_skipped",
+                "msg": "Account is Finished; Lua signal ignored",
+            }
+    except Exception:
+        pass
     reason = str(payload.get("reason_key") or f"lua_{event_name}").strip() or f"lua_{event_name}"
     event_payload = {
         "trigger": event_name,

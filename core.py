@@ -10,6 +10,7 @@ from config_store import (
     ConfigManager,
 )
 from domain.account_model import (
+    FINISHED_STATUS,
     STATE_META,
     Account,
     ServerType,
@@ -17,6 +18,7 @@ from domain.account_model import (
     account_launchable,
     cookie_identity_block_reason,
     cookie_invalid_block_reason,
+    is_account_finished,
 )
 from domain.states import (
     AccountState,
@@ -54,7 +56,9 @@ __all__ = [
     "RuntimeStateManager",
     "STRUCTURED_LOG_FILE",
     "STATE_META",
+    "FINISHED_STATUS",
     "ServerType",
+    "is_account_finished",
     "SmartQueue",
     "StateManager",
     "account_launch_block_reason",

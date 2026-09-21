@@ -462,6 +462,14 @@ class AccountWorker(threading.Thread):
         acc = self.acc
         flog(f"[WORKER] {acc.display_name} started")
 
+        try:
+            from domain.account_model import is_account_finished
+
+            if is_account_finished(acc):
+                flog(f"[WORKER] {acc.display_name} is Finished - skipping launch")
+                return
+        except Exception:
+            pass
         auth_gate = evaluate_account_auth_gate(acc)
         if auth_gate.blocked:
             mark_account_auth_quarantined(acc, auth_gate, source="worker_preflight", runtime_writer=self.state_mgr)
@@ -585,6 +593,16 @@ class AccountWorker(threading.Thread):
 
         crash_to = self.cfg.get("crash_timeout", 30)
         while not self._stop_event.is_set():
+            try:
+                from domain.account_model import is_account_finished as _is_finished
+
+                if _is_finished(acc):
+                    # Marked Finished mid-run: sit idle, no rejoin, no actions.
+                    self._wake.wait(timeout=2.0)
+                    self._wake.clear()
+                    continue
+            except Exception:
+                pass
             if acc.state == AccountState.IN_GAME:
                 if not acc.pid or not ProcessManager.is_bound_game_alive(
                     acc.pid,

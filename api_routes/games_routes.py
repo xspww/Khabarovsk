@@ -220,7 +220,16 @@ def register(app, ctx: ApiContext) -> None:
         for name in names:
             record = by_name[name.lower()]
             record["game_id"] = wanted
-            if wanted:
+            if not wanted:
+                # Unassign ("No game"): clear stale per-account targets or
+                # the old game resurrects via place_hint matching
+                # (game_for_account matches by place_id) and via the
+                # record.place_id fallback in build_target — the account
+                # would silently rejoin the previous game.
+                record["place_id"] = ""
+                record["vip_links"] = []
+                record["active_vip"] = ""
+            else:
                 # A stale explicit place_id from before multi-game (or from
                 # another game) would override the picked game at launch
                 # while the UI labels it as the new game. Clear it so the
@@ -228,6 +237,9 @@ def register(app, ctx: ApiContext) -> None:
                 current_place = str(record.get("place_id") or "").strip()
                 if current_place and target_place and current_place != target_place:
                     record["place_id"] = ""
+                # Dropping a game must not leak its VIP into the new one.
+                if str(record.get("active_vip") or "").strip():
+                    record["active_vip"] = ""
         try:
             ACCOUNT_STORE.write_records(records)
         except Exception as exc:

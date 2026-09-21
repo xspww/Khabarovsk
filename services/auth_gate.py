@@ -35,6 +35,18 @@ class AuthGateDecision:
 
 
 def evaluate_account_auth_gate(account: Any) -> AuthGateDecision:
+    try:
+        from domain.account_model import FINISHED_STATUS, is_account_finished
+
+        if is_account_finished(account):
+            return AuthGateDecision(
+                blocked=True,
+                reason_key="finished",
+                reason=FINISHED_STATUS,
+                category="finished",
+            )
+    except Exception:
+        pass
     if is_account_captcha_required(account):
         return AuthGateDecision(
             blocked=True,
@@ -69,6 +81,9 @@ def mark_account_auth_quarantined(
     runtime_writer: Any = None,
 ) -> AuthGateDecision:
     if not decision.blocked:
+        return decision
+    if decision.category == "finished" or decision.reason_key == "finished":
+        # User-marked done: never touch cookie/captcha state, just stay out.
         return decision
     if decision.reason_key == CAPTCHA_REASON:
         set_account_captcha_hold(

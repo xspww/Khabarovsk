@@ -28,7 +28,7 @@
   <a href="#intention">Intention</a>
 </p>
 
-<p align="center">Cronus Launcher is a helper for AFK farmers and multi-instance players. If the game disconnects, it rejoins automatically — no need to stay up watching your accounts.</p>
+<img width="1280" height="820" alt="r1" src="https://github.com/user-attachments/assets/84c32026-0316-46bb-999b-4c4b5f6b9698" />
 
 ## Functions
 

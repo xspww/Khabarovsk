@@ -3,7 +3,7 @@
 Notify-only checking lives in app_version_check; this module performs the
 update opencode-installer-style: download the versioned exe asset from the
 GitHub Release, verify it against the published checksums.txt, then hand
-over to a hidden swap-and-relaunch script and exit so the new exe boots.
+over to a console swap-and-relaunch script and exit so the new exe boots.
 
 Safety rules (deliberate, do not soften without a product decision):
 - Source runs (``python main.py``) are refused: there is no exe to swap.
@@ -170,92 +170,24 @@ _UPDATER_PS1 = r"""# Cronus one-click updater (generated, user-initiated only).
 param([int]$ParentPid, [string]$CurrentExe, [string]$StagedExe, [string]$LogFile, [string]$Version, [string]$OldExe, [string]$AppArgs)
 $ErrorActionPreference = "Stop"
 function Log([string]$m) { Add-Content -LiteralPath $LogFile ("[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $m) }
-# Loader window: the main app is dead during swap/launch, so a small
-# splash stays on screen telling the user what is happening.
-$splash = $null
-$phaseLabel = $null
-$slideBar = $null
-$slideTimer = $null
-try {
-  Add-Type -AssemblyName System.Windows.Forms
-  Add-Type -AssemblyName System.Drawing
-  # Loader window: deep navy card, indigo accent, prompt lines.
-  $bg = [System.Drawing.Color]::FromArgb(11, 14, 23)
-  $indigo = [System.Drawing.Color]::FromArgb(99, 102, 241)
-  $muted = [System.Drawing.Color]::FromArgb(141, 144, 153)
-  $splash = New-Object System.Windows.Forms.Form
-  $splash.Text = "Cronus Launcher Update"
-  $splash.Size = New-Object System.Drawing.Size(420, 196)
-  $splash.StartPosition = "CenterScreen"
-  $splash.FormBorderStyle = "None"
-  $splash.BackColor = $bg
-  $splash.TopMost = $true
-  $splash.ShowInTaskbar = $true
-  $edge = New-Object System.Windows.Forms.Panel
-  $edge.Size = New-Object System.Drawing.Size(420, 3)
-  $edge.Location = New-Object System.Drawing.Point(0, 0)
-  $edge.BackColor = $indigo
-  $splash.Controls.Add($edge)
-  $prompt = New-Object System.Windows.Forms.Label
-  $prompt.Text = "> cronus update"
-  $prompt.ForeColor = $indigo
-  $prompt.Font = New-Object System.Drawing.Font("Consolas", 9)
-  $prompt.AutoSize = $true
-  $prompt.Location = New-Object System.Drawing.Point(28, 22)
-  $splash.Controls.Add($prompt)
-  $title = New-Object System.Windows.Forms.Label
-  $title.Text = "Updating to v$Version..."
-  $title.ForeColor = [System.Drawing.Color]::White
-  $title.Font = New-Object System.Drawing.Font("Segoe UI", 13, [System.Drawing.FontStyle]::Bold)
-  $title.AutoSize = $true
-  $title.Location = New-Object System.Drawing.Point(28, 46)
-  $splash.Controls.Add($title)
-  $phaseLabel = New-Object System.Windows.Forms.Label
-  $phaseLabel.Text = "> waiting for the app to close"
-  $phaseLabel.ForeColor = $muted
-  $phaseLabel.Font = New-Object System.Drawing.Font("Consolas", 9)
-  $phaseLabel.AutoSize = $true
-  $phaseLabel.Location = New-Object System.Drawing.Point(28, 84)
-  $splash.Controls.Add($phaseLabel)
-  $track = New-Object System.Windows.Forms.Panel
-  $track.Size = New-Object System.Drawing.Size(364, 8)
-  $track.Location = New-Object System.Drawing.Point(28, 120)
-  $track.BackColor = [System.Drawing.Color]::FromArgb(35, 37, 45)
-  $splash.Controls.Add($track)
-  $slideBar = New-Object System.Windows.Forms.Panel
-  $slideBar.Size = New-Object System.Drawing.Size(90, 8)
-  $slideBar.Location = New-Object System.Drawing.Point(0, 0)
-  $slideBar.BackColor = $indigo
-  $track.Controls.Add($slideBar)
-  $slideTimer = New-Object System.Windows.Forms.Timer
-  $slideTimer.Interval = 30
-  $slideTimer.Add_Tick({
-    try {
-      $x = $slideBar.Location.X + 6
-      if ($x -gt 364) { $x = -90 }
-      $slideBar.Location = New-Object System.Drawing.Point($x, 0)
-    } catch {}
-  })
-  $slideTimer.Start()
-  $splash.Show()
-  [System.Windows.Forms.Application]::DoEvents()
-} catch {
-  $splash = $null
-}
-function Pump() { try { [System.Windows.Forms.Application]::DoEvents() } catch {} }
+# Console progress: the main app is dead during swap/launch, so progress
+# goes to this console window (the exe runs with console=True).
+try { $Host.UI.RawUI.WindowTitle = "Cronus Launcher Update" } catch {}
+Write-Host "> cronus update" -ForegroundColor Blue
+Write-Host "Updating to v$Version..." -ForegroundColor White
 function Phase([string]$m) {
   Log($m)
-  try { if ($phaseLabel) { $phaseLabel.Text = $m; Pump } } catch {}
+  try { Write-Host $m -ForegroundColor Gray } catch {}
 }
 function WaitPump([int]$seconds) {
-  for ($w = 0; $w -lt ($seconds * 5); $w++) { Pump; Start-Sleep -Milliseconds 200 }
+  Start-Sleep -Seconds $seconds
 }
 try {
   Phase("> waiting for the app to close")
   Log("waiting for PID $ParentPid")
   $deadline = (Get-Date).AddSeconds(__TIMEOUT__)
   while ($true) {
-    try { $p = Get-Process -Id $ParentPid -ErrorAction Stop; Pump; Start-Sleep -Milliseconds 400 }
+    try { $p = Get-Process -Id $ParentPid -ErrorAction Stop; Start-Sleep -Milliseconds 400 }
     catch { break }
     if ((Get-Date) -gt $deadline) { Log("parent still alive; aborting"); exit 3 }
   }
@@ -362,7 +294,7 @@ try {
   if ($launchedPid -eq 0) {
     $msg = "Could not start the new version. It is in place - start it manually: $CurrentExe (details: $LogFile)"
     Log("launch failed after retries; " + $msg)
-    try { if ($phaseLabel) { $phaseLabel.Text = "> " + $msg } } catch {}
+    try { Write-Host ("> " + $msg) -ForegroundColor Red } catch {}
     WaitPump 15
     exit 7
   }
@@ -371,12 +303,10 @@ try {
   exit 0
 } catch {
   Log("failed: $($_.Exception.Message)")
-  try { if ($phaseLabel) { $phaseLabel.Text = "> update failed - see $LogFile" } } catch {}
+  try { Write-Host "> update failed - see $LogFile" -ForegroundColor Red } catch {}
   WaitPump 10
   exit 5
 } finally {
-  try { if ($slideTimer) { $slideTimer.Stop(); $slideTimer.Dispose() } } catch {}
-  try { if ($splash) { $splash.Close(); $splash.Dispose() } } catch {}
   try { Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue } catch {}
 }
 """.replace("__TIMEOUT__", str(int(SWAP_TIMEOUT_SECONDS)))
@@ -515,7 +445,7 @@ class AppUpdater:
             if "--autostart" in sys.argv:
                 app_args += " --autostart"
             proc = subprocess.Popen(
-                ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
+                ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Normal",
                  "-ExecutionPolicy", "Bypass", "-File", script,
                  "-ParentPid", str(os.getpid()),
                  "-CurrentExe", new_exe,

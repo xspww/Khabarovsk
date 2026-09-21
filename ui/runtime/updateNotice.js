@@ -166,7 +166,7 @@
         + '<div class="cronus-updating-title">Updating to v' + esc(overlayVersion || "") + '…</div>'
         + '<div class="cronus-updating-track"><div class="cronus-updating-fill" id="cronus-updating-fill"></div></div>'
         + '<div class="cronus-updating-row"><span id="cronus-updating-pct">0%</span><span class="cronus-updating-dots"><i></i><i></i><i></i></span></div>'
-        + '<div class="cronus-updating-sub">The app restarts itself when the download lands. A loader window stays on screen until it is back.</div></div>';
+        + '<div class="cronus-updating-sub">The app restarts itself when the download lands. A terminal window shows progress until it is back.</div></div>';
       document.body.appendChild(ov);
     } catch (e) {}
   }

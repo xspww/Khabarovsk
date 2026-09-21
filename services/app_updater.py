@@ -11,11 +11,11 @@ Safety rules (deliberate, do not soften without a product decision):
   never auto-starts a farm: after the swap the user starts it themselves.
 - Only HTTPS GitHub Release assets; the exe never runs before its SHA256
   matches the release's checksums.txt entry.
-- The swap script verifies each move. If the new exe cannot be put in
-  place, it rolls back to the .bak so the app is never left with no exe.
-- The new exe is launched with retries and verified alive before the
-  .bak is removed. A failed launch keeps the backup and logs how to
-  restore it, instead of silently leaving the user with nothing open.
+- No .bak backup is kept: the verified staged exe overwrites the current
+  exe directly (a leftover ``*.bak`` from an older version is deleted).
+- The new exe is launched with retries and a long settle wait, because a
+  PyInstaller onefile cold extract plus Defender scan can take a minute.
+  The script only gives up after every attempt clearly fails.
 """
 
 from __future__ import annotations
@@ -117,8 +117,9 @@ def _download(url: str, dest: str, progress: Optional[Callable[[int, int], None]
 
 
 _UPDATER_PS1 = r"""# Cronus one-click updater (generated, user-initiated only).
-# Waits for the old app PID to exit, swaps the verified exe into place,
-# relaunches it, then deletes itself. No network, no payload.
+# Waits for the old app PID to exit, moves the verified exe into place
+# (overwriting directly, no .bak kept), relaunches it, then deletes
+# itself. No network, no payload.
 param([int]$ParentPid, [string]$CurrentExe, [string]$StagedExe, [string]$LogFile)
 $ErrorActionPreference = "Stop"
 function Log([string]$m) { Add-Content -LiteralPath $LogFile ("[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $m) }
@@ -130,75 +131,65 @@ try {
     catch { break }
     if ((Get-Date) -gt $deadline) { Log("parent still alive; aborting"); exit 3 }
   }
+  Start-Sleep -Seconds 1
   if (-not (Test-Path -LiteralPath $StagedExe)) { Log("staged exe missing; aborting"); exit 4 }
-  $bak = "$CurrentExe.bak"
-  if (Test-Path -LiteralPath $bak) { Remove-Item -LiteralPath $bak -Force }
-  try {
-    [System.IO.File]::Move($CurrentExe, $bak)
-  } catch {
-    Log("failed to back up current exe; aborting: $($_.Exception.Message)")
-    exit 5
+  # Drop any leftover backup from an older updater version: no .bak is kept.
+  $oldBak = "$CurrentExe.bak"
+  if (Test-Path -LiteralPath $oldBak) {
+    try { Remove-Item -LiteralPath $oldBak -Force; Log("removed leftover backup") } catch { Log("note: could not remove leftover backup") }
   }
-  if ((-not (Test-Path -LiteralPath $bak)) -or (Test-Path -LiteralPath $CurrentExe)) {
-    Log("backup verify failed; aborting")
-    exit 5
-  }
-  try {
-    [System.IO.File]::Move($StagedExe, $CurrentExe)
-  } catch {
-    Log("swap failed: $($_.Exception.Message); rolling back")
+  # The exe may be briefly locked (Defender / indexer) right after the old
+  # process exits, so retry the replace instead of failing on first lock.
+  $swapped = $false
+  for ($i = 1; $i -le 10; $i++) {
     try {
       if (Test-Path -LiteralPath $CurrentExe) { Remove-Item -LiteralPath $CurrentExe -Force }
-      [System.IO.File]::Move($bak, $CurrentExe)
-      Log("rolled back to previous exe")
+      Move-Item -LiteralPath $StagedExe -Destination $CurrentExe -Force
+      if (Test-Path -LiteralPath $CurrentExe) { $swapped = $true; break }
     } catch {
-      Log("ROLLBACK FAILED: $($_.Exception.Message); previous exe is at $bak")
+      Log("swap try $i locked: $($_.Exception.Message)")
     }
-    exit 6
+    Start-Sleep -Seconds 2
   }
-  if (-not (Test-Path -LiteralPath $CurrentExe)) {
-    Log("swap verify failed; rolling back")
-    try {
-      [System.IO.File]::Move($bak, $CurrentExe)
-      Log("rolled back to previous exe")
-    } catch {
-      Log("ROLLBACK FAILED: $($_.Exception.Message); previous exe is at $bak")
-    }
-    exit 6
-  }
+  if (-not $swapped) { Log("swap failed after retries; staged exe left at $StagedExe"); exit 6 }
   Log("swapped; launching")
+  $workDir = Split-Path -Parent $CurrentExe
   $launchedPid = 0
-  for ($attempt = 1; $attempt -le 3; $attempt++) {
+  # A onefile cold extract plus Defender scan can take a minute, so give
+  # each attempt a long settle window instead of a few seconds.
+  for ($attempt = 1; $attempt -le 5; $attempt++) {
     try {
-      $p = Start-Process -FilePath $CurrentExe -WorkingDirectory (Split-Path -Parent $CurrentExe) -PassThru
+      $p = Start-Process -FilePath $CurrentExe -WorkingDirectory $workDir -PassThru
       if ($null -eq $p) {
         Log("launch attempt ${attempt}: no process handle returned")
       } else {
         Log("launch attempt $attempt started PID $($p.Id); waiting")
-        Start-Sleep -Seconds 6
+        Start-Sleep -Seconds 10
+        try {
+          $null = Get-Process -Id $p.Id -ErrorAction Stop
+        } catch {
+          Log("launch attempt ${attempt}: process exited within 10s")
+          Start-Sleep -Seconds 2
+          continue
+        }
+        Start-Sleep -Seconds 25
         try {
           $alive = Get-Process -Id $p.Id -ErrorAction Stop
           $launchedPid = $p.Id
           Log("new version running (PID $launchedPid)")
           break
         } catch {
-          Log("launch attempt ${attempt}: process exited quickly")
+          Log("launch attempt ${attempt}: process gone during settle")
         }
       }
     } catch {
       Log("launch attempt $attempt failed: $($_.Exception.Message)")
     }
-    Start-Sleep -Seconds 2
+    Start-Sleep -Seconds 3
   }
   if ($launchedPid -eq 0) {
-    Log("launch failed after retries (new exe is in place; previous exe kept at $bak)")
+    Log("launch failed after retries, but the new exe is in place - start it manually: $CurrentExe")
     exit 7
-  }
-  try {
-    if (Test-Path -LiteralPath $bak) { Remove-Item -LiteralPath $bak -Force }
-    Log("removed backup; update complete")
-  } catch {
-    Log("note: could not remove backup: $($_.Exception.Message)")
   }
   Log("done")
   exit 0

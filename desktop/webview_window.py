@@ -83,6 +83,27 @@ def _load_bundled_kanit_fonts() -> bool:
     return False
 
 
+def _webview2_preflight() -> bool:
+    """Synchronously force the .NET/WebView2 load before creating any widget.
+
+    QtWebView2Widget initializes async (QTimer.singleShot -> _init_webview),
+    so a broken frozen layout (missing lib/*.dll) only surfaces as a dead
+    black window + thread tracebacks. Preflight turns that into a clean
+    False here, and the caller falls back to the system browser instead.
+    """
+    try:
+        from qtwebview2._dotnet_bridge import load_dotnet_env
+    except Exception as exc:
+        flog_kv("MAIN", "desktop_webview_preflight_unavailable", "warning", error=str(exc))
+        return False
+    try:
+        load_dotnet_env()
+        return True
+    except Exception as exc:
+        flog_kv("MAIN", "desktop_webview_preflight_failed", "warning", error=str(exc))
+        return False
+
+
 class DesktopWindow:
     """Deep module: owns the desktop window behind a small interface.
 
@@ -101,6 +122,8 @@ class DesktopWindow:
         on_first_show: Optional[Callable[[], None]] = None,
     ) -> bool:
         _prepare_webview_env()
+        if not _webview2_preflight():
+            return False
         try:
             from PySide6.QtCore import QPoint, QSize, QTimer, Qt, QCoreApplication
             from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap

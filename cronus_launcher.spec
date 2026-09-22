@@ -22,6 +22,37 @@ import os
 # Run pyinstaller from the repository root so these relative paths resolve.
 block_cipher = None
 
+
+def _qtwebview2_lib_datas():
+    """Mirror qtwebview2/lib/* to top-level lib/ in the bundle.
+
+    Upstream hook (qtwebview2 0.5.0) collects lib/ under qtwebview2/lib/,
+    but _dotnet_bridge.get_absolute_path() resolves sys._MEIPASS/lib/...
+    in frozen builds, so the exe ships without findable .NET assemblies
+    (v2.2.0 black-window crash). This maps the same tree to where the
+    bridge actually looks. Subdirectory layout (runtimes/...) is preserved
+    because .NET probes native deps relative to the Core assembly.
+    """
+    try:
+        import pathlib
+        import qtwebview2
+    except Exception:
+        return []
+    root = pathlib.Path(qtwebview2.__file__).resolve().parent / "lib"
+    if not root.is_dir():
+        return []
+    out = []
+    for path in sorted(root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel_parent = path.parent.relative_to(root)
+        dest = "lib" if str(rel_parent) == "." else str(pathlib.Path("lib") / rel_parent).replace("\\", "/")
+        out.append((str(path), dest))
+    return out
+
+
+_QTWEBVIEW2_LIB_DATAS = _qtwebview2_lib_datas()
+
 a = Analysis(
     ["main.py"],
     pathex=["."],
@@ -30,6 +61,7 @@ a = Analysis(
         ("assets", "assets"),
         ("ui", "ui"),
         ("lua", "lua"),
+        *_QTWEBVIEW2_LIB_DATAS,
     ],
     hiddenimports=[
         "PIL",

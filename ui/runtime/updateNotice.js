@@ -197,7 +197,8 @@
       var label = job.progress || job.state || "updating";
       setLabel(label.charAt(0).toUpperCase() + label.slice(1) + "…", job.msg || "", true);
       setProgress(progressPct(job));
-      statusTimer = setTimeout(pollStatus, STATUS_POLL_MS);
+      // Hidden tab: 5s cadence is enough for a progress bar nobody sees.
+      statusTimer = setTimeout(pollStatus, document.hidden ? 5000 : STATUS_POLL_MS);
     }).catch(function () {
       // Server gone mid-poll: either restarting into the new version (good)
       // or something died. Assume reboot, show the loader, stop polling.
@@ -247,7 +248,7 @@
   }
 
   function onButton(version, latestUrl) {
-    get("/api/status").then(function (s) {
+    get("/api/status/lite").then(function (s) {
       if (s && s.running) {
         confirmModal(version, function () { applyUpdate(version, latestUrl, true); });
       } else {

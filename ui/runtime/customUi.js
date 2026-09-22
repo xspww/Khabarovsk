@@ -69,7 +69,14 @@
   };
   if (!_gridPickerObserved) {
     _gridPickerObserved = true;
-    new MutationObserver(_ensureGridPicker).observe(document.body, { childList: true, subtree: true });
+    const _gridObserver = new MutationObserver(() => {
+      if (document.hidden) return;
+      _ensureGridPicker();
+      if (document.getElementById('window-grid-preset')?.dataset.gridPickerReady === '1') {
+        try { _gridObserver.disconnect(); } catch (_) {}
+      }
+    });
+    _gridObserver.observe(document.body, { childList: true, subtree: true });
     // fallback single retry after dashboard render
     setTimeout(_ensureGridPicker, 1500);
   }
@@ -91,7 +98,11 @@
       || lower.includes('missing') || lower.includes('not found') || lower.includes('required')) {
       type = 'error';
     }
-    while (host.children.length >= 4) host.firstElementChild?.remove();
+    while (host.children.length >= 4) {
+      const old = host.firstElementChild;
+      try { old && clearTimeout(old._timer); } catch (_) {}
+      old?.remove();
+    }
     const icons = {
       success: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#6366f1"/><path d="M8.2 12.2l2.6 2.6 4.5-5" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
       error: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#f87171"/><path d="M15 9l-6 6M9 9l6 6" stroke="white" stroke-width="1.9" stroke-linecap="round"/></svg>',
@@ -107,7 +118,7 @@
     item.append(icon, label);
     host.appendChild(item);
     requestAnimationFrame(() => item.classList.add('show'));
-    setTimeout(() => {
+    item._timer = setTimeout(() => {
       item.classList.remove('show');
       item.classList.add('hide');
       setTimeout(() => item.remove(), 200);
@@ -165,7 +176,7 @@
         const user = row.dataset.user;
         const st = statusOf(row);
         const checked = isRunning(st.key) ? ' checked' : '';
-        return `<label class="close-pick${checked ? ' is-checked' : ''}"><input type="checkbox" data-close-user="${user}"${checked}><span class="close-check" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="close-name">${escPick(row.querySelector('.name')?.textContent?.trim() || user)}</span><span class="close-st st-${st.key}">${escPick(st.label)}</span></label>`;
+        return `<label class="close-pick${checked ? ' is-checked' : ''}"><input type="checkbox" data-close-user="${escPick(user)}"${checked}><span class="close-check" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="close-name">${escPick(row.querySelector('.name')?.textContent?.trim() || user)}</span><span class="close-st st-${st.key}">${escPick(st.label)}</span></label>`;
       }).join('') : '<div class="v-empty">No accounts found.</div>'}</div>`;
       foot.innerHTML = '<div class="close-pick-foot"><div class="close-pick-tools"><button class="btn ghost" id="close-select-all">Select All</button><button class="btn ghost" id="close-clear">Clear</button></div><button class="btn danger" id="close-selected-confirm">Close Selected</button></div>';
       backdrop.hidden = false;
@@ -233,7 +244,7 @@
   syncLimiterActions();
   // Replaced 100ms polling with MutationObserver (perf)
   const _limiterRoot = document.getElementById('limiter-save')?.closest('.card') || document.body;
-  new MutationObserver(syncLimiterActions).observe(_limiterRoot, { attributes: true, subtree: true, attributeFilter: ['class'] });
+  new MutationObserver(() => { if (!document.hidden) syncLimiterActions(); }).observe(_limiterRoot, { attributes: true, subtree: true, attributeFilter: ['class'] });
 
   // Floating description editor: the dashboard renders the editor inline in
   // the row and handles save/cancel/toolbar itself. We only lift the editor
@@ -289,10 +300,22 @@
   };
   document.addEventListener('input', (event) => {
     const ta = event.target instanceof Element ? event.target.closest('.desc-textarea') : null;
-    if (ta?.dataset.user) descDrafts[descKey(ta.dataset.user)] = ta.value;
+    if (ta?.dataset.user) {
+      descDrafts[descKey(ta.dataset.user)] = ta.value;
+      // Cap: one draft per account, drop oldest beyond 50.
+      const keys = Object.keys(descDrafts);
+      if (keys.length > 50) delete descDrafts[keys[0]];
+    }
   }, true);
-  new MutationObserver(() => { try { refloatDescEditor(); } catch (_) {} })
-    .observe(document.body, { childList: true, subtree: true });
+  let _refloatQueued = false;
+  new MutationObserver(() => {
+    if (_refloatQueued || document.hidden) return;
+    _refloatQueued = true;
+    requestAnimationFrame(() => {
+      _refloatQueued = false;
+      try { refloatDescEditor(); } catch (_) {}
+    });
+  }).observe(document.body, { childList: true, subtree: true });
   const refocusDescTextarea = () => {
     const ta = document.querySelector('#accounts-table .desc-editor.desc-floating .desc-textarea');
     if (ta && document.activeElement !== ta) {

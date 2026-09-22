@@ -109,9 +109,9 @@
     $("executor-retry")?.addEventListener("click", async () => { try { renderRelaunch(await api("/troubleshoot/executor/relaunch", "POST", {}), await api("/config")); } catch (error) { show(error.message, true); } });
     $("executor-check-now")?.addEventListener("click", async () => { try { renderStatus(await api("/troubleshoot/executor/check", "POST", {})); show("Compatibility check complete"); } catch (error) { show(error.message, true); } });
   }
-  const observer = new MutationObserver(buildCard);
+  const observer = new MutationObserver(() => { if (!document.hidden) buildCard(); });
   observer.observe(document.documentElement, { childList: true, subtree: true });
   buildCard();
   setTimeout(load, 500);
-  setInterval(() => { if ($("view-troubleshoot")?.classList.contains("active")) load(); }, 30000);
+  setInterval(() => { if (!document.hidden && $("view-troubleshoot")?.classList.contains("active")) load(); }, 30000);
 })();

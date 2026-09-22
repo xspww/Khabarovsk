@@ -11,23 +11,22 @@ import urllib.request
 from typing import Any, Dict, Optional, List, Tuple
 from app_paths import APP_DATA_DIR, APP_ROOT_DIR, IS_COMPILED, path_targets_current_exe
 from core import flog_kv
+from desktop.constants import APP_USER_AGENT, DEFAULT_PORT, INSTANCE_LOCK_PORT, LOOPBACK_HOST, PORT_SCAN_COUNT
 
 
-APP_USER_AGENT = "CronusLauncher/RT"
 BASE_DIR = APP_ROOT_DIR
-HOST = "127.0.0.1"
+HOST = LOOPBACK_HOST
 INSTANCE_TOKEN = secrets.token_urlsafe(32)
 _APP_MUTEX = None
 _INSTANCE_SOCKET = None
 _INSTANCE_STATE_FILE = os.path.join(APP_DATA_DIR, "cronus_rt_instance.json")
 _PYTHON_ENTRYPOINTS: Tuple[Tuple[str, ...], ...] = (
     ("main.py",),
-    ("ops", "run_backend.py"),
 )
 
 
-def _find_free_port(start: int = 7777) -> int:
-    for p in range(start, start + 20):
+def _find_free_port(start: int = DEFAULT_PORT) -> int:
+    for p in range(start, start + PORT_SCAN_COUNT):
         try:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
                 s.bind((HOST, p))
@@ -37,8 +36,8 @@ def _find_free_port(start: int = 7777) -> int:
     return start
 
 
-def _find_existing_dashboard(start: int = 7777) -> Optional[int]:
-    for p in range(start, start + 20):
+def _find_existing_dashboard(start: int = DEFAULT_PORT) -> Optional[int]:
+    for p in range(start, start + PORT_SCAN_COUNT):
         try:
             req = urllib.request.Request(
                 f"http://{HOST}:{p}/api/status",
@@ -72,12 +71,6 @@ def _cmdline_part_matches_entrypoint(part: str, cwd: str, entrypoint: str) -> bo
     return bool(candidate and candidate == entrypoint)
 
 
-def _module_targets_this_app(module_name: str, cwd: str) -> bool:
-    if not cwd or os.path.normcase(os.path.abspath(cwd)) != os.path.normcase(os.path.abspath(BASE_DIR)):
-        return False
-    return str(module_name or "").strip() == "ops.run_backend"
-
-
 def _cmdline_targets_this_app(cmdline: List[str], cwd: str = "") -> bool:
     try:
         cwd_norm = os.path.normcase(os.path.abspath(cwd or "")) if cwd else ""
@@ -88,11 +81,8 @@ def _cmdline_targets_this_app(cmdline: List[str], cwd: str = "") -> bool:
     if not has_python:
         return False
     entrypoints = tuple(_entrypoint_path(item) for item in _PYTHON_ENTRYPOINTS)
-    for index, part in enumerate(parts):
-        text = str(part or "")
-        if any(_cmdline_part_matches_entrypoint(text, cwd_norm, entrypoint) for entrypoint in entrypoints):
-            return True
-        if text == "-m" and index + 1 < len(parts) and _module_targets_this_app(parts[index + 1], cwd_norm):
+    for part in parts:
+        if any(_cmdline_part_matches_entrypoint(str(part or ""), cwd_norm, entrypoint) for entrypoint in entrypoints):
             return True
     return False
 
@@ -276,33 +266,6 @@ def _find_same_app_process() -> Optional[int]:
     return None
 
 
-def prepare_backend_single_instance(port: int) -> bool:
-    state = _read_instance_state()
-    pid = int(state.get("pid") or 0)
-    if pid and _is_pid_alive(pid) and _is_same_cronus_process(pid):
-        flog_kv("MAIN", "backend_duplicate_blocked", "warning", pid=pid, port=state.get("port") or "")
-        return False
-
-    same_pid = _find_same_app_process()
-    if same_pid:
-        flog_kv("MAIN", "backend_duplicate_blocked", "warning", pid=same_pid)
-        return False
-
-    existing_port = _find_existing_dashboard(7777)
-    if existing_port is not None:
-        flog_kv("MAIN", "backend_duplicate_blocked", "warning", existing_port=existing_port)
-        return False
-
-    mutex_ok = _acquire_single_instance_mutex()
-    socket_ok = _acquire_instance_socket()
-    if (not mutex_ok) or (not socket_ok):
-        flog_kv("MAIN", "backend_duplicate_blocked", "warning", mutex_ok=mutex_ok, socket_ok=socket_ok)
-        return False
-
-    _write_instance_state(int(port))
-    return True
-
-
 def _acquire_single_instance_mutex() -> bool:
     global _APP_MUTEX
     try:
@@ -320,33 +283,12 @@ def _acquire_instance_socket() -> bool:
     global _INSTANCE_SOCKET
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind((HOST, 7711))
+        sock.bind((HOST, INSTANCE_LOCK_PORT))
         sock.listen(1)
         _INSTANCE_SOCKET = sock
         return True
     except OSError:
         return False
-
-
-def _has_older_main_process() -> bool:
-    try:
-        import psutil
-
-        current = psutil.Process(os.getpid())
-        current_ct = float(current.create_time())
-        for proc in psutil.process_iter(["pid", "name", "cmdline", "create_time"]):
-            if proc.info.get("pid") == current.pid:
-                continue
-            cmdline = " ".join(proc.info.get("cmdline") or []).lower()
-            if "main.py" not in cmdline:
-                continue
-            if "python" not in (proc.info.get("name") or "").lower() and "python" not in cmdline:
-                continue
-            if float(proc.info.get("create_time") or 0.0) <= current_ct:
-                return True
-    except Exception:
-        return False
-    return False
 
 
 clear_instance_state = _clear_instance_state

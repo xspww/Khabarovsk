@@ -146,6 +146,7 @@ function enhanceSelect(select) {
 }
 
 function syncAll() {
+  if (document.hidden) return;
   SELECTORS.forEach((selector) => {
     document.querySelectorAll(selector).forEach((select) => {
       enhanceSelect(select);
@@ -169,4 +170,9 @@ window.CronusCustomSelectSync = (id) => {
 };
 
 syncAll();
-setInterval(syncAll, 400);
+// Was 400ms forever (150 DOM walks/min even when idle/hidden).
+// 2000ms + hidden-skip + refocus resync: no visual change.
+setInterval(syncAll, 2000);
+document.addEventListener("visibilitychange", function () {
+  if (!document.hidden) syncAll();
+});

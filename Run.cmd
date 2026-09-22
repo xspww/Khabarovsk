@@ -7,7 +7,13 @@ set PYTHONIOENCODING=utf-8
 set CRONUS_CONSOLE_ACTIVITY=1
 set CRONUS_CONSOLE_COLOR=1
 cd /d "%~dp0"
-python main.py
+where python >nul 2>nul
+if errorlevel 1 (
+  echo Python not found in PATH. Install Python 3.10+ and retry.
+  pause
+  exit /b 1
+)
+python main.py %*
 if errorlevel 1 (
   echo.
   echo Cronus Launcher exited with an error.

@@ -48,6 +48,13 @@ a = Analysis(
         "pandas",
         "scipy",
         "pytest",
+        # WebView2-only shell (desktop/webview_window.py): never bundle the
+        # QtWebEngine Chromium stack (~100MB, 1.3GB runtime). qtwebview2
+        # ships its own PyInstaller hook for lib/.
+        "PySide6.QtWebEngineWidgets",
+        "PySide6.QtWebEngineCore",
+        "PySide6.QtWebEngineQuick",
+        "PySide6.QtWebEngine",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,

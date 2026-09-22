@@ -56,6 +56,53 @@ def register(app, ctx: ApiContext) -> None:
     def api_status():
         return farm.get_status()
 
+    @app.get("/api/status/lite")
+    def api_status_lite():
+        """Lightweight poll for background refresh: revision + counts only.
+
+        Full /api/status carries ~150 fields per account and re-renders the
+        whole table. Background timers (5s fallback, 60s keepalive, update
+        notice) must use this instead to avoid Chromium heap growth.
+        """
+        try:
+            full = farm.get_status()
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+        try:
+            accounts = full.get("accounts") if isinstance(full, dict) else []
+        except Exception:
+            accounts = []
+        lite_accounts = []
+        try:
+            for item in (accounts or []):
+                if not isinstance(item, dict):
+                    continue
+                lite_accounts.append(
+                    {
+                        "username": str(item.get("username") or ""),
+                        "account_id": str(item.get("account_id") or item.get("username") or ""),
+                        "state": str(item.get("state") or ""),
+                        "public_state": str(item.get("public_state") or ""),
+                        "blocked_reason": str(item.get("blocked_reason") or ""),
+                        "pid": item.get("pid"),
+                        "process_alive": bool(item.get("process_alive", False)),
+                    }
+                )
+        except Exception:
+            lite_accounts = []
+        return {
+            "ok": True,
+            "running": bool(full.get("running", False)),
+            "status_revision": int(full.get("status_revision", -1) or -1),
+            "status_updated_at": float(full.get("status_updated_at") or 0.0),
+            "total_accounts": int(full.get("total_accounts", len(lite_accounts)) or len(lite_accounts)),
+            "in_game": int(full.get("in_game", 0) or 0),
+            "failed": int(full.get("failed", 0) or 0),
+            "queued": int(full.get("queued", 0) or 0),
+            "launching": int(full.get("launching", 0) or 0),
+            "accounts": lite_accounts,
+        }
+
     @app.get("/api/runtime/health")
     def api_runtime_health():
         return farm.get_runtime_health()

@@ -15,8 +15,6 @@ if BASE_DIR not in sys.path:
 from app_paths import APP_NAME, IS_COMPILED, resource_path
 from desktop import console_output
 
-APP_USER_AGENT = "CronusLauncher/RT"
-APP_ICON_FILE = "cronus_icon.png"
 REQUIREMENTS_FILE = os.path.join(BASE_DIR, "requirements.txt")
 _STARTUP_COLOR_SUPPORT: Optional[bool] = None
 _COLOR_GREEN = "\x1b[92m"
@@ -216,7 +214,6 @@ ROBLOX_INSTALLER = RobloxInstallManager(
 
 
 _EXECUTOR_RESUME_AFTER_UPDATE = False
-_previous_compatibility_payload: dict = {}
 
 
 def _executor_base_transition(event: str, payload: dict) -> None:
@@ -252,11 +249,9 @@ def _executor_base_transition(event: str, payload: dict) -> None:
 
 
 def _executor_transition(event: str, payload: dict) -> None:
-    global _previous_compatibility_payload
     _executor_base_transition(event, payload)
     if event == "compatible" and (payload.get("became_compatible") or payload.get("executor_version_changed")):
         EXECUTOR_RELAUNCHER.request_relaunch("weao_compatibility_or_executor_version_changed")
-    _previous_compatibility_payload = dict(payload)
 
 
 EXECUTOR_TRACKER = ExecutorCompatibilityService(

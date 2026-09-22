@@ -48,7 +48,7 @@
     $("cronus-auto-update-on-boot")?.addEventListener("change", (event) => save({ auto_update_on_boot: !!event.target.checked }));
   }
   bind();
-  new MutationObserver(bind).observe(document.documentElement, { childList: true, subtree: true });
+  new MutationObserver(() => { if (!document.hidden) bind(); }).observe(document.documentElement, { childList: true, subtree: true });
   setTimeout(load, 500);
-  setInterval(() => { if ($("view-cronus")?.classList.contains("active")) load(); }, 30000);
+  setInterval(() => { if (!document.hidden && $("view-cronus")?.classList.contains("active")) load(); }, 30000);
 })();

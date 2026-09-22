@@ -2,10 +2,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from typing import Optional
-from typing import Iterable
-from typing import Dict
-from typing import Any
+from typing import Any, Dict, Iterable, Optional
 COLOR_RESET = "\x1b[0m"
 ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 def enable_virtual_terminal(stream: Any = None) -> bool:

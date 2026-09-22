@@ -111,7 +111,7 @@ def register(app, ctx: ApiContext) -> None:
 
     @app.post("/api/update/open")
     def api_update_open():
-        # QWebEngineView (the desktop window) drops window.open() silently,
+        # The embedded WebView2 window drops window.open() silently,
         # so opening the Releases page must happen here via the OS browser.
         snap = check_app_update()
         url = str(snap.get("latest_url") or "").strip()

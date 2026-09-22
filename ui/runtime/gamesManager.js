@@ -785,7 +785,7 @@
   // Debounced + self-muted: dashboard re-renders the table on every status
   // tick, so run at most once per burst and never observe our own writes.
   const observer = new MutationObserver(() => {
-    if (scheduled) return;
+    if (scheduled || document.hidden) return;
     scheduled = true;
     setTimeout(() => {
       scheduled = false;
@@ -815,6 +815,7 @@
     });
   } catch (_) {}
   setInterval(() => {
+    if (document.hidden) return;
     refreshGames();
     refreshAccountGames();
   }, 30000);

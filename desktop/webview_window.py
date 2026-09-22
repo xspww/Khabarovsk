@@ -11,9 +11,12 @@ from version import app_display_version
 from core import flog_kv
 from desktop.console_icon import APP_ICON_FILE
 
-# Evergreen WebView2 Runtime download (bootstrapper). Opened only when the
-# runtime is missing and the user accepts the one-time prompt.
-WEBVIEW2_DOWNLOAD_URL = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+# Evergreen WebView2 bootstrapper (~2MB downloader, Microsoft official).
+# Installed silently on first launch when missing so every machine gets the
+# real embedded window instead of the browser fallback.
+WEBVIEW2_BOOTSTRAPPER_URL = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+_WEBVIEW2_INSTALL_TIMEOUT_SECONDS = 300.0
+_WEBVIEW2_MAX_DOWNLOAD_BYTES = 10 * 1024 * 1024
 _WEBVIEW2_CLIENT_KEY = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
 _WEBVIEW2_PROMPT_FLAG = os.path.join(APP_DATA_DIR, "webview2_install_prompted")
 
@@ -64,34 +67,106 @@ def _mark_webview2_prompted() -> None:
         pass
 
 
-def _offer_webview2_install() -> None:
-    """One-time Yes/No prompt to download the WebView2 Runtime.
+def _download_webview2_bootstrapper() -> str:
+    """Download the Evergreen bootstrapper. Returns the exe path or ''."""
+    try:
+        import urllib.request
+    except Exception as exc:
+        flog_kv("MAIN", "desktop_webview_download_unavailable", "warning", error=str(exc))
+        return ""
+    try:
+        target_dir = os.path.join(CACHE_DIR, "webview2_bootstrapper")
+        os.makedirs(target_dir, exist_ok=True)
+        target = os.path.join(target_dir, "MicrosoftEdgeWebview2Setup.exe")
+    except Exception as exc:
+        flog_kv("MAIN", "desktop_webview_download_dir_failed", "warning", error=str(exc))
+        return ""
+    try:
+        req = urllib.request.Request(
+            WEBVIEW2_BOOTSTRAPPER_URL,
+            headers={"User-Agent": "CronusLauncher"},
+        )
+        with urllib.request.urlopen(req, timeout=60.0) as resp:
+            chunks = []
+            received = 0
+            while True:
+                piece = resp.read(256 * 1024)
+                if not piece:
+                    break
+                received += len(piece)
+                if received > _WEBVIEW2_MAX_DOWNLOAD_BYTES:
+                    flog_kv("MAIN", "desktop_webview_download_too_large", "warning", received=received)
+                    return ""
+                chunks.append(piece)
+        with open(target, "wb") as handle:
+            for piece in chunks:
+                handle.write(piece)
+        return target
+    except Exception as exc:
+        flog_kv("MAIN", "desktop_webview_download_failed", "warning", error=str(exc))
+        return ""
 
-    Shown only when the runtime is missing and we have never asked before.
-    Never blocks the dashboard: the caller falls back to the system browser
-    either way.
+
+def _install_webview2_runtime(setup_path: str) -> bool:
+    """Run the bootstrapper silently. Returns True on exit code 0."""
+    try:
+        import subprocess
+    except Exception as exc:
+        flog_kv("MAIN", "desktop_webview_install_unavailable", "warning", error=str(exc))
+        return False
+    try:
+        flog_kv("MAIN", "desktop_webview_install_start")
+        proc = subprocess.run(
+            [setup_path, "/silent", "/install"],
+            timeout=_WEBVIEW2_INSTALL_TIMEOUT_SECONDS,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        ok = int(getattr(proc, "returncode", 1) or 1) == 0
+        flog_kv("MAIN", "desktop_webview_install_done", ok=ok)
+        return ok
+    except Exception as exc:
+        flog_kv("MAIN", "desktop_webview_install_failed", "warning", error=str(exc))
+        return False
+
+
+def _ensure_webview2_runtime() -> str:
+    """Return the runtime version, installing it first when missing.
+
+    One-time Yes/No prompt, then download + silent install + recheck.
+    Returns '' when the user declines, is offline, or the install fails,
+    in which case the caller falls back to the system browser.
     """
+    version = _read_webview2_version()
+    if version:
+        return version
     if _webview2_prompted_before():
-        return
+        return ""
     _mark_webview2_prompted()
     try:
         choice = ctypes.windll.user32.MessageBoxW(
             None,
             "Microsoft Edge WebView2 Runtime was not found on this PC.\n\n"
-            "The dashboard will open in your browser instead.\n"
-            "Download the free WebView2 Runtime for the built-in window?",
+            "Install it now (one-time download, needs internet)?\n"
+            "Otherwise the dashboard opens in your browser instead.",
             f"{APP_NAME} - WebView2 Runtime missing",
             0x00000004 | 0x00000040,  # MB_YESNO | MB_ICONINFORMATION
         )
     except Exception:
-        return
-    if int(choice or 0) == 6:  # IDYES
-        try:
-            import webbrowser
-
-            webbrowser.open(WEBVIEW2_DOWNLOAD_URL)
-        except Exception as exc:
-            flog_kv("MAIN", "desktop_webview_download_open_failed", "warning", error=str(exc))
+        return ""
+    if int(choice or 0) != 6:  # IDYES
+        flog_kv("MAIN", "desktop_webview_install_declined")
+        return ""
+    setup_path = _download_webview2_bootstrapper()
+    if not setup_path:
+        return ""
+    _install_webview2_runtime(setup_path)
+    version = _read_webview2_version()
+    if version:
+        flog_kv("MAIN", "desktop_webview_runtime_ready", version=version)
+    else:
+        flog_kv("MAIN", "desktop_webview_runtime_still_missing", "warning")
+    return version
 
 
 def _webview_data_dir() -> str:
@@ -203,14 +278,12 @@ class DesktopWindow:
         shutdown_event: Any,
         on_first_show: Optional[Callable[[], None]] = None,
     ) -> bool:
-        runtime_version = _read_webview2_version()
+        runtime_version = _ensure_webview2_runtime()
         if not runtime_version:
-            # Clean machine without the Evergreen runtime (the VM case):
-            # WebView2 creation would fail async with FileNotFoundException
-            # AFTER the window shows (black window). Bail out early so the
-            # caller falls back to the system browser instead.
+            # Clean machine where the user declined / is offline / install
+            # failed: bail out early so the caller falls back to the system
+            # browser instead of showing a dead black window.
             flog_kv("MAIN", "desktop_webview_runtime_missing", "warning")
-            _offer_webview2_install()
             return False
         _prepare_webview_env()
         if not _webview2_preflight():

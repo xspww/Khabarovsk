@@ -6,10 +6,92 @@ import signal
 import sys
 from typing import Any, Callable, Optional
 
-from app_paths import APP_NAME, APP_ROOT_DIR, CACHE_DIR, resource_path
+from app_paths import APP_DATA_DIR, APP_NAME, APP_ROOT_DIR, CACHE_DIR, resource_path
 from version import app_display_version
 from core import flog_kv
 from desktop.console_icon import APP_ICON_FILE
+
+# Evergreen WebView2 Runtime download (bootstrapper). Opened only when the
+# runtime is missing and the user accepts the one-time prompt.
+WEBVIEW2_DOWNLOAD_URL = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"
+_WEBVIEW2_CLIENT_KEY = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+_WEBVIEW2_PROMPT_FLAG = os.path.join(APP_DATA_DIR, "webview2_install_prompted")
+
+
+def _read_webview2_version() -> str:
+    """Return the installed WebView2 Runtime version, or '' when missing.
+
+    Pure registry read (HKLM/HKCU, 64/32-bit views). Works frozen or not,
+    never raises, cheap enough to run on every boot.
+    """
+    try:
+        import winreg
+    except Exception:
+        return ""
+    base = "SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\" + _WEBVIEW2_CLIENT_KEY
+    base_x86 = "SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\" + _WEBVIEW2_CLIENT_KEY
+    roots_keys = (
+        (winreg.HKEY_LOCAL_MACHINE, base),
+        (winreg.HKEY_LOCAL_MACHINE, base_x86),
+        (winreg.HKEY_CURRENT_USER, base),
+    )
+    for root, subkey in roots_keys:
+        for view in (0, winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+            try:
+                flags = winreg.KEY_READ | view if view else winreg.KEY_READ
+                with winreg.OpenKey(root, subkey, 0, flags) as key:
+                    version, _ = winreg.QueryValueEx(key, "pv")
+                if str(version or "").strip():
+                    return str(version).strip()
+            except Exception:
+                continue
+    return ""
+
+
+def _webview2_prompted_before() -> bool:
+    try:
+        return os.path.exists(_WEBVIEW2_PROMPT_FLAG)
+    except Exception:
+        return True
+
+
+def _mark_webview2_prompted() -> None:
+    try:
+        os.makedirs(os.path.dirname(_WEBVIEW2_PROMPT_FLAG), exist_ok=True)
+        with open(_WEBVIEW2_PROMPT_FLAG, "w", encoding="utf-8") as handle:
+            handle.write("1")
+    except Exception:
+        pass
+
+
+def _offer_webview2_install() -> None:
+    """One-time Yes/No prompt to download the WebView2 Runtime.
+
+    Shown only when the runtime is missing and we have never asked before.
+    Never blocks the dashboard: the caller falls back to the system browser
+    either way.
+    """
+    if _webview2_prompted_before():
+        return
+    _mark_webview2_prompted()
+    try:
+        choice = ctypes.windll.user32.MessageBoxW(
+            None,
+            "Microsoft Edge WebView2 Runtime was not found on this PC.\n\n"
+            "The dashboard will open in your browser instead.\n"
+            "Download the free WebView2 Runtime for the built-in window?",
+            f"{APP_NAME} - WebView2 Runtime missing",
+            0x00000004 | 0x00000040,  # MB_YESNO | MB_ICONINFORMATION
+        )
+    except Exception:
+        return
+    if int(choice or 0) == 6:  # IDYES
+        try:
+            import webbrowser
+
+            webbrowser.open(WEBVIEW2_DOWNLOAD_URL)
+        except Exception as exc:
+            flog_kv("MAIN", "desktop_webview_download_open_failed", "warning", error=str(exc))
 
 
 def _webview_data_dir() -> str:
@@ -121,6 +203,15 @@ class DesktopWindow:
         shutdown_event: Any,
         on_first_show: Optional[Callable[[], None]] = None,
     ) -> bool:
+        runtime_version = _read_webview2_version()
+        if not runtime_version:
+            # Clean machine without the Evergreen runtime (the VM case):
+            # WebView2 creation would fail async with FileNotFoundException
+            # AFTER the window shows (black window). Bail out early so the
+            # caller falls back to the system browser instead.
+            flog_kv("MAIN", "desktop_webview_runtime_missing", "warning")
+            _offer_webview2_install()
+            return False
         _prepare_webview_env()
         if not _webview2_preflight():
             return False

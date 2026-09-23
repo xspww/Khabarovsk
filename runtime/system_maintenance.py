@@ -51,6 +51,8 @@ class SystemMaintenance(
         self._last_cpu_limiter_apply_at = 0.0
         self._cpu_limiter_released = False
         self._last_window_resize_at = 0.0
+        self._last_auto_minimize_at = 0.0
+        self._auto_minimize_first_seen: Dict[int, float] = {}
         self._last_popup_scan_at: Dict[str, float] = {}
         self._last_popup_batch_at = 0.0
         self._popup_scan_cursor = 0
@@ -117,6 +119,11 @@ class SystemMaintenance(
             ("maintenance:performance", performance_interval, self._run_performance, "maintenance_performance"),
             ("maintenance:housekeeping", housekeeping_interval, self._run_housekeeping, "maintenance_housekeeping"),
             ("maintenance:reconcile", self._reconcile_interval(), self._run_reconcile, "periodic_reconcile"),
+            # Auto-minimize needs seconds granularity (user sets 1-3600s).
+            # Performance runs every 10-60s so a dedicated 5s job keeps the
+            # "minimize after N seconds" promise without EnumWindows spam
+            # (inner 2s throttle still applies).
+            ("maintenance:auto_minimize", 5.0, self._run_auto_minimize, "maintenance_auto_minimize"),
         ]
         self._maintenance_job_keys = [key for key, _interval, _callback, _reason in jobs]
         stagger = min(2.0, max(0.5, base / max(1, len(jobs))))
@@ -158,6 +165,12 @@ class SystemMaintenance(
         self._apply_auto_process_priority()
         self._apply_cpu_limiter()
         self._enforce_window_resize()
+
+    def _run_auto_minimize(self, job: RuntimeScheduledJob) -> None:
+        try:
+            self._enforce_auto_minimize()
+        except Exception:
+            pass
 
     def _run_reconcile(self, job: RuntimeScheduledJob) -> None:
         self._runtime_reconcile_all(trigger=job.reason or "periodic_reconcile", force_restart=False)

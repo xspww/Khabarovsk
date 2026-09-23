@@ -5,10 +5,10 @@ from app_paths import resource_path
 _STATIC_SCRIPTS = (
     '<script src="/ui/runtime/perfGuard.js?v=1"></script>'
     '<script src="/ui/runtime/exploitstrapVersionPicker.js?v=7"></script>'
-    '<script src="/ui/runtime/executorCompatibility.js?v=7"></script>'
-    '<script src="/ui/runtime/gamesManager.js?v=8"></script>'
-    '<script src="/ui/runtime/customUi.js?v=11"></script>'
-    '<script src="/ui/runtime/cronusManager.js?v=1"></script>'
+    '<script src="/ui/runtime/executorCompatibility.js?v=8"></script>'
+    '<script src="/ui/runtime/gamesManager.js?v=9"></script>'
+    '<script src="/ui/runtime/customUi.js?v=12"></script>'
+    '<script src="/ui/runtime/cronusManager.js?v=2"></script>'
     '<script src="/ui/runtime/updateNotice.js?v=3"></script>'
 )
 

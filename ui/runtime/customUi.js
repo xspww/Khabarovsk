@@ -87,26 +87,38 @@
   };
 
   // Same look as the feedback toast (icon + auto type), without importing it.
+  const TOAST_ICONS_SHARED = {
+    success: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#22c55e"/><path d="M8.2 12.2l2.6 2.6 4.5-5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    warning: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#f59e0b"/><path d="M12 7.5v5.2" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16.2" r="1.2" fill="white"/></svg>',
+    error: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#ef4444"/><path d="M15 9l-6 6M9 9l6 6" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>',
+  };
+  const pickResultType = (message) => {
+    const lower = String(message || '').toLowerCase();
+    if (lower.includes('farm started')) {
+      if (lower.includes('blocked') || lower.includes('skipped') || lower.includes('unavailable')) return 'warning';
+      return 'success';
+    }
+    if (lower.includes('unsaved') || lower.includes('save changes')) return 'warning';
+    if (lower.includes('error') || lower.includes('failed') || lower.includes('invalid')
+      || lower.includes('cannot') || lower.includes('denied')
+      || lower.includes('missing') || lower.includes('not found') || lower.includes('required')) {
+      if (lower.includes('blocked') && lower.includes('launchable')) return 'warning';
+      return 'error';
+    }
+    if (lower.includes('blocked') && lower.includes('launchable')) return 'warning';
+    return 'success';
+  };
   const showResultToast = (message) => {
     const host = document.getElementById('toast');
     if (!host) return;
     const text = String(message || '');
-    const lower = text.toLowerCase();
-    let type = 'success';
-    if (lower.includes('error') || lower.includes('failed') || lower.includes('invalid')
-      || lower.includes('cannot') || lower.includes('blocked') || lower.includes('denied')
-      || lower.includes('missing') || lower.includes('not found') || lower.includes('required')) {
-      type = 'error';
-    }
+    const type = pickResultType(text);
     while (host.children.length >= 4) {
       const old = host.firstElementChild;
       try { old && clearTimeout(old._timer); } catch (_) {}
       old?.remove();
     }
-    const icons = {
-      success: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#6366f1"/><path d="M8.2 12.2l2.6 2.6 4.5-5" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-      error: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#f87171"/><path d="M15 9l-6 6M9 9l6 6" stroke="white" stroke-width="1.9" stroke-linecap="round"/></svg>',
-    };
+    const icons = TOAST_ICONS_SHARED;
     const item = document.createElement('div');
     item.className = `toast-item toast-${type}`;
     const icon = document.createElement('span');

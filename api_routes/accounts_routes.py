@@ -34,12 +34,37 @@ def _reset_account_runtime_for_finish(farm: Any, acc: Any) -> None:
     if acc is None:
         return
     try:
+        from core import AccountState as _AccountState
+
         runtime_state = getattr(farm, "_runtime_state", None)
         if runtime_state is not None:
             with acc._lock:
                 if hasattr(runtime_state, "clear_recovery"):
                     runtime_state.clear_recovery(acc, reason="account_finished", inflight=False)
                 runtime_state.set_cooldown(acc, 0.0, reason="account_finished")
+                try:
+                    runtime_state.set_desired(acc, _AccountState.IDLE, reason="account_finished")
+                except Exception:
+                    pass
+                # Clear stale markers so the card does not stick on Rejoining.
+                # Must mirror _revive: recovery_view keys off these texts +
+                # last_recovery_at, so clear them all and stamp the reason.
+                try:
+                    acc.last_crash_reason = ""
+                    acc.last_recovery_reason = ""
+                    acc.last_state_reason = "account_finished"
+                    acc.last_recovery_at = 0.0
+                    acc.last_rejoin_trigger = ""
+                    acc.recovery_scheduled_at = 0.0
+                    acc.recovery_inflight = False
+                    acc.recovery_status = ""
+                    acc.pid_missing_since = 0.0
+                except Exception:
+                    pass
+                try:
+                    acc.sync_runtime("account_finished")
+                except Exception:
+                    pass
     except Exception:
         pass
     try:
@@ -50,15 +75,24 @@ def _reset_account_runtime_for_finish(farm: Any, acc: Any) -> None:
             worker.wake()
     except Exception:
         pass
+    try:
+        if hasattr(farm, "_bump_status_revision"):
+            farm._bump_status_revision()
+    except Exception:
+        pass
 
 
 def _revive_unfinished_account(farm: Any, username: str) -> bool:
     """Give an Unfinished account a clean relaunch while the farm runs.
 
-    Without this the account resumes a half-dead recovery (stale dead-pid
-    binding, leftover cooldown/inflight) and sticks in Rejoining forever.
-    Mirrors the proven mid-run add flow from account_reload.
+    Previous version only woke the worker. If the account state was not
+    IN_GAME (killed by Finished, FAILED, IDLE, COOLDOWN...) the worker loop
+    just slept 2s forever and recovery_view kept showing stale
+    kill/rejoin markers as "Rejoining". Mirror resume_captcha_account:
+    full reset + transition to IDLE + request_evaluate + wake.
     """
+    from core import flog_kv as _flog_kv
+
     acc = farm._find_account(username)
     if acc is None:
         return False
@@ -84,12 +118,32 @@ def _revive_unfinished_account(farm: Any, username: str) -> bool:
     except Exception:
         pass
     try:
+        from core import AccountState as _AccountState
+
         runtime_state = getattr(farm, "_runtime_state", None)
         if runtime_state is not None:
             with acc._lock:
                 if hasattr(runtime_state, "clear_recovery"):
                     runtime_state.clear_recovery(acc, reason="account_unfinished", inflight=False)
                 runtime_state.set_cooldown(acc, 0.0, reason="account_unfinished")
+                try:
+                    runtime_state.set_desired(acc, _AccountState.IN_GAME, reason="account_unfinished")
+                except Exception:
+                    pass
+                # Drop stale Rejoining markers (kill/crash/rejoin text + old timestamps).
+                try:
+                    acc.last_crash_reason = ""
+                    acc.last_recovery_reason = ""
+                    acc.last_state_reason = "account_unfinished"
+                    acc.last_recovery_at = 0.0
+                    acc.recovery_scheduled_at = 0.0
+                    acc.last_rejoin_trigger = ""
+                    acc.pid_missing_since = 0.0
+                    acc.recovery_inflight = False
+                    acc.recovery_status = ""
+                    acc.sync_runtime("account_unfinished")
+                except Exception:
+                    pass
     except Exception:
         pass
     try:
@@ -98,8 +152,60 @@ def _revive_unfinished_account(farm: Any, username: str) -> bool:
             _start_added_worker,
         )
 
-        _prepare_added_runtime_account(farm, acc)
-        return bool(_start_added_worker(farm, acc))
+        if not _prepare_added_runtime_account(farm, acc):
+            return False
+        # Force public state back to IDLE so worker + recovery can launch fresh.
+        # Without this, state != IN_GAME branch in AccountWorker just sleeps.
+        try:
+            from core import AccountState as _AccountState2
+
+            state_mgr = getattr(farm, "_state_mgr", None)
+            if state_mgr is not None:
+                try:
+                    state_mgr.transition(acc, _AccountState2.IDLE, reason="account_unfinished", force=True)
+                except Exception:
+                    pass
+            else:
+                rs = getattr(farm, "_runtime_state", None)
+                if rs is not None and hasattr(rs, "transition_public"):
+                    try:
+                        rs.transition_public(acc, _AccountState2.IDLE, reason="account_unfinished", force=True)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        started = bool(_start_added_worker(farm, acc))
+        # Critical: wake is not enough — queue a fresh evaluate like manual resume.
+        try:
+            orchestrator = getattr(farm, "_runtime_orchestrator", None)
+            if orchestrator is not None and hasattr(orchestrator, "request_evaluate"):
+                orchestrator.request_evaluate(acc, trigger="account_unfinished")
+        except Exception:
+            pass
+        try:
+            worker = (getattr(farm, "_workers", None) or {}).get(acc._config_username)
+            if worker is not None:
+                worker.wake()
+        except Exception:
+            pass
+        try:
+            if hasattr(farm, "_bump_status_revision"):
+                farm._bump_status_revision()
+            if hasattr(farm, "_push_event"):
+                farm._push_event(
+                    "system",
+                    f"Unfinished relaunch: {acc.display_name}",
+                    account=acc,
+                    severity="success",
+                    reason="account_unfinished",
+                )
+        except Exception:
+            pass
+        try:
+            _flog_kv("API", "account_unfinished_relaunched", account=acc.display_name)
+        except Exception:
+            pass
+        return started
     except Exception:
         return False
 
@@ -375,6 +481,19 @@ def register(app, ctx: ApiContext) -> None:
             msg += f", marked {invalid_count} invalid"
         if allowlist_result.get("allowlist_cleared"):
             msg += ", cleared account test lock"
+        try:
+            from core import flog_kv as _flog_kv
+
+            _flog_kv(
+                "COOKIE",
+                "reload_cookies",
+                valid=valid_count,
+                captcha=captcha_count,
+                invalid=invalid_count,
+                count=count,
+            )
+        except Exception:
+            pass
         result = {"ok": True, "count": count, "msg": msg, **validation, **allowlist_result}
         finish_idempotent_request(idem, result)
         return result

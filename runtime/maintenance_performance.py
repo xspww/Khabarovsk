@@ -145,6 +145,8 @@ class MaintenancePerformanceMixin:
         arrange = _window_arrange_settings_from_config(self._cfg)
         if not target and not arrange:
             self._last_window_resize_at = time.time()
+            # Still run auto-minimize even when resize/arrange are off.
+            self._enforce_auto_minimize()
             return
         try:
             seconds = max(1.0, float(self._cfg.get("roblox_window_resize_interval_seconds", 10) or 10))
@@ -191,3 +193,118 @@ class MaintenancePerformanceMixin:
                 columns=result.get("columns", ""),
                 seconds=f"{seconds:.1f}",
             )
+        # Auto Minimize runs on the same cycle so minimized windows keep
+        # their grid position/size.
+        try:
+            self._enforce_auto_minimize()
+        except Exception:
+            pass
+
+    def _enforce_auto_minimize(self):
+        """Minimize each visible Roblox window after N seconds (configurable)."""
+        if not bool(self._cfg.get("auto_minimize_enabled", False)):
+            # Reset tracking so re-enabling starts fresh.
+            try:
+                if getattr(self, "_auto_minimize_first_seen", None):
+                    self._auto_minimize_first_seen.clear()
+            except Exception:
+                pass
+            return
+        try:
+            delay = int(float(self._cfg.get("auto_minimize_seconds", 10) or 10))
+        except Exception:
+            delay = 10
+        delay = max(1, min(delay, 3600))
+        now = time.time()
+        # Throttle to at most once every 2s to avoid EnumWindows spam.
+        try:
+            last = float(getattr(self, "_last_auto_minimize_at", 0.0) or 0.0)
+        except Exception:
+            last = 0.0
+        if (now - last) < 2.0:
+            return
+        self._last_auto_minimize_at = now
+        if not hasattr(self, "_auto_minimize_first_seen") or self._auto_minimize_first_seen is None:
+            self._auto_minimize_first_seen = {}
+        seen: dict = self._auto_minimize_first_seen
+        try:
+            from services.process_service import ProcessManager
+
+            windows = []
+            try:
+                # Prefer visible-only snapshot so already-minimized windows are skipped.
+                fn = getattr(ProcessManager, "_visible_roblox_windows", None)
+                if callable(fn):
+                    windows = fn() or []
+                else:
+                    list_fn = getattr(ProcessManager, "list_live_game_processes", None)
+                    if callable(list_fn):
+                        live = list_fn() or []
+                        windows = [{"pid": int(item.get("pid") or 0), "hwnd": int(item.get("hwnd") or 0)} for item in live if int(item.get("pid") or 0)]
+            except Exception:
+                windows = []
+            if not windows:
+                # Prune dead entries when nothing visible.
+                try:
+                    seen.clear()
+                except Exception:
+                    pass
+                return
+            live_pids = set()
+            due_pids: list[int] = []
+            for item in windows:
+                try:
+                    pid = int(item.get("pid") or 0)
+                except Exception:
+                    continue
+                if not pid:
+                    continue
+                live_pids.add(pid)
+                first = seen.get(pid)
+                if first is None:
+                    seen[pid] = now
+                    continue
+                try:
+                    age = now - float(first)
+                except Exception:
+                    age = 0.0
+                if age >= delay:
+                    due_pids.append(pid)
+            # Drop pids that disappeared.
+            try:
+                for pid in list(seen.keys()):
+                    if pid not in live_pids:
+                        seen.pop(pid, None)
+            except Exception:
+                pass
+            if not due_pids:
+                return
+            due_set = set(due_pids)
+            due_windows = [w for w in windows if int(w.get("pid") or 0) in due_set]
+            if not due_windows:
+                return
+            try:
+                from services import window_control as _wc
+
+                result = _wc.minimize_windows(due_windows)
+                minimized = int(result.get("minimized") or 0)
+            except Exception as exc:
+                flog_kv("WINDOW", "auto_minimize_failed", "warning", error=str(exc))
+                return
+            if minimized > 0:
+                flog_kv(
+                    "WINDOW",
+                    "auto_minimized",
+                    minimized=minimized,
+                    delay_seconds=delay,
+                    pids=",".join(str(p) for p in due_pids[:10]),
+                )
+                # Don't re-minimize the same pids every 2s — wait until they
+                # reappear (user restored) by resetting their timer.
+                try:
+                    for pid in due_pids:
+                        seen[pid] = now
+                except Exception:
+                    pass
+        except Exception as exc:
+            flog_kv("WINDOW", "auto_minimize_failed", "warning", error=str(exc))

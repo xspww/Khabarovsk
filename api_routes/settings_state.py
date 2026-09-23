@@ -73,6 +73,13 @@ def _normalize_window_size_settings(ctx: ApiContext, body: Optional[Dict[str, An
         0,
         300,
     )
+    auto_minimize_enabled = bool(body.get("auto_minimize_enabled", ctx.cfg_mgr.get("auto_minimize_enabled", False)))
+    auto_minimize_seconds = _int_setting(
+        body.get("auto_minimize_seconds", ctx.cfg_mgr.get("auto_minimize_seconds", 10)),
+        10,
+        1,
+        3600,
+    )
     return {
         "enabled": enabled,
         "unlock_size_enabled": unlock_size_enabled,
@@ -85,6 +92,8 @@ def _normalize_window_size_settings(ctx: ApiContext, body: Optional[Dict[str, An
         "arrange_rows": arrange_rows,
         "arrange_gap": arrange_gap,
         "arrange_margin": arrange_margin,
+        "auto_minimize_enabled": auto_minimize_enabled,
+        "auto_minimize_seconds": auto_minimize_seconds,
     }
 
 
@@ -103,6 +112,8 @@ def _window_size_status(ctx: ApiContext) -> Dict[str, Any]:
         "arrange_rows": settings["arrange_rows"],
         "arrange_gap": settings["arrange_gap"],
         "arrange_margin": settings["arrange_margin"],
+        "auto_minimize_enabled": settings["auto_minimize_enabled"],
+        "auto_minimize_seconds": settings["auto_minimize_seconds"],
         "presets": [{"value": key, "width": value[0], "height": value[1]} for key, value in WINDOW_SIZE_PRESETS.items()],
     }
 
@@ -119,14 +130,29 @@ def _roblox_runtime_restart_required(ctx: ApiContext) -> Dict[str, Any]:
     rt_running = bool(getattr(ctx.farm, "running", False))
     requires_restart = bool(running or rt_running)
     warning = ""
+    title = ""
+    action = ""
     if requires_restart:
-        warning = "Close Roblox or Stop guard, then re-game for performance settings to take effect."
+        if running and rt_running:
+            title = "Roblox is running"
+            warning = f"Auto Rejoin is ON with {count} Roblox client(s) open. Stop Auto Rejoin or close Roblox, then change performance settings to take effect."
+            action = "Stop Auto Rejoin or close Roblox first"
+        elif running:
+            title = "Roblox is running"
+            warning = f"{count} Roblox client(s) open. Close Roblox, then change performance settings to take effect."
+            action = "Close Roblox first"
+        else:
+            title = "Auto Rejoin is ON"
+            warning = "Stop Auto Rejoin, then change performance settings to take effect."
+            action = "Stop Auto Rejoin first"
     return {
         "roblox_running": running,
         "roblox_pid_count": count,
         "rt_running": rt_running,
         "requires_restart": requires_restart,
         "warning": warning,
+        "warning_title": title,
+        "required_action": action,
     }
 
 

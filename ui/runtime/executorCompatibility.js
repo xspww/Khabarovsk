@@ -9,9 +9,24 @@
     return h;
   };
   const esc = (value) => { const n = document.createElement("span"); n.textContent = String(value || ""); return n.innerHTML; };
+  const NOTICE_ICONS = {
+    warning: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#f59e0b"/><path d="M12 7.5v5.2" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16.2" r="1.2" fill="white"/></svg>',
+    error: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#ef4444"/><path d="M15 9l-6 6M9 9l6 6" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>',
+    success: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#22c55e"/><path d="M8.2 12.2l2.6 2.6 4.5-5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  };
   const show = (message, error = false) => {
     const node = $("executor-monitor-notice");
-    if (node) { node.textContent = message || ""; node.classList.toggle("show", !!message); node.classList.toggle("notice-error", !!error); }
+    if (!node) return;
+    if (!message) { node.innerHTML = ""; node.className = "notice"; return; }
+    const lower = String(message || "").toLowerCase();
+    let kind = error ? "error" : "warning";
+    if (!error && (lower.includes("saved") || lower.includes("complete"))) kind = "success";
+    let title = kind === "error" ? "Action needed" : kind === "success" ? "Saved" : "Heads up";
+    if (lower.includes("close roblox") || lower.includes("stop auto rejoin") || lower.includes("stop guard")) title = "Roblox is running";
+    if (lower.includes("browse") || lower.includes("relaunch")) title = kind === "error" ? "Executor setup needed" : title;
+    const icon = NOTICE_ICONS[kind] || NOTICE_ICONS.warning;
+    node.innerHTML = `<span class="notice-icon">${icon}</span><span class="notice-copy"><span class="notice-title">${esc(title)}</span><span class="notice-desc">${esc(message)}</span></span>`;
+    node.className = "notice show" + (kind === "error" ? " notice-error" : kind === "success" ? " notice-success" : "");
   };
   async function api(path, method = "GET", body) {
     const response = await fetch(`/api${path}`, { method, headers: headers(body !== undefined), cache: "no-store", body: body === undefined ? undefined : JSON.stringify(body) });

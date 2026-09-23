@@ -47,20 +47,34 @@
   }
 
   // Project-style notifications: same stacked .toast-item cards as
-  // components/feedback.js (success/error/info + icons, max 4, 3.2s).
+  // components/feedback.js (success/warning/error/info + icons, max 4, 3.2s).
   const TOAST_ICONS = {
-    success: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#6366f1"/><path d="M8.2 12.2l2.6 2.6 4.5-5" stroke="white" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    error: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#f87171"/><path d="M15 9l-6 6M9 9l6 6" stroke="white" stroke-width="1.9" stroke-linecap="round"/></svg>',
-    info: '<svg viewBox="0 0 24 24" fill="none"><path d="M6 13c0 3 1.5 5 6 5s6-2 6-5V8a6 6 0 0 0-12 0v5z" stroke="#60a5fa" stroke-width="1.7" stroke-linejoin="round"/><path d="M9 16a3 3 0 0 0 6 0" stroke="#60a5fa" stroke-width="1.7" stroke-linecap="round"/><circle cx="12" cy="8" r="1.5" fill="#60a5fa"/></svg>',
+    success: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#22c55e"/><path d="M8.2 12.2l2.6 2.6 4.5-5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    warning: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#f59e0b"/><path d="M12 7.5v5.2" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16.2" r="1.2" fill="white"/></svg>',
+    error: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#ef4444"/><path d="M15 9l-6 6M9 9l6 6" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>',
+    info: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#3b82f6"/><path d="M12 11v5" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="8" r="1.2" fill="white"/></svg>',
   };
+
+  function pickToastKind(message) {
+    const s = String(message || "").toLowerCase();
+    if (s.includes("farm started")) {
+      if (s.includes("blocked") || s.includes("skipped") || s.includes("unavailable")) return "warning";
+      return "success";
+    }
+    if (s.includes("unsaved") || s.includes("save changes")) return "warning";
+    if (/error|failed|invalid|cannot|denied|missing|not found|required|0 valid/i.test(s)) {
+      if (s.includes("blocked") && s.includes("launchable")) return "warning";
+      if (s.includes("blocked") && s.includes("farm started")) return "warning";
+      return "error";
+    }
+    if (s.includes("blocked") && s.includes("launchable")) return "warning";
+    return "success";
+  }
 
   function toast(message, type) {
     const box = document.querySelector("#toast");
     if (!box) return;
-    let kind = type;
-    if (!kind) {
-      kind = /error|failed|invalid|cannot|blocked|denied|missing|not found/i.test(String(message || "")) ? "error" : "success";
-    }
+    let kind = type || pickToastKind(message);
     while (box.children.length >= 4) {
       if (box.firstElementChild) box.firstElementChild.remove();
       else break;
@@ -475,13 +489,21 @@
   }
 
   function notifyGamesChanged() { try { document.dispatchEvent(new CustomEvent("cronus:games-changed")); } catch (_) {} }
+  const _NOTICE_ICONS = {
+    warning: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#f59e0b"/><path d="M12 7.5v5.2" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16.2" r="1.2" fill="white"/></svg>',
+    error: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#ef4444"/><path d="M15 9l-6 6M9 9l6 6" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>',
+    success: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#22c55e"/><path d="M8.2 12.2l2.6 2.6 4.5-5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  };
   function notice(message, isError) {
     const node = document.querySelector("#cronus-games-notice");
-    if (node) {
-      node.textContent = String(message || "");
-      node.classList.toggle("show", !!message);
-      node.classList.toggle("notice-error", !!isError);
-    }
+    if (!node) return;
+    if (!message) { node.innerHTML = ""; node.className = "notice"; return; }
+    const lower = String(message || "").toLowerCase();
+    const kind = isError ? "error" : (lower.includes("saved") || lower.includes("deleted") ? "success" : "warning");
+    const title = kind === "error" ? "Action needed" : kind === "success" ? "Saved" : "Heads up";
+    const icon = _NOTICE_ICONS[kind] || _NOTICE_ICONS.warning;
+    node.innerHTML = `<span class="notice-icon">${icon}</span><span class="notice-copy"><span class="notice-title">${esc(title)}</span><span class="notice-desc">${esc(message)}</span></span>`;
+    node.className = "notice show" + (kind === "error" ? " notice-error" : kind === "success" ? " notice-success" : "");
   }
 
   async function onAddGame() {

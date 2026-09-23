@@ -18,6 +18,21 @@ def recovery_step_for_account(acc: Any, display_state: AccountState, network_sta
         )
     ).lower()
     recovery_status = str(acc.recovery_status or "").strip().lower()
+    # Finished/Unfinished transitions leave stale kill/rejoin text behind.
+    # Never label those as Rejoining — they are Idle until a fresh recovery starts.
+    if "account_finished" in reason_text or "account_unfinished" in reason_text:
+        # If a real new recovery started after the unfinished reset
+        # (last_recovery_at newer than the reset), allow normal flow.
+        # The revive path zeroes last_recovery_at, so any marker now is stale.
+        try:
+            _last_rec = max(
+                float(getattr(acc, "last_recovery_at", 0.0) or 0.0),
+                float(getattr(acc, "recovery_scheduled_at", 0.0) or 0.0),
+            )
+        except Exception:
+            _last_rec = 0.0
+        if not _last_rec:
+            return "Idle", -1, float(acc.last_state_change_at or 0.0)
     state_name = display_state.name
     recovery_markers = (
         "rejoin",
@@ -70,8 +85,12 @@ def recovery_step_for_account(acc: Any, display_state: AccountState, network_sta
         return "Rejoining", 5, float(acc.recovery_scheduled_at or acc.last_recovery_at or 0.0)
     if state_name in {"LAUNCHING", "STARTING"} or "launch" in reason_text:
         return "Launching", 3, float(acc.last_launch_at or acc.last_state_change_at or 0.0)
+    # kill/process text is stale unless a real recovery is active.
+    # Without this, old "account_finished kill" markers show Rejoining forever.
     if "kill" in reason_text or "process" in reason_text:
-        return "Rejoining", 2, float(acc.last_pid_change_at or acc.last_recovery_at or 0.0)
+        if has_current_recovery_marker or recovery_status or bool(getattr(acc, "recovery_inflight", False)):
+            return "Rejoining", 2, float(acc.last_pid_change_at or acc.last_recovery_at or 0.0)
+        return "Idle", -1, float(acc.last_state_change_at or 0.0)
     if (network_state and network_state != NET_ONLINE) or "network" in reason_text:
         return "Disconnected", 1, float(acc.last_network_lost_at or acc.last_recovery_at or 0.0)
     if "disconnect" in reason_text or "reconnect" in reason_text:

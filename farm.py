@@ -668,6 +668,21 @@ class FarmController:
             if hasattr(self, "_bump_status_revision"):
                 self._bump_status_revision()
 
+        # Block same-server: if another account already sits in this JobId,
+        # hop this account to a different server (public servers only hop
+        # cleanly; VIP private links stay put).
+        try:
+            if detection.job_id and not detection.is_vip:
+                from services.same_server_guard import check_and_hop_same_server
+
+                check_and_hop_same_server(
+                    self, acc,
+                    detection_job_id=detection.job_id,
+                    detection_place_id=detection.place_id,
+                )
+        except Exception:
+            pass
+
         return {
             "observed_server_type": detection.server_type,
             "observed_is_vip": detection.is_vip,

@@ -65,6 +65,7 @@ DEFAULTS: Dict[str, Any] = {
     "games_migrated":           False,
     "auto_create_private_server_enabled": False,
     "auto_create_private_server_free_only": True,
+    "block_same_server_enabled": False,
     "auto_close_enabled":       False,
     "auto_close_minutes":       0,
     "auto_minimize_enabled":    False,

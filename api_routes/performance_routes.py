@@ -258,10 +258,16 @@ def register(app, ctx: ApiContext) -> None:
             "roblox_window_arrange_rows": settings["arrange_rows"],
             "roblox_window_arrange_gap": settings["arrange_gap"],
             "roblox_window_arrange_margin": settings["arrange_margin"],
+            "auto_minimize_enabled": settings.get("auto_minimize_enabled", False),
+            "auto_minimize_seconds": settings.get("auto_minimize_seconds", 10),
         })
         cfg_mgr.save()
         if hasattr(farm, "apply_config_snapshot"):
             farm.apply_config_snapshot()
+        try:
+            flog_kv("CONFIG", "updated", updated=["window_size", "auto_minimize"])
+        except Exception:
+            pass
         payload = _window_size_status(ctx)
         payload["resize_result"] = resize_result
         if settings["arrange_enabled"]:

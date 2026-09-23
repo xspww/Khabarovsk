@@ -38,6 +38,12 @@ _ICON_VIP_SERVER = "👑"
 _ICON_PUBLIC_SERVER = "🦺"
 _ICON_CHECKING = "🚧"
 _ICON_TELEPORT = "🌀"
+_ICON_CONFIG = "⚙️"
+_ICON_RELOAD = "🔄"
+_ICON_FINISH = "🏁"
+_ICON_FARM = "🚀"
+_ICON_WINDOW = "🪟"
+_ICON_SERVER = "🌐"
 _ICON_ALIASES = {
     "OK": _ICON_OK,
     "CHECK": _ICON_OK,
@@ -75,6 +81,12 @@ _COLOR_BY_ICON = {
     _ICON_PUBLIC_SERVER: _COLOR_GRAY,
     _ICON_CHECKING: "\x1b[93m",
     _ICON_TELEPORT: "\x1b[96m",
+    _ICON_CONFIG: "\x1b[96m",
+    _ICON_RELOAD: "\x1b[96m",
+    _ICON_FINISH: "\x1b[92m",
+    _ICON_FARM: "\x1b[92m",
+    _ICON_WINDOW: "\x1b[90m",
+    _ICON_SERVER: "\x1b[93m",
 }
 _COLOR_SUPPORT: Optional[bool] = None
 
@@ -283,6 +295,81 @@ def _found_process_line(account: str, pid: Any, fields: Dict[str, Any] | None = 
 def _reload_all_line(count: Any) -> str:
     account_count = _int_text(count, "0")
     return _line(_ICON_TELEPORT, f"Reload All Roblox ( {account_count} Accounts )", stamp_color=_COLOR_RELOAD_STAMP)
+
+
+def _config_line(action: str, fields: Dict[str, Any]) -> str:
+    updated = fields.get("updated") or fields.get("keys") or ""
+    if isinstance(updated, (list, tuple)):
+        keys = ", ".join(str(k) for k in updated[:6])
+        if len(updated) > 6:
+            keys += f" +{len(updated) - 6} more"
+    else:
+        keys = _text(updated)
+        if not keys:
+            # Fall back to single-key hints (game_place_id, fps_limit, ...)
+            hints = []
+            for k in ("game_place_id", "game_mode", "max_concurrent_accounts", "fps_limit",
+                      "auto_minimize_enabled", "block_same_server_enabled",
+                      "roblox_window_resize_enabled", "lua_enabled"):
+                if k in fields:
+                    hints.append(k)
+            keys = ", ".join(hints[:4])
+    label = _text(action or "updated", "updated")
+    # Friendly labels for common saves
+    lower_keys = str(keys).lower()
+    if "game_place_id" in lower_keys or "game_private" in lower_keys or "block_same_server" in lower_keys:
+        label = "Game saved"
+    elif "max_concurrent" in lower_keys or "queue_" in lower_keys or "auto_close" in lower_keys:
+        label = "Queue saved"
+    elif "fps_limit" in lower_keys or "fps_limiter" in lower_keys:
+        label = "Performance saved"
+    elif "roblox_window" in lower_keys or "auto_minimize" in lower_keys or "window_size" in lower_keys:
+        label = "Windows saved"
+    elif "lua_" in lower_keys:
+        label = "Lua saved"
+    detail = f": {keys}" if keys and label not in keys else ""
+    return _line(_ICON_CONFIG, f"{_paint(label, _COLOR_WHITE)}{_paint(detail, _COLOR_GRAY)}", stamp_color=_COLOR_WHITE)
+
+
+def _finished_line(account: str, finished: bool, count: Any = "") -> str:
+    n = _int_text(count, "")
+    suffix = f" ({n})" if n and n != "0" else ""
+    if finished:
+        return _line(_ICON_FINISH, f"{_paint('Finished', _COLOR_WHITE)} {_username_paren(account)}{_paint(suffix, _COLOR_GRAY)}")
+    return _line(_ICON_FINISH, f"{_paint('Unfinished — relaunching', _COLOR_WHITE)} {_username_paren(account)}{_paint(suffix, _COLOR_GRAY)}")
+
+
+def _reload_cookies_line(valid: Any, captcha: Any, invalid: Any) -> str:
+    v = _int_text(valid, "0")
+    c = _int_text(captcha, "0")
+    inv = _int_text(invalid, "0")
+    return _line(_ICON_RELOAD, f"{_paint('Reload Cookies', _COLOR_WHITE)} {_paint(f'{v} valid, {c} CAPTCHA, {inv} invalid', _COLOR_GRAY)}")
+
+
+def _farm_line(started: bool, detail: str = "") -> str:
+    if started:
+        msg = f"{_paint('Farm started', _COLOR_WHITE)}"
+    else:
+        msg = f"{_paint('Farm stopped', _COLOR_WHITE)}"
+    if detail:
+        msg += f" {_paint(f'— {detail}', _COLOR_GRAY)}"
+    return _line(_ICON_FARM, msg)
+
+
+def _same_server_line(account: str, conflict: str = "", job: str = "") -> str:
+    short = _short_job(job)
+    if conflict and short:
+        return _line(_ICON_SERVER, f"{_username_paren(account)} {_paint(f'same server as ({conflict}) Job {short} — hopping', _COLOR_DISCONNECT_STAMP)}")
+    if conflict:
+        return _line(_ICON_SERVER, f"{_username_paren(account)} {_paint(f'same server as ({conflict}) — hopping', _COLOR_DISCONNECT_STAMP)}")
+    return _line(_ICON_SERVER, f"{_username_paren(account)} {_paint('same server — hopping', _COLOR_DISCONNECT_STAMP)}")
+
+
+def _window_minimize_line(minimized: Any, delay: Any = "") -> str:
+    n = _int_text(minimized, "0")
+    d = _text(delay)
+    suffix = f" after {d}s" if d else ""
+    return _line(_ICON_WINDOW, f"{_paint(f'Minimized {n} Roblox window(s){suffix}', _COLOR_GRAY)}")
 
 
 def _teleport_line(account: str) -> Optional[str]:
@@ -515,6 +602,56 @@ def _format_recovery(name: str, fields: Dict[str, Any]) -> Optional[str]:
 def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]:
     account = _account(fields)
     pid = _pid(fields)
+    # ── Product actions: config / farm / finished / reload ──
+    if scope == "CONFIG" and name in {"updated", "saved", "config_updated"}:
+        return _config_line("Config updated", fields)
+    if scope == "API" and name in {"accounts_finished", "accounts_unfinished", "account_finished", "account_unfinished", "account_unfinished_relaunched"}:
+        # Anything with "unfinished" in the name is an Unfinished event.
+        is_finished = "unfinished" not in name.lower()
+        acct = _text(fields.get("account", "")) or account
+        # account field may be comma-joined list — show compact
+        if "," in acct:
+            parts = [p.strip() for p in acct.split(",") if p.strip()]
+            acct = f"{len(parts)} accounts" if len(parts) > 1 else (parts[0] if parts else "Accounts")
+            return _finished_line(acct, is_finished, "")
+        # Single account: don't append redundant total count.
+        return _finished_line(acct or "Account", is_finished, "")
+    if scope == "API" and name in {"start_preflight_error", "start_failed", "game_defaults_applied"}:
+        return None
+    if scope == "ACCOUNT_DATA" and name in {"reload_cookie_validation", "reload_synced_running_farm"}:
+        # Summary is emitted separately as RELOAD line; skip noisy sync logs.
+        return None
+    if scope in {"COOKIE", "ACCOUNT_DATA", "API"} and name in {"reload_cookies", "accounts_reload", "reload_checked"}:
+        try:
+            valid = fields.get("valid", fields.get("valid_count", fields.get("kept", "")))
+            captcha = fields.get("captcha", "")
+            invalid = fields.get("invalid", "")
+            if valid != "" or captcha != "" or invalid != "":
+                return _reload_cookies_line(valid or 0, captcha or 0, invalid or 0)
+        except Exception:
+            pass
+        return None
+    if scope == "FARM" and name in {"started", "stopped", "start", "stop"}:
+        try:
+            if name in {"started", "start"}:
+                launchable = _text(fields.get("launchable", ""))
+                total = _text(fields.get("accounts", ""))
+                detail = f"{launchable}/{total} launchable" if launchable and total else ""
+                blocked = _text(fields.get("blocked", ""))
+                if blocked and blocked != "0":
+                    detail += f", {blocked} blocked" if detail else f"{blocked} blocked"
+                return _farm_line(True, detail)
+            return _farm_line(False, "")
+        except Exception:
+            return _farm_line(name in {"started", "start"}, "")
+    if scope == "SERVER" and name in {"same_server_blocked", "same_server_hop"}:
+        return _same_server_line(account, _text(fields.get("conflict_with", "")), _job_id(fields) or _text(fields.get("job_id", "")))
+    if scope == "WINDOW" and name in {"auto_minimized", "minimized_roblox_windows"}:
+        return _window_minimize_line(fields.get("minimized", fields.get("count", "")), fields.get("delay_seconds", fields.get("delay", "")))
+    if scope == "WINDOW" and name in {"auto_window_arrange_cycle", "auto_window_resize_cycle", "resized_roblox_windows"}:
+        return None
+    if scope in {"CONFIG", "PERFORMANCE", "QUEUE", "GAME"} and "saved" in name.lower():
+        return _config_line(name.replace("_", " "), fields)
     if scope == "RUNTIME" and name == "suspect_process_check":
         return _suspect_process_line(account)
     if scope in {"LUA", "LUA_EVENT"} and name == "teleport_detected":

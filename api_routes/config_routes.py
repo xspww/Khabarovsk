@@ -52,6 +52,7 @@ def register(app, ctx: ApiContext) -> None:
             "game_mode",
             "games", "games_migrated",
             "auto_create_private_server_enabled", "auto_create_private_server_free_only",
+            "block_same_server_enabled",
             "auto_close_enabled", "auto_close_minutes",
             "auto_minimize_enabled", "auto_minimize_seconds",
             "not_responding_timeout",
@@ -289,6 +290,8 @@ def register(app, ctx: ApiContext) -> None:
             updates["auto_create_private_server_enabled"] = bool(updates["auto_create_private_server_enabled"])
         if "auto_create_private_server_free_only" in updates:
             updates["auto_create_private_server_free_only"] = bool(updates["auto_create_private_server_free_only"])
+        if "block_same_server_enabled" in updates:
+            updates["block_same_server_enabled"] = bool(updates["block_same_server_enabled"])
         cfg_mgr.update(updates)
         cfg_mgr.save()
         applied_defaults = 0
@@ -296,4 +299,10 @@ def register(app, ctx: ApiContext) -> None:
             applied_defaults = _apply_game_defaults(ctx, farm._accounts, persist=True)
         if hasattr(farm, "apply_config_snapshot"):
             farm.apply_config_snapshot()
+        try:
+            from core import flog_kv as _flog_kv
+
+            _flog_kv("CONFIG", "updated", updated=list(updates.keys()), game_defaults_applied=applied_defaults)
+        except Exception:
+            pass
         return {"ok": True, "updated": list(updates.keys()), "game_defaults_applied": applied_defaults}

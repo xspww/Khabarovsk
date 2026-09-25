@@ -1,0 +1,102 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt pyinstaller
+
+      - name: Check tag matches version.py
+        shell: powershell
+        run: |
+          $tag = "${{ github.ref_name }}".Trim()
+          $line = Select-String -Path version.py -Pattern '^APP_VERSION\s*=\s*"([^"]+)"'
+          if (-not $line) { Write-Error "APP_VERSION not found in version.py"; exit 1 }
+          $ver = $line.Matches[0].Groups[1].Value
+          if ($tag -ne "v$ver") {
+            Write-Error "Tag $tag does not match version.py APP_VERSION $ver"
+            exit 1
+          }
+          "APP_VERSION=$ver" >> $env:GITHUB_ENV
+
+      - name: Validate updater script syntax
+        shell: powershell
+        run: |
+          python -c "import services.app_updater as u; open('updater_check.ps1','w',encoding='utf-8').write(u._UPDATER_PS1.replace('__TIMEOUT__','90'))"
+          $errs = $null; $toks = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile("$pwd/updater_check.ps1", [ref]$toks, [ref]$errs)
+          Remove-Item updater_check.ps1 -Force
+          if ($errs.Count -gt 0) { $errs | ForEach-Object { Write-Error "$($_.Extent.StartLineNumber): $($_.Message)" }; exit 1 }
+          Write-Host "Updater script syntax OK"
+
+      - name: Build exe icon
+        run: python -c "from PIL import Image; Image.open('assets/cronus_icon.png').save('assets/cronus_icon.ico')"
+
+      - name: Build exe
+        run: pyinstaller cronus_launcher.spec
+
+      - name: Smoke test (guard boot, no display needed)
+        shell: powershell
+        run: |
+          $exe = "dist/CronusLauncher.exe"
+          if (-not (Test-Path $exe)) { Write-Error "Build output missing: $exe"; exit 1 }
+          $sizeMb = [math]::Round((Get-Item $exe).Length / 1MB, 1)
+          Write-Host "Smoke test exe: $exe ($sizeMb MB onefile; cold extract can be slow)"
+          $proc = Start-Process -FilePath (Resolve-Path $exe) `
+            -ArgumentList "--multi-roblox-guard", "mutex", "--parent-pid", "$PID" `
+            -PassThru -RedirectStandardOutput "guard_out.txt" -NoNewWindow
+          $ready = $false
+          # Onefile cold extract + Defender scan can exceed 90s on slow
+          # runners (see cronus_launcher.spec notes). Allow up to 4 minutes.
+          for ($i = 0; $i -lt 240; $i++) {
+            Start-Sleep -Seconds 1
+            if ((Test-Path guard_out.txt) -and (Select-String -Path guard_out.txt -Pattern "multi_roblox_guard_ready" -Quiet)) { $ready = $true; break }
+            if ($proc.HasExited) { break }
+            if ($i -gt 0 -and ($i % 60 -eq 0)) { Write-Host "Smoke test waiting ${i}s (proc alive)" }
+          }
+          try { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue } catch {}
+          if (-not $ready) {
+            Write-Host "Proc exited: $($proc.HasExited) exitCode: $(try { $proc.ExitCode } catch { 'n/a' })"
+            Get-Content guard_out.txt -ErrorAction SilentlyContinue
+            Write-Error "Smoke test failed: guard did not report ready"; exit 1
+          }
+          Write-Host "Smoke test passed"
+
+      - name: Package exe and checksums
+        shell: powershell
+        run: |
+          $ver = "${{ env.APP_VERSION }}"
+          $exeName = "CronusLauncher-$ver.exe"
+          Copy-Item "dist/CronusLauncher.exe" $exeName
+          $h = (Get-FileHash $exeName -Algorithm SHA256).Hash.ToLower()
+          # WriteAllLines defaults to UTF-8 without BOM. Out-File -Encoding utf8
+          # on Windows PowerShell 5.1 writes a BOM, which breaks sha256sum parsing.
+          [System.IO.File]::WriteAllLines("$pwd/checksums.txt", @("$h  $exeName"))
+          Get-Content checksums.txt
+
+      - name: Publish to GitHub Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            CronusLauncher-${{ env.APP_VERSION }}.exe
+            checksums.txt
+          fail_on_unmatched_files: false
+          prerelease: ${{ contains(github.ref_name, 'beta') }}
+          generate_release_notes: true

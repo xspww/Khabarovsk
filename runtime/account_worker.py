@@ -1,0 +1,677 @@
+from __future__ import annotations
+
+import threading
+import time
+import urllib.error
+import urllib.request
+from typing import Any, Dict, List, Optional
+
+from core import (
+    AccountState,
+    cookie_identity_block_reason,
+    flog,
+    flog_kv,
+)
+from services.process_service import ProcessManager, ProcessService
+from runtime.account_worker_disconnects import handle_disconnect_checks
+from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
+from services.captcha_guard import (
+    CAPTCHA_BLOCK_REASON,
+    CAPTCHA_REASON,
+    captcha_detail,
+    is_captcha_text,
+    set_account_captcha_hold,
+)
+from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
+from runtime.recovery_support import RECOVERY_REASON_MESSAGES, _set_account_cookie_block, compute_backoff
+from runtime.supervisor_runtime import SupervisorRuntime
+from core import StateManager
+from core import EventBus
+from core import Account
+
+
+class AccountWorker(threading.Thread):
+    """
+    AccountWorker observes process health.
+    It no longer decides how recovery should happen.
+    """
+
+    REASON_MESSAGES = RECOVERY_REASON_MESSAGES
+
+    def __init__(
+        self,
+        acc: Account,
+        state_mgr: StateManager,
+        bus: EventBus,
+        cfg: dict,
+        recovery: RecoveryEngine,
+        stop: threading.Event,
+        supervisor: Optional[SupervisorRuntime] = None,
+        accounts: Optional[List[Account]] = None,
+    ):
+        super().__init__(daemon=True, name=f"Worker-{acc.username}")
+        self.acc = acc
+        self.state_mgr = state_mgr
+        self.bus = bus
+        self.cfg = cfg
+        self.recovery = recovery
+        self.runtime_owner = getattr(recovery, "runtime_orchestrator", recovery)
+        # NOTE: must not be named `self._stop` — threading.Thread uses
+        # `_stop()` internally (join/_wait_for_tstate_lock on Python <=3.13),
+        # so shadowing it with an Event breaks join() with
+        # "TypeError: 'Event' object is not callable".
+        self._stop_event = stop
+        self._supervisor = supervisor
+        self._accounts = accounts or [acc]
+        self._wake = threading.Event()
+        self._not_responding_since: Optional[float] = None
+        self._connection_error_since: Optional[float] = None
+        self._last_missing_hold_log = 0.0
+
+    def wake(self):
+        self._wake.set()
+
+    def update_config(self, cfg: dict) -> None:
+        self.cfg = cfg
+    def report_fault(
+        self,
+        reason_key: str,
+        extra: str = "",
+        expected_runtime_generation: Optional[int] = None,
+        expected_session_id: str = "",
+        expected_launch_nonce: str = "",
+        expected_transaction_id: str = "",
+    ):
+        msg = self.REASON_MESSAGES.get(reason_key, reason_key)
+        if extra:
+            msg += f" [{extra}]"
+        flog(f"[WORKER] {self.acc.display_name} fault: {msg}")
+        if self._supervisor:
+            self._supervisor.emit(
+                "AccountSupervisor",
+                "FAULT_SIGNAL",
+                account=self.acc,
+                severity="warning",
+                reason=reason_key,
+                payload={"detail": msg},
+            )
+        self.runtime_owner.handle_runtime_signal(
+            self.acc,
+            "fault",
+            reason_key,
+            payload={"detail": msg, "reason_msg": msg},
+            expected_runtime_generation=expected_runtime_generation,
+            expected_session_id=expected_session_id,
+            expected_launch_nonce=expected_launch_nonce,
+            expected_transaction_id=expected_transaction_id,
+        )
+        self._wake.set()
+
+    def _rebind_live_game_process(self, reason: str) -> bool:
+        acc = self.acc
+        reconciliation = ProcessManager.staged_orphan_reconcile(
+            acc,
+            launched_after=acc.last_launch_at,
+            quarantine_seconds=max(15.0, min(30.0, float(self.cfg.get("launch_verify_window", 25) or 25))),
+        )
+        validation = reconciliation.get("validation") or {}
+        pid = validation.get("pid")
+        name = str(validation.get("name") or "")
+        if not pid:
+            return False
+        confidence = float(validation.get("confidence") or 0.0)
+        action = str(reconciliation.get("action") or "")
+        if action != "auto_bind":
+            flog_kv(
+                "WORKER",
+                "rebind_rejected",
+                "warning",
+                account=acc.display_name,
+                pid=pid,
+                reason=reason,
+                action=action,
+                confidence=f"{confidence:.1f}",
+                confidence_level=reconciliation.get("confidence_level", ""),
+                reject=reconciliation.get("reason", ""),
+            )
+            return False
+        with acc._lock:
+            old_pid = acc.pid
+            runtime_generation = acc.runtime_generation
+        bind_result = ProcessService.bind_account_process(
+            acc,
+            pid,
+            self.state_mgr,
+            reason=reason,
+            expected_identity=str(validation.get("identity") or ""),
+            launched_after=acc.last_launch_at,
+            process_name=name or "RobloxPlayerBeta.exe",
+            min_ram_mb=20.0,
+            expected_runtime_generation=runtime_generation,
+        )
+        if not bind_result.get("ok"):
+            self.state_mgr.set_binding_status(acc, "rebind_rejected", reason=bind_result.get("reason", reason))
+            flog_kv(
+                "WORKER",
+                "rebind_validation_rejected",
+                "warning",
+                account=acc.display_name,
+                pid=pid,
+                reason=reason,
+                reject=bind_result.get("reason", ""),
+            )
+            return False
+        if pid != old_pid:
+            flog(
+                f"[WORKER] {acc.display_name} rebound live game PID {old_pid} -> {pid} "
+                f"({reason})"
+            )
+        else:
+            flog_kv(
+                "WORKER",
+                "rebind_refreshed",
+                account=acc.display_name,
+                pid=pid,
+                reason=reason,
+                confidence=f"{confidence:.1f}",
+            )
+        _apply_cpu_limiter_for_bound_process(self._accounts, self.cfg, reason, acc)
+        return True
+
+    def _safe_adopt_visible_process(self, reason: str) -> bool:
+        acc = self.acc
+        with acc._lock:
+            runtime_generation = acc.runtime_generation
+        result = ProcessService.safe_adopt_visible_process(
+            acc,
+            self.state_mgr,
+            accounts=self._accounts,
+            reason=reason,
+            expected_runtime_generation=runtime_generation,
+        )
+        if result.get("ok"):
+            flog_kv(
+                "WORKER",
+                "visible_process_adopted",
+                account=acc.display_name,
+                pid=result.get("pid"),
+                reason=reason,
+                runtime_generation=runtime_generation,
+            )
+            _apply_cpu_limiter_for_bound_process(self._accounts, self.cfg, reason, acc)
+            return True
+        if result.get("reason") not in {"no_visible_candidate", "desired_state_not_in_game"}:
+            flog_kv(
+                "WORKER",
+                "visible_process_adopt_rejected",
+                "warning",
+                account=acc.display_name,
+                pid=result.get("pid") or "",
+                reason=reason,
+                reject=result.get("reason", ""),
+                runtime_generation=runtime_generation,
+            )
+        return False
+
+    def _assess_missing_bound_process(self, source: str) -> Dict[str, object]:
+        acc = self.acc
+        now = time.time()
+        grace_period = max(4.0, min(float(self.cfg.get("crash_timeout", 30)), 10.0))
+
+        if self._rebind_live_game_process(source):
+            return {"status": "rebound", "grace_period": grace_period}
+
+        if self._safe_adopt_visible_process(f"{source}_visible_adopt"):
+            return {"status": "rebound", "grace_period": grace_period, "adopted": True}
+
+        reconciliation = ProcessManager.staged_orphan_reconcile(
+            acc,
+            launched_after=acc.last_launch_at,
+            quarantine_seconds=max(15.0, min(30.0, float(self.cfg.get("launch_verify_window", 25) or 25))),
+        )
+        validation = reconciliation.get("validation") or {}
+        presence = ProcessManager.summarize_game_presence(launched_after=acc.last_launch_at)
+        with acc._lock:
+            acc.last_signal_confidence = float(validation.get("confidence") or 0.0)
+            acc.last_reconcile_at = time.time()
+        if reconciliation.get("action") == "auto_bind" and self._rebind_live_game_process(f"{source}_presence"):
+            return {"status": "rebound", "presence": presence, "validation": validation, "grace_period": grace_period}
+
+        with acc._lock:
+            if not acc.pid_missing_since:
+                acc.pid_missing_since = now
+            missing_for = now - acc.pid_missing_since
+            pid_was = acc.pid
+
+        has_multi_signal = reconciliation.get("action") == "quarantine"
+        if self._looks_like_multi_roblox_guard_failure(pid_was, presence, missing_for, grace_period):
+            return {
+                "status": "multi_roblox_guard_failed",
+                "presence": presence,
+                "validation": validation,
+                "missing_for": missing_for,
+                "grace_period": grace_period,
+            }
+
+        if missing_for < grace_period or has_multi_signal:
+            return {
+                "status": "hold",
+                "reason": str(reconciliation.get("reason") or "presence_hold"),
+                "presence": presence,
+                "validation": validation,
+                "missing_for": missing_for,
+                "grace_period": grace_period,
+            }
+
+        return {
+            "status": "dead",
+            "presence": presence,
+            "validation": validation,
+            "missing_for": missing_for,
+            "grace_period": grace_period,
+        }
+
+    def _looks_like_multi_roblox_guard_failure(
+        self,
+        pid_was: Optional[int],
+        presence: Dict[str, Any],
+        missing_for: float,
+        grace_period: float,
+    ) -> bool:
+        if not bool(self.cfg.get("multi_roblox_enabled", False)):
+            return False
+        if bool(self.cfg.get("rt_rotation_enabled", False)):
+            return False
+        if not pid_was or missing_for < grace_period:
+            return False
+        try:
+            window = max(grace_period, float(self.cfg.get("multi_roblox_guard_failure_window", 180) or 180))
+        except Exception:
+            window = 180.0
+        try:
+            overlap_window = float(
+                self.cfg.get("multi_roblox_guard_failure_overlap_seconds", grace_period) or grace_period
+            )
+        except Exception:
+            overlap_window = grace_period
+        overlap_window = max(1.0, min(overlap_window, window))
+        with self.acc._lock:
+            launch_age = time.time() - float(self.acc.last_launch_at or 0.0)
+            missing_since = float(self.acc.pid_missing_since or 0.0)
+        newest_created = float(presence.get("newest_created") or 0.0)
+        if not newest_created or not missing_since:
+            return False
+        if not self._has_active_multi_roblox_launch_overlap():
+            return False
+        if launch_age > window and newest_created < (time.time() - window):
+            return False
+        if newest_created < (missing_since - overlap_window):
+            return False
+        if newest_created > (missing_since + max(5.0, grace_period)):
+            return False
+        pids = []
+        for item in presence.get("pids", []) or []:
+            try:
+                pid = int(item)
+            except Exception:
+                continue
+            if pid:
+                pids.append(pid)
+        other_pids = [pid for pid in pids if pid != int(pid_was)]
+        return bool(other_pids)
+
+    def _has_active_multi_roblox_launch_overlap(self) -> bool:
+        accounts = list(getattr(self, "_accounts", []) or [])
+        if not accounts:
+            return True
+        active_launch_states = {AccountState.QUEUED, AccountState.LAUNCHING, AccountState.VERIFY}
+        for other in accounts:
+            if other is self.acc:
+                continue
+            try:
+                with other._lock:
+                    if other.desired_state == AccountState.IN_GAME and other.state in active_launch_states:
+                        return True
+            except Exception:
+                continue
+        return False
+
+    def handle_missing_bound_process(self, source: str) -> str:
+        acc = self.acc
+        with acc._lock:
+            pid_was = acc.pid
+            observed_runtime_generation = acc.runtime_generation
+            observed_session_id = acc.session_id
+            observed_launch_nonce = acc.launch_nonce
+            observed_transaction_id = acc.rejoin_transaction_id
+        assessment = self._assess_missing_bound_process(source)
+        status = str(assessment.get("status") or "")
+        if status == "rebound":
+            return status
+
+        if status == "hold":
+            now = time.time()
+            reason = str(assessment.get("reason") or "")
+            presence = assessment.get("presence") or {
+                "pids": [],
+                "visible_windows": 0,
+                "max_ram_mb": 0.0,
+                "max_cpu": 0.0,
+            }
+            missing_for = float(assessment.get("missing_for") or 0.0)
+            if now - self._last_missing_hold_log >= 5.0:
+                flog(
+                    f"[WORKER] {acc.display_name} bound PID missing but game signals remain "
+                    f"(missing={missing_for:.1f}s pids={presence['pids']} "
+                    f"windows={presence['visible_windows']} ram={presence['max_ram_mb']:.1f}MB "
+                    f"cpu={presence['max_cpu']:.2f}%)"
+                )
+                self._last_missing_hold_log = now
+            return status
+
+        presence = assessment.get("presence") or {
+            "visible_windows": 0,
+            "max_ram_mb": 0.0,
+            "max_cpu": 0.0,
+        }
+        grace_period = float(assessment.get("grace_period") or 0.0)
+        guard_failed = status == "multi_roblox_guard_failed"
+        with acc._lock:
+            if not self.recovery._runtime_state.guard_session_identity(
+                acc,
+                expected_generation=observed_runtime_generation,
+                expected_session_id=observed_session_id,
+                expected_launch_nonce=observed_launch_nonce,
+                expected_transaction_id=observed_transaction_id,
+                reason=f"missing_bound_process:{source}",
+            ):
+                flog_kv(
+                    "WORKER",
+                    "stale_worker_signal_rejected",
+                    "warning",
+                    account=acc.display_name,
+                    source=source,
+                    pid=pid_was or "",
+                    expected_runtime_generation=observed_runtime_generation,
+                    current_runtime_generation=acc.runtime_generation,
+                    expected_session_id=observed_session_id,
+                    current_session_id=acc.session_id,
+                    expected_transaction_id=observed_transaction_id,
+                    current_transaction_id=acc.rejoin_transaction_id,
+                )
+                return "stale"
+        if pid_was:
+            ProcessService.evict_pid_cache(pid_was, reason=f"missing_bound_process:{source}", account=acc)
+        if pid_was:
+            self.state_mgr.clear_process_binding(
+                acc,
+                reason="missing_bound_process_dead",
+                increment_generation=True,
+            )
+        else:
+            with acc._lock:
+                acc.pid_missing_since = 0.0
+        with acc._lock:
+            signal_runtime_generation = acc.runtime_generation
+            signal_session_id = acc.session_id
+            signal_launch_nonce = acc.launch_nonce
+            signal_transaction_id = acc.rejoin_transaction_id
+
+        extra = f"PID={pid_was}" if pid_was else "PID=<none>"
+        extra += (
+            f" grace={grace_period:.1f}s"
+            f" windows={presence['visible_windows']}"
+            f" ram={float(presence['max_ram_mb'] or 0.0):.1f}MB"
+            f" cpu={float(presence['max_cpu'] or 0.0):.2f}%"
+        )
+        if guard_failed:
+            msg = self.REASON_MESSAGES["multi_roblox_guard_failed"]
+            try:
+                from roblox_hybrid import record_multi_roblox_guard_failure
+
+                record_multi_roblox_guard_failure(f"{acc.display_name}: {extra}")
+            except Exception:
+                pass
+            with acc._lock:
+                acc.manual_status = msg
+                acc.last_error = f"{msg} [{extra}]"
+            flog_kv("MULTI_ROBLOX", "guard_runtime_failure_detected", "error", account=acc.display_name, detail=extra)
+            self.runtime_owner.handle_runtime_signal(
+                acc,
+                "fatal",
+                "multi_roblox_guard_failed",
+                payload={"detail": f"{msg} [{extra}]", "reason_msg": msg},
+                expected_runtime_generation=signal_runtime_generation,
+                expected_session_id=signal_session_id,
+                expected_launch_nonce=signal_launch_nonce,
+                expected_transaction_id=signal_transaction_id,
+            )
+            self._wake.set()
+            return status
+        self.report_fault(
+            "pid_dead",
+            extra,
+            expected_runtime_generation=signal_runtime_generation,
+            expected_session_id=signal_session_id,
+            expected_launch_nonce=signal_launch_nonce,
+            expected_transaction_id=signal_transaction_id,
+        )
+        return status
+
+    def run(self):
+        acc = self.acc
+        flog(f"[WORKER] {acc.display_name} started")
+
+        try:
+            from domain.account_model import is_account_finished
+
+            if is_account_finished(acc):
+                flog(f"[WORKER] {acc.display_name} is Finished - skipping launch")
+                return
+        except Exception:
+            pass
+        auth_gate = evaluate_account_auth_gate(acc)
+        if auth_gate.blocked:
+            mark_account_auth_quarantined(acc, auth_gate, source="worker_preflight", runtime_writer=self.state_mgr)
+            reason_key = auth_gate.reason_key
+            reason_msg = auth_gate.reason
+            if auth_gate.reason_key == CAPTCHA_REASON:
+                flog_kv("CAPTCHA", "account_hold", "warning", account=acc.display_name, detail=auth_gate.reason)
+            else:
+                flog(f"[WORKER] {acc.display_name} launch blocked: {auth_gate.reason}", "warning")
+            self.runtime_owner.handle_runtime_signal(
+                acc,
+                "fatal",
+                reason_key,
+                payload={"reason_msg": reason_msg, "detail": auth_gate.reason},
+            )
+            return
+
+        if acc.cookie:
+            validate_attempt = 0
+            while not self._stop_event.is_set():
+                while not self.recovery._net.is_online() and not self._stop_event.is_set():
+                    self._wake.wait(timeout=2.0)
+                    self._wake.clear()
+                if self._stop_event.is_set():
+                    return
+
+                ok, username, detail, transient = self._validate_cookie(acc.cookie)
+                if ok:
+                    mismatch_reason = cookie_identity_block_reason(acc.username, username, bool(username and username.lower() != acc.username.lower()))
+                    if mismatch_reason:
+                        _set_account_cookie_block(acc, mismatch_reason, cookie_username=username)
+                        flog(f"[WORKER] {acc.display_name} launch blocked: {mismatch_reason}", "warning")
+                        self.runtime_owner.handle_runtime_signal(
+                            acc,
+                            "fatal",
+                            "cookie_mismatch",
+                            payload={"reason_msg": mismatch_reason, "detail": mismatch_reason},
+                        )
+                        return
+                    with acc._lock:
+                        acc.cookie_username = str(username or acc.cookie_username or "")
+                        acc.cookie_mismatch = False
+                        acc.session_valid = True
+                        acc.session_checked = True
+                        acc.session_wait_started_at = 0.0
+                    if username and username != acc.username:
+                        flog(f"[WORKER] {acc.display_name} cookie validated as '{username}'")
+                    flog(f"[WORKER] {acc.display_name} cookie valid ({username})")
+                    self.runtime_owner.request_evaluate(acc, trigger="cookie_validated")
+                    break
+
+                with acc._lock:
+                    acc.session_checked = True
+                    acc.session_valid = False
+                    acc.last_crash_reason = "cookie_check_transient" if transient else "cookie_invalid"
+
+                if transient:
+                    validate_attempt += 1
+                    delay = compute_backoff(validate_attempt, base=3, cap=30)
+                    flog(
+                        f"[WORKER] {acc.display_name} cookie validation transient error -> retry in {delay:.1f}s: {detail}",
+                        "warning",
+                    )
+                    self.runtime_owner.request_evaluate(acc, trigger="cookie_validation_retry")
+                    self._wake.wait(timeout=delay)
+                    self._wake.clear()
+                    continue
+
+                if is_captcha_text(detail):
+                    set_account_captcha_hold(acc, detail, source="cookie_validation", runtime_writer=self.state_mgr)
+                    flog_kv("CAPTCHA", "detected", "warning", account=acc.display_name, detail=detail)
+                    self.runtime_owner.handle_runtime_signal(
+                        acc,
+                        "fatal",
+                        CAPTCHA_REASON,
+                        payload={"reason_msg": CAPTCHA_BLOCK_REASON, "detail": detail},
+                    )
+                    return
+
+                flog(f"[WORKER] {acc.display_name} cookie invalid -> FAILED: {detail}", "warning")
+                self.runtime_owner.handle_runtime_signal(
+                    acc,
+                    "fatal",
+                    "cookie_invalid",
+                    payload={"reason_msg": self.REASON_MESSAGES["cookie_invalid"], "detail": detail},
+                )
+                return
+        else:
+            with acc._lock:
+                acc.session_valid = True
+                acc.session_checked = True
+            flog(f"[WORKER] {acc.display_name} no cookie - skipping validation")
+
+        initial_bound = False
+        if acc.state != AccountState.IN_GAME:
+            if self._rebind_live_game_process("initial_probe"):
+                initial_bound = True
+            elif self._safe_adopt_visible_process("initial_probe_visible_adopt"):
+                initial_bound = True
+
+        if initial_bound:
+            with acc._lock:
+                runtime_generation = acc.runtime_generation
+                session_id = acc.session_id
+                launch_nonce = acc.launch_nonce
+                transaction_id = acc.rejoin_transaction_id
+            self.runtime_owner.handle_runtime_signal(
+                acc,
+                "launch_success",
+                "initial_probe",
+                payload={"trigger": "initial_probe", "count_rejoin": False},
+                expected_runtime_generation=runtime_generation,
+                expected_session_id=session_id,
+                expected_launch_nonce=launch_nonce,
+                expected_transaction_id=transaction_id,
+            )
+            self._wake.wait(timeout=1.0)
+            self._wake.clear()
+
+        self.runtime_owner.request_evaluate(acc, trigger="initial_boot")
+
+        crash_to = self.cfg.get("crash_timeout", 30)
+        while not self._stop_event.is_set():
+            try:
+                from domain.account_model import is_account_finished as _is_finished
+
+                if _is_finished(acc):
+                    # Marked Finished mid-run: sit idle, no rejoin, no actions.
+                    self._wake.wait(timeout=2.0)
+                    self._wake.clear()
+                    continue
+            except Exception:
+                pass
+            if acc.state == AccountState.IN_GAME:
+                if not acc.pid or not ProcessManager.is_bound_game_alive(
+                    acc.pid,
+                    owner_key=acc._config_username,
+                    expected_identity=acc.bound_process_identity,
+                ):
+                    status = self.handle_missing_bound_process("bound_pid_missing")
+                    if status == "rebound":
+                        self._wake.wait(timeout=1.0)
+                        self._wake.clear()
+                        continue
+                    if status == "hold":
+                        self._wake.wait(timeout=min(float(crash_to), 5.0))
+                        self._wake.clear()
+                        continue
+                    continue
+                else:
+                    with acc._lock:
+                        acc.pid_missing_since = 0.0
+
+                if acc.pid and acc.in_game_since:
+                    runtime = time.time() - (acc.in_game_since or time.time())
+                    if handle_disconnect_checks(self, acc, runtime):
+                        continue
+
+                wait_timeout = float(crash_to)
+                if acc.pid and acc.in_game_since and self.cfg.get("connection_error_rejoin", True) and self.cfg.get("popup_disconnected_enabled", True):
+                    wait_timeout = min(
+                        wait_timeout,
+                        max(1.0, float(self.cfg.get("popup_scan_interval_seconds", 2.0) or 2.0)),
+                    )
+                self._wake.wait(timeout=wait_timeout)
+                self._wake.clear()
+                continue
+
+            self._wake.wait(timeout=2.0)
+            self._wake.clear()
+
+        flog(f"[WORKER] {acc.display_name} stopped")
+
+    @staticmethod
+    def _validate_cookie(cookie: str):
+        try:
+            req = urllib.request.Request(
+                "https://users.roblox.com/v1/users/authenticated",
+                headers={
+                    "Cookie": f".ROBLOSECURITY={cookie.strip()}",
+                    "User-Agent": "Mozilla/5.0",
+                    "Accept": "application/json",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=8) as resp:
+                data = __import__("json").loads(resp.read())
+            username = data.get("name", "")
+            return (True, username, "", False) if username else (False, "", "no username in response", True)
+        except urllib.error.HTTPError as e:
+            headers = dict(e.headers.items()) if e.headers else {}
+            try:
+                body = e.read().decode("utf-8", errors="replace")
+            except Exception:
+                body = ""
+            captcha = captcha_detail(e.code, body, headers)
+            if captcha:
+                return False, "", captcha, False
+            transient = e.code >= 500 or e.code == 429
+            suffix = body[:180].replace("\r", " ").replace("\n", " ") if body else ""
+            detail = f"HTTP {e.code} {'(transient)' if transient else '(cookie expired or invalid)'}"
+            if suffix:
+                detail += f" {suffix}"
+            return False, "", detail, transient
+        except Exception as e:
+            return False, "", str(e), True

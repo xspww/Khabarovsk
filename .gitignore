@@ -1,0 +1,67 @@
+﻿# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Local configuration and environment secrets
+.env
+.env.*
+*.key
+*.pem
+secrets.json
+
+# Local runtime data and sensitive account state
+# (Stored at %LOCALAPPDATA%\Cronus Launcher\data by default)
+data/
+cronus_rt1_instances/
+AccountData.json
+account_import_pending.json
+cronus_rt1_config.json
+cronus_rt12_accounts.txt
+cronus_rt12_runtime.txt
+account_tools_audit.jsonl
+*.bak
+
+# Logs and local databases
+*.log
+*.out.log
+*.err.log
+*.db
+*.db-shm
+*.db-wal
+debug_popup_live_*.png
+
+# Build outputs (PyInstaller exe is published via GitHub Releases)
+dist/
+build/
+guard_out.txt
+assets/cronus_icon.ico
+build_info.py
+
+# Temporary and editor files
+.vscode/
+.idea/
+*.code-workspace
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Operating system files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+*.lnk

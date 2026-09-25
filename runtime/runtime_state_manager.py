@@ -1,0 +1,748 @@
+from __future__ import annotations
+
+import sys
+import threading
+import time
+from typing import Any, Callable, Dict, Optional
+
+from domain.states import AccountState, RuntimeState, is_valid_runtime_transition, runtime_state_for_public
+from runtime.runtime_invariants import invariant_snapshot
+from runtime.runtime_state_observability import (
+    account_name as _account_name,
+    caller as _caller,
+    emit_invariant_violations as _emit_invariant_violations,
+    runtime_log_fields as _runtime_log_fields,
+    snapshot_account_runtime as _snapshot_account_runtime,
+    transition_invariant_blockers as _transition_invariant_blockers,
+)
+from runtime.runtime_transactions import (
+    begin_rejoin_transaction as _begin_rejoin_transaction,
+    finish_rejoin_transaction as _finish_rejoin_transaction,
+    update_rejoin_transaction as _update_rejoin_transaction,
+)
+from services.process_proof_policy import (
+    PROOF_STRONG,
+    PROOF_UNTRUSTED,
+    normalize_process_proof_level,
+    process_proof_allowed_for_state,
+    required_process_proof_for_state,
+)
+
+
+Logger = Callable[..., None]
+
+
+class RuntimeStateManager:
+    """Single-writer helper for lifecycle-critical Account runtime fields."""
+
+    def __init__(self, logger: Optional[Logger] = None):
+        self._log = logger
+
+    def _emit(self, scope: str, event: str, level: str = "info", **fields: Any) -> None:
+        if not self._log:
+            return
+        thread_name = threading.current_thread().name
+        fields.setdefault("event_type", event)
+        fields.setdefault("thread_name", thread_name)
+        fields.setdefault("thread", thread_name)
+        if "account_id" not in fields and fields.get("account"):
+            fields["account_id"] = fields.get("account")
+        if "PID" not in fields and "pid" in fields:
+            fields["PID"] = fields.get("pid")
+        if "pid" not in fields and "PID" in fields:
+            fields["pid"] = fields.get("PID")
+        try:
+            self._log(scope, event, level, **fields)
+        except TypeError:
+            self._log(scope, event, **fields)
+        except Exception as exc:
+            print(f"[RUNTIME] logger_failed event={event} error={exc}", file=sys.stderr)
+
+    def _caller(self) -> str:
+        return _caller()
+
+    def _account_name(self, acc: Any) -> str:
+        return _account_name(acc)
+
+    def _runtime_log_fields(self, acc: Any, reason: str = "", **fields: Any) -> Dict[str, Any]:
+        return _runtime_log_fields(acc, reason=reason, **fields)
+
+    def _emit_invariant_violations(self, acc: Any, reason: str, runtime_state: Optional[RuntimeState] = None) -> bool:
+        return _emit_invariant_violations(self._log, acc, reason, runtime_state=runtime_state)
+
+    def snapshot(self, acc: Any) -> Dict[str, Any]:
+        return _snapshot_account_runtime(self._log, acc)
+
+    def guard_runtime_generation(self, acc: Any, expected_generation: Optional[int], reason: str = "") -> bool:
+        if expected_generation is None:
+            return True
+        current = int(getattr(acc, "runtime_generation", 0) or 0)
+        if int(expected_generation) == current:
+            return True
+        self._emit(
+            "RUNTIME",
+            "stale_work_rejected",
+            "warning",
+            **self._runtime_log_fields(
+                acc,
+                reason=reason,
+                expected_generation=expected_generation,
+                current_generation=current,
+                session_id=getattr(acc, "session_id", ""),
+                transaction_id=getattr(acc, "rejoin_transaction_id", ""),
+            ),
+        )
+        return False
+
+    def guard_recovery_generation(self, acc: Any, expected_generation: Optional[int], reason: str = "") -> bool:
+        if expected_generation is None:
+            return True
+        current = int(getattr(acc, "recovery_generation", 0) or 0)
+        if int(expected_generation) == current:
+            return True
+        self._emit(
+            "RUNTIME",
+            "stale_work_rejected",
+            "warning",
+            **self._runtime_log_fields(
+                acc,
+                reason=reason,
+                expected_recovery_generation=expected_generation,
+                current_recovery_generation=current,
+                session_id=getattr(acc, "session_id", ""),
+                transaction_id=getattr(acc, "rejoin_transaction_id", ""),
+            ),
+        )
+        return False
+
+    def guard_session_identity(
+        self,
+        acc: Any,
+        expected_generation: Optional[int] = None,
+        expected_session_id: str = "",
+        expected_launch_nonce: str = "",
+        expected_transaction_id: str = "",
+        reason: str = "",
+    ) -> bool:
+        if not self.guard_runtime_generation(acc, expected_generation, reason or "session_guard"):
+            return False
+        if expected_session_id and str(getattr(acc, "session_id", "") or "") != str(expected_session_id):
+            self._emit(
+                "RUNTIME",
+                "stale_work_rejected",
+                "warning",
+                **self._runtime_log_fields(
+                    acc,
+                    reason=reason or "session_mismatch",
+                    expected_session_id=expected_session_id,
+                    current_session_id=getattr(acc, "session_id", ""),
+                ),
+            )
+            return False
+        if expected_launch_nonce and str(getattr(acc, "launch_nonce", "") or "") != str(expected_launch_nonce):
+            self._emit(
+                "RUNTIME",
+                "stale_work_rejected",
+                "warning",
+                **self._runtime_log_fields(
+                    acc,
+                    reason=reason or "launch_nonce_mismatch",
+                    expected_launch_nonce=expected_launch_nonce,
+                    current_launch_nonce=getattr(acc, "launch_nonce", ""),
+                ),
+            )
+            return False
+        if expected_transaction_id and str(getattr(acc, "rejoin_transaction_id", "") or "") != str(expected_transaction_id):
+            self._emit(
+                "RUNTIME",
+                "stale_work_rejected",
+                "warning",
+                **self._runtime_log_fields(
+                    acc,
+                    reason=reason or "transaction_mismatch",
+                    expected_transaction_id=expected_transaction_id,
+                    current_transaction_id=getattr(acc, "rejoin_transaction_id", ""),
+                ),
+            )
+            return False
+        return True
+
+    def bump_runtime_generation(self, acc: Any, reason: str = "") -> int:
+        acc.runtime_generation = int(getattr(acc, "runtime_generation", 0) or 0) + 1
+        acc.sync_runtime(reason or "runtime_generation")
+        self._emit(
+            "RUNTIME",
+            "generation_bumped",
+            **self._runtime_log_fields(acc, reason=reason),
+        )
+        return int(acc.runtime_generation)
+
+    def begin_rejoin_transaction(self, acc: Any, reason: str, launch_intent: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        return _begin_rejoin_transaction(acc, reason, launch_intent, emit=self._emit)
+
+    def update_rejoin_transaction(self, acc: Any, status: str = "", step: str = "", reason: str = "", server_validation: str = "", scheduler_slot: str = "") -> Dict[str, Any]:
+        return _update_rejoin_transaction(
+            acc,
+            status=status,
+            step=step,
+            reason=reason,
+            server_validation=server_validation,
+            scheduler_slot=scheduler_slot,
+            emit=self._emit,
+        )
+
+    def finish_rejoin_transaction(
+        self,
+        acc: Any,
+        status: str,
+        reason: str,
+        destination_evidence: Optional[Dict[str, Any]] = None,
+        server_validation: str = "",
+    ) -> Dict[str, Any]:
+        return _finish_rejoin_transaction(
+            acc,
+            status,
+            reason,
+            destination_evidence=destination_evidence,
+            server_validation=server_validation,
+            emit=self._emit,
+        )
+
+    def transition_public(
+        self,
+        acc: Any,
+        new_state: AccountState,
+        reason: str = "",
+        force: bool = False,
+        expected_generation: Optional[int] = None,
+        increment_generation: bool = False,
+    ) -> bool:
+        if not self.guard_runtime_generation(acc, expected_generation, reason or "transition"):
+            return False
+        old_state = acc.state
+        old_runtime = runtime_state_for_public(old_state)
+        new_runtime = runtime_state_for_public(new_state)
+        if new_runtime == RuntimeState.RUNNING:
+            proof_level = normalize_process_proof_level(getattr(acc, "process_proof_level", PROOF_UNTRUSTED))
+            if not process_proof_allowed_for_state(proof_level, new_state):
+                acc.process_reject_reason = "process_proof_insufficient"
+                acc.binding_decision = "rejected"
+                acc.sync_runtime(reason or "process_proof_insufficient")
+                self._emit(
+                    "STATE",
+                    "state_write_rejected",
+                    "warning",
+                    **self._runtime_log_fields(
+                        acc,
+                        reason=reason or "process_proof_insufficient",
+                        old=getattr(old_state, "name", old_state),
+                        new=new_state.name,
+                        old_runtime=old_runtime.value,
+                        new_runtime=new_runtime.value,
+                        reject="process_proof_insufficient",
+                        process_proof_level=proof_level,
+                        required_process_proof=required_process_proof_for_state(new_state),
+                        caller=self._caller(),
+                    ),
+                )
+                return False
+        blockers = [] if (force and new_runtime not in {RuntimeState.RUNNING, RuntimeState.BACKOFF, RuntimeState.RECOVERING}) else _transition_invariant_blockers(self._log, acc, new_runtime, reason or "transition")
+        if blockers:
+            self._emit(
+                "STATE",
+                "state_write_rejected",
+                "warning",
+                **self._runtime_log_fields(
+                    acc,
+                    reason=reason or "transition_invariant",
+                    old=getattr(old_state, "name", old_state),
+                    new=new_state.name,
+                    old_runtime=old_runtime.value,
+                    new_runtime=new_runtime.value,
+                    reject="invariant_violation",
+                    blockers=blockers,
+                    snapshot=invariant_snapshot(acc, runtime_state=new_runtime),
+                    caller=self._caller(),
+                ),
+            )
+            return False
+        if not force and not is_valid_runtime_transition(old_runtime, new_runtime):
+            self._emit(
+                "STATE",
+                "state_write_rejected",
+                "warning",
+                **self._runtime_log_fields(
+                    acc,
+                    reason=reason,
+                    old=old_state.name,
+                    new=new_state.name,
+                    old_runtime=old_runtime.value,
+                    new_runtime=new_runtime.value,
+                    session_id=getattr(acc, "session_id", ""),
+                    transaction_id=getattr(acc, "rejoin_transaction_id", ""),
+                    caller=self._caller(),
+                ),
+            )
+            self._emit(
+                "STATE",
+                "invalid_transition",
+                "warning",
+                **self._runtime_log_fields(
+                    acc,
+                    reason=reason,
+                    old=old_state.name,
+                    new=new_state.name,
+                    old_runtime=old_runtime.value,
+                    new_runtime=new_runtime.value,
+                    caller=self._caller(),
+                    snapshot=self.snapshot(acc),
+                ),
+            )
+            return False
+
+        acc.state = new_state
+        acc.last_state_reason = str(reason or "")
+        acc.last_state_change_at = time.time()
+        if increment_generation:
+            self.bump_runtime_generation(acc, reason or "transition_epoch")
+        else:
+            acc.sync_runtime(reason or "transition")
+        self._emit(
+            "STATE",
+            "transition_owned",
+            **self._runtime_log_fields(
+                acc,
+                reason=reason,
+                old=old_state.name,
+                new=new_state.name,
+                old_runtime=old_runtime.value,
+                new_runtime=new_runtime.value,
+            ),
+        )
+        self._emit_invariant_violations(acc, reason or "post_transition", runtime_state=new_runtime)
+        return True
+
+    def set_desired(self, acc: Any, desired: AccountState, reason: str = "", increment_generation: bool = False) -> None:
+        acc.desired_state = desired
+        if increment_generation:
+            self.bump_runtime_generation(acc, reason or "desired_epoch")
+        else:
+            acc.sync_runtime(reason or "desired_state")
+        self._emit(
+            "RUNTIME",
+            "desired_state_owned",
+            **self._runtime_log_fields(acc, reason=reason or "desired_state", desired_public_state=desired.name),
+        )
+
+    def set_cooldown(self, acc: Any, until_ts: float, reason: str = "") -> None:
+        acc.cooldown_until = max(0.0, float(until_ts or 0.0))
+        acc.sync_runtime(reason or "cooldown")
+        self._emit(
+            "RUNTIME",
+            "owned_mutation",
+            **self._runtime_log_fields(
+                acc,
+                reason=reason,
+                field="cooldown_until",
+                cooldown_until=acc.cooldown_until,
+            ),
+        )
+
+    def set_binding_status(self, acc: Any, status: str, reason: str = "") -> None:
+        acc.process_binding_status = str(status or "unbound")
+        if status:
+            text = str(status)
+            if text == "verified":
+                acc.binding_decision = "verified"
+            elif text.startswith("orphan"):
+                acc.binding_decision = "quarantined"
+            elif text in {"unbound", "released"}:
+                acc.binding_decision = "released"
+                acc.process_proof_level = PROOF_UNTRUSTED
+            else:
+                acc.binding_decision = text
+        acc.sync_runtime(reason or "binding_status")
+        self._emit(
+            "STATE",
+            "process_binding_status",
+            account=getattr(acc, "display_name", getattr(acc, "username", "")),
+            pid=getattr(acc, "pid", None),
+            status=acc.process_binding_status,
+            runtime_generation=getattr(acc, "runtime_generation", 0),
+            recovery_generation=getattr(acc, "recovery_generation", 0),
+            command_generation=getattr(acc, "command_generation", 0),
+            reason=reason,
+        )
+
+    def update_launch_intent(
+        self,
+        acc: Any,
+        launch_intent: Dict[str, Any],
+        reason: str = "",
+        expected_generation: Optional[int] = None,
+    ) -> bool:
+        if not self.guard_runtime_generation(acc, expected_generation, reason or "launch_intent_update"):
+            return False
+        acc.launch_intent = dict(launch_intent or {})
+        acc.launch_intent_summary = dict(acc.launch_intent.get("launch_intent_summary", {}) or {})
+        acc.sync_runtime(reason or "launch_intent_update")
+        self._emit(
+            "RUNTIME",
+            "owned_mutation",
+            account=getattr(acc, "display_name", getattr(acc, "username", "")),
+            field="launch_intent",
+            launch_intent_summary=acc.launch_intent_summary,
+            runtime_generation=getattr(acc, "runtime_generation", 0),
+            recovery_generation=getattr(acc, "recovery_generation", 0),
+            command_generation=getattr(acc, "command_generation", 0),
+            session_id=getattr(acc, "session_id", ""),
+            transaction_id=getattr(acc, "rejoin_transaction_id", ""),
+            reason=reason,
+        )
+        return True
+
+    def set_recovery(self, acc: Any, status: str = "", reason: str = "", inflight: Optional[bool] = None) -> None:
+        if status:
+            acc.recovery_status = str(status)
+        if reason:
+            acc.last_recovery_reason = str(reason)
+        if inflight is not None:
+            acc.recovery_inflight = bool(inflight)
+        acc.sync_runtime(reason or status or "recovery")
+        self._emit(
+            "RUNTIME",
+            "owned_mutation",
+            **self._runtime_log_fields(
+                acc,
+                reason=reason or status,
+                field="recovery",
+                status=getattr(acc, "recovery_status", ""),
+                inflight=getattr(acc, "recovery_inflight", False),
+            ),
+        )
+
+    def clear_recovery(self, acc: Any, reason: str = "", inflight: Optional[bool] = False) -> None:
+        acc.recovery_status = ""
+        acc.last_recovery_reason = ""
+        if inflight is not None:
+            acc.recovery_inflight = bool(inflight)
+        acc.sync_runtime(reason or "recovery_clear")
+        self._emit(
+            "RUNTIME",
+            "owned_mutation",
+            **self._runtime_log_fields(
+                acc,
+                reason=reason or "recovery_clear",
+                field="recovery_clear",
+                status=getattr(acc, "recovery_status", ""),
+                inflight=getattr(acc, "recovery_inflight", False),
+            ),
+        )
+
+    def clear_manual_start_failure_gate(self, acc: Any, max_fail_count: int = 5) -> bool:
+        max_fail = max(1, int(max_fail_count or 5))
+        reason = str(getattr(acc, "last_crash_reason", "") or "")
+        failed_status = str(getattr(acc, "recovery_status", "") or "") == "failed"
+        over_fail_limit = int(getattr(acc, "fail_count", 0) or 0) >= max_fail
+        if reason not in {"max_fail", "max_retry"} and not (failed_status and over_fail_limit):
+            return False
+
+        acc.retry_count = 0
+        acc.fail_count = 0
+        acc.launch_fail_count = 0
+        acc.crash_retry_count = 0
+        acc.network_retry_count = 0
+        acc.session_retry_count = 0
+        acc.session_wait_started_at = 0.0
+        acc.pid_missing_since = 0.0
+        acc.last_network_lost_at = None
+        acc.last_crash_reason = ""
+        acc.last_recovery_reason = ""
+        acc.recovery_status = ""
+        acc.recovery_inflight = False
+        acc.recovery_scheduled_at = 0.0
+        acc.last_rejoin_trigger = ""
+        self.set_cooldown(acc, 0.0, reason="manual_start_reset_failure_gate")
+        acc.sync_runtime("manual_start_reset_failure_gate")
+        self._emit(
+            "RUNTIME",
+            "owned_mutation",
+            **self._runtime_log_fields(
+                acc,
+                reason="manual_start_reset_failure_gate",
+                field="manual_start_failure_gate",
+                max_fail_count=max_fail,
+            ),
+        )
+        return True
+
+    def bump_recovery_generation(self, acc: Any, reason: str = "", now: Optional[float] = None) -> int:
+        acc.recovery_generation = int(getattr(acc, "recovery_generation", 0) or 0) + 1
+        acc.last_recovery_at = float(now if now is not None else time.time())
+        acc.sync_runtime(reason or "recovery_generation")
+        self._emit(
+            "RECOVERY",
+            "generation_bumped",
+            account=getattr(acc, "display_name", getattr(acc, "username", "")),
+            runtime_generation=getattr(acc, "runtime_generation", 0),
+            recovery_generation=getattr(acc, "recovery_generation", 0),
+            command_generation=getattr(acc, "command_generation", 0),
+            reason=reason,
+            thread=threading.current_thread().name,
+        )
+        return int(acc.recovery_generation)
+
+    def begin_recovery(
+        self,
+        acc: Any,
+        status: str,
+        reason: str,
+        bucket: str = "crash",
+        now: Optional[float] = None,
+        count_retry: bool = True,
+        count_crash: bool = True,
+        count_fail: bool = True,
+    ) -> int:
+        event_ts = float(now if now is not None else time.time())
+        generation = self.bump_recovery_generation(acc, reason or status or "recovery_begin", now=event_ts)
+        acc.recovery_inflight = True
+        acc.recovery_status = str(status or "recovering")
+        acc.last_recovery_reason = str(reason or "")
+        acc.last_crash_reason = str(reason or "")
+        if count_retry:
+            acc.retry_count = int(getattr(acc, "retry_count", 0) or 0) + 1
+        if count_crash:
+            acc.crash_count = int(getattr(acc, "crash_count", 0) or 0) + 1
+        bucket_name = str(bucket or "crash")
+        if bucket_name == "network":
+            acc.network_retry_count = int(getattr(acc, "network_retry_count", 0) or 0) + 1
+        elif bucket_name == "launch":
+            acc.launch_fail_count = int(getattr(acc, "launch_fail_count", 0) or 0) + 1
+        elif bucket_name == "session":
+            acc.session_retry_count = int(getattr(acc, "session_retry_count", 0) or 0) + 1
+        elif bucket_name != "manual":
+            acc.crash_retry_count = int(getattr(acc, "crash_retry_count", 0) or 0) + 1
+        if count_fail:
+            acc.fail_count = int(getattr(acc, "fail_count", 0) or 0) + 1
+        acc.sync_runtime(status or reason or "recovery_begin")
+        self._emit(
+            "RECOVERY",
+            "begin_owned",
+            account=getattr(acc, "display_name", getattr(acc, "username", "")),
+            runtime_generation=getattr(acc, "runtime_generation", 0),
+            recovery_generation=generation,
+            command_generation=getattr(acc, "command_generation", 0),
+            status=status,
+            reason=reason,
+            bucket=bucket_name,
+            pid=getattr(acc, "pid", None),
+            thread=threading.current_thread().name,
+        )
+        return generation
+
+    def begin_account_command(self, acc: Any, command: Dict[str, Any]) -> int:
+        current_id = str(getattr(acc, "current_command_id", "") or "")
+        next_id = str(command.get("command_id", "") or "")
+        if current_id and current_id != next_id:
+            self._emit(
+                "RUNTIME",
+                "command_begin_rejected",
+                "warning",
+                **self._runtime_log_fields(
+                    acc,
+                    reason="command_already_inflight",
+                    expected_command_id=next_id,
+                    current_command_id=current_id,
+                ),
+            )
+            return int(getattr(acc, "command_generation", 0) or 0)
+        acc.command_generation = int(getattr(acc, "command_generation", 0) or 0) + 1
+        acc.current_command_id = next_id
+        acc.current_command = str(command.get("action", ""))
+        acc.command_inflight_started_at = float(command.get("started_at") or time.time())
+        acc.sync_runtime("command_begin")
+        self._emit(
+            "RUNTIME",
+            "command_begin",
+            **self._runtime_log_fields(
+                acc,
+                reason="command_begin",
+                command_id=acc.current_command_id,
+                command=acc.current_command,
+            ),
+        )
+        return int(acc.command_generation)
+
+    def finish_account_command(self, acc: Any, command_id: str, ok: bool = True, error: str = "") -> None:
+        if command_id and getattr(acc, "current_command_id", "") != command_id:
+            self._emit(
+                "RUNTIME",
+                "stale_work_rejected",
+                "warning",
+                **self._runtime_log_fields(
+                    acc,
+                    reason="command_finish",
+                    expected_command_id=command_id,
+                    current_command_id=getattr(acc, "current_command_id", ""),
+                ),
+            )
+            return
+        acc.current_command_id = ""
+        acc.current_command = ""
+        acc.command_inflight_started_at = 0.0
+        if error:
+            acc.last_error = str(error)
+        acc.sync_runtime("command_finish")
+        self._emit(
+            "RUNTIME",
+            "command_finish",
+            **self._runtime_log_fields(
+                acc,
+                reason="command_finish",
+                command_id=command_id,
+                ok=ok,
+                error=error,
+            ),
+        )
+
+    def clear_process_binding(self, acc: Any, reason: str = "", increment_generation: bool = False) -> None:
+        acc.pid = None
+        acc.bound_process_name = ""
+        acc.bound_process_identity = ""
+        acc.ownership_confidence = 0.0
+        acc.last_signal_confidence = 0.0
+        acc.process_binding_status = "unbound"
+        acc.binding_decision = "released"
+        acc.process_binding_confidence = 0.0
+        acc.process_proof_level = PROOF_UNTRUSTED
+        acc.process_reject_reason = ""
+        acc.process_owner_claim = ""
+        acc.observed_server_type = ""
+        acc.observed_private_server_id = ""
+        acc.observed_private_server_owner_id = ""
+        acc.observed_place_id = ""
+        acc.observed_job_id = ""
+        acc.observed_universe_id = ""
+        acc.observed_server_at = 0.0
+        acc.unmanaged_live_process_count = 0
+        acc.unmanaged_live_pids = []
+        acc.adopt_candidate_pid = None
+        acc.adopt_reject_reason = ""
+        acc.orphan_confidence = 0.0
+        acc.orphan_pid = None
+        acc.orphan_identity = ""
+        acc.pid_missing_since = time.time()
+        if increment_generation:
+            self.bump_runtime_generation(acc, reason or "process_unbound")
+        else:
+            acc.sync_runtime(reason or "process_unbound")
+        self._emit(
+            "STATE",
+            "process_unbound",
+            **self._runtime_log_fields(acc, reason=reason, pid="", PID=""),
+        )
+
+    def clear_orphan_diagnostics(self, acc: Any, reason: str = "") -> None:
+        acc.unmanaged_live_process_count = 0
+        acc.unmanaged_live_pids = []
+        acc.adopt_candidate_pid = None
+        acc.adopt_reject_reason = ""
+        acc.orphan_confidence = 0.0
+        acc.orphan_pid = None
+        acc.orphan_identity = ""
+        acc.orphan_observed_at = 0.0
+        acc.orphan_verify_after = 0.0
+        acc.sync_runtime(reason or "orphan_diagnostics_clear")
+        self._emit(
+            "STATE",
+            "orphan_diagnostics_cleared",
+            **self._runtime_log_fields(acc, reason=reason or "orphan_diagnostics_clear"),
+        )
+
+    def bind_process(
+        self,
+        acc: Any,
+        pid: int,
+        process_name: str,
+        process_identity: str,
+        reason: str = "",
+        confidence: float = 100.0,
+        process_proof_level: str = PROOF_STRONG,
+        increment_generation: bool = True,
+    ) -> None:
+        old_pid = getattr(acc, "pid", None)
+        acc.pid = int(pid)
+        acc.bound_process_name = process_name or "RobloxPlayerBeta.exe"
+        acc.bound_process_identity = process_identity or ""
+        acc.pid_missing_since = 0.0
+        acc.last_pid_change_at = time.time()
+        acc.ownership_confidence = float(confidence or 0.0)
+        acc.last_signal_confidence = float(confidence or 0.0)
+        acc.process_binding_status = "verified"
+        acc.binding_decision = "verified"
+        acc.process_binding_confidence = float(confidence or 0.0)
+        acc.process_proof_level = normalize_process_proof_level(process_proof_level) or PROOF_UNTRUSTED
+        acc.process_reject_reason = ""
+        acc.unmanaged_live_process_count = 0
+        acc.unmanaged_live_pids = []
+        acc.adopt_candidate_pid = None
+        acc.adopt_reject_reason = ""
+        acc.orphan_confidence = 0.0
+        if increment_generation and old_pid and int(old_pid) != int(pid):
+            self.bump_runtime_generation(acc, reason or "process_bind_replace")
+        else:
+            acc.sync_runtime(reason or "process_bind")
+        self._emit(
+            "STATE",
+            "process_bound",
+            **self._runtime_log_fields(
+                acc,
+                reason=reason,
+                pid=pid,
+                PID=pid,
+                old_pid=old_pid or "",
+                session_id=getattr(acc, "session_id", ""),
+                transaction_id=getattr(acc, "rejoin_transaction_id", ""),
+            ),
+        )
+
+    def forced_reset(self, acc: Any, desired: AccountState = AccountState.IDLE, reason: str = "forced_reset") -> None:
+        self.clear_process_binding(acc, reason, increment_generation=False)
+        acc.desired_state = desired
+        acc.cooldown_until = 0.0
+        acc.recovery_inflight = False
+        acc.recovery_status = ""
+        acc.last_recovery_reason = ""
+        acc.recovery_scheduled_at = 0.0
+        acc.current_command_id = ""
+        acc.current_command = ""
+        acc.command_inflight_started_at = 0.0
+        acc.session_id = ""
+        acc.launch_nonce = ""
+        acc.account_runtime_id = ""
+        acc.rejoin_transaction_id = ""
+        acc.scheduler_slot = ""
+        acc.supervisor_state = "stopped"
+        acc.last_transaction_status = ""
+        acc.last_transaction_step = ""
+        acc.last_transaction_reason = ""
+        acc.last_transaction_started_at = 0.0
+        acc.last_transaction_completed_at = 0.0
+        acc.last_transaction_failure_reason = ""
+        acc.server_validation = "unverified"
+        acc.destination_validation = "unverified"
+        acc.launch_intent = {}
+        acc.launch_intent_summary = {}
+        acc.state = desired
+        acc.last_state_reason = reason
+        acc.last_state_change_at = time.time()
+        self.bump_runtime_generation(acc, reason)
+        self._emit(
+            "STATE",
+            "forced_reset",
+            **self._runtime_log_fields(
+                acc,
+                reason=reason,
+                state=getattr(getattr(acc, "state", None), "name", getattr(acc, "state", "")),
+            ),
+        )

@@ -1,0 +1,84 @@
+.cronus-update-btn {
+  --p: 0%;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  width: 100%;
+  margin: 0 0 10px;
+  height: 32px;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid #43456e;
+  background: rgba(99, 102, 241, 0.16);
+  color: #a5b4fc;
+  font: 700 11px var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  overflow: hidden;
+  isolation: isolate;
+}
+.cronus-update-btn > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  position: relative;
+  z-index: 1;
+}
+.cronus-update-btn:hover {
+  background: rgba(99, 102, 241, 0.26);
+  border-color: #4a4c6e;
+  color: #c7d2fe;
+}
+.cronus-update-btn:disabled {
+  opacity: 0.75;
+  cursor: wait;
+}
+/* Update available: soft indigo pulse to catch the eye. */
+.cronus-update-btn.is-available {
+  animation: cronus-update-pulse 2.4s ease-in-out infinite;
+}
+@keyframes cronus-update-pulse {
+  0%, 100% { border-color: #43456e; }
+  50% { border-color: #6366f1; }
+}
+/* Downloading: indigo fill tracks --p with a shimmer sweep. */
+.cronus-update-btn.is-downloading {
+  animation: none;
+  border-color: rgba(99, 102, 241, 0.55);
+  color: #e0e7ff;
+}
+.cronus-update-btn.is-downloading::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  width: var(--p);
+  background: rgba(99, 102, 241, 0.28);
+  transition: width 0.4s ease;
+  z-index: 0;
+}
+.cronus-update-btn.is-downloading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 20%, rgba(255, 255, 255, 0.14) 50%, transparent 80%);
+  animation: cronus-update-shimmer 1.6s linear infinite;
+  z-index: 0;
+}
+@keyframes cronus-update-shimmer {
+  from { transform: translateX(-100%); }
+  to { transform: translateX(100%); }
+}
+/* Failed: muted red tint, no animation noise. */
+.cronus-update-btn.is-failed {
+  animation: none;
+  border-color: #7f2d3a;
+  background: rgba(244, 63, 94, 0.12);
+  color: #fda4af;
+}
+.cronus-update-btn.is-failed::before,
+.cronus-update-btn.is-failed::after {
+  display: none;
+}

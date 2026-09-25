@@ -104,6 +104,22 @@
   padding: 7px 18px;
 }
 
+/* ── Inset dividers between rows (never touch card edges) ── */
+.queue-card .queue-row{
+  position: relative;
+}
+.queue-card .queue-row::before{
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 18px;
+  right: 18px;
+  border-top: 1px solid rgba(140, 144, 156, .12);
+}
+.queue-card .queue-row:first-child::before{
+  display: none;
+}
+
 .queue-row-copy{
   min-width: 0;
   display: grid;
@@ -226,6 +242,10 @@
   padding: 6px 14px;
   border-radius: 6px;
   cursor: pointer;
+  transition: background .18s ease,border-color .18s ease,color .18s ease,box-shadow .18s ease,transform .12s ease!important;
+}
+.seg-toggle button:active{
+  transform: scale(.96);
 }
 .seg-toggle button:hover{
   color: #ffffff;
@@ -234,4 +254,172 @@
   background: #1d1f25;
   border-color: #32343d;
   color: #ffffff;
+  box-shadow: 0 0 0 1px rgba(99,102,241,.22),0 2px 10px rgba(0,0,0,.35);
 }
+
+/* ── Game pool inside Game card (screenshot layout) ── */
+#game-pool-row > .queue-row-copy.game-pool-copy{
+  width: 100%;
+}
+#game-pool-box{
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  padding: 2px 0 0;
+  display: grid;
+  gap: 12px;
+}
+#game-pool-head{
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+#game-pool-title{
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: .06em;
+  color: #8d9099;
+}
+#game-pool-add{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 1 auto;
+  margin-left: auto;
+}
+#game-pool-input{
+  width: 200px;
+  max-width: 40vw;
+}
+#game-pool-add-btn{
+  white-space: nowrap;
+  height: 33px;
+}
+#game-pool-list{
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+}
+.game-pool-empty{
+  font-size: 12.5px;
+  color: #787774;
+  padding: 4px 2px;
+}
+.game-pool-item{
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #23252d;
+  border-radius: 10px;
+  background: #101116;
+  padding: 10px 12px;
+}
+.game-pool-thumb{
+  width: 48px;
+  height: 48px;
+  flex: none;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #0b0c10;
+  border: 1px solid #22242b;
+  display: grid;
+  place-items: center;
+  font-weight: 800;
+  color: #787774;
+}
+.game-pool-thumb img{
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.game-pool-glyph{
+  font-size: 18px;
+}
+.game-pool-copy{
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 2px;
+}
+.game-pool-name{
+  font-size: 13.5px;
+  font-weight: 700;
+  color: #f2f3f5;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.game-pool-sub{
+  font-family: var(--mono, monospace);
+  font-size: 11.5px;
+  color: #787774;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.game-pool-del{
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  background: transparent;
+  border: 1px solid #2a2d36;
+  border-radius: 6px;
+  color: #9aa0ab;
+  cursor: pointer;
+  padding: 0;
+}
+.game-pool-del:hover{
+  color: #fda4af;
+  border-color: #f43f5e;
+}
+.game-pool-del svg{
+  width: 15px;
+  height: 15px;
+}
+.game-pool-del.armed{
+  background: #4c1d24;
+  border-color: #f43f5e;
+  color: #fda4af;
+}
+#game-pool-hint{
+  margin: 0;
+}
+#game-card #game-map-card.map-card{
+  background: #0b0c10;
+}
+/* ── Per-account game picker popup (Accounts table GAME cell) ── */
+#accounts-table .game-cell{cursor:pointer}
+body[data-game-mode="shared"] #accounts-table .game-cell{cursor:default}
+.cronus-game-pop{padding:10px}
+.cronus-game-pop .cronus-gpop-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:2px 4px 8px;font-size:12px;font-weight:700;color:#f2f3f5}
+.cronus-game-pop .cronus-gpop-head button{background:none;border:none;color:#8d9099;cursor:pointer;font-size:14px;line-height:1;padding:2px 6px}
+.cronus-game-pop .cronus-gpop-head button:hover{color:#fff}
+.cronus-gitem{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:10px;align-items:center;width:100%;text-align:left;background:#101116;border:1px solid #1f2128;border-radius:10px;padding:8px;margin-bottom:6px;cursor:pointer;color:#f2f3f5}
+.cronus-gitem:hover{border-color:#32343d;background:#17181d}
+.cronus-gitem.current{border-color:#1f6feb}
+.cronus-gitem .ogame-thumb{width:40px;height:40px;font-size:14px;flex:none}
+.cronus-gitem img{width:40px;height:40px;border-radius:8px;object-fit:cover;background:#0b0c10;border:1px solid #22242b;flex:none}
+.cronus-gitem .t{min-width:0}
+.cronus-gitem .n{font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cronus-gitem .p{font-size:11px;color:#7f838c;font-family:var(--mono,monospace)}
+.cronus-gitem .tick{color:#4ade80;font-weight:800;padding:0 4px}
+#view-accounts .account-tools{grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px}
+.cronus-bulkbar{display:flex;gap:8px;align-items:center;min-width:0}
+#cronus-bulk-btn{height:33px;white-space:nowrap;flex:none}
+/* Never show the removed Collection card, even if cached HTML injects it */
+#cronus-games-panel,
+#cronus-games-card{
+  display: none !important;
+}
+body[data-game-mode="shared"] #game-pool-row{
+  display: none !important;
+}
+/* ── Gated rows: always visible, dimmed + non-interactive when off (no layout jump) ── */
+.gated-off{opacity:.45}
+.gated-off .custom-select{pointer-events:none}
+.gated-off input,.gated-off select,.gated-off textarea{pointer-events:none}

@@ -173,17 +173,26 @@ function Log([string]$m) { Add-Content -LiteralPath $LogFile ("[{0}] {1}" -f (Ge
 # Console progress: the main app is dead during swap/launch, so progress
 # goes to this console window (the exe runs with console=True).
 try { $Host.UI.RawUI.WindowTitle = "Cronus Launcher Update" } catch {}
-Write-Host "> cronus update" -ForegroundColor Blue
-Write-Host "Updating to v$Version..." -ForegroundColor White
+Write-Host "> updating to v$Version..." -ForegroundColor Blue
 function Phase([string]$m) {
   Log($m)
-  try { Write-Host $m -ForegroundColor Gray } catch {}
+  # One clean status line per phase: dim the trailing ellipsis, and never
+  # repeat the same line twice (the attempt loop used to print "starting
+  # the new version..." twice back to back).
+  try {
+    if ($m.EndsWith("...")) {
+      Write-Host $m.Substring(0, $m.Length - 3) -ForegroundColor Gray -NoNewline
+      Write-Host "..." -ForegroundColor DarkGray
+    } else {
+      Write-Host $m -ForegroundColor Gray
+    }
+  } catch { try { Write-Host $m -ForegroundColor Gray } catch {} }
 }
 function WaitPump([int]$seconds) {
   Start-Sleep -Seconds $seconds
 }
 try {
-  Phase("> waiting for the app to close")
+  Phase("> waiting for the app to close...")
   Log("waiting for PID $ParentPid")
   $deadline = (Get-Date).AddSeconds(__TIMEOUT__)
   while ($true) {
@@ -256,7 +265,7 @@ try {
   if (-not $AppArgs) { $AppArgs = "--post-update" }
   for ($attempt = 1; $attempt -le 5; $attempt++) {
     try {
-      Phase("> starting the new version... (attempt $attempt)")
+      if ($attempt -gt 1) { Phase("> starting the new version... (attempt $attempt)") }
       $p = Start-Process -FilePath $CurrentExe -WorkingDirectory $workDir -WindowStyle Normal -ArgumentList $AppArgs -PassThru
       if ($null -eq $p) {
         Log("launch attempt ${attempt}: no process handle returned")
@@ -487,11 +496,10 @@ class AppUpdater:
                     raise RuntimeError(f"updater script exited immediately (code {script_exit}) - see {log_file}")
                 raise RuntimeError(f"updater script did not start (no log marker in 15s) - see {log_file}")
             time.sleep(2.0)
-            try:
-                from desktop import console_output
-                console_output.write_line(f"Updated to v{version} - restarting…")
-            except Exception:
-                pass
+            # Single writer: the swap script already printed the progress
+            # line and the "> updating to vX..." header, and it announces
+            # "> new version running" itself. Anything typed here lands
+            # mid-stream between the script's lines, so stay silent.
             os._exit(0)
         except Exception as exc:
             self._log("UPDATE", "update_failed", "error", error=exc, version=version)

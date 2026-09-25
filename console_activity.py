@@ -23,11 +23,15 @@ _LAST_FOUND_AT_BY_KEY: Dict[str, float] = {}
 _LAST_TELEPORT_AT_BY_ACCOUNT: Dict[str, float] = {}
 _LAST_JOB_BY_ACCOUNT: Dict[str, str] = {}
 _LAST_PLACE_BY_ACCOUNT: Dict[str, str] = {}
+_BLOCKED_ACCOUNTS: set[str] = set()
+_FINISHED_ACCOUNTS: set[str] = set()
+_LAST_FINISHED_AT_BY_KEY: Dict[str, float] = {}
 _LUA_LIVENESS_REQUIRED = False
 _DISCONNECT_DEDUP_SECONDS = 3.0
 _CAPTCHA_DEDUP_SECONDS = 3.0
 _FOUND_DEDUP_SECONDS = 3.0
 _TELEPORT_DEDUP_SECONDS = 3.0
+_FINISHED_DEDUP_SECONDS = 3.0
 _SUSPECT_FINAL_SUPPRESS_SECONDS = 5.0
 
 _ICON_OK = "✔"
@@ -42,7 +46,7 @@ _ICON_CONFIG = "⚙️"
 _ICON_RELOAD = "🔄"
 _ICON_FINISH = "🏁"
 _ICON_FARM = "🚀"
-_ICON_WINDOW = "🪟"
+_ICON_WINDOW = "💻"
 _ICON_SERVER = "🌐"
 _ICON_ALIASES = {
     "OK": _ICON_OK,
@@ -163,6 +167,17 @@ def _account(fields: Dict[str, Any]) -> str:
 
 def _account_key(account: Any) -> str:
     return _text(account, "Account").lower()
+
+
+def _is_auth_blocked(account: Any) -> bool:
+    # Product rule Q1: captcha / cookie-blocked / finished = blocked.
+    # All sets store display names; compare case-insensitive.
+    key = _account_key(account)
+    for blocked_set in (_CAPTCHA_ACCOUNTS, _BLOCKED_ACCOUNTS, _FINISHED_ACCOUNTS):
+        for entry in blocked_set:
+            if str(entry or "").lower() == key:
+                return True
+    return False
 
 
 def _reason(fields: Dict[str, Any], default: str = "") -> str:
@@ -298,15 +313,14 @@ def _reload_all_line(count: Any) -> str:
 
 
 def _config_line(action: str, fields: Dict[str, Any]) -> str:
+    # Product style: header only, no key details.
+    # e.g. "Game saved" / "Windows saved" / "Queue saved"
     updated = fields.get("updated") or fields.get("keys") or ""
     if isinstance(updated, (list, tuple)):
         keys = ", ".join(str(k) for k in updated[:6])
-        if len(updated) > 6:
-            keys += f" +{len(updated) - 6} more"
     else:
         keys = _text(updated)
         if not keys:
-            # Fall back to single-key hints (game_place_id, fps_limit, ...)
             hints = []
             for k in ("game_place_id", "game_mode", "max_concurrent_accounts", "fps_limit",
                       "auto_minimize_enabled", "block_same_server_enabled",
@@ -315,20 +329,28 @@ def _config_line(action: str, fields: Dict[str, Any]) -> str:
                     hints.append(k)
             keys = ", ".join(hints[:4])
     label = _text(action or "updated", "updated")
-    # Friendly labels for common saves
+    lower_action = label.lower()
     lower_keys = str(keys).lower()
-    if "game_place_id" in lower_keys or "game_private" in lower_keys or "block_same_server" in lower_keys:
+    if "game" in lower_action or "game_place_id" in lower_keys or "game_private" in lower_keys or "block_same_server" in lower_keys:
         label = "Game saved"
-    elif "max_concurrent" in lower_keys or "queue_" in lower_keys or "auto_close" in lower_keys:
+    elif "queue" in lower_action or "max_concurrent" in lower_keys or "queue_" in lower_keys or "auto_close" in lower_keys:
         label = "Queue saved"
-    elif "fps_limit" in lower_keys or "fps_limiter" in lower_keys:
+    elif "performance" in lower_action or "fps_limit" in lower_keys or "fps_limiter" in lower_keys:
         label = "Performance saved"
-    elif "roblox_window" in lower_keys or "auto_minimize" in lower_keys or "window_size" in lower_keys:
+    elif "window" in lower_action or "roblox_window" in lower_keys or "auto_minimize" in lower_keys or "window_size" in lower_keys:
         label = "Windows saved"
-    elif "lua_" in lower_keys:
+    elif "lua" in lower_action or "lua_" in lower_keys:
         label = "Lua saved"
-    detail = f": {keys}" if keys and label not in keys else ""
-    return _line(_ICON_CONFIG, f"{_paint(label, _COLOR_WHITE)}{_paint(detail, _COLOR_GRAY)}", stamp_color=_COLOR_WHITE)
+    elif "config" in lower_action:
+        label = "Config updated"
+    else:
+        # Fallback: never show raw "saved" / key soup. Default to clean header.
+        clean = label.split(":")[0].strip()
+        if not clean or clean.lower() in {"saved", "updated", "update"}:
+            clean = "Config updated"
+        # Title-case single words for product consistency.
+        label = clean[:1].upper() + clean[1:] if len(clean) > 1 else clean
+    return _line(_ICON_CONFIG, f"{_paint(label, _COLOR_WHITE)}", stamp_color=_COLOR_WHITE)
 
 
 def _finished_line(account: str, finished: bool, count: Any = "") -> str:
@@ -471,12 +493,23 @@ def _emit_suspect_process_check(fields: Dict[str, Any]) -> None:
     account = _account(fields)
     key = account.lower()
     final = _boolish(fields.get("final"), False)
+    # Final must always clear, even for blocked accounts, otherwise a stale
+    # logged entry would suppress the next legit Checking after unblock.
+    # Only set the 5s suppress window if we actually showed a Checking
+    # before — otherwise an unblock right after would be delayed for no reason.
+    if final:
+        had_logged = key in _SUSPECT_LOGGED_ACCOUNTS
+        _SUSPECT_LOGGED_ACCOUNTS.discard(key)
+        if had_logged:
+            _SUSPECT_FINALIZED_AT_BY_ACCOUNT[key] = time.monotonic()
+        else:
+            _SUSPECT_FINALIZED_AT_BY_ACCOUNT.pop(key, None)
+        return
+    # Q1: blocked accounts (captcha / cookie / finished) never get Checking.
+    if _is_auth_blocked(account):
+        return
     finalized_at = float(_SUSPECT_FINALIZED_AT_BY_ACCOUNT.get(key) or 0.0)
     if finalized_at and time.monotonic() - finalized_at <= _SUSPECT_FINAL_SUPPRESS_SECONDS:
-        return
-    if final:
-        _SUSPECT_LOGGED_ACCOUNTS.discard(key)
-        _SUSPECT_FINALIZED_AT_BY_ACCOUNT[key] = time.monotonic()
         return
     if key in _SUSPECT_LOGGED_ACCOUNTS:
         return
@@ -486,6 +519,9 @@ def _emit_suspect_process_check(fields: Dict[str, Any]) -> None:
 
 
 def _emit_check_before_disconnect(account: str) -> None:
+    # Q1: blocked accounts never get the pre-disconnect Checking line.
+    if _is_auth_blocked(account):
+        return
     key = _account_key(account)
     if key in _SUSPECT_LOGGED_ACCOUNTS:
         return
@@ -523,14 +559,23 @@ def set_total_accounts(count: Any) -> None:
 def _update_counters(scope: str, name: str, fields: Dict[str, Any]) -> None:
     global _QUEUE_SIZE
     account = _account(fields)
+    # Never track the fallback "Account" placeholder as a real account.
+    is_real_account = bool(account and account != "Account")
     if scope == "STATE" and name == "transition":
         old = _text(fields.get("old")).upper()
         new = _text(fields.get("new")).upper()
         reason = _reason(fields)
         if reason == "captcha_required":
-            _CAPTCHA_ACCOUNTS.add(account)
+            if is_real_account:
+                _CAPTCHA_ACCOUNTS.add(account)
         elif reason in {"manual_resume", "captcha_resume"} or new in {"QUEUED", "LAUNCHING", "VERIFY", "IN_GAME", "IDLE", "READY"}:
             _CAPTCHA_ACCOUNTS.discard(account)
+            # Account is launchable again -> clear cookie/finished blocks too.
+            if new in {"QUEUED", "LAUNCHING", "VERIFY", "IN_GAME", "READY"}:
+                _BLOCKED_ACCOUNTS.discard(account)
+                # Do not auto-clear FINISHED here; explicit unfinished event clears it.
+                if new in {"LAUNCHING", "VERIFY", "IN_GAME"}:
+                    _FINISHED_ACCOUNTS.discard(account)
         if new in {"LAUNCHING", "VERIFY"}:
             _SERVER_TYPE_BY_ACCOUNT.pop(_account_key(account), None)
         if new == "IN_GAME":
@@ -546,12 +591,37 @@ def _update_counters(scope: str, name: str, fields: Dict[str, Any]) -> None:
     elif scope == "STATE" and name == "forced_reset":
         _ACTIVE_ACCOUNTS.discard(account)
         _CAPTCHA_ACCOUNTS.discard(account)
+        _BLOCKED_ACCOUNTS.discard(account)
     elif scope == "CAPTCHA" or name == "captcha_dialog_hold" or (scope == "RECOVERY" and name == "captcha_hold"):
         if "resume" in name or "clear" in name or _reason(fields) in {"manual_resume", "captcha_resume"}:
             _CAPTCHA_ACCOUNTS.discard(account)
-        else:
+        elif is_real_account:
             _CAPTCHA_ACCOUNTS.add(account)
         _ACTIVE_ACCOUNTS.discard(account)
+    elif scope == "FARM" and name == "account_preflight_blocked":
+        # Q1: cookie / mismatch / captcha preflight -> treat as blocked.
+        if is_real_account:
+            _BLOCKED_ACCOUNTS.add(account)
+        _ACTIVE_ACCOUNTS.discard(account)
+    elif scope == "API" and name in {"accounts_finished", "account_finished"}:
+        raw = _text(fields.get("account", "")) or account
+        if "," in raw:
+            for part in [p.strip() for p in raw.split(",") if p.strip()]:
+                if part != "Account":
+                    _FINISHED_ACCOUNTS.add(part)
+                _ACTIVE_ACCOUNTS.discard(part)
+        elif raw and raw != "Account":
+            _FINISHED_ACCOUNTS.add(raw)
+            _ACTIVE_ACCOUNTS.discard(raw)
+    elif scope == "API" and name in {"accounts_unfinished", "account_unfinished", "account_unfinished_relaunched"}:
+        raw = _text(fields.get("account", "")) or account
+        if "," in raw:
+            for part in [p.strip() for p in raw.split(",") if p.strip()]:
+                _FINISHED_ACCOUNTS.discard(part)
+                _BLOCKED_ACCOUNTS.discard(part)
+        else:
+            _FINISHED_ACCOUNTS.discard(raw or account)
+            _BLOCKED_ACCOUNTS.discard(raw or account)
     elif scope == "QUEUE":
         if "size" in fields:
             try:
@@ -607,15 +677,30 @@ def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]
         return _config_line("Config updated", fields)
     if scope == "API" and name in {"accounts_finished", "accounts_unfinished", "account_finished", "account_unfinished", "account_unfinished_relaunched"}:
         # Anything with "unfinished" in the name is an Unfinished event.
+        # Q4: account_unfinished + account_unfinished_relaunched fire back-to-back
+        # for the same account -> dedup to one line per account per window.
         is_finished = "unfinished" not in name.lower()
         acct = _text(fields.get("account", "")) or account
-        # account field may be comma-joined list — show compact
+        # account field may be comma-joined list — show compact + dedup too.
         if "," in acct:
             parts = [p.strip() for p in acct.split(",") if p.strip()]
             acct = f"{len(parts)} accounts" if len(parts) > 1 else (parts[0] if parts else "Accounts")
+            dedupe_key = f"{acct.lower()}:{'finished' if is_finished else 'unfinished'}"
+            now = time.monotonic()
+            previous = float(_LAST_FINISHED_AT_BY_KEY.get(dedupe_key) or 0.0)
+            if previous and now - previous < _FINISHED_DEDUP_SECONDS:
+                return None
+            _LAST_FINISHED_AT_BY_KEY[dedupe_key] = now
             return _finished_line(acct, is_finished, "")
+        acct = acct or "Account"
+        dedupe_key = f"{acct.lower()}:{'finished' if is_finished else 'unfinished'}"
+        now = time.monotonic()
+        previous = float(_LAST_FINISHED_AT_BY_KEY.get(dedupe_key) or 0.0)
+        if previous and now - previous < _FINISHED_DEDUP_SECONDS:
+            return None
+        _LAST_FINISHED_AT_BY_KEY[dedupe_key] = now
         # Single account: don't append redundant total count.
-        return _finished_line(acct or "Account", is_finished, "")
+        return _finished_line(acct, is_finished, "")
     if scope == "API" and name in {"start_preflight_error", "start_failed", "game_defaults_applied"}:
         return None
     if scope == "ACCOUNT_DATA" and name in {"reload_cookie_validation", "reload_synced_running_farm"}:

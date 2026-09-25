@@ -88,7 +88,7 @@
 
   // Same look as the feedback toast (icon + auto type), without importing it.
   const TOAST_ICONS_SHARED = {
-    success: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#22c55e"/><path d="M8.2 12.2l2.6 2.6 4.5-5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    success: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#5e8bff"/><path d="M8.2 12.2l2.6 2.6 4.5-5" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
     warning: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#f59e0b"/><path d="M12 7.5v5.2" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16.2" r="1.2" fill="white"/></svg>',
     error: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#ef4444"/><path d="M15 9l-6 6M9 9l6 6" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>',
   };
@@ -108,6 +108,24 @@
     if (lower.includes('blocked') && lower.includes('launchable')) return 'warning';
     return 'success';
   };
+  const flipToastShift = (h, s) => {
+    try {
+      const kids = [...h.children].filter((n) => n !== s);
+      const first = new Map(kids.map((n) => [n, n.getBoundingClientRect().top]));
+      return () => {
+        kids.forEach((n) => {
+          if (!n.isConnected) return;
+          const a = first.get(n), b = n.getBoundingClientRect().top, d = a - b;
+          if (a === undefined || !d) return;
+          n.style.transition = 'none';
+          n.style.transform = `translateY(${d}px)`;
+          void n.offsetHeight;
+          n.style.transition = '';
+          n.style.transform = '';
+        });
+      };
+    } catch (_) { return () => {}; }
+  };
   const showResultToast = (message) => {
     const host = document.getElementById('toast');
     if (!host) return;
@@ -116,7 +134,7 @@
     while (host.children.length >= 4) {
       const old = host.firstElementChild;
       try { old && clearTimeout(old._timer); } catch (_) {}
-      old?.remove();
+      if (old) { const play = flipToastShift(host, old); old.remove(); play(); }
     }
     const icons = TOAST_ICONS_SHARED;
     const item = document.createElement('div');
@@ -128,12 +146,14 @@
     label.className = 'toast-text';
     label.textContent = text;
     item.append(icon, label);
+    const play = flipToastShift(host);
     host.appendChild(item);
+    play();
     requestAnimationFrame(() => item.classList.add('show'));
     item._timer = setTimeout(() => {
       item.classList.remove('show');
       item.classList.add('hide');
-      setTimeout(() => item.remove(), 200);
+      setTimeout(() => { const drop = flipToastShift(host, item); item.remove(); drop(); }, 200);
     }, 3200);
   };
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import re
 import sys
 import threading
 import time
@@ -158,6 +159,20 @@ def _console_finish_startup(*, clear: bool) -> None:
         _console_clear_startup_screen()
 
 
+def _console_seal_inline_line() -> None:
+    """Finish the current inline progress line cleanly.
+
+    The progress line is written inline (no trailing newline), so a plain
+    write after it would concatenate onto the same line ("100%Restarting").
+    Sealing keeps the completed line and moves the cursor to the next line
+    for whoever writes next (usually the swap script's own header).
+    """
+    global _STARTUP_PROGRESS_LAST_LEN
+    if _STARTUP_PROGRESS_LAST_LEN > 0:
+        _console_write_inline("\n")
+        _STARTUP_PROGRESS_LAST_LEN = 0
+
+
 def _console_clear_after_window_show(enabled: bool = True) -> None:
     global _STARTUP_CLEAR_AFTER_WINDOW_SHOW
     _STARTUP_CLEAR_AFTER_WINDOW_SHOW = bool(enabled)
@@ -172,6 +187,48 @@ def _console_finish_after_window_show() -> None:
 
 def _console_event(icon: str, message: str, *, indent: bool = False) -> None:
     _console_write(format_console_line(icon, message, indent=indent))
+
+
+_UPDATE_BAR_WIDTH = 30
+_UPDATE_PHASE_LABELS = {
+    "starting": "Preparing update",
+    "downloading": "Downloading",
+    "verifying": "Verifying checksum",
+    "restarting": "Restarting into the new version",
+}
+
+
+def _parse_update_percent(job: dict) -> Optional[int]:
+    try:
+        match = re.search(r"(\d{1,3})\s*%", str((job or {}).get("progress") or ""))
+        if match:
+            return max(0, min(100, int(match.group(1))))
+    except Exception:
+        pass
+    return None
+
+
+def _render_update_progress(percent: int, label: str) -> None:
+    """Single-line updater progress reusing the boot bar style (no step x/6)."""
+    # Mark the progress as active so _console_finish_startup() actually
+    # erases this line later; without this the clear was skipped and the
+    # next message concatenated onto it ("100%Restarting into...").
+    global _STARTUP_PROGRESS_LAST_LEN, _STARTUP_SPINNER_INDEX, _STARTUP_PROGRESS_ACTIVE
+    try:
+        pct = max(0, min(100, int(percent)))
+    except (TypeError, ValueError):
+        pct = 0
+    filled = int(round(_UPDATE_BAR_WIDTH * (pct / 100.0)))
+    bar = _startup_paint("█" * filled, _COLOR_NAVY_BLUE) + _startup_paint("░" * (_UPDATE_BAR_WIDTH - filled), _COLOR_DIM)
+    spinner = _STARTUP_SPINNER_FRAMES[_STARTUP_SPINNER_INDEX % len(_STARTUP_SPINNER_FRAMES)]
+    _STARTUP_SPINNER_INDEX += 1
+    text = _startup_paint(str(label or "Updating"), _COLOR_NAVY_TEXT)
+    line = f"{spinner} {text}  [{bar}] {pct:3d}%"
+    visible_len = _startup_visible_len(line)
+    padding = " " * max(0, _STARTUP_PROGRESS_LAST_LEN - visible_len)
+    _console_write_inline(f"\r{line}{padding}")
+    _STARTUP_PROGRESS_ACTIVE = True
+    _STARTUP_PROGRESS_LAST_LEN = visible_len
 
 
 def _console_status(label: str, detail: str) -> None:
@@ -239,11 +296,18 @@ def _autostart_api(path: str, method: str = "GET", body: Any = None) -> Any:
     import json as _json
 
     data = _json.dumps(body or {}).encode("utf-8") if body is not None else None
+    # Same-process loopback calls must carry the API token: the middleware
+    # rejects every mutating POST /api/* without X-Cronus-Token (403), which
+    # used to make the startup update prompt and --autostart updates fail
+    # silently and fall back to a normal boot with the update button shown.
     req = urllib.request.Request(
         f"http://{HOST}:{PORT}{path}",
         data=data,
         method=method,
-        headers={"Content-Type": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "X-Cronus-Token": str(_INSTANCE_TOKEN or ""),
+        },
     )
     try:
         with urllib.request.urlopen(req, timeout=15.0) as resp:
@@ -308,6 +372,169 @@ def _run_autostart_chain() -> None:
         except Exception as exc:
             flog_kv("BOOT", "farm_start_failed", "error", error=str(exc))
     flog_kv("BOOT", "autostart_done")
+
+
+def _maybe_prompt_startup_update() -> bool:
+    """Blocking Yes/No prompt when a newer app version exists at boot.
+
+    Shows a native Windows dialog like:
+      [Update Available]
+      A new version is available!
+      Current: vX  New: vY
+      Would you like to update now?  [Yes] [No]
+
+    Returns True when the user accepted and an update is now running
+    (the AppUpdater relaunches the app itself, so the caller must NOT
+    open the desktop window). Returns False to boot normally.
+    """
+    if "--post-update" in sys.argv:
+        return False
+    try:
+        _, farm = _require_configured()
+        cfg = farm.cfg_mgr
+    except Exception:
+        return False
+    try:
+        if "--autostart" in sys.argv and bool(cfg.get("auto_update_on_boot", False)):
+            return False
+    except Exception:
+        pass
+    # The GitHub check used to run synchronously here (up to 20s on a bad
+    # link), stalling every launch before the window even opened. Run it in
+    # a thread and give up fast: a slow check just boots normally and the
+    # dashboard button surfaces the update when its own poll completes.
+    try:
+        from services.app_version_check import check_app_update
+
+        _box: dict = {}
+
+        def _check() -> None:
+            try:
+                _box["snap"] = check_app_update()
+            except Exception as exc:  # noqa: BLE001 - reported below
+                _box["error"] = exc
+
+        _checker = threading.Thread(target=_check, daemon=True, name="CronusStartupUpdateCheck")
+        _checker.start()
+        _checker.join(timeout=8.0)
+        if _checker.is_alive():
+            flog_kv("UPDATE", "startup_check_slow_skipped", "warning", timeout_s=8.0)
+            return False
+        if "error" in _box:
+            raise _box["error"]
+        snap = _box.get("snap")
+    except Exception as exc:
+        flog_kv("UPDATE", "startup_check_failed", "warning", error=str(exc))
+        return False
+    if not isinstance(snap, dict):
+        return False
+    if not snap.get("update_available"):
+        return False
+    latest = str(snap.get("latest_version") or "").strip()
+    if not latest:
+        return False
+    current = str(snap.get("current_version") or "").strip()
+    latest_url = str(snap.get("latest_url") or "").strip()
+    cur_label = f"v{current}" if current and not current.lower().startswith("v") else (current or "unknown")
+    new_label = f"v{latest}" if not latest.lower().startswith("v") else latest
+    text = (
+        "A new version is available!\n"
+        f"Current: {cur_label}\n"
+        f"New: {new_label}\n"
+        "\n"
+        "Would you like to update now?"
+    )
+    try:
+        choice = ctypes.windll.user32.MessageBoxW(
+            None,
+            text,
+            "Update Available",
+            0x00000004 | 0x00000040,  # MB_YESNO | MB_ICONINFORMATION
+        )
+    except Exception as exc:
+        flog_kv("UPDATE", "startup_prompt_failed", "warning", error=str(exc))
+        return False
+    if int(choice or 0) != 6:  # IDYES
+        flog_kv("UPDATE", "startup_prompt_declined", version=latest)
+        return False
+    flog_kv("UPDATE", "startup_prompt_accepted", version=latest)
+    try:
+        import app_paths
+
+        if not app_paths.IS_COMPILED:
+            if latest_url:
+                try:
+                    webbrowser.open(latest_url)
+                except Exception:
+                    pass
+            return False
+    except Exception:
+        pass
+    try:
+        applied = _autostart_api("/api/update/apply", "POST", {"confirm_stop_farm": True})
+    except Exception as exc:
+        flog_kv("UPDATE", "startup_apply_failed", "warning", error=str(exc))
+        return False
+    if not isinstance(applied, dict) or not applied.get("accepted"):
+        reason = str((applied or {}).get("msg") or "not accepted") if isinstance(applied, dict) else "not accepted"
+        flog_kv("UPDATE", "startup_apply_rejected", "warning", msg=reason)
+        return False
+    # End the boot progress bar first so the update status starts on its own
+    # clean line (it used to jam onto the bar: "88%Updating to vX...").
+    # No separate "Updating to vX..." line here: the progress line below
+    # carries the version ("Downloading v2.3.8 ..."), and the swap script
+    # prints its own single "> updating to vX..." header when it takes
+    # over the console.
+    _console_finish_startup(clear=False)
+    _restart_announced = False
+    try:
+        while True:
+            time.sleep(0.5)
+            try:
+                snap_status = _autostart_api("/api/update/status")
+            except Exception:
+                continue
+            job = snap_status.get("job") if isinstance(snap_status, dict) else None
+            if not isinstance(job, dict):
+                continue
+            if not job.get("active"):
+                _console_finish_startup(clear=False)
+                if job.get("state") == "failed":
+                    err = str(job.get("error") or job.get("msg") or "update failed")
+                    flog_kv("UPDATE", "startup_update_failed", "error", error=err)
+                    try:
+                        ctypes.windll.user32.MessageBoxW(
+                            None,
+                            f"Update failed:\n{err}",
+                            "Update Available",
+                            0x00000000 | 0x00000010,  # MB_OK | MB_ICONERROR
+                        )
+                    except Exception:
+                        pass
+                    return False
+                _console_write(f"Updated to v{latest} - launching...")
+                return True
+            phase = str(job.get("state") or "updating").strip().lower() or "updating"
+            if phase == "restarting":
+                # The swap script owns the console from here on (it prints
+                # "> updating to vX..." and each phase step); just finish
+                # the progress line cleanly instead of announcing a dupe.
+                if not _restart_announced:
+                    _restart_announced = True
+                    _console_seal_inline_line()
+                continue
+            label = _UPDATE_PHASE_LABELS.get(phase, phase.replace("_", " ").capitalize())
+            if latest and phase in {"downloading", "verifying"}:
+                label = f"{label} v{latest}"
+            pct = _parse_update_percent(job)
+            if pct is None:
+                pct = 100 if phase == "verifying" else 0
+            # Render every tick so the spinner keeps moving even while the
+            # backend reports KB counts instead of percents.
+            _render_update_progress(pct, label)
+    except Exception:
+        return True
+    return True
 
 
 def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
@@ -377,6 +604,17 @@ def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
         flog_kv("MAIN", "fastapi_not_ready", "error", port=PORT, detail=detail)
         _console_status("backend", f"Not ready: {detail}")
         _console_status("log", LOG_FILE)
+    if ready and _maybe_prompt_startup_update():
+        # User hit Yes and the updater took over: it downloads, swaps the
+        # exe, and os._exit()s into the new version. Park here instead of
+        # opening the desktop window; if the update failed the prompt
+        # returns False and we boot normally below.
+        try:
+            while not _SHUTDOWN_REQUESTED.wait(1.0):
+                pass
+        except KeyboardInterrupt:
+            pass
+        return
     threading.Thread(target=_run_autostart_chain, daemon=True, name="CronusAutostart").start()
     _console_status("desktop", "Opening desktop window (WebView2)")
     _console_clear_after_window_show(ready)

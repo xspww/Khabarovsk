@@ -8,11 +8,12 @@
 (function () {
   "use strict";
 
-  var POLL_MS = 6 * 60 * 60 * 1000;
+  var POLL_MS = 15 * 60 * 1000;
   var STATUS_POLL_MS = 1000;
   var timer = 0;
   var statusTimer = 0;
   var working = false;
+  var lastRefreshAt = 0;
 
   function token() {
     try {
@@ -49,12 +50,24 @@
 
   function removeButton() {
     var b = button();
-    if (b && b.parentNode) b.parentNode.removeChild(b);
+    if (!b) return;
+    // Keep static placeholder but hide it so CSS stays loaded and
+    // the next ensureButton does not need to recreate the node.
+    try {
+      b.hidden = true;
+      b.style.display = "none";
+      b.classList.remove("is-available", "is-downloading", "is-failed");
+    } catch (e) {
+      if (b && b.parentNode) b.parentNode.removeChild(b);
+    }
   }
 
   function ensureButton() {
     var b = button();
-    if (b) return b;
+    if (b) {
+      try { b.hidden = false; b.style.display = ""; } catch (e) {}
+      return b;
+    }
     b = document.createElement("button");
     b.id = "cronus-update-btn";
     b.className = "cronus-update-btn";
@@ -67,7 +80,13 @@
   function setLabel(text, title, disabled) {
     var b = ensureButton();
     b.disabled = !!disabled;
-    b.textContent = text;
+    // Preserve arrow icon when the label is the update-available state;
+    // render() sets innerHTML with the icon, so text updates use textContent.
+    if (b.classList.contains("is-available") && text.charAt(0) !== "\u21E9") {
+      b.innerHTML = "<span>&#8659; " + esc(text) + "</span>";
+    } else {
+      b.textContent = text;
+    }
     if (title) b.title = title;
   }
 
@@ -264,10 +283,20 @@
     if (working) return;
     if (!snap || !snap.update_available || !snap.latest_version) {
       removeButton();
+      // Surface the check_error in console and as a tooltip on the
+      // hidden placeholder so power users can diagnose why no update
+      // is shown (offline / rate-limited). The button stays hidden.
+      if (snap && snap.check_error) {
+        try { console.warn("[update] check_error:", snap.check_error); } catch (e) {}
+        var ph = button();
+        if (ph) ph.title = snap.check_error;
+      }
       return;
     }
     var b = ensureButton();
     b.disabled = false;
+    b.hidden = false;
+    b.style.display = "";
     b.classList.remove("is-downloading", "is-failed");
     b.classList.add("is-available");
     b.style.setProperty("--p", "0%");
@@ -279,13 +308,14 @@
   var failCount = 0;
   function schedule() {
     if (timer) clearTimeout(timer);
-    // A failed check used to silence the button for 6 hours. Retry soon
-    // instead (1m, 2m, ... capped at 15m); successes stay on POLL_MS.
+    // A failed check retries soon (1m, 2m, ... capped at 15m); successes
+    // re-check every POLL_MS (15m) so a new release shows within minutes.
     var wait = failCount > 0 ? Math.min(15 * 60 * 1000, 60000 * failCount) : POLL_MS;
     timer = setTimeout(refresh, wait);
   }
 
   function refresh() {
+    lastRefreshAt = Date.now();
     get("/api/update/check").then(function (snap) {
       failCount = 0;
       try { render(snap); } catch (e) {}
@@ -296,14 +326,38 @@
     });
   }
 
-  document.addEventListener("DOMContentLoaded", function () {
+  function bootRefresh() {
     try { refresh(); } catch (e) {}
-  });
+  }
+  // DOMContentLoaded may have already fired (script injected at end of body
+  // after the module script). Handle both cases so the first check is never
+  // missed on WebView2 where readyState can already be interactive/complete.
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", bootRefresh);
+  } else {
+    // Defer one tick so ensureButton finds .side-launch reliably.
+    setTimeout(bootRefresh, 50);
+  }
   // App left open across a release: re-check when the window is focused
-  // again instead of waiting for the next poll.
+  // or becomes visible again instead of waiting for the next poll.
+  // Previously this only fired when the button was missing, so a transient
+  // failure would never recover without a reload. Now we re-check whenever
+  // at least 60s has passed since the last attempt.
   document.addEventListener("visibilitychange", function () {
     try {
-      if (!document.hidden && !working && !button()) refresh();
+      if (!document.hidden && !working) {
+        var age = Date.now() - lastRefreshAt;
+        if (!button() || age > 60000) refresh();
+        else if (latestSnap && latestSnap.check_error) refresh();
+      }
+    } catch (e) {}
+  });
+  window.addEventListener("focus", function () {
+    try {
+      if (!working) {
+        var age2 = Date.now() - lastRefreshAt;
+        if (age2 > 60000) refresh();
+      }
     } catch (e) {}
   });
 })();

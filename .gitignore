@@ -50,7 +50,6 @@ assets/cronus_icon.ico
 build_info.py
 
 # Temporary and editor files
-.freebuff/
 .vscode/
 .idea/
 *.code-workspace

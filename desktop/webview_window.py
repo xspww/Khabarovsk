@@ -186,6 +186,17 @@ def _prepare_webview_env() -> None:
         os.environ.setdefault("WEBVIEW2_USER_DATA_FOLDER", data_dir)
     except Exception:
         pass
+    # Silence benign Chromium shutdown spam on stderr (e.g.
+    # "Failed to unregister class Chrome_WidgetWin_0. Error = 1411"),
+    # which is not our error but scares users in the console/updater
+    # window every time the app closes. Read by the WebView2 loader when
+    # the environment is created, so it must be set here beforehand.
+    try:
+        prev = str(os.environ.get("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS") or "")
+        if "--disable-logging" not in prev:
+            os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (prev + " --disable-logging").strip()
+    except Exception:
+        pass
 
 
 def _set_app_user_model_id() -> None:
@@ -358,7 +369,7 @@ class DesktopWindow:
                 self._title_label = QLabel(self)
                 self._title_label.setObjectName("CronusTitle")
                 self._title_label.setTextFormat(Qt.TextFormat.RichText)
-                self._title_label.setText(f'<span>{APP_NAME}</span> <span style="color: #42495d;">- {app_display_version()}</span>')
+                self._title_label.setText(f'<span>{APP_NAME}</span> <span style="color: #5c616b;">- {app_display_version()}</span>')
                 self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 self._title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
                 layout = QHBoxLayout(self)
@@ -384,14 +395,14 @@ class DesktopWindow:
                 self.setStyleSheet(
                     """
                     #CronusTitleBar {
-                        background-color: #0d0e12;
-                        border-bottom: 1px solid #1d1f26;
+                        background-color: #0c0d13;
+                        border-bottom: 1px solid #20232c;
                         border-top-left-radius: 10px;
                         border-top-right-radius: 10px;
                     }
                     #CronusTitle {
                         font-family: "Kanit", "Segoe UI", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif;
-                        color: #7f838c;
+                        color: #9aa0ab;
                         font-size: 12px;
                         font-weight: 500;
                     }
@@ -401,14 +412,14 @@ class DesktopWindow:
                     QPushButton#WinMinButton, QPushButton#WinMaxButton, QPushButton#WinCloseButton {
                         width: 34px; height: 22px; min-width: 34px; max-width: 34px;
                         min-height: 22px; max-height: 22px; border-radius: 9px;
-                        border: 1px solid #232529;
-                        background-color: #15161b;
+                        border: 1px solid #262a33;
+                        background-color: #14161c;
                         color: #53565e;
                         padding: 0px;
                     }
                     QPushButton#WinMinButton:hover, QPushButton#WinMaxButton:hover {
-                        background-color: #1b1c22;
-                        border-color: #32343d;
+                        background-color: #1a1d29;
+                        border-color: #3a3f4d;
                         color: #ffffff;
                     }
                     QPushButton#WinCloseButton:hover {
@@ -515,15 +526,15 @@ class DesktopWindow:
         # This is the main RAM/CPU win vs the old transparent QWebEngineView.
         view = QtWebView2Widget(parent=window, url=str(url or ""))
         view.setObjectName("CronusWebView")
-        view.setStyleSheet("#CronusWebView { background: #0b0c10; border: 0; }")
+        view.setStyleSheet("#CronusWebView { background: #0a0b10; border: 0; }")
         container = QWidget(window)
         container.setObjectName("CronusWindowShell")
         container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
         container.setStyleSheet(
             """
             QWidget#CronusWindowShell {
-                background: #0b0c10;
-                border: 1px solid #1d1f26;
+                background: #0a0b10;
+                border: 1px solid #20232c;
                 border-radius: 10px;
             }
             """

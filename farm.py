@@ -16,7 +16,7 @@ from core import (
     flog,
     flog_kv,
 )
-from services.network_monitor import NET_ONLINE, NetworkMonitor
+from services.network_monitor import NET_OFFLINE, NET_ONLINE, NetworkMonitor
 from services.process_service import ProcessManager, ProcessService
 from services.captcha_guard import (
     clear_account_captcha_hold,
@@ -844,13 +844,26 @@ class FarmController:
             self._recovery.on_network_restored(self._accounts)
             for worker in self._workers.values():
                 worker.wake()
-        else:
+        elif new == NET_OFFLINE:
             for acc in self._accounts:
                 self._runtime_orchestrator.request_network_lost(
                     acc,
                     "network_drop",
                     payload={"trigger": f"net:{new.lower()}"},
                 )
+        else:
+            # DEGRADED means the internet works but the Roblox homepage
+            # probe flaked (heavy page, 4s timeout, regional filtering)
+            # while game traffic is fine. Leave live sessions alone and
+            # only log it — mass network_lost here used to kill playable
+            # games into an endless Rejoining loop.
+            flog_kv(
+                "NET",
+                "degraded_ignored",
+                old=old,
+                new=new,
+                accounts=len(self._accounts),
+            )
 
     def _push_event(self, kind: str, msg: str, account: Optional[Account] = None, severity: str = "info", reason: str = "", **fields: Any):
         if account:

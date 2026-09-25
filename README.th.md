@@ -7,8 +7,8 @@
 <p align="center">ตัวจัดการหลายบัญชี Roblox พร้อมรีจอยอัตโนมัติ</p>
 
 <p align="center">
-  <a href="https://github.com/Khabarovsk6000/Roblox-Auto-Rejoin-windown/releases"><img src="https://img.shields.io/github/v/release/Khabarovsk6000/Roblox-Auto-Rejoin-windown?label=release" alt="release" /></a>
-  <a href="https://github.com/Khabarovsk6000/Roblox-Auto-Rejoin-windown/actions/workflows/release.yml"><img src="https://github.com/Khabarovsk6000/Roblox-Auto-Rejoin-windown/actions/workflows/release.yml/badge.svg" alt="build" /></a>
+  <a href="https://github.com/xspww/Roblox-Auto-Rejoin-Windows/releases"><img src="https://img.shields.io/github/v/release/xspww/Roblox-Auto-Rejoin-Windows?label=release" alt="release" /></a>
+  <a href="https://github.com/xspww/Roblox-Auto-Rejoin-Windows/actions/workflows/release.yml"><img src="https://github.com/xspww/Roblox-Auto-Rejoin-Windows/actions/workflows/release.yml/badge.svg" alt="build" /></a>
   <img src="https://img.shields.io/badge/platform-Windows-blue" alt="platform" />
   <img src="https://img.shields.io/badge/python-3.11+-blue" alt="python" />
 </p>
@@ -52,7 +52,7 @@
 
 วิธีง่ายสุดคือโหลดตัว build สำเร็จจากหน้า Releases ไม่ต้องลง Python เพิ่ม
 
-1. เปิด `https://github.com/Khabarovsk6000/Roblox-Auto-Rejoin-windown/releases`
+1. เปิด `https://github.com/xspww/Roblox-Auto-Rejoin-Windows/releases`
 2. โหลด `CronusLauncher-<version>.exe` แล้วรันได้เลย
 3. ตัว portable `CronusLauncher-<version>-portable.zip` ข้างในมี exe ตัวเดียวกันพร้อม Lua loader
 
@@ -69,8 +69,8 @@
 1. Clone repo:
 
 ```powershell
-git clone https://github.com/Khabarovsk6000/Roblox-Auto-Rejoin-windown.git
-cd Roblox-Auto-Rejoin-windown
+git clone https://github.com/xspww/Roblox-Auto-Rejoin-Windows.git
+cd Roblox-Auto-Rejoin-Windows
 ```
 
 2. ลง dependencies:

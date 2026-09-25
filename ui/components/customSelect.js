@@ -3,6 +3,7 @@ const SELECTORS = [
   "#cpu-mode",
   "#ram-limit-preset",
   "#executor-selected",
+  "#window-size-preset",
 ];
 const enhanced = new WeakMap();
 

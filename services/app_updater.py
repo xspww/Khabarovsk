@@ -349,6 +349,41 @@ try {
     } catch {}
     return @($ids | Select-Object -Unique)
   }
+  function Test-ProcessDescendsFrom([int]$ProcessId, [int]$RootPid) {
+    $cursor = $ProcessId
+    for ($depth = 0; $depth -lt 16; $depth++) {
+      if ($cursor -eq $RootPid) { return $true }
+      try {
+        $node = Get-CimInstance Win32_Process -Filter "ProcessId = $cursor" -ErrorAction Stop
+        if ($null -eq $node) { return $false }
+        $parent = [int]$node.ParentProcessId
+        if ($parent -le 0 -or $parent -eq $cursor) { return $false }
+        $cursor = $parent
+      } catch { return $false }
+    }
+    return $false
+  }
+  function Get-LaunchTreePids([int]$RootPid) {
+    $script:ProcessTreeQueryOk = $false
+    $ids = New-Object 'System.Collections.Generic.HashSet[int]'
+    [void]$ids.Add($RootPid)
+    try {
+      $items = @(Get-CimInstance Win32_Process -Property ProcessId, ParentProcessId -ErrorAction Stop)
+      $script:ProcessTreeQueryOk = $true
+      $changed = $true
+      while ($changed) {
+        $changed = $false
+        foreach ($item in $items) {
+          $childProcessId = [int]$item.ProcessId
+          $parentProcessId = [int]$item.ParentProcessId
+          if ($childProcessId -gt 0 -and $ids.Contains($parentProcessId) -and $ids.Add($childProcessId)) {
+            $changed = $true
+          }
+        }
+      }
+    } catch { Log("could not inspect launched process tree: $($_.Exception.Message)") }
+    return @($ids)
+  }
   function ProbeReady([int]$StartedPid, [string]$ExpectedExe, [string]$ExpectedVersion) {
     for ($port = 7777; $port -le 7796; $port++) {
       try {
@@ -357,6 +392,10 @@ try {
         $reportedPid = 0
         try { $reportedPid = [int]$r.pid } catch {}
         if ($reportedPid -gt 0 -and $reportedPid -eq $StartedPid) { return $true }
+        # PyInstaller one-file starts the Python worker from its extracted
+        # _MEI directory. Its PID differs from Start-Process and its image
+        # path differs from the installed exe, but it remains a child process.
+        if ($reportedPid -gt 0 -and (Test-ProcessDescendsFrom -ProcessId $reportedPid -RootPid $StartedPid)) { return $true }
         if ($reportedPid -gt 0 -and ((Get-TargetAppPids -ExpectedExe $ExpectedExe) -contains $reportedPid)) {
           return $true
         }
@@ -378,13 +417,26 @@ try {
         # A onefile launcher can exit while its same-exe worker is still
         # starting. Treat the process handle as a hint, not proof of failure;
         # wait for the versioned local API from the verified executable path.
-        $readyDeadline = (Get-Date).AddSeconds(90)
+        $readyWaitSeconds = if ($attempt -eq 1) { 240 } else { 90 }
+        $readyDeadline = (Get-Date).AddSeconds($readyWaitSeconds)
+        Phase("Waiting for v$Version to become ready (up to $readyWaitSeconds seconds)")
         while ((Get-Date) -lt $readyDeadline) {
           if (ProbeReady -StartedPid $p.Id -ExpectedExe $CurrentExe -ExpectedVersion $Version) { $readyUrl = "ready"; break }
           $targetPids = @(Get-TargetAppPids -ExpectedExe $CurrentExe)
           $starterAlive = $false
           try { $null = Get-Process -Id $p.Id -ErrorAction Stop; $starterAlive = $true } catch {}
+          $launchTreePids = @()
+          $launchTreeAlive = $false
+          $treeQueryOk = $true
           if ($targetPids.Count -eq 0 -and -not $starterAlive) {
+            $launchTreePids = @(Get-LaunchTreePids -RootPid $p.Id)
+            $treeQueryOk = [bool]$script:ProcessTreeQueryOk
+            foreach ($treePid in $launchTreePids) {
+              if ([int]$treePid -eq [int]$p.Id) { continue }
+              try { $null = Get-Process -Id ([int]$treePid) -ErrorAction Stop; $launchTreeAlive = $true; break } catch {}
+            }
+          }
+          if ($targetPids.Count -eq 0 -and -not $starterAlive -and -not $launchTreeAlive -and $treeQueryOk) {
             $exitCode = "unknown"
             try { $p.Refresh(); if ($p.HasExited) { $exitCode = [string]$p.ExitCode } } catch {}
             Log("launch attempt ${attempt}: no target executable process remains; starter exit code=$exitCode")
@@ -406,6 +458,14 @@ try {
           }
         } else {
           Log("launch attempt ${attempt}: API never answered")
+        }
+        $launchTreePids = @(Get-LaunchTreePids -RootPid $p.Id)
+        if ($launchTreePids.Count -gt 0) {
+          Log("launch attempt ${attempt}: stopping launched process tree $(($launchTreePids) -join ',')")
+          foreach ($treePid in @($launchTreePids | Where-Object { [int]$_ -ne [int]$p.Id })) {
+            try { Stop-Process -Id ([int]$treePid) -Force -ErrorAction SilentlyContinue } catch {}
+          }
+          try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
         }
         WaitPump 2
       }

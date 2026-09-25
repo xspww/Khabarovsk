@@ -270,11 +270,24 @@ def _acquire_single_instance_mutex() -> bool:
     global _APP_MUTEX
     try:
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        mutex = kernel32.CreateMutexW(None, False, "Local\\Cronus_RT_1_0")
+        create_mutex = kernel32.CreateMutexW
+        create_mutex.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p)
+        create_mutex.restype = ctypes.c_void_p
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = (ctypes.c_void_p,)
+        close_handle.restype = ctypes.c_bool
+        ctypes.set_last_error(0)
+        mutex = create_mutex(None, False, "Local\\Cronus_RT_1_0")
         if not mutex:
             return True
+        if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+            # CreateMutex still returns a handle when the named mutex exists.
+            # Close our reference so a later retry can observe the previous
+            # instance's handle being released instead of seeing our own.
+            close_handle(mutex)
+            return False
         _APP_MUTEX = mutex
-        return ctypes.get_last_error() != 183
+        return True
     except Exception:
         return True
 

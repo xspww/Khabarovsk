@@ -9,8 +9,8 @@ Safety rules (deliberate, do not soften without a product decision):
 - Source runs (``python main.py``) are refused: there is no exe to swap.
 - A running farm refuses unless the caller confirms the stop. The updater
   never auto-starts a farm: after the swap the user starts it themselves.
-- Only HTTPS GitHub Release assets; the exe must pass SHA256 and pinned
-  Authenticode publisher checks before it can replace the installed build.
+- Only HTTPS GitHub Release assets; the exe must pass SHA256 and a
+  project-key signature check before it can replace the installed build.
 - The app only exits after the swap script proves it started (first log
   marker). A stillborn script fails loudly instead of killing the app.
 - The previous executable stays in place until the new build answers a
@@ -23,7 +23,6 @@ Safety rules (deliberate, do not soften without a product decision):
 from __future__ import annotations
 
 import hashlib
-import base64
 import ctypes
 import os
 import re
@@ -38,7 +37,7 @@ from typing import Any, Callable, Dict, List, Optional
 
 import app_paths
 from services.app_version_check import HTTP_TIMEOUT_SECONDS, UPDATE_USER_AGENT, check_app_update
-from version import RELEASE_SIGNER_PUBLIC_KEY
+from services.release_signing import verify_signature_manifest
 
 CHECKSUMS_ASSET = "checksums.txt"
 EXE_ASSET_PREFIX = "CronusLauncher-"
@@ -49,6 +48,7 @@ SWAP_TIMEOUT_SECONDS = 300.0
 _PROGRESS_CHUNK = 256 * 1024
 MAX_EXE_SIZE_BYTES = 1024 * 1024 * 1024
 MAX_CHECKSUMS_SIZE_BYTES = 1024 * 1024
+MAX_SIGNATURE_SIZE_BYTES = 16 * 1024
 _GITHUB_RELEASE_HOST = "github.com"
 
 
@@ -98,6 +98,15 @@ def pick_checksums_asset(snapshot: Dict[str, Any]) -> str:
     return ""
 
 
+def pick_signature_asset(snapshot: Dict[str, Any], version: str) -> str:
+    wanted = f"{EXE_ASSET_PREFIX}{version}{EXE_ASSET_SUFFIX}.sig".lower()
+    for item in _release_assets(snapshot):
+        if str(item.get("name") or "").lower() == wanted:
+            url = str(item.get("browser_download_url") or item.get("url") or "")
+            return url if url else ""
+    return ""
+
+
 def asset_size(snapshot: Dict[str, Any], filename: str) -> int:
     wanted = str(filename or "").lower()
     for item in _release_assets(snapshot):
@@ -131,35 +140,6 @@ def sha256_file(path: str) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def _verify_authenticode(path: str, expected_public_key: str) -> bool:
-    """Ask Windows to validate the Authenticode chain and pin its signer key."""
-    expected = str(expected_public_key or "").strip().upper()
-    if not expected or not os.path.isfile(path):
-        return False
-    encoded_path = base64.b64encode(os.path.abspath(path).encode("utf-8")).decode("ascii")
-    encoded_key = base64.b64encode(expected.encode("ascii")).decode("ascii")
-    script = (
-        f"$p=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('{encoded_path}'));"
-        f"$k=[Text.Encoding]::ASCII.GetString([Convert]::FromBase64String('{encoded_key}'));"
-        "$s=Get-AuthenticodeSignature -LiteralPath $p;"
-        "if ($s.Status -ne 'Valid' -or -not $s.SignerCertificate -or "
-        "$s.SignerCertificate.GetPublicKeyString().ToUpperInvariant() -ne $k) { exit 1 }; exit 0"
-    )
-    command = base64.b64encode(script.encode("utf-16le")).decode("ascii")
-    try:
-        result = subprocess.run(
-            ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
-             "-EncodedCommand", command],
-            capture_output=True,
-            timeout=45,
-            close_fds=True,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
 
 
 DOWNLOAD_RETRIES = 3
@@ -256,7 +236,7 @@ _UPDATER_PS1 = r"""# Cronus one-click updater (generated, user-initiated only).
 # Waits for the old app PID to exit, atomically installs the verified exe,
 # relaunches it and checks its PID/version readiness before cleanup. It
 # downloads nothing; its only network probe is the local readiness endpoint.
-param([int]$ParentPid, [string]$CurrentExe, [string]$StagedExe, [string]$LogFile, [string]$Version, [string]$AppArgs, [string]$ExpectedHash, [string]$ExpectedSignerPublicKey)
+param([int]$ParentPid, [string]$CurrentExe, [string]$StagedExe, [string]$LogFile, [string]$Version, [string]$AppArgs, [string]$ExpectedHash)
 $ErrorActionPreference = "Stop"
 function Log([string]$m) { Add-Content -LiteralPath $LogFile ("[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $m) }
 # Console progress: the main app is dead during swap/launch, so progress
@@ -304,11 +284,6 @@ try {
   Copy-Item -LiteralPath $StagedExe -Destination $pendingExe -Force
   $copiedHash = (Get-FileHash -LiteralPath $pendingExe -Algorithm SHA256).Hash.ToLowerInvariant()
   if ($copiedHash -ne $ExpectedHash.ToLowerInvariant()) { throw "copied package checksum mismatch" }
-  $signature = Get-AuthenticodeSignature -LiteralPath $pendingExe
-  if ($signature.Status -ne "Valid" -or -not $signature.SignerCertificate -or
-      $signature.SignerCertificate.GetPublicKeyString().ToUpperInvariant() -ne $ExpectedSignerPublicKey.ToUpperInvariant()) {
-    throw "package Authenticode signature is invalid or from an unexpected publisher"
-  }
   $swapped = $false
   for ($i = 1; $i -le 10; $i++) {
     try {
@@ -521,12 +496,16 @@ class AppUpdater:
         exe_name = f"{EXE_ASSET_PREFIX}{version}{EXE_ASSET_SUFFIX}"
         exe_url = pick_exe_asset(snap, version)
         sums_url = pick_checksums_asset(snap)
-        if not exe_url or not sums_url:
+        signature_url = pick_signature_asset(snap, version)
+        if not exe_url or not sums_url or not signature_url:
             self._set_job(active=False, state="idle", ok=False, msg="Release assets missing")
             return {"ok": False, "accepted": False, "msg": "Release assets missing for v" + version}
         exe_size = asset_size(snap, exe_name)
         sums_size = asset_size(snap, CHECKSUMS_ASSET)
-        if exe_size <= 0 or exe_size > MAX_EXE_SIZE_BYTES or sums_size <= 0 or sums_size > MAX_CHECKSUMS_SIZE_BYTES:
+        signature_size = asset_size(snap, exe_name + ".sig")
+        if (exe_size <= 0 or exe_size > MAX_EXE_SIZE_BYTES
+                or sums_size <= 0 or sums_size > MAX_CHECKSUMS_SIZE_BYTES
+                or signature_size <= 0 or signature_size > MAX_SIGNATURE_SIZE_BYTES):
             message = "Update rejected: release asset size is missing or outside safe limits"
             self._set_job(active=False, state="failed", ok=False, error=message, msg=message,
                            version=version, finished_at=time.time())
@@ -550,7 +529,7 @@ class AppUpdater:
         self._set_job(state="downloading", version=version, msg=f"Downloading v{version}")
         thread = threading.Thread(
             target=self._run,
-            args=(version, exe_url, sums_url, exe_size, sums_size,
+            args=(version, exe_url, sums_url, signature_url, exe_size, sums_size, signature_size,
                   bool(farm_running and confirm_stop_farm), requires_elevation),
             name="CronusAppUpdate", daemon=True,
         )
@@ -562,8 +541,10 @@ class AppUpdater:
         version: str,
         exe_url: str,
         sums_url: str,
+        signature_url: str,
         exe_size: int,
         sums_size: int,
+        signature_size: int,
         stop_farm: bool,
         requires_elevation: bool,
     ) -> None:
@@ -573,6 +554,7 @@ class AppUpdater:
             exe_name = f"{EXE_ASSET_PREFIX}{version}{EXE_ASSET_SUFFIX}"
             staged_exe = os.path.join(stage, exe_name)
             staged_sums = os.path.join(stage, CHECKSUMS_ASSET)
+            staged_signature = os.path.join(stage, exe_name + ".sig")
 
             def progress(kind: str):
                 def report(received: int, total: int):
@@ -585,6 +567,7 @@ class AppUpdater:
                       expected_size=exe_size, max_size=MAX_EXE_SIZE_BYTES)
             self._set_job(state="verifying", progress="verifying", msg="Verifying checksum")
             _download(sums_url, staged_sums, expected_size=sums_size, max_size=MAX_CHECKSUMS_SIZE_BYTES)
+            _download(signature_url, staged_signature, expected_size=signature_size, max_size=MAX_SIGNATURE_SIZE_BYTES)
             with open(staged_sums, "r", encoding="utf-8", errors="replace") as handle:
                 expected = parse_checksums(handle.read(), exe_name)
             if not expected:
@@ -592,8 +575,10 @@ class AppUpdater:
             actual = sha256_file(staged_exe)
             if actual != expected:
                 raise RuntimeError("checksum mismatch (download corrupted?)")
-            if not _verify_authenticode(staged_exe, RELEASE_SIGNER_PUBLIC_KEY):
-                raise RuntimeError("Authenticode signature is invalid or release signer is not pinned in this build")
+            with open(staged_signature, "rb") as handle:
+                signature_manifest = handle.read(MAX_SIGNATURE_SIZE_BYTES + 1)
+            if not verify_signature_manifest(staged_exe, signature_manifest, version, exe_name):
+                raise RuntimeError("release signature is invalid or does not match this version and file")
             self._log("UPDATE", "package_verified", version=version)
 
             current_exe = os.path.abspath(app_paths.EXECUTABLE_PATH)
@@ -624,8 +609,7 @@ class AppUpdater:
                  "-LogFile", log_file,
                  "-Version", version,
                  "-AppArgs", app_args,
-                 "-ExpectedHash", expected,
-                 "-ExpectedSignerPublicKey", RELEASE_SIGNER_PUBLIC_KEY]
+                 "-ExpectedHash", expected]
             proc = None
             if requires_elevation:
                 # Ask for UAC before stopping the farm. Declining elevation

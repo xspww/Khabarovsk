@@ -18,13 +18,6 @@ except Exception:
     _BUILD_TAG = ""
 BUILD_TAG = str(_BUILD_TAG or "").strip()
 
-try:
-    from build_info import RELEASE_SIGNER_PUBLIC_KEY as _RELEASE_SIGNER_PUBLIC_KEY
-except Exception:
-    _RELEASE_SIGNER_PUBLIC_KEY = ""
-RELEASE_SIGNER_PUBLIC_KEY = str(_RELEASE_SIGNER_PUBLIC_KEY or "").strip().upper()
-
-
 def app_display_version() -> str:
     """Version shown in the title bar and API. Prefers the baked build tag."""
     if BUILD_TAG:

@@ -58,9 +58,9 @@
 
 ตัวอัปเดตในแอปใช้ได้กับไฟล์ exe จาก Releases บน Windows เท่านั้น และต้องต่ออินเทอร์เน็ต ถ้าไฟล์อยู่ในโฟลเดอร์ที่ต้องใช้สิทธิ์ผู้ดูแลระบบ เช่น `Program Files` ระบบจะแสดง UAC ให้ยืนยันก่อนเขียนไฟล์ หากไม่มีสิทธิ์ผู้ดูแลระบบ ให้วาง exe ในโฟลเดอร์ของผู้ใช้ เช่น Downloads รุ่นที่รันจากซอร์สไม่รองรับ self-update
 
-Release ที่สร้างด้วย workflow ปัจจุบันต้องใช้ code-signing certificate ที่ Windows เชื่อถือ เก็บเป็น GitHub Actions secrets ชื่อ `CRONUS_SIGNING_CERT_PFX_BASE64` และ `CRONUS_SIGNING_CERT_PASSWORD` โปรแกรมจะตรวจลายเซ็น Authenticode และ public key ของผู้เผยแพร่ก่อนติดตั้ง ต้องใช้ signing key เดิมกับ release ถัดไปด้วย
+workflow จะเซ็นไฟล์ exe และ portable archive ด้วยกุญแจ release ของโปรเจกต์ โปรแกรมตรวจลายเซ็นและ SHA256 ก่อนติดตั้ง update กุญแจนี้ดูแลในฝั่งโปรเจกต์ ผู้ใช้ไม่ต้องติดตั้ง certificate หรือปรับค่า update เอง เนื่องจาก exe ไม่ได้ใช้ certificate เชิงพาณิชย์ของ Windows, SmartScreen อาจยังแสดงคำเตือนตามปกติเมื่อดาวน์โหลดรุ่นใหม่ ให้โหลดจากหน้า Releases ด้านบนเท่านั้น SHA256 ใช้ตรวจไฟล์เสียหาย ส่วนลายเซ็นใช้ยืนยันว่าไฟล์มาจากโปรเจกต์นี้
 
-ถ้า Windows SmartScreen เตือน ให้ตรวจว่าโหลดจากหน้า Releases ด้านบนและตรวจ SHA256 เทียบกับ `checksums.txt` ใน release เดียวกัน การตรวจ SHA256 อย่างเดียวใช้ตรวจไฟล์เสียหรือดาวน์โหลดไม่ครบ ไม่ได้แทนการตรวจลายเซ็นผู้เผยแพร่
+ถ้า Windows SmartScreen เตือน ให้ตรวจว่าโหลดจากหน้า Releases ด้านบน การตรวจลายเซ็นของโปรแกรมยังคงทำงานก่อน update แม้ Windows จะแสดงคำเตือนนี้
 
 ```powershell
 (Get-FileHash CronusLauncher-2.5.1.exe -Algorithm SHA256).Hash

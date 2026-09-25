@@ -49,51 +49,14 @@ jobs:
       - name: Build exe icon
         run: python -c "from PIL import Image; Image.open('assets/cronus_icon.png').save('assets/cronus_icon.ico')"
 
-      - name: Prepare signed build metadata
+      - name: Prepare build metadata
         shell: powershell
-        env:
-          CRONUS_SIGNING_CERT_PFX_BASE64: ${{ secrets.CRONUS_SIGNING_CERT_PFX_BASE64 }}
-          CRONUS_SIGNING_CERT_PASSWORD: ${{ secrets.CRONUS_SIGNING_CERT_PASSWORD }}
         run: |
-          if (-not $env:CRONUS_SIGNING_CERT_PFX_BASE64 -or -not $env:CRONUS_SIGNING_CERT_PASSWORD) {
-            Write-Error "Configure CRONUS_SIGNING_CERT_PFX_BASE64 and CRONUS_SIGNING_CERT_PASSWORD Actions secrets before publishing releases."
-            exit 1
-          }
-          $pfxPath = Join-Path $env:RUNNER_TEMP "cronus-signing.pfx"
-          [System.IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($env:CRONUS_SIGNING_CERT_PFX_BASE64))
-          $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
-            $pfxPath, $env:CRONUS_SIGNING_CERT_PASSWORD,
-            [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet)
-          if (-not $cert.HasPrivateKey -or $cert.NotAfter -lt (Get-Date)) {
-            Write-Error "The signing certificate is expired or has no private key."
-            exit 1
-          }
-          $publicKey = $cert.GetPublicKeyString().ToUpperInvariant()
           $tag = "${{ github.ref_name }}"
-          [System.IO.File]::WriteAllText("$pwd/build_info.py", "BUILD_TAG = `"$tag`"`nRELEASE_SIGNER_PUBLIC_KEY = `"$publicKey`"`n")
-          "CRONUS_SIGNING_PFX_PATH=$pfxPath" >> $env:GITHUB_ENV
-          "CRONUS_SIGNER_PUBLIC_KEY=$publicKey" >> $env:GITHUB_ENV
+          [System.IO.File]::WriteAllText("$pwd/build_info.py", "BUILD_TAG = `"$tag`"`n")
 
       - name: Build exe
         run: pyinstaller cronus_launcher.spec
-
-      - name: Sign executable
-        shell: powershell
-        env:
-          CRONUS_SIGNING_CERT_PASSWORD: ${{ secrets.CRONUS_SIGNING_CERT_PASSWORD }}
-        run: |
-          try {
-            $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" |
-              Sort-Object FullName -Descending | Select-Object -First 1
-            if (-not $signtool) { Write-Error "Windows SDK signtool.exe was not found."; exit 1 }
-            & $signtool.FullName sign /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 `
-              /f $env:CRONUS_SIGNING_PFX_PATH /p $env:CRONUS_SIGNING_CERT_PASSWORD "dist/CronusLauncher.exe"
-            if ($LASTEXITCODE -ne 0) { Write-Error "Authenticode signing failed."; exit 1 }
-            & $signtool.FullName verify /pa /all "dist/CronusLauncher.exe"
-            if ($LASTEXITCODE -ne 0) { Write-Error "Signed executable failed Authenticode verification."; exit 1 }
-          } finally {
-            Remove-Item -LiteralPath $env:CRONUS_SIGNING_PFX_PATH -Force -ErrorAction SilentlyContinue
-          }
 
       - name: Smoke test (guard boot, no display needed)
         shell: powershell
@@ -124,6 +87,8 @@ jobs:
 
       - name: Package exe and checksums
         shell: powershell
+        env:
+          CRONUS_RELEASE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.CRONUS_RELEASE_SIGNING_PRIVATE_KEY_B64 }}
         run: |
           $ver = "${{ env.APP_VERSION }}"
           $exeName = "CronusLauncher-$ver.exe"
@@ -134,11 +99,21 @@ jobs:
           Copy-Item $exeName $portableDir
           Copy-Item "lua/run_in_executor.lua" (Join-Path $portableDir "lua/run_in_executor.lua")
           Compress-Archive -Path (Join-Path $portableDir "*") -DestinationPath $zipName -CompressionLevel Optimal -Force
+          if (-not $env:CRONUS_RELEASE_SIGNING_PRIVATE_KEY_B64) {
+            Write-Error "The project release-signing key is not configured in GitHub Actions secrets."
+            exit 1
+          }
+          python -m services.release_signing --file $exeName --version $ver --output "$exeName.sig"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m services.release_signing --file $zipName --version $ver --output "$zipName.sig"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $h = (Get-FileHash $exeName -Algorithm SHA256).Hash.ToLower()
           $zipHash = (Get-FileHash $zipName -Algorithm SHA256).Hash.ToLower()
+          $exeSigHash = (Get-FileHash "$exeName.sig" -Algorithm SHA256).Hash.ToLower()
+          $zipSigHash = (Get-FileHash "$zipName.sig" -Algorithm SHA256).Hash.ToLower()
           # WriteAllLines defaults to UTF-8 without BOM. Out-File -Encoding utf8
           # on Windows PowerShell 5.1 writes a BOM, which breaks sha256sum parsing.
-          [System.IO.File]::WriteAllLines("$pwd/checksums.txt", @("$h  $exeName", "$zipHash  $zipName"))
+          [System.IO.File]::WriteAllLines("$pwd/checksums.txt", @("$h  $exeName", "$zipHash  $zipName", "$exeSigHash  $exeName.sig", "$zipSigHash  $zipName.sig"))
           Get-Content checksums.txt
 
       - name: Publish to GitHub Releases
@@ -146,7 +121,9 @@ jobs:
         with:
           files: |
             CronusLauncher-${{ env.APP_VERSION }}.exe
+            CronusLauncher-${{ env.APP_VERSION }}.exe.sig
             CronusLauncher-${{ env.APP_VERSION }}-portable.zip
+            CronusLauncher-${{ env.APP_VERSION }}-portable.zip.sig
             checksums.txt
           fail_on_unmatched_files: true
           prerelease: ${{ contains(github.ref_name, 'beta') }}

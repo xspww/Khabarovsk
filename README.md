@@ -57,13 +57,12 @@ No Python is needed for this option.
 2. Download `CronusLauncher-<version>.exe` and run it.
 3. The portable build `CronusLauncher-<version>-portable.zip` holds the same exe plus the Lua loader.
 
-Windows SmartScreen may warn because the exe is not code signed.
-The builds come only from the Releases page above.
-Press More info, then Run anyway when the file name matches the release.
-Verify the download with `checksums.txt` from the same release when unsure:
+The in-app updater supports compiled release builds on Windows and needs an internet connection. If the exe is in a protected folder such as `Program Files`, the updater requests administrator approval before writing. If the account has no administrator access, move the exe to a user-writable folder. Source runs do not self-update.
+
+Release builds made by the current workflow require a code-signing certificate trusted by Windows. Store it in the `CRONUS_SIGNING_CERT_PFX_BASE64` and `CRONUS_SIGNING_CERT_PASSWORD` GitHub Actions secrets, and keep the same signing key for later releases. The updater checks the Authenticode signature and pinned publisher key before installing. When Windows SmartScreen warns, download only from the Releases page above. A SHA256 check detects incomplete or corrupted downloads; it does not replace publisher signature verification:
 
 ```powershell
-(Get-FileHash CronusLauncher-1.0.5.exe -Algorithm SHA256).Hash
+(Get-FileHash CronusLauncher-2.5.1.exe -Algorithm SHA256).Hash
 ```
 
 ## Quick Start (from source)

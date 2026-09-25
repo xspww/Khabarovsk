@@ -56,10 +56,14 @@
 2. โหลด `CronusLauncher-<version>.exe` แล้วรันได้เลย
 3. ตัว portable `CronusLauncher-<version>-portable.zip` ข้างในมี exe ตัวเดียวกันพร้อม Lua loader
 
-พอรันครั้งแรก Windows SmartScreen อาจเตือนเพราะ exe ยังไม่มีลายเซ็น โหลดจากหน้า Releases ด้านบนเท่านั้น ถ้าชื่อไฟล์ตรงกับ release ก็กด More info แล้ว Run anyway ได้เลย ไม่แน่ใจก็เช็ค SHA256 เทียบกับ `checksums.txt` ใน release เดียวกัน
+ตัวอัปเดตในแอปใช้ได้กับไฟล์ exe จาก Releases บน Windows เท่านั้น และต้องต่ออินเทอร์เน็ต ถ้าไฟล์อยู่ในโฟลเดอร์ที่ต้องใช้สิทธิ์ผู้ดูแลระบบ เช่น `Program Files` ระบบจะแสดง UAC ให้ยืนยันก่อนเขียนไฟล์ หากไม่มีสิทธิ์ผู้ดูแลระบบ ให้วาง exe ในโฟลเดอร์ของผู้ใช้ เช่น Downloads รุ่นที่รันจากซอร์สไม่รองรับ self-update
+
+Release ที่สร้างด้วย workflow ปัจจุบันต้องใช้ code-signing certificate ที่ Windows เชื่อถือ เก็บเป็น GitHub Actions secrets ชื่อ `CRONUS_SIGNING_CERT_PFX_BASE64` และ `CRONUS_SIGNING_CERT_PASSWORD` โปรแกรมจะตรวจลายเซ็น Authenticode และ public key ของผู้เผยแพร่ก่อนติดตั้ง ต้องใช้ signing key เดิมกับ release ถัดไปด้วย
+
+ถ้า Windows SmartScreen เตือน ให้ตรวจว่าโหลดจากหน้า Releases ด้านบนและตรวจ SHA256 เทียบกับ `checksums.txt` ใน release เดียวกัน การตรวจ SHA256 อย่างเดียวใช้ตรวจไฟล์เสียหรือดาวน์โหลดไม่ครบ ไม่ได้แทนการตรวจลายเซ็นผู้เผยแพร่
 
 ```powershell
-(Get-FileHash CronusLauncher-1.0.5.exe -Algorithm SHA256).Hash
+(Get-FileHash CronusLauncher-2.5.1.exe -Algorithm SHA256).Hash
 ```
 
 ## เริ่มใช้จากซอร์ส

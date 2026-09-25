@@ -10,6 +10,7 @@ silent, exactly like opencode's upgrade(): never annoy the user.
 
 import json
 import os
+import re
 import shutil
 import urllib.request
 from typing import Any, Dict
@@ -41,6 +42,7 @@ _CHECK_CACHE_OK = False
 _CHECK_CACHE_SNAP: Dict[str, Any] = {}
 _CHECK_CACHE_TTL_OK = 180.0
 _CHECK_CACHE_TTL_FAIL = 30.0
+_RELEASE_TAG_RE = re.compile(r"^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
 
 
 def _cached_check_snapshot() -> Dict[str, Any] | None:
@@ -107,12 +109,20 @@ def _assets_from_payload(payload: Dict[str, Any]) -> list:
     raw_assets = payload.get("assets")
     if not isinstance(raw_assets, list):
         return []
-    return [
-        {"name": str(item.get("name") or ""),
-         "browser_download_url": str(item.get("browser_download_url") or "")}
-        for item in raw_assets
-        if isinstance(item, dict)
-    ]
+    assets = []
+    for item in raw_assets:
+        if not isinstance(item, dict):
+            continue
+        try:
+            size = max(0, int(item.get("size") or 0))
+        except (TypeError, ValueError):
+            size = 0
+        assets.append({
+            "name": str(item.get("name") or ""),
+            "browser_download_url": str(item.get("browser_download_url") or ""),
+            "size": size,
+        })
+    return assets
 
 
 def _is_usable_release(payload: Any) -> bool:
@@ -124,7 +134,7 @@ def _is_usable_release(payload: Any) -> bool:
     if payload.get("prerelease"):
         return False
     tag = str(payload.get("tag_name") or "").strip()
-    return bool(tag)
+    return bool(tag and _RELEASE_TAG_RE.fullmatch(tag))
 
 
 def _pick_newest_stable(payloads: Any, current: str) -> Dict[str, Any]:
@@ -156,13 +166,8 @@ def check_app_update() -> Dict[str, Any]:
     rate-limited, unexpected payload) just reports no update available,
     but records the reason in check_error so the UI can show it.
 
-    Strategy (fix for "no update on other machines"):
-    1. Try /releases/latest first (fast path).
-    2. Fallback to /releases?per_page=20 and pick the newest stable
-       non-draft, non-prerelease tag newer than current. This covers:
-       - fresh repo where /latest 404s but list works,
-       - /latest pointing at a draft/prerelease,
-       - rate-limit/transient hiccups on one endpoint.
+    Select the highest semantic version among the newest 100 stable
+    releases. Fall back to /releases/latest only if listing fails.
     Results are cached (success 180s, failure 30s) to avoid stalling
     dashboard opens with a live GitHub round-trip every time.
     """
@@ -186,23 +191,41 @@ def check_app_update() -> Dict[str, Any]:
         "assets": [],
         "check_error": _LAST_CHECK_ERROR,
     }
-    latest_error = ""
-    # --- Fast path: /releases/latest ---
+    # Select by semantic version from the release list, not GitHub's
+    # manually assignable "latest" pointer or publication order.
+    try:
+        payloads = _api_get_json(releases_api_list(100))
+        if not isinstance(payloads, list):
+            raise RuntimeError("bad response from GitHub releases list")
+        best = _pick_newest_stable(payloads, current)
+        if best:
+            tag = str(best.get("tag_name") or "").strip()
+            base["assets"] = _assets_from_payload(best)
+            base.update(
+                latest_version=strip_tag_prefix(tag),
+                latest_url=str(best.get("html_url") or release_tag_url(tag)),
+                update_available=True,
+            )
+        _LAST_CHECK_ERROR = ""
+        base["check_error"] = ""
+        _store_check_snapshot(base, True)
+        return base
+    except Exception as exc:
+        detail = str(exc) or "connection failed"
+        if "403" in detail:
+            detail += " (GitHub rate limit - retry in a few minutes)"
+        list_error = f"GitHub release list failed: {detail}"
+
+    # If listing releases is unavailable, try GitHub's designated latest
+    # stable release so an API outage does not hide every possible update.
     try:
         payload = _api_get_json(releases_api_latest())
-        if not isinstance(payload, dict):
-            latest_error = "bad response from GitHub API"
-        elif not payload.get("tag_name") and payload.get("message"):
-            # GitHub error payloads (rate limit / not found) come back as
-            # {"message": "...", "documentation_url": "..."} with no tag_name.
-            latest_error = str(payload.get("message") or "GitHub API error")[:200]
-        elif _is_usable_release(payload):
+        if _is_usable_release(payload):
             tag = str(payload.get("tag_name") or "").strip()
-            base["assets"] = _assets_from_payload(payload)
-            if tag and is_newer_version(tag, current):
-                latest = strip_tag_prefix(tag)
+            if is_newer_version(tag, current):
+                base["assets"] = _assets_from_payload(payload)
                 base.update(
-                    latest_version=latest,
+                    latest_version=strip_tag_prefix(tag),
                     latest_url=str(payload.get("html_url") or release_tag_url(tag)),
                     update_available=True,
                 )
@@ -210,58 +233,10 @@ def check_app_update() -> Dict[str, Any]:
                 base["check_error"] = ""
                 _store_check_snapshot(base, True)
                 return base
-            # /latest is valid but not newer: still a successful check.
-            _LAST_CHECK_ERROR = ""
-            base["check_error"] = ""
-            _store_check_snapshot(base, True)
-            return base
-        # Draft/prerelease on /latest: fall through to the list below
-        # instead of silently reporting "no update".
+        raise RuntimeError("latest release is not newer or is not a stable release")
     except Exception as exc:
-        detail = str(exc) or "connection failed"
-        if "403" in detail:
-            detail += " (GitHub rate limit - retry in a few minutes)"
-        latest_error = f"GitHub check failed: {detail}"
-    # --- Fallback: /releases list ---
-    try:
-        payloads = _api_get_json(releases_api_list())
-        best = _pick_newest_stable(payloads, current)
-        if best:
-            tag = str(best.get("tag_name") or "").strip()
-            base["assets"] = _assets_from_payload(best)
-            latest = strip_tag_prefix(tag)
-            base.update(
-                latest_version=latest,
-                latest_url=str(best.get("html_url") or release_tag_url(tag)),
-                update_available=True,
-            )
-            _LAST_CHECK_ERROR = ""
-            base["check_error"] = ""
-            _store_check_snapshot(base, True)
-            return base
-        # List succeeded but nothing newer: not an error on its own.
-        if latest_error and isinstance(payloads, list):
-            _note_check_error(latest_error + " (fallback: no newer stable release)")
-            base["check_error"] = _LAST_CHECK_ERROR
-            _store_check_snapshot(base, False)
-            return base
-        if not latest_error:
-            # Draft/prerelease on /latest and nothing newer on the list.
-            # Do not advertise prereleases (beta) as stable updates.
-            _LAST_CHECK_ERROR = ""
-            base["check_error"] = ""
-            _store_check_snapshot(base, True)
-        else:
-            _note_check_error(latest_error)
-            base["check_error"] = _LAST_CHECK_ERROR
-            _store_check_snapshot(base, False)
-        return base
-    except Exception as exc:
-        detail = str(exc) or "connection failed"
-        if "403" in detail:
-            detail += " (GitHub rate limit - retry in a few minutes)"
-        combined = latest_error + f" | list failed: {detail}" if latest_error else f"GitHub check failed: {detail}"
-        _note_check_error(combined)
+        latest_error = str(exc) or "latest release lookup failed"
+        _note_check_error(f"{list_error} | latest fallback failed: {latest_error}")
         base["check_error"] = _LAST_CHECK_ERROR
         _store_check_snapshot(base, False)
         return base

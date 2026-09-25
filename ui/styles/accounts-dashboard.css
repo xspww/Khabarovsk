@@ -129,3 +129,29 @@
   #view-accounts .page-head .btn{flex:1}
   .accounts-table-card .table-wrap{max-height:none}
 }
+
+/* Resource monitor cards (CPU/RAM/VIRTUAL) */
+#view-accounts #res-cards-toggle{width:33px;height:33px;flex:0 0 33px;padding:0;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;background:#15161b;border-color:#232529;color:#8d9099}
+#view-accounts #res-cards-toggle svg{width:15px;height:15px;display:block}
+#view-accounts #res-cards-toggle:hover:not(:disabled){background:#1b1c22;border-color:#32343d;color:#ffffff}
+#view-accounts #res-cards-toggle.active{border-color:#43456e;color:#a5b4fc;background:rgba(99,102,241,.1)}
+.res-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:14px}
+.res-card{background:#101116;border:1px solid #1f2128;border-radius:10px;padding:12px 14px 10px;min-width:0;transition:opacity .2s ease}
+.res-cards.is-stale .res-card{opacity:.55}
+.res-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:6px}
+.res-label{display:inline-flex;align-items:center;gap:7px;color:#8d9099;font-size:11.5px;font-weight:700;letter-spacing:.04em}
+.res-label svg{width:14px;height:14px;display:block}
+.res-head strong{font-size:15px;font-weight:800;color:#f2f3f5;font-variant-numeric:tabular-nums}
+.res-spark{width:100%;height:36px;display:block}
+.res-bar{height:3px;border-radius:999px;background:#1d1f26;margin-top:6px;overflow:hidden}
+.res-bar i{display:block;height:100%;width:100%;border-radius:999px;transform:scaleX(0);transform-origin:left center;transition:transform .38s cubic-bezier(.2,.7,.2,1)}
+.res-card[data-res="cpu"] .res-bar i{background:#8b93f8}
+.res-card[data-res="ram"] .res-bar i{background:#22c55e}
+.res-card[data-res="virt"] .res-bar i{background:#60a5fa}
+.res-sub{margin-top:6px;color:#53565e;font:600 11px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+@media(max-width:820px){
+  .res-cards{grid-template-columns:1fr}
+}
+@media(prefers-reduced-motion:reduce){
+  .res-bar i{transition:none}
+}

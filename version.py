@@ -6,7 +6,7 @@ from typing import Tuple
 # Single source of truth for the launcher version.
 # Release tags must match: tag "v1.0.0" <-> APP_VERSION "1.0.0".
 # The release workflow fails the build when they differ.
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.5.1"
 TAG_PREFIX = "v"
 
 # Build tag baked in at release time (e.g. "v1.0.0-beta.3").
@@ -17,6 +17,12 @@ try:
 except Exception:
     _BUILD_TAG = ""
 BUILD_TAG = str(_BUILD_TAG or "").strip()
+
+try:
+    from build_info import RELEASE_SIGNER_PUBLIC_KEY as _RELEASE_SIGNER_PUBLIC_KEY
+except Exception:
+    _RELEASE_SIGNER_PUBLIC_KEY = ""
+RELEASE_SIGNER_PUBLIC_KEY = str(_RELEASE_SIGNER_PUBLIC_KEY or "").strip().upper()
 
 
 def app_display_version() -> str:

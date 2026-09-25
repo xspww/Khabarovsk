@@ -3,6 +3,7 @@
 
   let GAMES = [];
   let GAME_MODE = "shared"; // GAME card switch; pool UI only lives in per-account
+  let GAME_MODE_PREVIEW = "";
   let ACCOUNT_GAMES = {}; // lower(username) -> game_id
   let PLACE_NAMES = {}; // place_id -> name
   let PLACE_THUMBS = {}; // place_id -> image_url
@@ -117,7 +118,7 @@
     try {
       const data = await api("/games");
       GAMES = Array.isArray(data.games) ? data.games : [];
-      setGameMode(data.game_mode);
+      setGameMode(GAME_MODE_PREVIEW || data.game_mode, !!GAME_MODE_PREVIEW);
     } catch (_) {
       // Keep the last good list: a single failed tick must not wipe the UI.
       if (!retry) setTimeout(() => refreshGames(true), 4000);
@@ -127,10 +128,11 @@
     refreshRowBadges();
   }
 
-  function setGameMode(mode) {
+  function setGameMode(mode, preview = false) {
     const next = String(mode || "").trim().toLowerCase().replace("-", "_") === "per_account"
       ? "per_account"
       : "shared";
+    GAME_MODE_PREVIEW = preview ? next : "";
     GAME_MODE = next;
     applyGameMode();
   }
@@ -625,8 +627,8 @@
   refreshGames();
   refreshAccountGames();
   decorateRows();
-  // Instant reaction to the GAME card mode switch (saveGamePanel
-  // dispatches this); the 30s poll below stays as the fallback.
+  // Keep the Game Pool preview in sync with the unsaved mode switch;
+  // the 30s poll below remains the persisted-state fallback.
   try {
     document.addEventListener("cronus:game-mode", (e) => {
       const mode = e && e.detail && e.detail.mode;
@@ -634,7 +636,7 @@
         refreshGames();
         return;
       }
-      setGameMode(mode);
+      setGameMode(mode, !!(e.detail && e.detail.preview));
     });
   } catch (_) {}
   setInterval(() => {

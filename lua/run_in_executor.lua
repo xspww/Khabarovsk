@@ -1,5 +1,3 @@
--- Cronus Lua bootstrap loader.
--- Wait for LocalPlayer before requesting the session-scoped helper.
 local function env_value(key, fallback)
     local ok, value = pcall(function()
         if getgenv then

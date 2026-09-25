@@ -109,6 +109,15 @@ def register(app, ctx: ApiContext) -> None:
         # Notify-only (opencode-style): just report, never download/install.
         return check_app_update()
 
+    @app.get("/api/app/ready")
+    def api_app_ready():
+        # The updater probes this endpoint and matches both PID and version.
+        # A generic /api/status response from another local service is not
+        # sufficient evidence that the just-launched build is healthy.
+        from version import app_display_version
+
+        return {"ok": True, "pid": os.getpid(), "version": app_display_version()}
+
     @app.post("/api/update/open")
     def api_update_open():
         # The embedded WebView2 window drops window.open() silently,
@@ -355,6 +364,34 @@ def register(app, ctx: ApiContext) -> None:
     @app.post("/api/ram/import")
     def api_ram_import():
         return {"ok": False, "msg": "Roblox Account Manager is disabled in RT 1.4"}
+
+
+    @app.get("/api/system/resources")
+    def api_system_resources():
+        try:
+            import psutil
+        except Exception as exc:
+            raise HTTPException(500, f"psutil unavailable: {exc}")
+        try:
+            vm = psutil.virtual_memory()
+            sw = psutil.swap_memory()
+            gb = float(1024 ** 3)
+            return {
+                "ok": True,
+                "cpu_percent": round(float(psutil.cpu_percent(interval=None)), 1),
+                "cpu_threads": int(os.cpu_count() or 0),
+                "ram_percent": round(float(vm.percent), 1),
+                "ram_used_gb": round(float(vm.used) / gb, 1),
+                "ram_total_gb": round(float(vm.total) / gb, 1),
+                "virt_percent": round(float(sw.percent), 1),
+                "virt_used_gb": round(float(sw.used) / gb, 1),
+                "virt_total_gb": round(float(sw.total) / gb, 1),
+            }
+        except HTTPException:
+            raise
+        except Exception as exc:
+            flog_kv("API", "system_resources_failed", "warning", error=exc)
+            raise HTTPException(500, f"resource read failed: {exc}")
 
     @app.get("/", response_class=HTMLResponse)
     def serve_ui():

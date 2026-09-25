@@ -423,3 +423,49 @@ body[data-game-mode="shared"] #game-pool-row{
 .gated-off{opacity:.45}
 .gated-off .custom-select{pointer-events:none}
 .gated-off input,.gated-off select,.gated-off textarea{pointer-events:none}
+
+/* Layout-shift fix: keep Enabled/Disabled label same width so sibling input never moves */
+.toggle-row span{
+  min-width: 62px;
+  flex: 0 0 auto;
+  justify-content: flex-start;
+  text-align: left;
+  white-space: nowrap;
+}
+.toggle-field-row{
+  align-items: center;
+  column-gap: 10px;
+}
+.toggle-field-row .toggle-row{
+  flex: 0 0 auto;
+}
+#autoclose-controls{
+  flex: 0 1 auto;
+  min-width: 0;
+}
+#autoclose-controls .input{
+  width: 200px;
+  max-width: 40vw;
+}
+
+/* Layout-shift fix: hide number spinner so hover/focus never changes input width */
+.queue-row-input input[type=number]::-webkit-inner-spin-button,
+.queue-row-input input[type=number]::-webkit-outer-spin-button,
+input.input[type=number]::-webkit-inner-spin-button,
+input.input[type=number]::-webkit-outer-spin-button{
+  -webkit-appearance: none;
+  appearance: none;
+  margin: 0;
+  display: none;
+}
+.queue-row-input input[type=number],
+input.input[type=number]{
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+.queue-row-input input[type=number]:hover,
+.queue-row-input input[type=number]:focus,
+input.input[type=number]:hover,
+input.input[type=number]:focus{
+  padding-right: 10px;
+}

@@ -412,19 +412,19 @@ class DesktopWindow:
                     QPushButton#WinMinButton, QPushButton#WinMaxButton, QPushButton#WinCloseButton {
                         width: 34px; height: 22px; min-width: 34px; max-width: 34px;
                         min-height: 22px; max-height: 22px; border-radius: 9px;
-                        border: 1px solid #262a33;
-                        background-color: #14161c;
-                        color: #53565e;
+border: 1px solid #262a33;
+                         background-color: #14161c;
+                         color: #53565e;
                         padding: 0px;
                     }
                     QPushButton#WinMinButton:hover, QPushButton#WinMaxButton:hover {
-                        background-color: #1a1d29;
-                        border-color: #3a3f4d;
+background-color: #1a1d29;
+                         border-color: #3a3f4d;
                         color: #ffffff;
                     }
                     QPushButton#WinCloseButton:hover {
-                        background-color: #26161b;
-                        border-color: #4c1d24;
+background-color: #26161b;
+                         border-color: #4c1d24;
                         color: #f87171;
                     }
                     """
@@ -533,8 +533,8 @@ class DesktopWindow:
         container.setStyleSheet(
             """
             QWidget#CronusWindowShell {
-                background: #0a0b10;
-                border: 1px solid #20232c;
+background: #0a0b10;
+                 border: 1px solid #20232c;
                 border-radius: 10px;
             }
             """

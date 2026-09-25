@@ -154,4 +154,115 @@
     });
     mo.observe(document.documentElement, { childList: true, subtree: true });
   } catch (e) {}
+  function initResourceMonitor() {
+    var cards = document.getElementById("res-cards");
+    var toggle = document.getElementById("res-cards-toggle");
+    if (!cards || !toggle || toggle.dataset.resMonitorWired === "1") return;
+    toggle.dataset.resMonitorWired = "1";
+    var colors = { cpu: "#8b93f8", ram: "#22c55e", virt: "#60a5fa" };
+    var history = { cpu: [], ram: [], virt: [] };
+    var timer = 0;
+    var inFlight = false;
+    function byId(id) { return document.getElementById(id); }
+    function shouldPoll() {
+      return !cards.hidden && !document.hidden && !!document.querySelector("#view-accounts.active");
+    }
+    function setStale(value) { cards.classList.toggle("is-stale", !!value); }
+    function push(key, value) {
+      var values = history[key];
+      values.push(value);
+      while (values.length > 60) values.shift();
+    }
+    function drawSpark(id, key) {
+      var canvas = byId(id);
+      if (!canvas) return;
+      var values = history[key];
+      var dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
+      var width = canvas.clientWidth || canvas.parentElement && canvas.parentElement.clientWidth || 200;
+      var height = 36;
+      var pixelWidth = Math.round(width * dpr);
+      var pixelHeight = Math.round(height * dpr);
+      if (canvas.width !== pixelWidth || canvas.height !== pixelHeight) {
+        canvas.width = pixelWidth;
+        canvas.height = pixelHeight;
+      }
+      var context = canvas.getContext("2d");
+      context.clearRect(0, 0, canvas.width, canvas.height);
+      context.scale(dpr, dpr);
+      if (values.length < 2) return;
+      var step = width / 59;
+      var offset = (60 - values.length) * step;
+      context.beginPath();
+      values.forEach(function (value, index) {
+        var x = offset + index * step;
+        var y = height - 3 - Math.max(0, Math.min(100, value)) / 100 * (height - 8);
+        if (index === 0) context.moveTo(x, y);
+        else context.lineTo(x, y);
+      });
+      context.strokeStyle = colors[key];
+      context.lineWidth = 1.6;
+      context.lineJoin = "round";
+      context.lineCap = "round";
+      context.stroke();
+      var lastX = offset + (values.length - 1) * step;
+      var lastY = height - 3 - Math.max(0, Math.min(100, values[values.length - 1])) / 100 * (height - 8);
+      context.beginPath();
+      context.arc(lastX - 1, lastY, 2.4, 0, Math.PI * 2);
+      context.fillStyle = colors[key];
+      context.fill();
+    }
+    function render(data) {
+      var cpu = Number(data.cpu_percent);
+      var ram = Number(data.ram_percent);
+      var virtual = Number(data.virt_percent);
+      push("cpu", cpu);
+      push("ram", ram);
+      push("virt", virtual);
+      byId("res-cpu-pct").textContent = Math.round(cpu) + "%";
+      byId("res-ram-pct").textContent = Math.round(ram) + "%";
+      byId("res-virt-pct").textContent = Math.round(virtual) + "%";
+      byId("res-cpu-bar").style.transform = "scaleX(" + Math.max(0, Math.min(100, cpu)) / 100 + ")";
+      byId("res-ram-bar").style.transform = "scaleX(" + Math.max(0, Math.min(100, ram)) / 100 + ")";
+      byId("res-virt-bar").style.transform = "scaleX(" + Math.max(0, Math.min(100, virtual)) / 100 + ")";
+      byId("res-cpu-sub").textContent = data.cpu_threads + " threads";
+      byId("res-ram-sub").textContent = data.ram_used_gb + " / " + data.ram_total_gb + " GB";
+      byId("res-virt-sub").textContent = data.virt_used_gb + " / " + data.virt_total_gb + " GB";
+      drawSpark("res-cpu-spark", "cpu");
+      drawSpark("res-ram-spark", "ram");
+      drawSpark("res-virt-spark", "virt");
+      setStale(false);
+    }
+    function poll() {
+      if (inFlight || !shouldPoll()) return;
+      inFlight = true;
+      fetch("/api/system/resources")
+        .then(function (response) {
+          if (!response.ok) throw new Error("HTTP " + response.status);
+          return response.json();
+        })
+        .then(function (data) {
+          if (data && data.ok !== false) render(data);
+          else setStale(true);
+        })
+        .catch(function () { setStale(true); })
+        .finally(function () { inFlight = false; });
+    }
+    function apply(visible) {
+      cards.hidden = !visible;
+      toggle.classList.toggle("active", visible);
+      toggle.setAttribute("aria-pressed", String(visible));
+      try { localStorage.setItem("rg_res_cards", visible ? "1" : "0"); } catch (e) {}
+      if (visible) setTimeout(poll, 50);
+    }
+    apply(localStorage.getItem("rg_res_cards") !== "0");
+    toggle.addEventListener("click", function () { apply(cards.hidden); });
+    timer = setInterval(function () { if (shouldPoll()) poll(); }, 2000);
+    window.addEventListener("resize", function () {
+      drawSpark("res-cpu-spark", "cpu");
+      drawSpark("res-ram-spark", "ram");
+      drawSpark("res-virt-spark", "virt");
+    });
+  }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initResourceMonitor);
+  else initResourceMonitor();
 })();

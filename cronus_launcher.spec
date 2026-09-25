@@ -18,6 +18,7 @@
 #   The release workflow fails the build when they differ.
 
 import os
+from PyInstaller.utils.hooks import collect_data_files
 
 # Run pyinstaller from the repository root so these relative paths resolve.
 block_cipher = None
@@ -52,6 +53,7 @@ def _qtwebview2_lib_datas():
 
 
 _QTWEBVIEW2_LIB_DATAS = _qtwebview2_lib_datas()
+_CERTIFI_DATAS = collect_data_files("certifi")
 
 a = Analysis(
     ["main.py"],
@@ -62,6 +64,7 @@ a = Analysis(
         ("ui", "ui"),
         ("lua", "lua"),
         *_QTWEBVIEW2_LIB_DATAS,
+        *_CERTIFI_DATAS,
     ],
     hiddenimports=[
         "PIL",

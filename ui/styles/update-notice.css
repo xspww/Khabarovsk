@@ -36,6 +36,15 @@
   opacity: 0.75;
   cursor: wait;
 }
+/* A failed check stays visible so users can retry and see the reason. */
+.cronus-update-btn.is-check-failed {
+  animation: none;
+  border-color: #735d32;
+  background: rgba(234, 179, 8, 0.08);
+  color: #e8c878;
+  text-transform: none;
+  letter-spacing: 0;
+}
 /* Update available: soft indigo pulse to catch the eye. */
 .cronus-update-btn.is-available {
   animation: cronus-update-pulse 2.4s ease-in-out infinite;

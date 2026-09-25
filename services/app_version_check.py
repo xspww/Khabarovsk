@@ -11,6 +11,7 @@ silent, exactly like opencode's upgrade(): never annoy the user.
 import json
 import os
 import re
+import ssl
 import shutil
 import urllib.request
 from typing import Any, Dict
@@ -89,7 +90,20 @@ def _api_get_json(url: str) -> Any:
             "Accept": "application/vnd.github+json",
         },
     )
-    with urllib.request.urlopen(request, timeout=HTTP_TIMEOUT_SECONDS) as response:
+    # Frozen Python builds may not have a usable machine-wide CA store on
+    # clean Windows installations. Ship certifi's maintained root bundle so
+    # HTTPS verification behaves consistently across user machines.
+    try:
+        import certifi
+
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+    except (ImportError, OSError, ssl.SSLError):
+        # Keep source/dev environments functional if the optional bundle is
+        # unavailable; release builds install certifi via requirements.txt.
+        ssl_context = ssl.create_default_context()
+    with urllib.request.urlopen(
+        request, timeout=HTTP_TIMEOUT_SECONDS, context=ssl_context
+    ) as response:
         body = response.read()
     return json.loads(body.decode("utf-8", errors="replace"))
 

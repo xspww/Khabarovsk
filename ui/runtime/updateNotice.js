@@ -283,13 +283,19 @@
     if (working) return;
     if (!snap || !snap.update_available || !snap.latest_version) {
       removeButton();
-      // Surface the check_error in console and as a tooltip on the
-      // hidden placeholder so power users can diagnose why no update
-      // is shown (offline / rate-limited). The button stays hidden.
       if (snap && snap.check_error) {
         try { console.warn("[update] check_error:", snap.check_error); } catch (e) {}
-        var ph = button();
-        if (ph) ph.title = snap.check_error;
+        var retry = ensureButton();
+        retry.disabled = false;
+        retry.classList.remove("is-available", "is-downloading", "is-failed");
+        retry.classList.add("is-check-failed");
+        retry.textContent = "Retry update check";
+        retry.title = snap.check_error;
+        retry.onclick = function () {
+          retry.disabled = true;
+          retry.textContent = "Checking for updates…";
+          refresh();
+        };
       }
       return;
     }
@@ -297,7 +303,7 @@
     b.disabled = false;
     b.hidden = false;
     b.style.display = "";
-    b.classList.remove("is-downloading", "is-failed");
+    b.classList.remove("is-downloading", "is-failed", "is-check-failed");
     b.classList.add("is-available");
     b.style.setProperty("--p", "0%");
     b.innerHTML = "<span>&#8659; v" + esc(snap.latest_version) + "</span>";
@@ -322,6 +328,7 @@
       schedule();
     }).catch(function () {
       failCount++;
+      render({ check_error: "Could not contact the local update service. Retrying automatically." });
       schedule();
     });
   }

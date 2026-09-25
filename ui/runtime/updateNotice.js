@@ -2,7 +2,8 @@
  * Button flow: check farm state -> confirm modal if running -> POST
  * /api/update/apply -> poll /api/update/status for progress -> the app
  * exits and a hidden swap script relaunches the new exe.
- * Source runs refuse apply; then we fall back to opening Releases.
+ * Source runs cannot replace an executable, so explain that limitation in
+ * the app instead of unexpectedly navigating the user to GitHub.
  * Failures are quiet except on the button itself - never annoy the user.
  */
 (function () {
@@ -127,14 +128,6 @@
     }
   }
 
-  function openReleases(fallbackUrl) {
-    var opt = { method: "POST", headers: apiHeaders(true) };
-    fetch("/api/update/open", opt).catch(function () {});
-    if (fallbackUrl) {
-      try { window.open(fallbackUrl, "_blank", "noopener"); } catch (e) {}
-    }
-  }
-
   var overlayVersion = "";
   function setProgress(pct) {
     // Sidebar button fill + overlay bar share one value.
@@ -242,7 +235,7 @@
       if (!res.ok || !res.accepted) {
         working = false;
         if (/source run/i.test(res.msg || "")) {
-          openReleases(latestUrl); // dev runs keep the old open-releases path
+          setLabel("Install update manually once", "Self-update is available after installing the packaged app. This copy is running from source.", false);
           renderLatest();
           return;
         }
@@ -281,7 +274,7 @@
   function render(snap) {
     latestSnap = snap;
     if (working) return;
-    if (!snap || !snap.update_available || !snap.latest_version) {
+    if (!snap || snap.compiled === false || !snap.update_available || !snap.latest_version) {
       removeButton();
       if (snap && snap.check_error) {
         try { console.warn("[update] check_error:", snap.check_error); } catch (e) {}

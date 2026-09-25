@@ -389,6 +389,15 @@ def _maybe_prompt_startup_update() -> bool:
     """
     if "--post-update" in sys.argv:
         return False
+    # Source checkouts cannot replace their running Python files. Keep the
+    # update notice in the dashboard instead of prompting at every startup.
+    try:
+        import app_paths
+
+        if not app_paths.IS_COMPILED:
+            return False
+    except Exception:
+        return False
     try:
         _, farm = _require_configured()
         cfg = farm.cfg_mgr
@@ -434,7 +443,6 @@ def _maybe_prompt_startup_update() -> bool:
     if not latest:
         return False
     current = str(snap.get("current_version") or "").strip()
-    latest_url = str(snap.get("latest_url") or "").strip()
     cur_label = f"v{current}" if current and not current.lower().startswith("v") else (current or "unknown")
     new_label = f"v{latest}" if not latest.lower().startswith("v") else latest
     text = (
@@ -458,18 +466,6 @@ def _maybe_prompt_startup_update() -> bool:
         flog_kv("UPDATE", "startup_prompt_declined", version=latest)
         return False
     flog_kv("UPDATE", "startup_prompt_accepted", version=latest)
-    try:
-        import app_paths
-
-        if not app_paths.IS_COMPILED:
-            if latest_url:
-                try:
-                    webbrowser.open(latest_url)
-                except Exception:
-                    pass
-            return False
-    except Exception:
-        pass
     try:
         applied = _autostart_api("/api/update/apply", "POST", {"confirm_stop_farm": True})
     except Exception as exc:

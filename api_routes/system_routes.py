@@ -107,7 +107,11 @@ def register(app, ctx: ApiContext) -> None:
     @app.get("/api/update/check")
     def api_update_check():
         # Notify-only (opencode-style): just report, never download/install.
-        return check_app_update()
+        # The UI must not offer an in-app update for a source checkout;
+        # only a packaged executable can replace itself safely.
+        import app_paths
+
+        return {**check_app_update(), "compiled": bool(app_paths.IS_COMPILED)}
 
     @app.get("/api/app/ready")
     def api_app_ready():

@@ -477,10 +477,9 @@ def _maybe_prompt_startup_update() -> bool:
         return False
     # End the boot progress bar first so the update status starts on its own
     # clean line (it used to jam onto the bar: "88%Updating to vX...").
-    # No separate "Updating to vX..." line here: the progress line below
-    # carries the version ("Downloading v2.3.8 ..."), and the swap script
-    # prints its own single "> updating to vX..." header when it takes
-    # over the console.
+    # No separate update line here: the progress line carries the version.
+    # The swap script waits for this process to exit before writing to the
+    # console, so the two progress displays cannot overwrite each other.
     _console_finish_startup(clear=False)
     _restart_announced = False
     try:
@@ -512,9 +511,8 @@ def _maybe_prompt_startup_update() -> bool:
                 return True
             phase = str(job.get("state") or "updating").strip().lower() or "updating"
             if phase == "restarting":
-                # The swap script owns the console from here on (it prints
-                # "> updating to vX..." and each phase step); just finish
-                # the progress line cleanly instead of announcing a dupe.
+                # The updater takes over only after this process exits. Seal
+                # the final progress line, then stay silent during handoff.
                 if not _restart_announced:
                     _restart_announced = True
                     _console_seal_inline_line()
@@ -576,7 +574,10 @@ def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
         _console_status("startup", "Existing Cronus instance detected; requesting cleanup")
         _stop_previous_instance()
         _stop_same_app_processes()
-        mutex_ok = _acquire_single_instance_mutex()
+        # Keep the mutex already acquired by this process. Recreating it would
+        # report ERROR_ALREADY_EXISTS against our own still-open handle.
+        if not mutex_ok:
+            mutex_ok = _acquire_single_instance_mutex()
         if not socket_ok:
             socket_ok = _acquire_instance_socket()
     if not mutex_ok:

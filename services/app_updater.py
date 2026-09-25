@@ -239,22 +239,15 @@ _UPDATER_PS1 = r"""# Cronus one-click updater (generated, user-initiated only).
 param([int]$ParentPid, [string]$CurrentExe, [string]$StagedExe, [string]$LogFile, [string]$Version, [string]$AppArgs, [string]$ExpectedHash)
 $ErrorActionPreference = "Stop"
 function Log([string]$m) { Add-Content -LiteralPath $LogFile ("[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $m) }
-# Console progress: the main app is dead during swap/launch, so progress
-# goes to this console window (the exe runs with console=True).
+# The old app owns the console until it exits. After that, the updater owns
+# it only through installation and hands it to the new app at launch.
 try { $Host.UI.RawUI.WindowTitle = "Cronus Launcher Update" } catch {}
-Write-Host "> updating to v$Version..." -ForegroundColor Blue
+$script:ConsoleReady = $false
 function Phase([string]$m) {
   Log($m)
-  # One clean status line per phase: dim the trailing ellipsis, and never
-  # repeat the same line twice (the attempt loop used to print "starting
-  # the new version..." twice back to back).
+  if (-not $script:ConsoleReady) { return }
   try {
-    if ($m.EndsWith("...")) {
-      Write-Host $m.Substring(0, $m.Length - 3) -ForegroundColor Gray -NoNewline
-      Write-Host "..." -ForegroundColor DarkGray
-    } else {
-      Write-Host $m -ForegroundColor Gray
-    }
+    Write-Host ("> " + $m) -ForegroundColor Gray
   } catch { try { Write-Host $m -ForegroundColor Gray } catch {} }
 }
 function WaitPump([int]$seconds) {
@@ -265,7 +258,6 @@ $backupExe = ""
 $swapped = $false
 $launchedPid = 0
 try {
-  Phase("> waiting for the app to close...")
   Log("waiting for PID $ParentPid")
   $deadline = (Get-Date).AddSeconds(__TIMEOUT__)
   while ($true) {
@@ -274,8 +266,11 @@ try {
     if ((Get-Date) -gt $deadline) { Log("parent still alive; aborting"); exit 3 }
   }
   WaitPump 1
-  if (-not (Test-Path -LiteralPath $StagedExe)) { Phase("staged exe missing; aborting"); exit 4 }
-  Phase("> preparing files...")
+  $script:ConsoleReady = $true
+  Write-Host "Cronus Launcher updater" -ForegroundColor Blue
+  Write-Host ("Installing v" + $Version) -ForegroundColor Gray
+  if (-not (Test-Path -LiteralPath $StagedExe)) { Phase("Update package is missing; stopping"); exit 4 }
+  Phase("Preparing files")
   # Copy beside the target first: stage may be on another volume, and a
   # cross-volume Move-Item is not atomic. The old install remains untouched.
   $updateId = [guid]::NewGuid().ToString("N")
@@ -316,7 +311,7 @@ try {
   # lingering old instance trips the single-instance guard and the new
   # app would exit right away). The script itself is excluded.
   $exeBase = [System.IO.Path]::GetFileNameWithoutExtension($CurrentExe)
-  Phase("> sweeping leftover processes...")
+  Phase("Checking for leftover app processes")
   $sweepDeadline = (Get-Date).AddSeconds(30)
   while ((Get-Date) -lt $sweepDeadline) {
     $left = @()
@@ -333,15 +328,38 @@ try {
       Log("leftover PIDs still present after sweep: $(($still | ForEach-Object { $_.Id }) -join ',')")
     }
   } catch {}
-  Phase("> starting the new version...")
+  Phase("Starting v$Version")
   $workDir = Split-Path -Parent $CurrentExe
   $launchedPid = 0
   $readyUrl = ""
-  function ProbeReady([int]$ExpectedPid, [string]$ExpectedVersion) {
+  function Get-TargetAppPids([string]$ExpectedExe) {
+    $ids = @()
+    try {
+      $expectedPath = [System.IO.Path]::GetFullPath($ExpectedExe)
+      $processName = [System.IO.Path]::GetFileName($ExpectedExe)
+      foreach ($item in @(Get-CimInstance Win32_Process -Filter "Name='$processName'" -ErrorAction Stop)) {
+        if (-not $item.ExecutablePath) { continue }
+        try {
+          $actualPath = [System.IO.Path]::GetFullPath([string]$item.ExecutablePath)
+          if ([string]::Equals($actualPath, $expectedPath, [StringComparison]::OrdinalIgnoreCase)) {
+            $ids += [int]$item.ProcessId
+          }
+        } catch {}
+      }
+    } catch {}
+    return @($ids | Select-Object -Unique)
+  }
+  function ProbeReady([int]$StartedPid, [string]$ExpectedExe, [string]$ExpectedVersion) {
     for ($port = 7777; $port -le 7796; $port++) {
       try {
         $r = Invoke-RestMethod -Uri "http://127.0.0.1:${port}/api/app/ready" -TimeoutSec 2 -ErrorAction Stop
-        if ([int]$r.pid -eq $ExpectedPid -and [string]$r.version -eq $ExpectedVersion) { return $true }
+        if ([string]$r.version -ne $ExpectedVersion) { continue }
+        $reportedPid = 0
+        try { $reportedPid = [int]$r.pid } catch {}
+        if ($reportedPid -gt 0 -and $reportedPid -eq $StartedPid) { return $true }
+        if ($reportedPid -gt 0 -and ((Get-TargetAppPids -ExpectedExe $ExpectedExe) -contains $reportedPid)) {
+          return $true
+        }
       } catch {}
     }
     return $false
@@ -351,35 +369,44 @@ try {
   if (-not $AppArgs) { $AppArgs = "--post-update" }
   for ($attempt = 1; $attempt -le 5; $attempt++) {
     try {
-      if ($attempt -gt 1) { Phase("> starting the new version... (attempt $attempt)") }
+      if ($attempt -gt 1) { Phase("Retrying app startup ($attempt of 5)") }
       $p = Start-Process -FilePath $CurrentExe -WorkingDirectory $workDir -WindowStyle Normal -ArgumentList $AppArgs -PassThru
       if ($null -eq $p) {
         Log("launch attempt ${attempt}: no process handle returned")
       } else {
         Log("launch attempt $attempt started PID $($p.Id); waiting")
-        WaitPump 10
-        try {
-          $null = Get-Process -Id $p.Id -ErrorAction Stop
-        } catch {
-          Log("launch attempt ${attempt}: process exited within 10s")
-          WaitPump 2
-          continue
-        }
-        # PID alive is not enough: wait until the dashboard API answers.
-        $readyDeadline = (Get-Date).AddSeconds(75)
+        # A onefile launcher can exit while its same-exe worker is still
+        # starting. Treat the process handle as a hint, not proof of failure;
+        # wait for the versioned local API from the verified executable path.
+        $readyDeadline = (Get-Date).AddSeconds(90)
         while ((Get-Date) -lt $readyDeadline) {
-          try { $null = Get-Process -Id $p.Id -ErrorAction Stop }
-          catch { Log("launch attempt ${attempt}: process gone while waiting for API"); break }
-          if (ProbeReady -ExpectedPid $p.Id -ExpectedVersion $Version) { $readyUrl = "ready"; break }
+          if (ProbeReady -StartedPid $p.Id -ExpectedExe $CurrentExe -ExpectedVersion $Version) { $readyUrl = "ready"; break }
+          $targetPids = @(Get-TargetAppPids -ExpectedExe $CurrentExe)
+          $starterAlive = $false
+          try { $null = Get-Process -Id $p.Id -ErrorAction Stop; $starterAlive = $true } catch {}
+          if ($targetPids.Count -eq 0 -and -not $starterAlive) {
+            $exitCode = "unknown"
+            try { $p.Refresh(); if ($p.HasExited) { $exitCode = [string]$p.ExitCode } } catch {}
+            Log("launch attempt ${attempt}: no target executable process remains; starter exit code=$exitCode")
+            break
+          }
           WaitPump 3
         }
         if ($readyUrl -ne "") {
           $launchedPid = $p.Id
-          Phase("> new version running")
+          # The launched app may now be writing to this same console. Keep
+          # the handoff silent to avoid corrupting its startup display.
+          Log("new version is ready")
           break
         }
-        Log("launch attempt ${attempt}: API never answered")
-        try { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue } catch {}
+        if ($targetPids.Count -gt 0) {
+          Log("launch attempt ${attempt}: API never answered; stopping target PIDs $(($targetPids) -join ',')")
+          foreach ($targetPid in $targetPids) {
+            try { Stop-Process -Id $targetPid -Force -ErrorAction SilentlyContinue } catch {}
+          }
+        } else {
+          Log("launch attempt ${attempt}: API never answered")
+        }
         WaitPump 2
       }
     } catch {
@@ -397,9 +424,13 @@ try {
     } else {
       Remove-Item -LiteralPath $CurrentExe -Force -ErrorAction SilentlyContinue
     }
-    $msg = "Could not start the new version. The previous app was restored at: $CurrentExe (details: $LogFile)"
+    $msg = "Could not start v$Version after 5 attempts. Recovery was attempted."
     Log("launch failed after retries; " + $msg)
-    try { Write-Host ("> " + $msg) -ForegroundColor Red } catch {}
+    try {
+      Write-Host ("> " + $msg) -ForegroundColor Red
+      Write-Host ("  App: " + $CurrentExe) -ForegroundColor Gray
+      Write-Host ("  Log: " + $LogFile) -ForegroundColor Gray
+    } catch {}
     WaitPump 15
     exit 7
   }
@@ -423,7 +454,15 @@ try {
     } catch { Log("automatic rollback failed: $($_.Exception.Message)") }
   }
   Log("failed: $($_.Exception.Message)")
-  try { Write-Host "> update failed - see $LogFile" -ForegroundColor Red } catch {}
+  # Once the new app answers its readiness check it may already be writing
+  # startup output to this console. Never let updater cleanup/error output
+  # corrupt the new app's terminal view.
+  if ($launchedPid -eq 0) {
+    try {
+      Write-Host "> Update failed. Check the log, then start the app again." -ForegroundColor Red
+      Write-Host ("  Log: " + $LogFile) -ForegroundColor Gray
+    } catch {}
+  }
   WaitPump 10
   exit 5
 } finally {

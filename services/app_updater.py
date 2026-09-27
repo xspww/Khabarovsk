@@ -336,12 +336,31 @@ try {
   $workDir = Split-Path -Parent $CurrentExe
   $launchedPid = 0
   $readyUrl = ""
+  # The freshly installed build is launched from $CurrentExe, whose image name
+  # is the INSTALLED name (CronusLauncher.exe), while the staged file the user
+  # just verified is named after its version (CronusLauncher-<v>.exe). Matching
+  # only on the installed name therefore missed the running build entirely:
+  # the sweep found nothing, the readiness probe could not confirm, and the
+  # update rolled back even though the new app was healthy. Query both names.
+  function Get-AppImageNames() {
+    $names = @()
+    foreach ($candidate in @($CurrentExe, $StagedExe)) {
+      if (-not $candidate) { continue }
+      try {
+        $name = [System.IO.Path]::GetFileName($candidate)
+        if ($name -and $names -notcontains $name) { $names += $name }
+      } catch {}
+    }
+    return @($names)
+  }
   function Get-TargetAppPids([string]$ExpectedExe) {
     $ids = @()
     try {
       $expectedPath = [System.IO.Path]::GetFullPath($ExpectedExe)
-      $processName = [System.IO.Path]::GetFileName($ExpectedExe)
-      foreach ($item in @(Get-CimInstance Win32_Process -Filter "Name='$processName'" -ErrorAction Stop)) {
+      $names = @(Get-AppImageNames)
+      if ($names.Count -eq 0) { return @() }
+      $filter = ($names | ForEach-Object { "Name='$_'" }) -join " OR "
+      foreach ($item in @(Get-CimInstance Win32_Process -Filter $filter -ErrorAction Stop)) {
         if (-not $item.ExecutablePath) { continue }
         try {
           $actualPath = [System.IO.Path]::GetFullPath([string]$item.ExecutablePath)
@@ -404,13 +423,17 @@ try {
         $reportedPid = 0
         try { $reportedPid = [int]$r.pid } catch {}
         if ($reportedPid -gt 0 -and $reportedPid -eq $StartedPid) { return $true }
-        # PyInstaller one-file starts the Python worker from its extracted
-        # _MEI directory. Its PID differs from Start-Process and its image
-        # path differs from the installed exe, but it remains a child process.
-        if ($reportedPid -gt 0 -and (Test-ProcessDescendsFrom -ProcessId $reportedPid -RootPid $StartedPid)) { return $true }
+        # A PyInstaller one-file bootstrapper hands off to a Python worker and
+        # then exits, so $StartedPid is a dead handle while the worker (the
+        # PID the API reports) lives on as an orphan. Walking the parent chain
+        # is therefore unreliable: it only succeeds while the dead parent's
+        # process row still exists, and it fails on any machine that reuses or
+        # reaps PIDs quickly. The worker's image is the installed exe, which is
+        # the durable identity to match on.
         if ($reportedPid -gt 0 -and ((Get-TargetAppPids -ExpectedExe $ExpectedExe) -contains $reportedPid)) {
           return $true
         }
+        if ($reportedPid -gt 0 -and (Test-ProcessDescendsFrom -ProcessId $reportedPid -RootPid $StartedPid)) { return $true }
       } catch {}
     }
     return $false
@@ -464,14 +487,28 @@ try {
         # A onefile launcher can exit while its same-exe worker is still
         # starting. Treat the process handle as a hint, not proof of failure;
         # wait for the versioned local API from the verified executable path.
-        $readyWaitSeconds = if ($attempt -eq 1) { 240 } else { 90 }
+        $readyWaitSeconds = if ($attempt -eq 1) { 180 } else { 60 }
         $readyDeadline = (Get-Date).AddSeconds($readyWaitSeconds)
+        # The bootstrapper exits the moment it has forked the worker, so "no
+        # processes at all" is briefly TRUE on a perfectly healthy start. Give
+        # the handoff a real grace period before treating it as a crash, and
+        # remember the exit code the first time the handle reports one (after
+        # the process is gone the code is no longer readable, which is why the
+        # old log always printed an empty exit code).
+        $handoffGraceSeconds = 30
+        $handoffDeadline = (Get-Date).AddSeconds($handoffGraceSeconds)
+        $starterExitCode = "unknown"
+        $starterExitRecorded = $false
         Phase("Waiting for v$Version to become ready (up to $readyWaitSeconds seconds)")
         while ((Get-Date) -lt $readyDeadline) {
           if (ProbeReady -StartedPid $p.Id -ExpectedExe $CurrentExe -ExpectedVersion $Version) { $readyUrl = "ready"; break }
           $targetPids = @(Get-TargetAppPids -ExpectedExe $CurrentExe)
           $starterAlive = $false
           try { $null = Get-Process -Id $p.Id -ErrorAction Stop; $starterAlive = $true } catch {}
+          if (-not $starterAlive -and -not $starterExitRecorded) {
+            # Read the code once, while the handle still knows it.
+            try { if ($p.HasExited) { $starterExitCode = [string]$p.ExitCode; $starterExitRecorded = $true } } catch {}
+          }
           $launchTreePids = @()
           $launchTreeAlive = $false
           $treeQueryOk = $true
@@ -484,9 +521,12 @@ try {
             }
           }
           if ($targetPids.Count -eq 0 -and -not $starterAlive -and -not $launchTreeAlive -and $treeQueryOk) {
-            $exitCode = "unknown"
-            try { $p.Refresh(); if ($p.HasExited) { $exitCode = [string]$p.ExitCode } } catch {}
-            Log("launch attempt ${attempt}: no target executable process remains; starter exit code=$exitCode")
+            if ((Get-Date) -lt $handoffDeadline) {
+              # Still inside the bootstrapper-to-worker handoff window.
+              WaitPump 3
+              continue
+            }
+            Log("launch attempt ${attempt}: no target executable process remains after ${handoffGraceSeconds}s grace; starter exit code=$starterExitCode")
             break
           }
           WaitPump 3
@@ -498,13 +538,22 @@ try {
           Log("new version is ready")
           break
         }
+        # A stillborn build writes its traceback to the redirected boot log.
+        # Read it here: without this the user only ever sees "API never
+        # answered", which says nothing about the actual cause.
+        $bootTail = ""
+        try {
+          if ($BootLog -and (Test-Path -LiteralPath "$BootLog.err")) {
+            $bootTail = ((Get-Content -LiteralPath "$BootLog.err" -Tail 6 -ErrorAction SilentlyContinue) -join " | ")
+          }
+        } catch {}
         if ($targetPids.Count -gt 0) {
-          Log("launch attempt ${attempt}: API never answered; stopping target PIDs $(($targetPids) -join ',') (last seen: version='$script:LastSeenVersion' pid=$script:LastSeenPid port=$script:LastSeenPort; boot output: $BootLog)")
+          Log("launch attempt ${attempt}: API never answered; stopping target PIDs $(($targetPids) -join ',') (last seen: version='$script:LastSeenVersion' pid=$script:LastSeenPid port=$script:LastSeenPort; starter exit code=$starterExitCode; boot stderr: $bootTail; boot output: $BootLog)")
           foreach ($targetPid in $targetPids) {
             try { Stop-Process -Id $targetPid -Force -ErrorAction SilentlyContinue } catch {}
           }
         } else {
-          Log("launch attempt ${attempt}: API never answered (last seen: version='$script:LastSeenVersion' pid=$script:LastSeenPid port=$script:LastSeenPort; boot output: $BootLog)")
+          Log("launch attempt ${attempt}: API never answered (last seen: version='$script:LastSeenVersion' pid=$script:LastSeenPid port=$script:LastSeenPort; starter exit code=$starterExitCode; boot stderr: $bootTail; boot output: $BootLog)")
         }
         $launchTreePids = @(Get-LaunchTreePids -RootPid $p.Id)
         if ($launchTreePids.Count -gt 0) {

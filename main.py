@@ -269,6 +269,23 @@ farm.set_executor_start_guard(EXECUTOR_RELAUNCHER.ensure_started)
 cleanup_legacy_update_stage()
 
 app = FastAPI(title=APP_NAME, docs_url=None, redoc_url=None)
+
+
+@app.middleware("http")
+async def _no_store_ui_assets(request, call_next):
+    # Localhost desktop UI: never let the WebView cache HTML/JS/CSS.
+    # Otherwise edits (or updates) only appear after a manual cache clear.
+    response = await call_next(request)
+    try:
+        if request.url.path == "/" or request.url.path.startswith(("/ui/", "/assets/")):
+            response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+    except Exception:
+        pass
+    return response
+
+
 app.mount("/assets", StaticFiles(directory=resource_path("assets")), name="assets")
 app.mount("/ui", StaticFiles(directory=resource_path("ui")), name="ui")
 api_context = ApiContext(

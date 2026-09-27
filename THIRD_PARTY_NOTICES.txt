@@ -1,0 +1,20 @@
+Third-party notices
+====================
+
+MemReduct — RAM Cleanup logic base
+----------------------------------
+- Upstream: https://github.com/henrypp/memreduct (Mem Reduct v3.5.3)
+- Copyright (c) 2011-2026 Henry++
+- License: GNU General Public License v3.0 (GPLv3)
+- Used: memory-cleaning approach from src/main.c::_app_memoryclean and the
+  REDUCT_MASK_DEFAULT set (WorkingSet, SystemFileCache, StandbyPriority0,
+  RegistryCache, CombineMemoryLists, ModifiedFileCache/volume flush), ported
+  to Python ctypes (NtSetSystemInformation) in services/ram_cleanup.py.
+- No upstream binary is bundled; only the technique/sequence is ported.
+- Full GPLv3 text: https://www.gnu.org/licenses/gpl-3.0.html
+- Upstream license file: memreduct-master/LICENSE (GPLv3).
+
+Because this feature is a derivative of a GPLv3 work, distribution of this
+project (including the RAM Cleanup feature) must comply with GPLv3 terms:
+provide source, keep this notice, and license the distributed work under
+GPLv3. Private internal use without conveyance is unrestricted.

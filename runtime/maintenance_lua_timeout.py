@@ -8,6 +8,52 @@ from runtime.maintenance_captcha import detect_and_hold_captcha
 from typing import Any, Dict
 
 
+def emit_lua_wait_timeout_recovery(
+    owner: Any,
+    acc: Any,
+    *,
+    age: float,
+    timeout: float,
+    state_name: str,
+    runtime_generation: Any,
+    session_id: str,
+    launch_nonce: str,
+    transaction_id: str,
+    pid: Any,
+    log_event: str,
+    captcha_probe: str,
+) -> bool:
+    # Single owner for Lua-wait timeout action. Callers preserve their own
+    # age/state/log_event — only the captcha-probe + signal sequence is shared.
+    if detect_and_hold_captcha(owner, acc, pid, captcha_probe):
+        return True
+    flog_kv(
+        "MAINT",
+        log_event,
+        "warning",
+        account=acc.display_name,
+        age=f"{age:.1f}",
+        timeout=f"{timeout:.1f}",
+        pid=pid or "",
+    )
+    owner._runtime_signal(
+        acc,
+        "loading_freeze",
+        "lua_wait_timeout",
+        payload={
+            "trigger": "lua_wait_timeout",
+            "detail": f"Lua did not confirm in-game state within {timeout:.1f}s",
+            "reason_msg": "Waiting For Lua timed out",
+            "state": state_name,
+        },
+        expected_runtime_generation=runtime_generation,
+        expected_session_id=session_id,
+        expected_launch_nonce=launch_nonce,
+        expected_transaction_id=transaction_id,
+    )
+    return True
+
+
 def handle_in_game_lua_wait_timeout(owner: Any, acc: Any, cfg: Dict[str, Any], now: float) -> bool:
     if not lua_liveness_required(cfg):
         return False
@@ -41,31 +87,17 @@ def handle_in_game_lua_wait_timeout(owner: Any, acc: Any, cfg: Dict[str, Any], n
     ))
     if not pid_live:
         return False
-    if detect_and_hold_captcha(owner, acc, pid, "lua_wait_timeout_in_game"):
-        return True
-
-    flog_kv(
-        "MAINT",
-        "lua_missing_in_game_timeout_recovery",
-        "warning",
-        account=acc.display_name,
-        age=f"{missing_age:.1f}",
-        timeout=f"{lua_timeout:.1f}",
-        pid=pid or "",
-    )
-    owner._runtime_signal(
+    return emit_lua_wait_timeout_recovery(
+        owner,
         acc,
-        "loading_freeze",
-        "lua_wait_timeout",
-        payload={
-            "trigger": "lua_wait_timeout",
-            "detail": f"Lua did not confirm in-game state within {lua_timeout:.1f}s",
-            "reason_msg": "Waiting For Lua timed out",
-            "state": AccountState.IN_GAME.name,
-        },
-        expected_runtime_generation=runtime_generation,
-        expected_session_id=session_id,
-        expected_launch_nonce=launch_nonce,
-        expected_transaction_id=transaction_id,
+        age=missing_age,
+        timeout=lua_timeout,
+        state_name=AccountState.IN_GAME.name,
+        runtime_generation=runtime_generation,
+        session_id=session_id,
+        launch_nonce=launch_nonce,
+        transaction_id=transaction_id,
+        pid=pid,
+        log_event="lua_missing_in_game_timeout_recovery",
+        captcha_probe="lua_wait_timeout_in_game",
     )
-    return True

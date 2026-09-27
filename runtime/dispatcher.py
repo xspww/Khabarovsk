@@ -59,6 +59,20 @@ class Dispatcher(threading.Thread):
         if self._launcher:
             self._launcher.update_config(self._cfg)
 
+    def _requeue_machine_hold(self, acc: Account, decision: Any) -> None:
+        # Single owner for machine-supervisor deferrals. Same generations +
+        # delay math as before, only extracted for readability.
+        with acc._lock:
+            runtime_generation = acc.runtime_generation
+            recovery_generation = acc.recovery_generation
+        self._queue.push(
+            acc,
+            reason=f"machine_hold:{decision.reason}",
+            runtime_generation=runtime_generation,
+            recovery_generation=recovery_generation,
+            delay_seconds=max(1.0, float(decision.retry_after_seconds or 1.0)),
+        )
+
     def _apply_window_resize_after_launch(self, acc: Account) -> None:
         target = _window_resize_target_from_config(self._cfg)
         arrange = _window_arrange_settings_from_config(self._cfg)
@@ -320,16 +334,7 @@ class Dispatcher(threading.Thread):
                 decision = self._machine_supervisor.launch_decision(acc)
                 if not decision.allowed:
                     self._machine_supervisor.log_decision(acc, decision)
-                    with acc._lock:
-                        runtime_generation = acc.runtime_generation
-                        recovery_generation = acc.recovery_generation
-                    self._queue.push(
-                        acc,
-                        reason=f"machine_hold:{decision.reason}",
-                        runtime_generation=runtime_generation,
-                        recovery_generation=recovery_generation,
-                        delay_seconds=max(1.0, float(decision.retry_after_seconds or 1.0)),
-                    )
+                    self._requeue_machine_hold(acc, decision)
                     continue
 
             self._queue.mark_busy()

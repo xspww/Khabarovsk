@@ -10,18 +10,28 @@ from core import ServerType, account_launch_block_reason, flog, flog_kv, Account
 from services.browser_tracker import tracker_label
 
 def parse_vip_link(vip_url: str) -> Tuple[str, str]:
+    # Canonical parser lives in domain.roblox_private_servers (single owner).
+    # This wrapper preserves the public import path + warning logs so
+    # ProcessManager.parse_vip_link / accounts_routes callers see no change.
     if not vip_url:
         return "", ""
     try:
-        parsed = urllib.parse.urlparse(vip_url.strip())
-        qs     = urllib.parse.parse_qs(parsed.query)
-        m = re.search(r"/games/(\d+)", parsed.path)
-        place_id = m.group(1) if m else qs.get("placeId", [""])[0]
-        link_code = (
-            qs.get("privateServerLinkCode", [""])[0] or
-            qs.get("linkCode",              [""])[0] or
-            qs.get("code",                  [""])[0]
-        )
+        from domain.roblox_private_servers import parse_vip_link as _canonical_parse
+    except Exception:
+        _canonical_parse = None
+    try:
+        if _canonical_parse is not None:
+            place_id, link_code = _canonical_parse(vip_url)
+        else:
+            parsed = urllib.parse.urlparse(vip_url.strip())
+            qs = urllib.parse.parse_qs(parsed.query)
+            m = re.search(r"/games/(\d+)", parsed.path)
+            place_id = m.group(1) if m else qs.get("placeId", [""])[0]
+            link_code = (
+                qs.get("privateServerLinkCode", [""])[0] or
+                qs.get("linkCode", [""])[0] or
+                qs.get("code", [""])[0]
+            )
         if not place_id:
             flog("[VIP] Could not parse place_id from configured VIP link", "warning")
         if not link_code:

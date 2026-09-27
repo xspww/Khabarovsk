@@ -108,11 +108,16 @@ class RecoveryStormController:
             cfg = dict(self._cfg)
             accounts = list(self._accounts)
             if not _bool(cfg, "recovery_storm_enabled", False):
+                # Fast path: disabled keeps requested delay verbatim.
                 decision = RecoveryStormDecision(requested, requested, "disabled", 0, bool(net_online))
                 self._last_decision = decision
                 return decision
 
             now = self._clock()
+            # Drop stale global spacing from old outages so a far-future
+            # _next_due_at cannot block new recoveries forever.
+            if self._next_due_at and self._next_due_at < now:
+                self._next_due_at = 0.0
             account_key = str(getattr(account, "_config_username", getattr(account, "username", "")) or "")
             active = self._active_recovery_count(accounts, excluding=account)
             max_active = max(1, _int(cfg, "recovery_storm_max_active", 3))
@@ -131,9 +136,14 @@ class RecoveryStormController:
             if self._next_due_at > due_at:
                 due_at = self._next_due_at
                 reason_key = "global_spacing"
-            if due_at > now + requested + 0.05:
+            delayed = due_at > now + requested + 0.05
+            if delayed and jitter_window > 0:
                 due_at += _stable_jitter(account_key, reason, jitter_window)
-            self._next_due_at = max(self._next_due_at, due_at) + spacing
+            if delayed or reason_key != "normal":
+                # Only chain global spacing when actually contended.
+                # Idle recoveries (active=0, online) must not push _next_due_at
+                # forward or every later rejoin pays +spacing for nothing.
+                self._next_due_at = max(self._next_due_at, due_at) + spacing
             decision = RecoveryStormDecision(requested, max(0.0, due_at - now), reason_key, active, bool(net_online))
             self._last_decision = decision
             return decision
@@ -142,9 +152,12 @@ class RecoveryStormController:
         with self._lock:
             cfg = dict(self._cfg)
             accounts = list(self._accounts)
-            return {
-                "enabled": _bool(cfg, "recovery_storm_enabled", False),
-                "next_due_at": self._next_due_at,
-                "active_recovery_count": self._active_recovery_count(accounts),
-                "last_decision": self._last_decision.to_log_fields(),
-            }
+            next_due_at = float(self._next_due_at or 0.0)
+            last_decision = self._last_decision
+        # Count outside the lock — same result, shorter critical section.
+        return {
+            "enabled": _bool(cfg, "recovery_storm_enabled", False),
+            "next_due_at": next_due_at,
+            "active_recovery_count": self._active_recovery_count(accounts),
+            "last_decision": last_decision.to_log_fields(),
+        }

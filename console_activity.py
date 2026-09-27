@@ -48,6 +48,7 @@ _ICON_FINISH = "🏁"
 _ICON_FARM = "🚀"
 _ICON_WINDOW = "💻"
 _ICON_SERVER = "🌐"
+_ICON_RAM = "🧹"
 _ICON_ALIASES = {
     "OK": _ICON_OK,
     "CHECK": _ICON_OK,
@@ -91,6 +92,7 @@ _COLOR_BY_ICON = {
     _ICON_FARM: "\x1b[92m",
     _ICON_WINDOW: "\x1b[90m",
     _ICON_SERVER: "\x1b[93m",
+    _ICON_RAM: "\x1b[96m",
 }
 _COLOR_SUPPORT: Optional[bool] = None
 
@@ -392,6 +394,54 @@ def _window_minimize_line(minimized: Any, delay: Any = "") -> str:
     d = _text(delay)
     suffix = f" after {d}s" if d else ""
     return _line(_ICON_WINDOW, f"{_paint(f'Minimized {n} Roblox window(s){suffix}', _COLOR_GRAY)}")
+
+
+def _sanitize_ram_source(value: Any = "") -> str:
+    src = _text(value).lower()
+    if "auto" in src:
+        return "auto"
+    return "manual"
+
+
+def _format_ram_percent(percent: Any = "") -> str:
+    pct_text = _text(percent).replace("%", "").strip()
+    if not pct_text or pct_text.lower() == "none":
+        return ""
+    try:
+        return f"{float(pct_text):.1f}%"
+    except Exception:
+        return ""
+
+
+def _ram_cleanup_line(source: Any = "", freed_mb: Any = "", percent: Any = "") -> str:
+    src = _sanitize_ram_source(source)
+    freed_text = _text(freed_mb)
+    try:
+        freed_val = float(str(freed_mb).replace(",", ""))
+        freed_text = f"{freed_val:.1f} MB"
+    except Exception:
+        if freed_text and "mb" not in freed_text.lower():
+            freed_text = f"{freed_text} MB"
+    detail = f"freed {freed_text}" if freed_text else "done"
+    pct = _format_ram_percent(percent)
+    if pct:
+        detail += f" (RAM {pct})"
+    return _line(_ICON_RAM, f"{_paint(f'RAM cleaned ({src})', _COLOR_WHITE)} {_paint(f'— {detail}', _COLOR_GRAY)}")
+
+
+def _ram_failed_line(source: Any = "", error: Any = "") -> str:
+    src = _sanitize_ram_source(source)
+    err = _text(error) or "unknown error"
+    # Cyan broom icon + white header, gray reason (same palette as TELEPORT/CONFIG).
+    short_err = err if len(err) <= 120 else err[:117] + "..."
+    return _line(_ICON_RAM, f"{_paint(f'RAM cleanup failed ({src})', _COLOR_WHITE)} {_paint(f'— {short_err}', _COLOR_GRAY)}")
+
+
+def _ram_skipped_line(percent: Any = "", reason: Any = "") -> str:
+    pct = _format_ram_percent(percent)
+    suffix = f" (RAM {pct})" if pct else ""
+    why = _text(reason) or "requires admin — relaunch as administrator"
+    return _line(_ICON_RAM, f"{_paint('RAM cleanup skipped', _COLOR_WHITE)} {_paint(f'— {why}{suffix}', _COLOR_GRAY)}")
 
 
 def _teleport_line(account: str) -> Optional[str]:
@@ -735,6 +785,17 @@ def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]
         return _window_minimize_line(fields.get("minimized", fields.get("count", "")), fields.get("delay_seconds", fields.get("delay", "")))
     if scope == "WINDOW" and name in {"auto_window_arrange_cycle", "auto_window_resize_cycle", "resized_roblox_windows"}:
         return None
+    if scope == "PERFORMANCE" and name in {"ram_cleanup_auto", "ram_cleanup_manual", "ram_cleanup"}:
+        src = _text(fields.get("source")) or ("auto" if "auto" in name else "manual")
+        return _ram_cleanup_line(src, fields.get("freed_mb", ""), fields.get("percent", ""))
+    if scope == "PERFORMANCE" and name in {"ram_cleanup_auto_failed", "ram_cleanup_manual_failed", "ram_cleanup_failed"}:
+        src = _text(fields.get("source")) or ("auto" if "auto" in name else "manual")
+        err = fields.get("error")
+        if err is None:
+            err = fields.get("msg", "")
+        return _ram_failed_line(src, err)
+    if scope == "PERFORMANCE" and name in {"ram_cleanup_skipped_no_admin", "ram_cleanup_skipped"}:
+        return _ram_skipped_line(fields.get("percent", ""), "requires admin — relaunch as administrator")
     if scope in {"CONFIG", "PERFORMANCE", "QUEUE", "GAME"} and "saved" in name.lower():
         return _config_line(name.replace("_", " "), fields)
     if scope == "RUNTIME" and name == "suspect_process_check":

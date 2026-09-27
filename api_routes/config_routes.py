@@ -63,6 +63,8 @@ def register(app, ctx: ApiContext) -> None:
             "machine_supervisor_enabled", "machine_supervisor_max_launching_accounts",
             "machine_supervisor_cpu_high_percent", "machine_supervisor_memory_high_percent",
             "roblox_memory_guard_enabled", "roblox_memory_guard_mb", "roblox_memory_guard_hold_seconds",
+            "ram_cleanup_enabled", "ram_cleanup_threshold_pct", "ram_cleanup_interval_min",
+            "virtual_memory_mode", "virtual_memory_size_gb",
             "popup_scan_interval_seconds", "popup_scan_max_parallel",
             "connection_error_hold_time",
             "watchdog_enabled", "watchdog_cpu_low",
@@ -241,6 +243,23 @@ def register(app, ctx: ApiContext) -> None:
         if "roblox_memory_guard_hold_seconds" in updates:
             updates["roblox_memory_guard_hold_seconds"] = _float_setting(
                 updates["roblox_memory_guard_hold_seconds"], 30.0, 5.0, 3600.0
+            )
+        if "ram_cleanup_enabled" in updates:
+            updates["ram_cleanup_enabled"] = bool(updates["ram_cleanup_enabled"])
+        if "ram_cleanup_threshold_pct" in updates:
+            updates["ram_cleanup_threshold_pct"] = _float_setting(
+                updates["ram_cleanup_threshold_pct"], 85.0, 50.0, 95.0
+            )
+        if "ram_cleanup_interval_min" in updates:
+            updates["ram_cleanup_interval_min"] = _int_setting(
+                updates["ram_cleanup_interval_min"], 15, 5, 120
+            )
+        if "virtual_memory_mode" in updates:
+            mode = str(updates["virtual_memory_mode"] or "system_managed").strip().lower()
+            updates["virtual_memory_mode"] = mode if mode in ("system_managed", "custom") else "system_managed"
+        if "virtual_memory_size_gb" in updates:
+            updates["virtual_memory_size_gb"] = _int_setting(
+                updates["virtual_memory_size_gb"], 16, 1, 64
             )
         if "rt_rotation_enabled" in updates:
             updates["rt_rotation_enabled"] = bool(updates["rt_rotation_enabled"])

@@ -16,6 +16,15 @@
   overflow: visible;
 }
 
+/* An open menu must escape .queue-card{overflow:hidden!important} and paint
+   over the card below it — otherwise options are cut off and unreachable.
+   The !important matches theme-overrides.css or the menu stays clipped. */
+.queue-card.card-menu-open{
+  overflow: visible !important;
+  position: relative;
+  z-index: 30;
+}
+
 .custom-select-button{
   width: 100%;
   min-height: 34px;

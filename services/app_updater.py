@@ -18,6 +18,10 @@ Safety rules (deliberate, do not soften without a product decision):
 - The new exe is launched with retries and a long settle wait, because a
   PyInstaller onefile cold extract plus Defender scan can take a minute.
   The script only gives up after every attempt clearly fails.
+- The new exe's early console output is captured to newapp_boot_<v>.log so a
+  stillborn build leaves a traceback instead of a bare "API never answered".
+- When every attempt fails, the previous build is restored AND relaunched so
+  the user is never left with no app and a console that just disappears.
 """
 
 from __future__ import annotations
@@ -236,7 +240,7 @@ _UPDATER_PS1 = r"""# Cronus one-click updater (generated, user-initiated only).
 # Waits for the old app PID to exit, atomically installs the verified exe,
 # relaunches it and checks its PID/version readiness before cleanup. It
 # downloads nothing; its only network probe is the local readiness endpoint.
-param([int]$ParentPid, [string]$CurrentExe, [string]$StagedExe, [string]$LogFile, [string]$Version, [string]$AppArgs, [string]$ExpectedHash)
+param([int]$ParentPid, [string]$CurrentExe, [string]$StagedExe, [string]$LogFile, [string]$Version, [string]$AppArgs, [string]$ExpectedHash, [string]$BootLog)
 $ErrorActionPreference = "Stop"
 function Log([string]$m) { Add-Content -LiteralPath $LogFile ("[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $m) }
 # The old app owns the console until it exits. After that, the updater owns
@@ -388,6 +392,14 @@ try {
     for ($port = 7777; $port -le 7796; $port++) {
       try {
         $r = Invoke-RestMethod -Uri "http://127.0.0.1:${port}/api/app/ready" -TimeoutSec 2 -ErrorAction Stop
+        # Record what is actually listening, even on mismatch: without this
+        # every failure looks identical ("API never answered") and a
+        # version/PID mismatch is impossible to diagnose from the log.
+        try {
+          $script:LastSeenPort = $port
+          $script:LastSeenVersion = [string]$r.version
+          $script:LastSeenPid = [int]$r.pid
+        } catch {}
         if ([string]$r.version -ne $ExpectedVersion) { continue }
         $reportedPid = 0
         try { $reportedPid = [int]$r.pid } catch {}
@@ -406,10 +418,45 @@ try {
   # A onefile cold extract plus Defender scan can take a minute, so give
   # each attempt a long settle window instead of a few seconds.
   if (-not $AppArgs) { $AppArgs = "--post-update" }
+  # Start-Process treats one string as one argument vector entry: a value
+  # like "--post-update --autostart" would arrive as a SINGLE argv token and
+  # the `"--post-update" in sys.argv` / `"--autostart" in sys.argv` checks
+  # in the new app would silently miss. Always launch with a token array.
+  $AppArgsArray = @($AppArgs -split '\s+' | Where-Object { $_ })
+  if ($AppArgsArray.Count -eq 0) { $AppArgsArray = @("--post-update") }
+  $script:LastSeenPort = 0
+  $script:LastSeenVersion = ""
+  $script:LastSeenPid = 0
   for ($attempt = 1; $attempt -le 5; $attempt++) {
+    $script:LastSeenPort = 0
+    $script:LastSeenVersion = ""
+    $script:LastSeenPid = 0
     try {
       if ($attempt -gt 1) { Phase("Retrying app startup ($attempt of 5)") }
-      $p = Start-Process -FilePath $CurrentExe -WorkingDirectory $workDir -WindowStyle Normal -ArgumentList $AppArgs -PassThru
+      # Capture the new app's early console output (banner, tracebacks) to a
+      # file. A stillborn new version otherwise leaves zero evidence: its
+      # window closes and the updater can only report "API never answered".
+      # Redirecting implies no new window; the WebView GUI is unaffected.
+      try {
+        if ($BootLog) {
+          $bootDir = Split-Path -Parent $BootLog
+          if ($bootDir -and -not (Test-Path -LiteralPath $bootDir)) { New-Item -ItemType Directory -Path $bootDir -Force | Out-Null }
+          Add-Content -LiteralPath $BootLog ("[attempt $attempt] launching $CurrentExe args: $($AppArgsArray -join ' ')")
+        }
+      } catch {}
+      $startParams = @{
+        FilePath = $CurrentExe
+        WorkingDirectory = $workDir
+        ArgumentList = $AppArgsArray
+        PassThru = $true
+      }
+      if ($BootLog) {
+        $startParams["RedirectStandardOutput"] = $BootLog
+        $startParams["RedirectStandardError"] = ($BootLog + ".err")
+      } else {
+        $startParams["WindowStyle"] = "Normal"
+      }
+      $p = Start-Process @startParams
       if ($null -eq $p) {
         Log("launch attempt ${attempt}: no process handle returned")
       } else {
@@ -452,12 +499,12 @@ try {
           break
         }
         if ($targetPids.Count -gt 0) {
-          Log("launch attempt ${attempt}: API never answered; stopping target PIDs $(($targetPids) -join ',')")
+          Log("launch attempt ${attempt}: API never answered; stopping target PIDs $(($targetPids) -join ',') (last seen: version='$script:LastSeenVersion' pid=$script:LastSeenPid port=$script:LastSeenPort; boot output: $BootLog)")
           foreach ($targetPid in $targetPids) {
             try { Stop-Process -Id $targetPid -Force -ErrorAction SilentlyContinue } catch {}
           }
         } else {
-          Log("launch attempt ${attempt}: API never answered")
+          Log("launch attempt ${attempt}: API never answered (last seen: version='$script:LastSeenVersion' pid=$script:LastSeenPid port=$script:LastSeenPort; boot output: $BootLog)")
         }
         $launchTreePids = @(Get-LaunchTreePids -RootPid $p.Id)
         if ($launchTreePids.Count -gt 0) {
@@ -475,23 +522,36 @@ try {
     WaitPump 3
   }
   if ($launchedPid -eq 0) {
+    $restored = $false
     if (Test-Path -LiteralPath $backupExe) {
       try {
         Remove-Item -LiteralPath $CurrentExe -Force -ErrorAction SilentlyContinue
         [System.IO.File]::Move($backupExe, $CurrentExe)
         Log("restored prior target executable")
+        $restored = Test-Path -LiteralPath $CurrentExe
       } catch { Log("rollback failed: $($_.Exception.Message)") }
     } else {
       Remove-Item -LiteralPath $CurrentExe -Force -ErrorAction SilentlyContinue
     }
     $msg = "Could not start v$Version after 5 attempts. Recovery was attempted."
     Log("launch failed after retries; " + $msg)
+    # Never leave the user with nothing running and a console that just
+    # vanishes: bring the restored previous build back so the app is usable,
+    # then keep this console open long enough to actually read the message.
+    if ($restored) {
+      try {
+        Log("relaunching restored previous build")
+        Start-Process -FilePath $CurrentExe -WorkingDirectory $workDir -WindowStyle Normal | Out-Null
+      } catch { Log("relaunch of restored build failed: $($_.Exception.Message)") }
+    }
     try {
       Write-Host ("> " + $msg) -ForegroundColor Red
       Write-Host ("  App: " + $CurrentExe) -ForegroundColor Gray
       Write-Host ("  Log: " + $LogFile) -ForegroundColor Gray
+      if ($BootLog) { Write-Host ("  Boot output: " + $BootLog) -ForegroundColor Gray }
+      if ($restored) { Write-Host "> Previous version was restored and relaunched." -ForegroundColor Gray }
     } catch {}
-    WaitPump 15
+    WaitPump 60
     exit 7
   }
   Log("done ($readyUrl)")
@@ -499,6 +559,10 @@ try {
   try {
     Remove-Item -LiteralPath $StagedExe -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath (Join-Path (Split-Path -Parent $StagedExe) "checksums.txt") -Force -ErrorAction SilentlyContinue
+    # NOTE: the boot log is intentionally kept. The healthy new version is
+    # still running with its stdout redirected into it, so the file is locked
+    # and cannot be deleted here. The versioned name (newapp_boot_<v>.log)
+    # keeps one small file per update as a boot audit trail.
   } catch {}
   exit 0
 } catch {
@@ -688,6 +752,7 @@ class AppUpdater:
             with open(script, "w", encoding="utf-8") as handle:
                 handle.write(_UPDATER_PS1)
             log_file = os.path.join(stage, UPDATER_LOG_NAME)
+            boot_log = os.path.join(stage, f"newapp_boot_{version}.log")
 
             # Snapshot first: the script may log its marker within
             # milliseconds of starting.
@@ -708,7 +773,8 @@ class AppUpdater:
                  "-LogFile", log_file,
                  "-Version", version,
                  "-AppArgs", app_args,
-                 "-ExpectedHash", expected]
+                 "-ExpectedHash", expected,
+                 "-BootLog", boot_log]
             proc = None
             if requires_elevation:
                 # Ask for UAC before stopping the farm. Declining elevation

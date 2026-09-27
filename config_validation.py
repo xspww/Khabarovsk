@@ -37,6 +37,8 @@ _INT_RANGES: Dict[str, Tuple[int, int]] = {
     "roblox_window_arrange_columns": (1, 32),
     "roblox_window_arrange_rows": (1, 32),
     "roblox_window_arrange_gap": (0, 80),
+    "ram_cleanup_interval_min": (5, 120),
+    "virtual_memory_size_gb": (1, 64),
 }
 
 _FLOAT_RANGES: Dict[str, Tuple[float, float]] = {
@@ -64,6 +66,7 @@ _FLOAT_RANGES: Dict[str, Tuple[float, float]] = {
     "watchdog_hold_time": (1.0, 86400.0),
     "roblox_memory_guard_mb": (512.0, 65536.0),
     "roblox_memory_guard_hold_seconds": (5.0, 3600.0),
+    "ram_cleanup_threshold_pct": (50.0, 95.0),
     "cpu_limiter_default_percent": (5.0, 95.0),
     "roblox_window_resize_interval_seconds": (1.0, 3600.0),
     "multi_roblox_guard_self_heal_delay_seconds": (0.0, 300.0),

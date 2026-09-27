@@ -238,6 +238,39 @@ def _cpu_limiter_status(ctx: ApiContext) -> Dict[str, Any]:
     return CPU_LIMITER.snapshot(getattr(ctx.farm, "_accounts", []), settings)
 
 
+def _ram_cleanup_status(ctx: ApiContext) -> Dict[str, Any]:
+    try:
+        from services.ram_cleanup import RAM_CLEANUP
+    except Exception as exc:
+        return {"ok": False, "msg": f"ram cleanup unavailable: {exc}"}
+    cfg = {
+        "ram_cleanup_enabled": ctx.cfg_mgr.get("ram_cleanup_enabled", False),
+        "ram_cleanup_threshold_pct": ctx.cfg_mgr.get("ram_cleanup_threshold_pct", 85.0),
+        "ram_cleanup_interval_min": ctx.cfg_mgr.get("ram_cleanup_interval_min", 15),
+    }
+    try:
+        return RAM_CLEANUP.snapshot(cfg)
+    except Exception as exc:
+        return {"ok": False, "msg": str(exc), **cfg}
+
+
+def _virtual_memory_status(ctx: ApiContext) -> Dict[str, Any]:
+    try:
+        from services import virtual_memory as _vm
+    except Exception as exc:
+        return {"ok": False, "msg": f"virtual memory unavailable: {exc}"}
+    try:
+        payload = _vm.status()
+    except Exception as exc:
+        return {"ok": False, "msg": str(exc)}
+    payload["configured_mode"] = str(ctx.cfg_mgr.get("virtual_memory_mode", "system_managed") or "system_managed")
+    try:
+        payload["configured_size_gb"] = int(ctx.cfg_mgr.get("virtual_memory_size_gb", 16) or 16)
+    except Exception:
+        payload["configured_size_gb"] = 16
+    return payload
+
+
 def _migrate_account_games(ctx: ApiContext, accounts_to_update: List[Account]) -> int:
     """One-time linking of existing accounts to games. Returns linked count.
 

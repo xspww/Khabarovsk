@@ -7,6 +7,15 @@ from core import Account, flog_kv
 from services.process_service import ProcessService
 
 
+def _num_cfg(value, default: float) -> float:
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return default
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
 def _window_size_target_from_config(cfg: dict) -> Tuple[int, int]:
     try:
         width = int(float(cfg.get("roblox_window_width", 200) or 200))
@@ -199,6 +208,39 @@ class MaintenancePerformanceMixin:
             self._enforce_auto_minimize()
         except Exception:
             pass
+
+    def _apply_ram_cleanup(self):
+        """Auto RAM cleanup (MemReduct port): threshold + interval + 5min cooldown."""
+        if not bool(self._cfg.get("ram_cleanup_enabled", False)):
+            return
+        try:
+            now = time.time()
+            interval_min = max(5, min(120, int(_num_cfg(self._cfg.get("ram_cleanup_interval_min", 15), 15))))
+            last_check = float(getattr(self, "_last_ram_cleanup_check_at", 0.0) or 0.0)
+            if last_check and (now - last_check) < (interval_min * 60.0):
+                return
+            self._last_ram_cleanup_check_at = now
+            from services.ram_cleanup import RAM_CLEANUP
+
+            decision = RAM_CLEANUP.should_auto_clean(self._cfg, now)
+            if not decision.get("eligible"):
+                if str(decision.get("reason") or "") == "requires_admin":
+                    flog_kv("PERFORMANCE", "ram_cleanup_skipped_no_admin", "warning",
+                            percent=f"{float(decision.get('percent') or 0):.1f}", source="auto")
+                return
+            result = RAM_CLEANUP.clean(source="auto")
+            if result.get("ok"):
+                flog_kv("PERFORMANCE", "ram_cleanup_auto",
+                        freed_mb=result.get("freed_mb", 0.0),
+                        percent=f"{float(decision.get('percent') or 0):.1f}", source="auto")
+            else:
+                flog_kv("PERFORMANCE", "ram_cleanup_auto_failed", "warning",
+                        error=str(result.get("msg", ""))[:200], source="auto")
+        except Exception as exc:
+            try:
+                flog_kv("PERFORMANCE", "ram_cleanup_auto_failed", "warning", error=str(exc), source="auto")
+            except Exception:
+                pass
 
     def _enforce_auto_minimize(self):
         """Minimize each visible Roblox window after N seconds (configurable)."""

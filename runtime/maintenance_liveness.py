@@ -10,7 +10,7 @@ from runtime.maintenance_captcha import (
     detect_and_hold_captcha,
     handle_watchdog_captcha,
 )
-from runtime.maintenance_lua_timeout import handle_in_game_lua_wait_timeout
+from runtime.maintenance_lua_timeout import emit_lua_wait_timeout_recovery, handle_in_game_lua_wait_timeout
 from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
 from runtime.maintenance_watchdog_actions import (
     handle_disconnect_dialog_rejoin,
@@ -84,31 +84,19 @@ class MaintenanceLivenessMixin:
                     expected_browser_tracker_id=acc.browser_tracker_id,
                 ))
                 if pid_live and lua_wait_timed_out:
-                    if detect_and_hold_captcha(self, acc, pid, "lua_wait_timeout"):
-                        continue
-                    flog_kv(
-                        "MAINT",
-                        "lua_wait_timeout_recovery",
-                        "warning",
-                        account=acc.display_name,
-                        age=f"{age:.1f}",
-                        timeout=f"{lua_timeout:.1f}",
-                        pid=pid or "",
-                    )
-                    self._runtime_signal(
+                    emit_lua_wait_timeout_recovery(
+                        self,
                         acc,
-                        "loading_freeze",
-                        "lua_wait_timeout",
-                        payload={
-                            "trigger": "lua_wait_timeout",
-                            "detail": f"Lua did not confirm in-game state within {lua_timeout:.1f}s",
-                            "reason_msg": "Waiting For Lua timed out",
-                            "state": state.name,
-                        },
-                        expected_runtime_generation=runtime_generation,
-                        expected_session_id=session_id,
-                        expected_launch_nonce=launch_nonce,
-                        expected_transaction_id=transaction_id,
+                        age=age,
+                        timeout=lua_timeout,
+                        state_name=state.name,
+                        runtime_generation=runtime_generation,
+                        session_id=session_id,
+                        launch_nonce=launch_nonce,
+                        transaction_id=transaction_id,
+                        pid=pid,
+                        log_event="lua_wait_timeout_recovery",
+                        captcha_probe="lua_wait_timeout",
                     )
                     continue
                 if (

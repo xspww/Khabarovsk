@@ -160,25 +160,76 @@
     if (!cards || !toggle || toggle.dataset.resMonitorWired === "1") return;
     toggle.dataset.resMonitorWired = "1";
     var colors = { cpu: "#8b93f8", ram: "#22c55e", virt: "#60a5fa" };
+    var MAX_POINTS = 60;
+    // Static mode: no animation anywhere. New data redraws instantly.
     var history = { cpu: [], ram: [], virt: [] };
     var timer = 0;
     var inFlight = false;
     function byId(id) { return document.getElementById(id); }
+    function clampPct(v) {
+      v = Number(v);
+      if (!isFinite(v)) return 0;
+      return Math.max(0, Math.min(100, v));
+    }
     function shouldPoll() {
       return !cards.hidden && !document.hidden && !!document.querySelector("#view-accounts.active");
     }
     function setStale(value) { cards.classList.toggle("is-stale", !!value); }
     function push(key, value) {
       var values = history[key];
-      values.push(value);
-      while (values.length > 60) values.shift();
+      var v = clampPct(value);
+      if (!values.length) {
+        // Seed two identical points so a flat line shows on first sample.
+        values.push(v, v);
+        return;
+      }
+      values.push(v);
+      while (values.length > MAX_POINTS) values.shift();
+    }
+    function layoutPoints(values, width, height) {
+      var n = values.length;
+      var pts = new Array(n);
+      var span = height - 10;
+      for (var i = 0; i < n; i++) {
+        var x = n <= 1 ? width - 2 : (i / (n - 1)) * (width - 4) + 2;
+        var y = height - 4 - clampPct(values[i]) / 100 * span;
+        pts[i] = [x, y];
+      }
+      return pts;
+    }
+    function strokeSmooth(context, pts) {
+      var n = pts.length;
+      context.moveTo(pts[0][0], pts[0][1]);
+      if (n === 2) {
+        context.lineTo(pts[1][0], pts[1][1]);
+        return;
+      }
+      for (var i = 0; i < n - 1; i++) {
+        var p0 = pts[Math.max(0, i - 1)];
+        var p1 = pts[i];
+        var p2 = pts[i + 1];
+        var p3 = pts[Math.min(n - 1, i + 2)];
+        var c1x = p1[0] + (p2[0] - p0[0]) / 6;
+        var c1y = p1[1] + (p2[1] - p0[1]) / 6;
+        var c2x = p2[0] - (p3[0] - p1[0]) / 6;
+        var c2y = p2[1] - (p3[1] - p1[1]) / 6;
+        context.bezierCurveTo(c1x, c1y, c2x, c2y, p2[0], p2[1]);
+      }
+    }
+    function hexToRgba(hex, alpha) {
+      try {
+        var r = parseInt(hex.slice(1, 3), 16);
+        var g = parseInt(hex.slice(3, 5), 16);
+        var b = parseInt(hex.slice(5, 7), 16);
+        return "rgba(" + r + "," + g + "," + b + "," + alpha + ")";
+      } catch (e) { return hex; }
     }
     function drawSpark(id, key) {
       var canvas = byId(id);
       if (!canvas) return;
       var values = history[key];
       var dpr = Math.max(1, Math.min(2, window.devicePixelRatio || 1));
-      var width = canvas.clientWidth || canvas.parentElement && canvas.parentElement.clientWidth || 200;
+      var width = canvas.clientWidth || (canvas.parentElement && canvas.parentElement.clientWidth) || 200;
       var height = 36;
       var pixelWidth = Math.round(width * dpr);
       var pixelHeight = Math.round(height * dpr);
@@ -187,50 +238,69 @@
         canvas.height = pixelHeight;
       }
       var context = canvas.getContext("2d");
-      context.clearRect(0, 0, canvas.width, canvas.height);
-      context.scale(dpr, dpr);
+      context.setTransform(dpr, 0, 0, dpr, 0, 0);
+      context.clearRect(0, 0, width, height);
       if (values.length < 2) return;
-      var step = width / 59;
-      var offset = (60 - values.length) * step;
+      var pts = layoutPoints(values, width, height);
+      var color = colors[key];
+      // Soft area fill under the line (product look, no blink).
+      try {
+        context.beginPath();
+        strokeSmooth(context, pts);
+        context.lineTo(pts[pts.length - 1][0], height + 2);
+        context.lineTo(pts[0][0], height + 2);
+        context.closePath();
+        var grad = context.createLinearGradient(0, 0, 0, height);
+        grad.addColorStop(0, hexToRgba(color, 0.22));
+        grad.addColorStop(1, hexToRgba(color, 0));
+        context.fillStyle = grad;
+        context.fill();
+      } catch (e) {}
+      // Main line — redrawn instantly on each update.
       context.beginPath();
-      values.forEach(function (value, index) {
-        var x = offset + index * step;
-        var y = height - 3 - Math.max(0, Math.min(100, value)) / 100 * (height - 8);
-        if (index === 0) context.moveTo(x, y);
-        else context.lineTo(x, y);
-      });
-      context.strokeStyle = colors[key];
-      context.lineWidth = 1.6;
+      strokeSmooth(context, pts);
+      context.strokeStyle = color;
+      context.lineWidth = 1.8;
       context.lineJoin = "round";
       context.lineCap = "round";
       context.stroke();
-      var lastX = offset + (values.length - 1) * step;
-      var lastY = height - 3 - Math.max(0, Math.min(100, values[values.length - 1])) / 100 * (height - 8);
-      context.beginPath();
-      context.arc(lastX - 1, lastY, 2.4, 0, Math.PI * 2);
-      context.fillStyle = colors[key];
-      context.fill();
     }
-    function render(data) {
-      var cpu = Number(data.cpu_percent);
-      var ram = Number(data.ram_percent);
-      var virtual = Number(data.virt_percent);
-      push("cpu", cpu);
-      push("ram", ram);
-      push("virt", virtual);
-      byId("res-cpu-pct").textContent = Math.round(cpu) + "%";
-      byId("res-ram-pct").textContent = Math.round(ram) + "%";
-      byId("res-virt-pct").textContent = Math.round(virtual) + "%";
-      byId("res-cpu-bar").style.transform = "scaleX(" + Math.max(0, Math.min(100, cpu)) / 100 + ")";
-      byId("res-ram-bar").style.transform = "scaleX(" + Math.max(0, Math.min(100, ram)) / 100 + ")";
-      byId("res-virt-bar").style.transform = "scaleX(" + Math.max(0, Math.min(100, virtual)) / 100 + ")";
-      byId("res-cpu-sub").textContent = data.cpu_threads + " threads";
-      byId("res-ram-sub").textContent = data.ram_used_gb + " / " + data.ram_total_gb + " GB";
-      byId("res-virt-sub").textContent = data.virt_used_gb + " / " + data.virt_total_gb + " GB";
+    function drawAll() {
       drawSpark("res-cpu-spark", "cpu");
       drawSpark("res-ram-spark", "ram");
       drawSpark("res-virt-spark", "virt");
+    }
+    // No animation loop — static redraw on data only.
+    function setBar(barId, pct) {
+      var bar = byId(barId);
+      if (!isFinite(pct)) pct = 0;
+      var clamped = Math.max(0, Math.min(100, pct));
+      if (bar) bar.style.width = clamped + "%";
+    }
+    function render(data) {
+      var cpu = clampPct(data.cpu_percent);
+      var ram = clampPct(data.ram_percent);
+      var virtual = clampPct(data.virt_percent);
+      push("cpu", cpu);
+      push("ram", ram);
+      push("virt", virtual);
+      var cpuPct = byId("res-cpu-pct");
+      var ramPct = byId("res-ram-pct");
+      var virtPct = byId("res-virt-pct");
+      if (cpuPct) cpuPct.textContent = Math.round(cpu) + "%";
+      if (ramPct) ramPct.textContent = Math.round(ram) + "%";
+      if (virtPct) virtPct.textContent = Math.round(virtual) + "%";
+      setBar("res-cpu-bar", cpu);
+      setBar("res-ram-bar", ram);
+      setBar("res-virt-bar", virtual);
+      var cpuSub = byId("res-cpu-sub");
+      var ramSub = byId("res-ram-sub");
+      var virtSub = byId("res-virt-sub");
+      if (cpuSub) cpuSub.textContent = data.cpu_threads + " threads";
+      if (ramSub) ramSub.textContent = data.ram_used_gb + " / " + data.ram_total_gb + " GB";
+      if (virtSub) virtSub.textContent = data.virt_used_gb + " / " + data.virt_total_gb + " GB";
       setStale(false);
+      drawAll();
     }
     function poll() {
       if (inFlight || !shouldPoll()) return;
@@ -257,11 +327,9 @@
     apply(localStorage.getItem("rg_res_cards") !== "0");
     toggle.addEventListener("click", function () { apply(cards.hidden); });
     timer = setInterval(function () { if (shouldPoll()) poll(); }, 2000);
-    window.addEventListener("resize", function () {
-      drawSpark("res-cpu-spark", "cpu");
-      drawSpark("res-ram-spark", "ram");
-      drawSpark("res-virt-spark", "virt");
-    });
+    window.addEventListener("resize", drawAll);
+    // First paint so cards never look dead.
+    drawAll();
   }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", initResourceMonitor);
   else initResourceMonitor();

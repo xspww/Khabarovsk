@@ -175,6 +175,8 @@ class FarmController:
             return self._status_stream_clients
 
     def _status_perf_snapshot(self, cache_hit: bool, cache_age: float = 0.0) -> Dict[str, Any]:
+        # Shape is public API (dashboard/diagnostics may read it) — keep keys.
+        # Single owner for hit/miss accounting; called under _status_cache_lock.
         return {
             "cache_hit": bool(cache_hit),
             "cache_age_seconds": round(max(0.0, cache_age), 3),
@@ -183,6 +185,31 @@ class FarmController:
             "last_build_ms": round(float(self._status_cache_last_build_ms or 0.0), 2),
             "active_stream_clients": int(self._status_stream_clients),
         }
+
+    def _get_cached_status(self, revision: int, now: float) -> Optional[dict]:
+        cached = self._status_cache_snapshot
+        if cached is None:
+            return None
+        if self._status_cache_revision != revision:
+            return None
+        if now >= self._status_cache_expires_at:
+            return None
+        self._status_cache_hits += 1
+        cached_view = dict(cached)
+        cached_view["status_perf"] = self._status_perf_snapshot(
+            True, now - float(cached.get("status_updated_at") or now)
+        )
+        return cached_view
+
+    def _store_status_snapshot(self, snapshot: dict, revision: int, build_ms: float, ttl: float) -> dict:
+        self._status_cache_misses += 1
+        self._status_cache_last_build_ms = build_ms
+        snapshot["status_perf"] = self._status_perf_snapshot(False)
+        if ttl > 0:
+            self._status_cache_snapshot = snapshot
+            self._status_cache_revision = int(snapshot.get("status_revision", revision) or 0)
+            self._status_cache_expires_at = time.time() + ttl
+        return snapshot
 
     def _record_timeline(
         self,
@@ -726,25 +753,15 @@ class FarmController:
         now = time.time()
         if ttl > 0:
             with self._status_cache_lock:
-                cached = self._status_cache_snapshot
-                if cached is not None and self._status_cache_revision == revision and now < self._status_cache_expires_at:
-                    self._status_cache_hits += 1
-                    cached_view = dict(cached)
-                    cached_view["status_perf"] = self._status_perf_snapshot(True, now - float(cached.get("status_updated_at") or now))
+                cached_view = self._get_cached_status(revision, now)
+                if cached_view is not None:
                     return cached_view
 
         started = time.perf_counter()
         snapshot = build_farm_status(self)
         build_ms = (time.perf_counter() - started) * 1000.0
         with self._status_cache_lock:
-            self._status_cache_misses += 1
-            self._status_cache_last_build_ms = build_ms
-            snapshot["status_perf"] = self._status_perf_snapshot(False)
-            if ttl > 0:
-                self._status_cache_snapshot = snapshot
-                self._status_cache_revision = int(snapshot.get("status_revision", revision) or 0)
-                self._status_cache_expires_at = time.time() + ttl
-        return snapshot
+            return self._store_status_snapshot(snapshot, revision, build_ms, ttl)
 
     def get_public_farm_health(self) -> dict:
         return get_public_farm_health_payload(self)

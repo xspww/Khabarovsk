@@ -18,6 +18,20 @@ function optionLabel(option) {
 function closeSelect(state) {
   state.root.classList.remove("is-open");
   state.button.setAttribute("aria-expanded", "false");
+  syncCardMenuClass();
+}
+
+// Keeps an open menu visible: .queue-card clips with overflow:hidden and a
+// following card would otherwise paint over the absolute-positioned menu.
+function syncCardMenuClass() {
+  document.querySelectorAll(".queue-card.card-menu-open").forEach((card) => {
+    if (!card.querySelector(".custom-select.is-open")) {
+      card.classList.remove("card-menu-open");
+    }
+  });
+  const openRoot = document.querySelector(".custom-select.is-open");
+  const openCard = openRoot ? openRoot.closest(".queue-card") : null;
+  if (openCard) openCard.classList.add("card-menu-open");
 }
 
 function closeOthers(current) {
@@ -27,6 +41,7 @@ function closeOthers(current) {
       root.querySelector(".custom-select-button")?.setAttribute("aria-expanded", "false");
     }
   });
+  syncCardMenuClass();
 }
 
 function syncSelect(select) {
@@ -124,6 +139,7 @@ function enhanceSelect(select) {
     root.classList.toggle("is-open", !open);
     button.setAttribute("aria-expanded", String(!open));
     syncSelect(select);
+    syncCardMenuClass();
   });
 
   button.addEventListener("keydown", (event) => {
@@ -136,6 +152,7 @@ function enhanceSelect(select) {
       moveSelection(select, state, event.key === "ArrowDown" ? 1 : -1);
       root.classList.add("is-open");
       button.setAttribute("aria-expanded", "true");
+      syncCardMenuClass();
     }
     if (event.key === "Enter" || event.key === " ") {
       event.preventDefault();
@@ -161,6 +178,7 @@ document.addEventListener("click", () => {
     root.classList.remove("is-open");
     root.querySelector(".custom-select-button")?.setAttribute("aria-expanded", "false");
   });
+  syncCardMenuClass();
 });
 
 window.CronusCustomSelectSync = (id) => {

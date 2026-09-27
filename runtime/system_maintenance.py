@@ -88,18 +88,21 @@ class SystemMaintenance(
             self._scheduler.stop()
         flog("[MAINT] stopped")
 
-    def _base_interval(self) -> float:
-        try:
-            return max(1.0, min(5.0, float(self._cfg.get("periodic_reconcile_interval", 15) or 15)))
-        except Exception:
-            return 5.0
-
-    def _maintenance_interval(self, key: str, default: float, minimum: float, maximum: float) -> float:
+    # Single owner for maintenance timing. Config keys below are preserved
+    # for dashboard/compat — only the clamp logic is consolidated here.
+    # No interval values change vs. before.
+    def _clamped_interval(self, key: str, default: float, minimum: float, maximum: float) -> float:
         try:
             value = float(self._cfg.get(key, default) or default)
         except Exception:
             value = default
         return max(minimum, min(maximum, value))
+
+    def _base_interval(self) -> float:
+        return self._clamped_interval("periodic_reconcile_interval", 15.0, 1.0, 5.0)
+
+    def _maintenance_interval(self, key: str, default: float, minimum: float, maximum: float) -> float:
+        return self._clamped_interval(key, default, minimum, maximum)
 
     def _reconcile_interval(self) -> float:
         try:
@@ -164,6 +167,7 @@ class SystemMaintenance(
     def _run_performance(self, job: RuntimeScheduledJob) -> None:
         self._apply_auto_process_priority()
         self._apply_cpu_limiter()
+        self._apply_ram_cleanup()
         self._enforce_window_resize()
 
     def _run_auto_minimize(self, job: RuntimeScheduledJob) -> None:

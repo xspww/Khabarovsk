@@ -17,7 +17,9 @@ from .settings_state import (
     _fps_limiter_status,
     _graphics_status,
     _normalize_window_size_settings,
+    _ram_cleanup_status,
     _roblox_runtime_restart_required,
+    _virtual_memory_status,
     _window_size_status,
 )
 from .context import ApiContext
@@ -321,4 +323,128 @@ def register(app, ctx: ApiContext) -> None:
             resized=resize_result.get("resized", 0),
             count=resize_result.get("count", 0),
         )
+        return payload
+
+    @app.get("/api/performance/ram-cleanup")
+    def api_get_ram_cleanup():
+        return _ram_cleanup_status(ctx)
+
+    @app.post("/api/performance/ram-cleanup")
+    async def api_set_ram_cleanup(request: Request):
+        from services.ram_cleanup import normalize_ram_cleanup_settings
+
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Expected object")
+        settings = normalize_ram_cleanup_settings({
+            "ram_cleanup_enabled": body.get("enabled", body.get("ram_cleanup_enabled", cfg_mgr.get("ram_cleanup_enabled", False))),
+            "ram_cleanup_threshold_pct": body.get("threshold_pct", body.get("ram_cleanup_threshold_pct", cfg_mgr.get("ram_cleanup_threshold_pct", 85.0))),
+            "ram_cleanup_interval_min": body.get("interval_min", body.get("ram_cleanup_interval_min", cfg_mgr.get("ram_cleanup_interval_min", 15))),
+        })
+        cfg_mgr.update({
+            "ram_cleanup_enabled": settings["enabled"],
+            "ram_cleanup_threshold_pct": settings["threshold_pct"],
+            "ram_cleanup_interval_min": settings["interval_min"],
+        })
+        cfg_mgr.save()
+        if hasattr(farm, "apply_config_snapshot"):
+            try:
+                farm.apply_config_snapshot()
+            except Exception:
+                pass
+        payload = _ram_cleanup_status(ctx)
+        audit_event("ram_cleanup_apply", enabled=settings["enabled"],
+                    threshold_pct=settings["threshold_pct"], interval_min=settings["interval_min"])
+        return payload
+
+    @app.post("/api/performance/ram-cleanup/clean-now")
+    async def api_ram_cleanup_now(request: Request):
+        from services.ram_cleanup import RAM_CLEANUP
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        raw_source = str((body or {}).get("source") or "manual").strip().lower()
+        source = "auto" if raw_source == "auto" else "manual"
+        try:
+            result = RAM_CLEANUP.clean(source=source)
+        except Exception as exc:
+            flog_kv("PERFORMANCE", "ram_cleanup_failed", "error", error=str(exc), source=source)
+            raise HTTPException(500, str(exc))
+        if not result.get("ok"):
+            flog_kv("PERFORMANCE", "ram_cleanup_manual_failed", "warning",
+                    error=str(result.get("msg", ""))[:200], source=source)
+            audit_event("ram_cleanup_manual", ok=False, msg=result.get("msg", ""))
+            return result
+        _before = result.get("before")
+        if not isinstance(_before, dict):
+            _before = {}
+        _pct_raw = _before.get("percent")
+        _pct_text = ""
+        try:
+            if _pct_raw is not None and str(_pct_raw).strip() != "":
+                _pct_text = f"{float(_pct_raw):.1f}"
+        except Exception:
+            _pct_text = ""
+        flog_kv("PERFORMANCE", "ram_cleanup_manual",
+                freed_mb=result.get("freed_mb", 0.0), source=source, percent=_pct_text)
+        audit_event("ram_cleanup_manual", ok=True, freed_mb=result.get("freed_mb", 0.0), source=source)
+        payload = _ram_cleanup_status(ctx)
+        payload.update(result)  # live result wins over cached status
+        return payload
+
+    @app.get("/api/performance/virtual-memory")
+    def api_get_virtual_memory():
+        return _virtual_memory_status(ctx)
+
+    @app.post("/api/performance/virtual-memory")
+    async def api_set_virtual_memory(request: Request):
+        from services import virtual_memory as _vm
+
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Expected object")
+        try:
+            settings = _vm.normalize_virtual_memory_settings({
+                "virtual_memory_mode": body.get("mode", body.get("virtual_memory_mode", cfg_mgr.get("virtual_memory_mode", "system_managed"))),
+                "virtual_memory_size_gb": body.get("size_gb", body.get("virtual_memory_size_gb", cfg_mgr.get("virtual_memory_size_gb", 16))),
+            })
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        cfg_mgr.update({
+            "virtual_memory_mode": settings["mode"],
+            "virtual_memory_size_gb": settings["size_gb"],
+        })
+        cfg_mgr.save()
+        payload = _virtual_memory_status(ctx)
+        payload["staged"] = settings
+        payload["msg"] = "Saved — press Apply Virtual Memory to change Windows (requires reboot)"
+        audit_event("virtual_memory_stage", mode=settings["mode"], size_gb=settings["size_gb"])
+        return payload
+
+    @app.post("/api/performance/virtual-memory/apply")
+    async def api_apply_virtual_memory(request: Request):
+        from services import virtual_memory as _vm
+
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Expected object")
+        mode = str(body.get("mode", body.get("virtual_memory_mode", cfg_mgr.get("virtual_memory_mode", "system_managed"))) or "system_managed")
+        try:
+            size_gb = int(float(body.get("size_gb", body.get("virtual_memory_size_gb", cfg_mgr.get("virtual_memory_size_gb", 16))) or 16))
+        except Exception:
+            size_gb = 16
+        try:
+            result = _vm.apply(mode, size_gb)
+        except Exception as exc:
+            flog_kv("PERFORMANCE", "virtual_memory_apply_failed", "error", error=str(exc))
+            raise HTTPException(500, str(exc))
+        if result.get("ok"):
+            cfg_mgr.update({"virtual_memory_mode": result.get("mode", "system_managed"),
+                            "virtual_memory_size_gb": result.get("size_gb") or max(1, min(64, size_gb))})
+            cfg_mgr.save()
+            audit_event("virtual_memory_apply", mode=result.get("mode"), size_gb=result.get("size_gb"))
+        payload = _virtual_memory_status(ctx)
+        payload.update(result)
         return payload

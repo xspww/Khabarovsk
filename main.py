@@ -315,4 +315,33 @@ if __name__ == "__main__":
         sys.argv = [sys.argv[0], *sys.argv[idx + 1:]]
         raise SystemExit(multi_roblox_guard.main())
     EXECUTOR_TRACKER.start()
-    run_desktop(app, farm)
+    try:
+        run_desktop(app, farm)
+    except Exception as exc:
+        # A fatal boot error used to kill the new version silently during
+        # self-update: its window closed, the updater saw "API never answered"
+        # and rolled back with no evidence. Persist the traceback and use a
+        # distinctive exit code (11) so the updater log can point at it.
+        try:
+            flog_kv("MAIN", "fatal_boot_error", "error", error=str(exc))
+        except Exception:
+            pass
+        try:
+            import traceback as _traceback
+
+            with open(LOG_FILE, "a", encoding="utf-8", errors="replace") as _handle:
+                _handle.write(f"[FATAL] boot failed: {exc}\n{_traceback.format_exc()}\n")
+        except Exception:
+            pass
+        try:
+            import ctypes as _ctypes
+
+            _ctypes.windll.user32.MessageBoxW(
+                None,
+                f"Cronus Launcher failed to start:\n{exc}\n\nLog: {LOG_FILE}",
+                "Cronus Launcher",
+                0x00000000 | 0x00000010,  # MB_OK | MB_ICONERROR
+            )
+        except Exception:
+            pass
+        raise SystemExit(11)

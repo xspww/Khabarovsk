@@ -36,7 +36,7 @@
 /* Lua Manager code box (Luau syntax highlighting) */
 #view-developer .lua-code-shell{border:1px solid #1f2128;border-radius:8px;overflow:hidden;background:#0d0e12}
 #view-developer .lua-code-head{display:flex;align-items:center;height:34px;padding:0 14px;border-bottom:1px solid #1f2128;background:#101116;color:#53565e;font:800 10px var(--mono);text-transform:uppercase;letter-spacing:.1em}
-#view-developer .lua-code-box{margin:0;padding:14px 16px;min-height:160px;height:260px;max-height:340px;overflow:auto;background:#0d0e12;border:0;border-radius:0;color:#d7dae0;font:500 12px/1.65 "Cascadia Mono",Consolas,"Courier New",monospace;white-space:pre;tab-size:4}
+#view-developer .lua-code-box{margin:0;padding:14px 16px;min-height:0;height:auto;max-height:340px;overflow:auto;background:#0d0e12;border:0;border-radius:0;color:#d7dae0;font:500 12px/1.65 "Cascadia Mono",Consolas,"Courier New",monospace;white-space:pre;tab-size:4}
 #view-developer .lua-code-box code{font:inherit;background:0 0}
 #view-developer .lua-code-box::-webkit-scrollbar{width:10px;height:10px}
 #view-developer .lua-code-box::-webkit-scrollbar-track{background:#0d0e12}

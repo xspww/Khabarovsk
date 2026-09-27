@@ -55,7 +55,7 @@ No Python is needed for this option.
 
 1. Open `https://github.com/xspww/Khabarovsk/releases`.
 2. Download `CronusLauncher-<version>.exe` and run it.
-3. The portable build `CronusLauncher-<version>-portable.zip` holds the same exe plus the Lua loader.
+3. The portable build `CronusLauncher-<version>-portable.zip` unpacks to two files: `CronusLauncher.exe` and `Api.lua`. The exe keeps that stable name so updates replace it in place; `Api.lua` is the Lua loader to paste into your executor.
 
 The in-app updater supports compiled release builds on Windows and needs an internet connection. If the exe is in a protected folder such as `Program Files`, the updater requests administrator approval before writing. If the account has no administrator access, move the exe to a user-writable folder. Source runs do not self-update.
 
@@ -117,6 +117,8 @@ To send telemetry data and rejoin faster, run the file below in the Roblox execu
 ```text
 lua/run_in_executor.lua
 ```
+
+The portable zip ships this same file as `Api.lua` next to the exe.
 
 ## Data and Privacy
 

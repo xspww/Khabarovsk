@@ -91,13 +91,22 @@ jobs:
           CRONUS_RELEASE_SIGNING_PRIVATE_KEY_B64: ${{ secrets.CRONUS_RELEASE_SIGNING_PRIVATE_KEY_B64 }}
         run: |
           $ver = "${{ env.APP_VERSION }}"
+          # The updater downloads the versioned asset below, so the signed
+          # release artifact must keep the version in its name.
           $exeName = "CronusLauncher-$ver.exe"
           $zipName = "CronusLauncher-$ver-portable.zip"
           Copy-Item "dist/CronusLauncher.exe" $exeName
+          # The portable bundle is extracted and run by hand, so it ships the
+          # STABLE exe name. A versioned filename goes stale the moment the
+          # next update lands: the updater replaces the file in place, leaving
+          # e.g. "CronusLauncher-2.6.4.exe" holding the 2.6.5 build, which
+          # breaks shortcuts and misreports the installed version.
           $portableDir = Join-Path $pwd "portable-package"
-          New-Item -ItemType Directory -Force -Path (Join-Path $portableDir "lua") | Out-Null
-          Copy-Item $exeName $portableDir
-          Copy-Item "lua/run_in_executor.lua" (Join-Path $portableDir "lua/run_in_executor.lua")
+          if (Test-Path $portableDir) { Remove-Item $portableDir -Recurse -Force }
+          New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+          Copy-Item "dist/CronusLauncher.exe" (Join-Path $portableDir "CronusLauncher.exe")
+          # Flat, next to the exe: no lua/ subfolder to unpack first.
+          Copy-Item "lua/run_in_executor.lua" (Join-Path $portableDir "Api.lua")
           Compress-Archive -Path (Join-Path $portableDir "*") -DestinationPath $zipName -CompressionLevel Optimal -Force
           if (-not $env:CRONUS_RELEASE_SIGNING_PRIVATE_KEY_B64) {
             Write-Error "The project release-signing key is not configured in GitHub Actions secrets."

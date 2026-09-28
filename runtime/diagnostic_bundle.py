@@ -20,7 +20,6 @@ SAFE_CONFIG_KEYS = (
     "heartbeat_timeout",
     "launch_verify_window",
     "queue_delay_seconds",
-    "queue_duration_seconds",
     "queue_timeout",
     "max_concurrent_accounts",
     "machine_supervisor_enabled",

@@ -459,7 +459,6 @@ class RuntimeViewModelBuilder:
             "total_crash": total_crash,
             "network_state": farm._net_mon.get_state() if farm._net_mon else NET_ONLINE,
             "runtime_state": "RUNNING" if farm.running else "STOPPED",
-            "queue_duration_effective_seconds": farm._maintenance._queue_duration_seconds() if farm._maintenance else 0,
             "command_generation": farm._command_tracker.generation,
             "command_inflight": global_command,
             "multi_roblox_guard_state": multi_guard.get("state", "unknown"),

@@ -171,6 +171,12 @@ def handle_lua_rejoin_event(
             acc.lua_last_event_at = now
             acc.lua_session_id = acc.session_id
             acc.lua_launch_nonce = acc.launch_nonce
+            if event_name == "teleport_state":
+                # Teleport handoff starting: old client will exit, queued new
+                # client takes seconds to bind. Until arrival, the missing pid
+                # is expected — not a crash (no fault rejoin) and not a
+                # rotation target (no cycle kill mid-teleport).
+                acc.teleport_suppress_until = now + 180.0
             acc.sync_runtime(f"lua:{event_name}")
     if event_name in {"description", "set_description", "status_note"}:
         persisted, description = farm._set_lua_account_description(
@@ -248,6 +254,9 @@ def handle_lua_rejoin_event(
                 acc.last_activity_reason = "lua:in_game_missing_server_evidence"
                 acc.sync_runtime("lua_in_game_missing_server_evidence")
         else:
+            # Arrived with server evidence — any teleport handoff is done.
+            with acc._lock:
+                acc.teleport_suppress_until = 0.0
             if identity.pid and resolution.pid_match and resolution.bound_pid:
                 process_service.mark_account_process_proof(
                     acc,
@@ -291,6 +300,9 @@ def handle_lua_rejoin_event(
         if worker:
             worker.wake()
     elif event_name == "teleport_error":
+        # Teleport failed — handoff is over, normal fault recovery may proceed.
+        with acc._lock:
+            acc.teleport_suppress_until = 0.0
         signal = RuntimeSignal.FAULT.value
         severity = "warning"
         try:

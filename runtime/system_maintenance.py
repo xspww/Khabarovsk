@@ -161,7 +161,6 @@ class SystemMaintenance(
         self._scan_liveness_watchdog()
 
     def _run_queue(self, job: RuntimeScheduledJob) -> None:
-        self._enforce_queue_duration()
         self._enforce_auto_close()
 
     def _run_performance(self, job: RuntimeScheduledJob) -> None:

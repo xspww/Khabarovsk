@@ -15,11 +15,11 @@ const NOTICE_SVG = {
   ok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.1V12a10 10 0 1 1-5.9-9.1"/><path d="M22 4 12 14l-3-3"/></svg>',
   info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4"/><path d="M12 8h.01"/></svg>',
 };
-const NOTICE_TONE_CLASS = { error: "notice-error", ok: "notice-success", info: "notice-info", warn: "" };
+const NOTICE_TONE_CLASS = { error: "notice-error", ok: "notice-success", info: "notice-info", warn: "notice-warning" };
 
 function paintNotice(el, tone) {
   const cls = NOTICE_TONE_CLASS[tone] || "";
-  el.classList.remove("notice-error", "notice-success", "notice-info");
+  el.classList.remove("notice-error", "notice-success", "notice-info", "notice-warning");
   if (cls) el.classList.add(cls);
   let icon = el.querySelector(":scope > .notice-icon");
   if (!icon) {
@@ -45,7 +45,7 @@ export function setNotice(el, msg, tone, title) {
   if (!el) return;
   if (!msg) {
     el.textContent = "";
-    el.classList.remove("show", "notice-error", "notice-success", "notice-info");
+    el.classList.remove("show", "notice-error", "notice-success", "notice-info", "notice-warning");
     return;
   }
   const copy = paintNotice(el, tone || "warn");
@@ -99,21 +99,29 @@ export function renderRamCleanupPanel(e) {
   }
   const pct = src && src.current ? num(src.current.percent, NaN) : NaN;
   const freed = src ? num(src.last_freed_mb, 0) : 0;
+  let countdown = "";
+  if (enabled && src && num(src.next_check_in_seconds, 0) > 0) {
+    const s = Math.ceil(num(src.next_check_in_seconds, 0));
+    countdown = s >= 60 ? ` · Next check in ${Math.ceil(s / 60)} min` : ` · Next check in ${s}s`;
+  } else if (enabled) {
+    countdown = ` · Checks every ${interval} min`;
+  }
   const status = $("ram-cleanup-status");
   if (status) {
     if (src && src.last_run_at) {
       const when = new Date(src.last_run_at * 1000).toLocaleTimeString();
       status.textContent = `Last cleaned ${when} · Freed ${freed} MB` +
-        (Number.isFinite(pct) ? ` · Now ${pct.toFixed(1)}%` : "");
+        (Number.isFinite(pct) ? ` · Now ${pct.toFixed(1)}%` : "") + countdown;
     } else if (Number.isFinite(pct)) {
-      status.textContent = `Current ${pct.toFixed(1)}% — not cleaned yet`;
+      status.textContent = `Current ${pct.toFixed(1)}% — not cleaned yet` + countdown;
     } else {
-      status.textContent = "Not cleaned yet";
+      status.textContent = "Not cleaned yet" + countdown;
     }
   }
   const notice = $("ram-cleanup-notice");
   if (notice) {
     if (src && !src.ok && src.msg) setNotice(notice, src.msg, "error", "RAM Cleanup unavailable");
+    else if (src && src.is_admin === false && enabled) setNotice(notice, "Requires admin — relaunch as administrator, otherwise auto-clean stays skipped.", "warn", "Admin required");
     else setNotice(notice, "", "warn");
   }
   updateSaveState("ram-cleanup");

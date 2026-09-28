@@ -180,24 +180,33 @@ class RamCleanupService:
     def __init__(self) -> None:
         self._lock = threading.RLock()
         self._last_run_at = 0.0
+        self._last_check_at = 0.0
         self._last_freed_mb = 0.0
         self._last_status: Dict[str, Any] = {}
 
     # -- stats --
     def snapshot(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
         snap = _ram_snapshot_mb()
+        enabled = bool(cfg.get("ram_cleanup_enabled", False))
+        interval_min = max(5, min(120, int(_num(cfg.get("ram_cleanup_interval_min", 15), 15))))
         with self._lock:
             last_at = self._last_run_at
+            last_check = self._last_check_at
             freed = self._last_freed_mb
+        next_check_at = (last_check + interval_min * 60.0) if (enabled and last_check) else 0.0
+        next_in = max(0, int(next_check_at - time.time())) if next_check_at else 0
         return {
             "ok": True,
-            "enabled": bool(cfg.get("ram_cleanup_enabled", False)),
+            "enabled": enabled,
             "threshold_pct": max(50.0, min(95.0, _num(cfg.get("ram_cleanup_threshold_pct", 85.0), 85.0))),
-            "interval_min": max(5, min(120, int(_num(cfg.get("ram_cleanup_interval_min", 15), 15)))),
+            "interval_min": interval_min,
             "cooldown_seconds": int(_CLEANUP_COOLDOWN_SECONDS),
             "is_admin": is_admin(),
             "current": snap,
             "last_run_at": last_at,
+            "last_check_at": last_check,
+            "next_check_at": next_check_at,
+            "next_check_in_seconds": next_in,
             "last_freed_mb": round(float(freed), 1),
             "last": dict(self._last_status),
         }
@@ -211,6 +220,8 @@ class RamCleanupService:
         now = now if now is not None else time.time()
         if not bool(cfg.get("ram_cleanup_enabled", False)):
             return {"eligible": False, "reason": "disabled"}
+        with self._lock:
+            self._last_check_at = now
         threshold = max(50.0, min(95.0, _num(cfg.get("ram_cleanup_threshold_pct", 85.0), 85.0)))
         snap = _ram_snapshot_mb()
         if snap["percent"] < threshold:

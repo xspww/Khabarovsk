@@ -55,6 +55,28 @@ MAX_CHECKSUMS_SIZE_BYTES = 1024 * 1024
 MAX_SIGNATURE_SIZE_BYTES = 16 * 1024
 _GITHUB_RELEASE_HOST = "github.com"
 
+_PYI_ENV_PREFIXES = ("_PYI_", "PYINSTALLER_", "_MEIPASS")
+
+
+def _clean_env_for_updater() -> Dict[str, str]:
+    """Environment for the updater child, minus PyInstaller runtime state.
+
+    This app is itself a PyInstaller onefile child, so os.environ carries
+    _PYI_APPLICATION_HOME_DIR / _PYI_ARCHIVE_FILE / _PYI_PARENT_PROCESS_LEVEL
+    pointing at THIS build's extraction dir. The updater launches a DIFFERENT
+    build; if those variables leak through, the new bootloader believes it is
+    already extracted and loads the DLL from the old (now deleted) _MEI dir
+    instead of extracting its own. Reproduced directly: with exactly those
+    three variables set, the child dies with "Failed to load Python DLL".
+    """
+    clean: Dict[str, str] = {}
+    for key, value in os.environ.items():
+        upper = key.upper()
+        if upper.startswith(_PYI_ENV_PREFIXES):
+            continue
+        clean[key] = value
+    return clean
+
 
 def _validate_release_asset_url(url: str) -> str:
     """Accept only HTTPS release assets owned by this project."""
@@ -242,6 +264,15 @@ _UPDATER_PS1 = r"""# Cronus one-click updater (generated, user-initiated only).
 # downloads nothing; its only network probe is the local readiness endpoint.
 param([int]$ParentPid, [string]$CurrentExe, [string]$StagedExe, [string]$LogFile, [string]$Version, [string]$AppArgs, [string]$ExpectedHash, [string]$BootLog)
 $ErrorActionPreference = "Stop"
+# The updater is spawned by the app, which is itself a PyInstaller onefile
+# child. Its _PYI_* environment points at the OLD build's extraction dir.
+# Start-Process inherits this process's environment, so without this cleanup
+# the NEW build's bootloader believes it is already extracted, skips its own
+# extraction, and dies with "Failed to load Python DLL ... _MEI...python311.dll"
+# from the old (now deleted) directory. Verified by direct reproduction.
+Get-ChildItem Env: | Where-Object { $_.Name -like "_PYI_*" -or $_.Name -like "PYINSTALLER_*" -or $_.Name -like "_MEIPASS*" } | ForEach-Object {
+  try { Remove-Item "Env:$($_.Name)" -ErrorAction SilentlyContinue } catch {}
+}
 function Log([string]$m) { Add-Content -LiteralPath $LogFile ("[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $m) }
 # The old app owns the console until it exits. After that, the updater owns
 # it only through installation and hands it to the new app at launch.
@@ -839,6 +870,7 @@ class AppUpdater:
                 proc = subprocess.Popen(
                     ["powershell.exe", *ps_args],
                     close_fds=True,
+                    env=_clean_env_for_updater(),
                 )
             # Verified handoff: a stillborn swap script (e.g. a syntax error)
             # exits instantly and writes nothing. Never suicide the app until

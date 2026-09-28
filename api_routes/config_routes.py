@@ -46,7 +46,7 @@ def register(app, ctx: ApiContext) -> None:
             "executor_path_volt", "executor_path_potassium", "executor_path_real", "executor_path_madium",
             "crash_timeout", "heartbeat_timeout", "launch_verify_window", "login_warmup_delay",
             "anti_spam_window", "launch_rate_interval", "account_switch_cooldown",
-            "queue_delay_seconds", "queue_duration_seconds", "max_concurrent_accounts",
+            "queue_delay_seconds", "max_concurrent_accounts",
             "lua_enabled", "lua_timeout_seconds",
             "game_private_server_url", "game_place_id",
             "game_mode",
@@ -132,8 +132,6 @@ def register(app, ctx: ApiContext) -> None:
             updates["queue_delay_seconds"] = delay
             updates["launch_rate_interval"] = delay
             updates["account_switch_cooldown"] = delay
-        if "queue_duration_seconds" in updates:
-            updates["queue_duration_seconds"] = _int_setting(updates["queue_duration_seconds"], 15, 0, 86400)
         if "max_concurrent_accounts" in updates:
             updates["max_concurrent_accounts"] = _int_setting(updates["max_concurrent_accounts"], 40, 1, 500)
         if "lua_enabled" in updates:

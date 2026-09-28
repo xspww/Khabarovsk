@@ -12,7 +12,6 @@ _INT_RANGES: Dict[str, Tuple[int, int]] = {
     "lua_timeout_seconds": (1, 300),
     "launch_verify_window": (1, 3600),
     "queue_delay_seconds": (0, 3600),
-    "queue_duration_seconds": (0, 86400),
     "max_concurrent_accounts": (1, 200),
     "executor_check_interval_seconds": (30, 3600),
     "machine_supervisor_max_launching_accounts": (1, 200),

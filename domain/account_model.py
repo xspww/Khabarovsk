@@ -73,6 +73,7 @@ class Account:
     session_wait_started_at: float  = 0.0
     pid_missing_since: float        = 0.0
     cooldown_until: float           = 0.0
+    teleport_suppress_until: float  = 0.0  # Lua-reported teleport handoff — don't fault until arrival
     rapid_relaunch_count: int       = 0
     last_network_lost_at: Optional[float] = None
     last_pid_change_at: float       = 0.0

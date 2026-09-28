@@ -224,9 +224,19 @@ class MaintenancePerformanceMixin:
 
             decision = RAM_CLEANUP.should_auto_clean(self._cfg, now)
             if not decision.get("eligible"):
-                if str(decision.get("reason") or "") == "requires_admin":
+                reason = str(decision.get("reason") or "")
+                pct_text = f"{float(decision.get('percent') or 0):.1f}"
+                if reason == "requires_admin":
                     flog_kv("PERFORMANCE", "ram_cleanup_skipped_no_admin", "warning",
-                            percent=f"{float(decision.get('percent') or 0):.1f}", source="auto")
+                            percent=pct_text, source="auto")
+                elif reason in ("below_threshold", "cooldown"):
+                    # Visible heartbeat: without this the scheduled check is
+                    # silent and looks like "not cleaning on time / no terminal".
+                    flog_kv("PERFORMANCE", "ram_cleanup_skipped",
+                            reason=reason, percent=pct_text,
+                            threshold=f"{float(decision.get('threshold') or 0):.1f}",
+                            cooldown_remaining=decision.get("cooldown_remaining", 0),
+                            source="auto")
                 return
             result = RAM_CLEANUP.clean(source="auto")
             if result.get("ok"):

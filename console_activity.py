@@ -444,6 +444,22 @@ def _ram_skipped_line(percent: Any = "", reason: Any = "") -> str:
     return _line(_ICON_RAM, f"{_paint('RAM cleanup skipped', _COLOR_WHITE)} {_paint(f'— {why}{suffix}', _COLOR_GRAY)}")
 
 
+def _ram_skip_reason(fields: Dict[str, Any], name: Any = "") -> str:
+    reason = _text(fields.get("reason") or "").lower()
+    if "admin" in reason or _text(name) == "ram_cleanup_skipped_no_admin":
+        return "requires admin — relaunch as administrator"
+    if reason == "below_threshold":
+        thr = _format_ram_percent(fields.get("threshold", ""))
+        return f"below threshold {thr}" if thr else "below threshold"
+    if reason == "cooldown":
+        try:
+            remaining = float(str(fields.get("cooldown_remaining") or 0))
+            return f"cooldown {remaining:.0f}s"
+        except Exception:
+            return "cooldown"
+    return _text(fields.get("reason")) or "requires admin — relaunch as administrator"
+
+
 def _teleport_line(account: str) -> Optional[str]:
     key = _account_key(account)
     now = time.monotonic()
@@ -795,7 +811,7 @@ def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]
             err = fields.get("msg", "")
         return _ram_failed_line(src, err)
     if scope == "PERFORMANCE" and name in {"ram_cleanup_skipped_no_admin", "ram_cleanup_skipped"}:
-        return _ram_skipped_line(fields.get("percent", ""), "requires admin — relaunch as administrator")
+        return _ram_skipped_line(fields.get("percent", ""), _ram_skip_reason(fields, name))
     if scope in {"CONFIG", "PERFORMANCE", "QUEUE", "GAME"} and "saved" in name.lower():
         return _config_line(name.replace("_", " "), fields)
     if scope == "RUNTIME" and name == "suspect_process_check":

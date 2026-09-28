@@ -344,6 +344,13 @@ class AccountWorker(threading.Thread):
             observed_session_id = acc.session_id
             observed_launch_nonce = acc.launch_nonce
             observed_transaction_id = acc.rejoin_transaction_id
+            teleport_until = float(getattr(acc, "teleport_suppress_until", 0.0) or 0.0)
+        now_ts = time.time()
+        if teleport_until and now_ts < teleport_until:
+            # Teleport handoff: old client exited, queued new client still
+            # starting. Not a crash — let it bind instead of racing a
+            # fresh recovery launch against it (that race rejoins twice).
+            return "teleporting"
         assessment = self._assess_missing_bound_process(source)
         status = str(assessment.get("status") or "")
         if status == "rebound":

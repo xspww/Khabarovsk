@@ -50,7 +50,6 @@ DEFAULTS: Dict[str, Any] = {
     "launch_rate_interval":     6,
     "account_switch_cooldown":  10,
     "queue_delay_seconds":      15,
-    "queue_duration_seconds":   15,
     "max_concurrent_accounts":  40,
     "lua_enabled":             True,
     "lua_timeout_seconds":      60,

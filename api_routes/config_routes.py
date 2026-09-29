@@ -249,9 +249,11 @@ def register(app, ctx: ApiContext) -> None:
                 updates["ram_cleanup_threshold_pct"], 85.0, 50.0, 95.0
             )
         if "ram_cleanup_interval_min" in updates:
-            updates["ram_cleanup_interval_min"] = _int_setting(
-                updates["ram_cleanup_interval_min"], 15, 5, 120
-            )
+            try:
+                _iv = int(float(updates["ram_cleanup_interval_min"]))
+            except Exception:
+                _iv = 15
+            updates["ram_cleanup_interval_min"] = max(5, _iv)
         if "virtual_memory_mode" in updates:
             mode = str(updates["virtual_memory_mode"] or "system_managed").strip().lower()
             updates["virtual_memory_mode"] = mode if mode in ("system_managed", "custom") else "system_managed"

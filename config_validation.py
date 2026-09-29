@@ -36,7 +36,8 @@ _INT_RANGES: Dict[str, Tuple[int, int]] = {
     "roblox_window_arrange_columns": (1, 32),
     "roblox_window_arrange_rows": (1, 32),
     "roblox_window_arrange_gap": (0, 80),
-    "ram_cleanup_interval_min": (5, 120),
+    # ram_cleanup_interval_min: intentionally unbounded above (min 5 enforced
+    # in services/ram_cleanup + API write paths) — user-adjustable freely.
     "virtual_memory_size_gb": (1, 64),
 }
 

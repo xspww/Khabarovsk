@@ -34,6 +34,7 @@ REASON_TO_CATEGORY = {
     "cookie_invalid": AUTH_FAILURE,
     "cookie_missing": AUTH_FAILURE,
     "cookie_mismatch": AUTH_FAILURE,
+    "banned": AUTH_FAILURE,
     "captcha_required": AUTH_FAILURE,
     "teleport_timeout": TELEPORT_FAILURE,
     "server_full": SERVER_FULL,

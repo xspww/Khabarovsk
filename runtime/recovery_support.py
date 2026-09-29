@@ -16,6 +16,7 @@ RECOVERY_REASON_MESSAGES = {
     "launch_fail": "Disconnected - launch failed",
     "cookie_invalid": "Stopped - cookie invalid or expired",
     "cookie_missing": "Stopped - missing Roblox cookie",
+    "banned": "Stopped - account banned (Roblox). Unmark to allow rejoin.",
     "captcha_required": "CAPTCHA required. Solve it manually, then click Resume or Reload Cookies.",
     "max_fail": "Stopped - fail limit reached (FAILED state)",
     "recovery_budget_exceeded": "Stopped - recovery circuit breaker tripped. Reload cookies or restart the account after reviewing failures.",

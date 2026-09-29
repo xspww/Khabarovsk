@@ -341,6 +341,9 @@ def cookie_invalid_block_reason(*values: object) -> str:
         lowered = text.lower()
         if not lowered:
             continue
+        # Banned is a separate state — never report it as cookie_invalid.
+        if lowered.strip() in {"banned"} or "account banned" in lowered:
+            continue
         if lowered == "cookie_invalid":
             return "Invalid Cookie. Reimport the correct .ROBLOSECURITY for this account."
         has_cookie = "cookie" in lowered or ".roblosecurity" in lowered
@@ -354,6 +357,32 @@ def cookie_invalid_block_reason(*values: object) -> str:
         if has_cookie and invalid:
             return text
     return ""
+
+
+def banned_block_reason(*values: object) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        lowered = text.lower()
+        if not lowered:
+            continue
+        if lowered.strip() == "banned":
+            try:
+                from services.ban_guard import BANNED_BLOCK_REASON as _BANNED_MSG
+            except Exception:
+                _BANNED_MSG = "Account banned (Roblox). Unmark to allow rejoin."
+            return _BANNED_MSG
+        if "account banned" in lowered or "roblox ban" in lowered:
+            return text
+    return ""
+
+
+def is_account_banned(acc: Any) -> bool:
+    try:
+        from services.ban_guard import is_account_banned as _is_banned
+
+        return bool(_is_banned(acc))
+    except Exception:
+        return False
 
 
 FINISHED_STATUS = "Finished"
@@ -377,6 +406,22 @@ def is_account_finished(acc: Any) -> bool:
 def account_launch_block_reason(acc: Account) -> str:
     if is_account_finished(acc):
         return FINISHED_STATUS
+    try:
+        from services.ban_guard import BANNED_BLOCK_REASON, is_account_banned as _is_banned
+
+        if _is_banned(acc):
+            return BANNED_BLOCK_REASON
+    except Exception:
+        pass
+    banned = banned_block_reason(
+        getattr(acc, "manual_status", ""),
+        getattr(acc, "import_status", ""),
+        getattr(acc, "last_error", ""),
+        getattr(acc, "last_crash_reason", ""),
+        getattr(acc, "last_recovery_reason", ""),
+    )
+    if banned:
+        return banned
     try:
         from services.captcha_guard import CAPTCHA_BLOCK_REASON, is_account_captcha_required
 

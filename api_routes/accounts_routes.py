@@ -12,8 +12,15 @@ import webbrowser
 from typing import Any, Dict, List, Optional, Tuple
 from fastapi import HTTPException, Request
 from account_hybrid import ACCOUNT_STORE, audit_event
-from core import cookie_identity_block_reason, cookie_invalid_block_reason
+from core import banned_block_reason, cookie_identity_block_reason, cookie_invalid_block_reason
 from roblox_hybrid import resolve_vip_access_code, validate_cookie_details
+from services.ban_guard import (
+    BANNED_BLOCK_REASON,
+    BANNED_REASON,
+    clear_account_banned_hold,
+    is_banned_status_text,
+    is_banned_text,
+)
 from services.captcha_guard import (
     CAPTCHA_BLOCK_REASON,
     CAPTCHA_REASON,
@@ -475,10 +482,13 @@ def register(app, ctx: ApiContext) -> None:
         valid_count = len(validation.get("valid_accounts") or [])
         msg = f"Checked cookies: {valid_count} valid"
         captcha_count = int(validation.get("captcha") or 0)
+        banned_count = int(validation.get("banned") or len(validation.get("banned_accounts") or []) or 0)
         if captcha_count:
             msg += f", {captcha_count} need CAPTCHA"
         if invalid_count:
             msg += f", marked {invalid_count} invalid"
+        if banned_count:
+            msg += f", marked {banned_count} banned"
         if allowlist_result.get("allowlist_cleared"):
             msg += ", cleared account test lock"
         try:
@@ -490,6 +500,7 @@ def register(app, ctx: ApiContext) -> None:
                 valid=valid_count,
                 captcha=captcha_count,
                 invalid=invalid_count,
+                banned=banned_count,
                 count=count,
             )
         except Exception:
@@ -632,8 +643,15 @@ def register(app, ctx: ApiContext) -> None:
         invalid_reason = cookie_invalid_block_reason(record.get("manual_status"), record.get("import_status"))
         if invalid_reason:
             blocked_reason = invalid_reason
+        banned_reason = banned_block_reason(
+            record.get("manual_status"), record.get("import_status"),
+            record.get("last_error", ""), record.get("last_crash_reason", ""),
+        )
+        if banned_reason:
+            blocked_reason = banned_reason
         if is_captcha_status_text(record.get("manual_status"), record.get("import_status")):
-            blocked_reason = CAPTCHA_BLOCK_REASON
+            if not banned_reason:
+                blocked_reason = CAPTCHA_BLOCK_REASON
         if blocked_reason:
             result = {"ok": False, "fatal": True, "msg": blocked_reason, "blocked_reason": blocked_reason, "cookie_mismatch": bool(mismatch_reason)}
             audit_event("launch", username=username, ok=False, detail=blocked_reason, mode="blocked")
@@ -659,6 +677,25 @@ def register(app, ctx: ApiContext) -> None:
             result["captcha_required"] = True
             result["blocked_reason"] = CAPTCHA_BLOCK_REASON
             result["msg"] = CAPTCHA_BLOCK_REASON
+        if not result.get("ok") and is_banned_text(result.get("msg"), result.get("detail")):
+            runtime = next((a for a in farm._accounts if a.username == username), None)
+            if runtime:
+                try:
+                    from services.ban_guard import set_account_banned_hold
+
+                    set_account_banned_hold(runtime, str(result.get("detail") or result.get("msg") or ""), source="manual_launch", runtime_writer=farm._runtime_state)
+                except Exception:
+                    pass
+                if farm._recovery:
+                    farm._recovery.fail_account(runtime, BANNED_REASON, BANNED_BLOCK_REASON)
+                try:
+                    farm._push_event("cookie", f"Account banned: {runtime.display_name}", account=runtime, severity="error", reason=BANNED_REASON)
+                except Exception:
+                    pass
+            result["fatal"] = True
+            result["banned"] = True
+            result["blocked_reason"] = BANNED_BLOCK_REASON
+            result["msg"] = BANNED_BLOCK_REASON
         audit_event("launch", username=username, ok=bool(result.get("ok")), detail=result.get("msg", ""), mode=result.get("mode", ""))
         if result.get("ok"):
             _replace_farm_accounts_from_store()
@@ -718,10 +755,41 @@ def register(app, ctx: ApiContext) -> None:
     async def api_test_cookie(request: Request):
         body = await request.json()
         cookie = body.get("cookie", "")
+        username_hint = str(body.get("username") or "").strip()
         if not cookie:
             raise HTTPException(400, "cookie required")
         ok, username, detail, meta = validate_cookie_details(cookie)
-        return {"ok": ok, "username": username if ok else "", "user_id": meta.get("user_id", "") if ok else "", "msg": detail if not ok else ""}
+        meta = meta or {}
+        banned = bool(meta.get("is_banned") or meta.get("banned")) or bool(is_banned_text(detail))
+        resolved_username = str(meta.get("username") or username or "")
+        resolved_user_id = str(meta.get("user_id") or "")
+        if not ok and not banned and username_hint:
+            # Dead cookie with a typed username — check public ban status by
+            # name so the import preview can show the Banned mark.
+            try:
+                from roblox_hybrid import fetch_ban_status_by_username as _ban_by_name2
+
+                _b, _uid, _d = _ban_by_name2(username_hint)
+            except Exception:
+                _b, _uid, _d = None, "", ""
+            if _b is True:
+                return {
+                    "ok": False,
+                    "username": username_hint,
+                    "user_id": _uid,
+                    "banned": True,
+                    "msg": _d or BANNED_BLOCK_REASON,
+                }
+            if _uid and not resolved_username:
+                resolved_username = username_hint
+                resolved_user_id = _uid
+        return {
+            "ok": ok,
+            "username": resolved_username if (ok or banned or resolved_username) else "",
+            "user_id": resolved_user_id,
+            "banned": banned,
+            "msg": detail if not ok else "",
+        }
 
     @app.get("/api/vip-tracker/{username}")
     def api_vip_tracker(username: str):
@@ -833,5 +901,151 @@ def register(app, ctx: ApiContext) -> None:
                 )
             ),
         }
+
+    @app.post("/api/account/{username}/unban-mark")
+    def api_unban_mark(username: str, request: Request):
+        idem = begin_idempotent_request_sync(request, "unban_mark", username)
+        if idem.replay:
+            return idem.response
+        record = _find_account_record(username, include_cookie=False)
+        if not record:
+            raise HTTPException(404, "Account not found")
+        if not is_banned_status_text(record.get("manual_status"), record.get("import_status")):
+            result = {"ok": True, "cleared": False, "msg": f"{username} is not marked banned"}
+            finish_idempotent_request(idem, result)
+            return result
+        updated = ACCOUNT_STORE.update_record(username, {"manual_status": "", "import_status": ""})
+        if updated is None:
+            raise HTTPException(404, "Account not found")
+        try:
+            audit_event("banned_clear", username=username, ok=True)
+        except Exception:
+            pass
+        try:
+            acc = farm._find_account(username) if hasattr(farm, "_find_account") else next(
+                (a for a in farm._accounts if str(getattr(a, "_config_username", "") or getattr(a, "username", "")).lower() == str(username).lower()),
+                None,
+            )
+            if acc is not None:
+                clear_account_banned_hold(acc, runtime_writer=getattr(farm, "_runtime_state", None))
+        except Exception:
+            pass
+        try:
+            _replace_farm_accounts_from_store()
+        except Exception:
+            pass
+        # If the farm is running and the worker died on ban, restart it so
+        # Unmark rejoins without requiring a full restart.
+        try:
+            if bool(getattr(farm, "running", False)):
+                from services.account_reload import _start_added_worker as _restart_banned_worker
+
+                try:
+                    acc2 = farm._find_account(username) if hasattr(farm, "_find_account") else None
+                except Exception:
+                    acc2 = None
+                if acc2 is not None:
+                    try:
+                        workers = getattr(farm, "_workers", None) or {}
+                        worker = workers.get(getattr(acc2, "_config_username", ""))
+                        alive = bool(worker is not None and worker.is_alive())
+                    except Exception:
+                        alive = False
+                    if not alive:
+                        try:
+                            _restart_banned_worker(farm, acc2)
+                        except Exception:
+                            pass
+                    try:
+                        orchestrator = getattr(farm, "_runtime_orchestrator", None)
+                        if orchestrator is not None and hasattr(orchestrator, "request_evaluate"):
+                            orchestrator.request_evaluate(acc2, trigger="manual_unban")
+                    except Exception:
+                        pass
+                    try:
+                        if worker is not None and worker.is_alive():
+                            worker.wake()
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        result = {"ok": True, "cleared": True, "msg": f"Cleared Banned mark: {username}"}
+        finish_idempotent_request(idem, result)
+        return result
+
+    @app.post("/api/accounts/unban-mark")
+    async def api_unban_mark_bulk(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Expected object")
+        raw_names = body.get("usernames", [])
+        if isinstance(raw_names, str):
+            raw_names = [raw_names]
+        if not isinstance(raw_names, list):
+            raise HTTPException(400, "usernames must be a list")
+        names = [str(n or "").strip() for n in raw_names if str(n or "").strip()]
+        if not names:
+            raise HTTPException(400, "usernames required")
+        cleared: List[str] = []
+        missing: List[str] = []
+        skipped: List[str] = []
+        for username in names:
+            record = _find_account_record(username, include_cookie=False)
+            if not record:
+                missing.append(username)
+                continue
+            if not is_banned_status_text(record.get("manual_status"), record.get("import_status")):
+                skipped.append(username)
+                continue
+            updated = ACCOUNT_STORE.update_record(username, {"manual_status": "", "import_status": ""})
+            if updated is None:
+                missing.append(username)
+                continue
+            cleared.append(username)
+            try:
+                audit_event("banned_clear", username=username, ok=True)
+            except Exception:
+                pass
+            try:
+                acc = farm._find_account(username) if hasattr(farm, "_find_account") else None
+                if acc is not None:
+                    clear_account_banned_hold(acc, runtime_writer=getattr(farm, "_runtime_state", None))
+            except Exception:
+                pass
+        try:
+            _replace_farm_accounts_from_store()
+        except Exception:
+            pass
+        try:
+            if bool(getattr(farm, "running", False)) and cleared:
+                from services.account_reload import _start_added_worker as _restart_banned_worker2
+
+                orchestrator = getattr(farm, "_runtime_orchestrator", None)
+                workers = getattr(farm, "_workers", None) or {}
+                for username in cleared:
+                    try:
+                        acc2 = farm._find_account(username) if hasattr(farm, "_find_account") else None
+                    except Exception:
+                        acc2 = None
+                    if acc2 is None:
+                        continue
+                    try:
+                        worker = workers.get(getattr(acc2, "_config_username", ""))
+                        alive = bool(worker is not None and worker.is_alive())
+                    except Exception:
+                        alive = False
+                    if not alive:
+                        try:
+                            _restart_banned_worker2(farm, acc2)
+                        except Exception:
+                            pass
+                    try:
+                        if orchestrator is not None and hasattr(orchestrator, "request_evaluate"):
+                            orchestrator.request_evaluate(acc2, trigger="manual_unban")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        return {"ok": True, "cleared": cleared, "missing": missing, "skipped": skipped, "msg": f"Cleared Banned: {len(cleared)}"}
     # Web UI routes
     # Cronus Launcher dashboard is served by system_routes.py.

@@ -545,6 +545,49 @@ class AccountWorker(threading.Thread):
                     self._wake.clear()
                     continue
 
+                try:
+                    from services.ban_guard import (
+                        BANNED_BLOCK_REASON as _BANNED_MSG_RUN,
+                        is_banned_text as _is_banned_text_run,
+                        set_account_banned_hold as _set_banned_hold,
+                    )
+                except Exception:
+                    _BANNED_MSG_RUN = "Account banned (Roblox). Unmark to allow rejoin."
+                    _is_banned_text_run = lambda *a, **k: False  # type: ignore
+                    _set_banned_hold = None  # type: ignore
+                try:
+                    _is_banned_now = bool(_is_banned_text_run(detail))
+                except Exception:
+                    _is_banned_now = False
+                if _is_banned_now:
+                    _hold_ok = False
+                    if _set_banned_hold is not None:
+                        try:
+                            _set_banned_hold(acc, detail, source="cookie_validation", runtime_writer=self.state_mgr)
+                            _hold_ok = True
+                        except Exception:
+                            _hold_ok = False
+                    if not _hold_ok:
+                        try:
+                            with acc._lock:
+                                acc.session_checked = True
+                                acc.session_valid = False
+                                acc.manual_status = _BANNED_MSG_RUN
+                                acc.last_error = detail or _BANNED_MSG_RUN
+                                acc.last_crash_reason = "banned"
+                                acc.last_recovery_reason = "banned"
+                                acc.recovery_scheduled_at = 0.0
+                        except Exception:
+                            pass
+                    flog_kv("BANNED", "detected", "warning", account=acc.display_name, detail=detail)
+                    self.runtime_owner.handle_runtime_signal(
+                        acc,
+                        "fatal",
+                        "banned",
+                        payload={"reason_msg": _BANNED_MSG_RUN, "detail": detail or _BANNED_MSG_RUN},
+                    )
+                    return
+
                 if is_captcha_text(detail):
                     set_account_captcha_hold(acc, detail, source="cookie_validation", runtime_writer=self.state_mgr)
                     flog_kv("CAPTCHA", "detected", "warning", account=acc.display_name, detail=detail)
@@ -602,14 +645,23 @@ class AccountWorker(threading.Thread):
         while not self._stop_event.is_set():
             try:
                 from domain.account_model import is_account_finished as _is_finished
+                from services.ban_guard import is_account_banned as _is_banned_mid
 
-                if _is_finished(acc):
-                    # Marked Finished mid-run: sit idle, no rejoin, no actions.
+                if _is_finished(acc) or _is_banned_mid(acc):
+                    # Marked Finished/Banned mid-run: sit idle, no rejoin, no actions.
                     self._wake.wait(timeout=2.0)
                     self._wake.clear()
                     continue
             except Exception:
-                pass
+                try:
+                    from domain.account_model import is_account_finished as _is_finished2
+
+                    if _is_finished2(acc):
+                        self._wake.wait(timeout=2.0)
+                        self._wake.clear()
+                        continue
+                except Exception:
+                    pass
             if acc.state == AccountState.IN_GAME:
                 if not acc.pid or not ProcessManager.is_bound_game_alive(
                     acc.pid,
@@ -664,7 +716,24 @@ class AccountWorker(threading.Thread):
             with urllib.request.urlopen(req, timeout=8) as resp:
                 data = __import__("json").loads(resp.read())
             username = data.get("name", "")
-            return (True, username, "", False) if username else (False, "", "no username in response", True)
+            user_id = str(data.get("id") or "")
+            if not username:
+                return (False, "", "no username in response", True)
+            # Authenticated OK — check account-level ban (banned cookies still 200).
+            if user_id:
+                try:
+                    from roblox_hybrid import fetch_user_ban_status
+
+                    banned, ban_detail = fetch_user_ban_status(user_id)
+                except Exception:
+                    banned, ban_detail = None, ""
+                if banned is True:
+                    try:
+                        from services.ban_guard import BANNED_BLOCK_REASON as _BANNED_MSG
+                    except Exception:
+                        _BANNED_MSG = "Account banned (Roblox). Unmark to allow rejoin."
+                    return (False, username, ban_detail or _BANNED_MSG, False)
+            return (True, username, "", False)
         except urllib.error.HTTPError as e:
             headers = dict(e.headers.items()) if e.headers else {}
             try:
@@ -674,6 +743,17 @@ class AccountWorker(threading.Thread):
             captcha = captcha_detail(e.code, body, headers)
             if captcha:
                 return False, "", captcha, False
+            try:
+                from services.ban_guard import is_banned_text as _is_banned_text
+
+                if _is_banned_text(f"HTTP {e.code} {body}"):
+                    try:
+                        from services.ban_guard import BANNED_BLOCK_REASON as _BANNED_MSG2
+                    except Exception:
+                        _BANNED_MSG2 = "Account banned (Roblox). Unmark to allow rejoin."
+                    return False, "", body.strip()[:180] or _BANNED_MSG2, False
+            except Exception:
+                pass
             transient = e.code >= 500 or e.code == 429
             suffix = body[:180].replace("\r", " ").replace("\n", " ") if body else ""
             detail = f"HTTP {e.code} {'(transient)' if transient else '(cookie expired or invalid)'}"

@@ -1,12 +1,18 @@
 from __future__ import annotations
 from typing import Any, Dict, List, Optional
-from core import account_launch_block_reason, cookie_identity_block_reason, cookie_invalid_block_reason, flog_kv
-from services.account_reload import load_accounts_from_store, mark_invalid_cookie_record, replace_farm_accounts
+from core import account_launch_block_reason, banned_block_reason, cookie_identity_block_reason, cookie_invalid_block_reason, flog_kv
+from services.account_reload import load_accounts_from_store, mark_banned_cookie_record, mark_invalid_cookie_record, replace_farm_accounts
 from services.captcha_guard import (
     CAPTCHA_BLOCK_REASON,
     CAPTCHA_REASON,
     is_captcha_status_text,
     is_captcha_text,
+)
+from services.ban_guard import (
+    BANNED_BLOCK_REASON,
+    BANNED_IMPORT_STATUS,
+    is_banned_status_text,
+    is_banned_text,
 )
 from runtime.account_selection import runtime_account_allowlist
 from .settings_state import _apply_game_defaults
@@ -34,8 +40,20 @@ def account_data_api_records(store: Any, farm: Any) -> List[Dict[str, Any]]:
         invalid_reason = cookie_invalid_block_reason(item.get("manual_status"), item.get("import_status"))
         if invalid_reason:
             blocked_reason = invalid_reason
+        banned_reason = banned_block_reason(
+            item.get("manual_status"), item.get("import_status"),
+        )
+        if not banned_reason:
+            try:
+                banned_reason = banned_block_reason(item.get("blocked_reason", ""))
+            except Exception:
+                banned_reason = ""
+        if banned_reason:
+            blocked_reason = banned_reason
         if is_captcha_status_text(item.get("manual_status"), item.get("import_status")):
-            blocked_reason = CAPTCHA_BLOCK_REASON
+            # Banned outranks captcha — a banned account stays Banned.
+            if not banned_reason:
+                blocked_reason = CAPTCHA_BLOCK_REASON
         runtime = runtime_by_user.get(str(item.get("username") or "").strip().lower())
         if runtime:
             runtime_snapshot = runtime.runtime_snapshot()
@@ -82,6 +100,7 @@ def validate_cookie_records_from_store(store: Any, validate_cookie: Any, audit: 
     kept: List[Dict[str, Any]] = []
     invalid: List[Dict[str, str]] = []
     captcha: List[Dict[str, str]] = []
+    banned: List[Dict[str, str]] = []
     valid: List[Dict[str, str]] = []
     for record in records:
         username = str(record.get("username") or "").strip()
@@ -96,13 +115,35 @@ def validate_cookie_records_from_store(store: Any, validate_cookie: Any, audit: 
             ok, cookie_username, detail, meta = validate_cookie(cookie)
         except Exception as exc:
             raise RuntimeError(f"Cookie validation unavailable for {label}: {exc}") from exc
+        meta = meta or {}
+        is_banned = bool(meta.get("is_banned") or meta.get("banned")) or bool(is_banned_text(detail))
         if not ok:
-            if is_captcha_text(detail):
+            if is_captcha_text(detail) and not is_banned:
                 normalized = store.normalize_record(record)
                 normalized["manual_status"] = CAPTCHA_BLOCK_REASON
                 normalized["import_status"] = CAPTCHA_REASON
                 kept.append(normalized)
                 captcha.append({"username": label, "reason": detail or CAPTCHA_REASON})
+                continue
+            if is_banned:
+                normalized = mark_banned_cookie_record(store, record, detail)
+                # Preserve identity so the card still shows who is banned.
+                validated_username = str(meta.get("username") or cookie_username or "").strip()
+                if validated_username:
+                    normalized["cookie_username"] = validated_username
+                    if not username:
+                        normalized["username"] = validated_username
+                        username = validated_username
+                normalized["cookie_user_id"] = str(meta.get("user_id") or normalized.get("cookie_user_id") or "")
+                kept.append(normalized)
+                banned.append({"username": username or label, "reason": detail or BANNED_BLOCK_REASON})
+                continue
+            if is_banned_status_text(record.get("manual_status"), record.get("import_status")):
+                # Cookie is dead so ban cannot be re-confirmed — keep the
+                # previous Banned mark instead of flipping to Invalid.
+                normalized = mark_banned_cookie_record(store, record, detail or "cookie expired, ban mark kept")
+                kept.append(normalized)
+                banned.append({"username": username or label, "reason": detail or BANNED_BLOCK_REASON})
                 continue
             reason = detail or "invalid cookie"
             kept.append(mark_invalid_cookie_record(store, record, reason))
@@ -124,18 +165,24 @@ def validate_cookie_records_from_store(store: Any, validate_cookie: Any, audit: 
         if (
             is_captcha_status_text(normalized.get("manual_status"))
             or cookie_invalid_block_reason(normalized.get("manual_status"))
+            or is_banned_status_text(normalized.get("manual_status"), normalized.get("import_status"))
         ) and not normalized["cookie_mismatch"]:
             normalized["manual_status"] = ""
+            if is_banned_status_text(record.get("manual_status"), record.get("import_status")):
+                normalized["import_status"] = ""
         kept.append(normalized)
         valid.append({"username": username or label})
     store.write_records(kept)
     for item in invalid:
         audit("reload_cookie_invalid", item.get("username", ""), False, reason=item.get("reason", ""))
+    for item in banned:
+        audit("reload_cookie_banned", item.get("username", ""), False, reason=item.get("reason", ""))
     flog_kv(
         "ACCOUNT_DATA",
         "reload_cookie_validation",
         kept=len(kept),
         invalid=len(invalid),
+        banned=len(banned),
         total=len(records),
     )
     return {
@@ -144,10 +191,12 @@ def validate_cookie_records_from_store(store: Any, validate_cookie: Any, audit: 
         "removed": 0,
         "invalid": len(invalid),
         "captcha": len(captcha),
+        "banned": len(banned),
         "valid_accounts": valid,
         "removed_accounts": [],
         "invalid_accounts": invalid,
         "captcha_accounts": captcha,
+        "banned_accounts": banned,
     }
 def find_account_record(store: Any, username: str, include_cookie: bool = True) -> Optional[Dict[str, Any]]:
     wanted = str(username or "").strip().lower()

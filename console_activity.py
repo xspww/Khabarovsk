@@ -363,11 +363,15 @@ def _finished_line(account: str, finished: bool, count: Any = "") -> str:
     return _line(_ICON_FINISH, f"{_paint('Unfinished — relaunching', _COLOR_WHITE)} {_username_paren(account)}{_paint(suffix, _COLOR_GRAY)}")
 
 
-def _reload_cookies_line(valid: Any, captcha: Any, invalid: Any) -> str:
+def _reload_cookies_line(valid: Any, captcha: Any, invalid: Any, banned: Any = 0) -> str:
     v = _int_text(valid, "0")
     c = _int_text(captcha, "0")
     inv = _int_text(invalid, "0")
-    return _line(_ICON_RELOAD, f"{_paint('Reload Cookies', _COLOR_WHITE)} {_paint(f'{v} valid, {c} CAPTCHA, {inv} invalid', _COLOR_GRAY)}")
+    b = _int_text(banned, "0")
+    text = f"{v} valid, {c} CAPTCHA, {inv} invalid"
+    if b != "0":
+        text += f", {b} banned"
+    return _line(_ICON_RELOAD, f"{_paint('Reload Cookies', _COLOR_WHITE)} {_paint(text, _COLOR_GRAY)}")
 
 
 def _farm_line(started: bool, detail: str = "") -> str:
@@ -777,8 +781,9 @@ def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]
             valid = fields.get("valid", fields.get("valid_count", fields.get("kept", "")))
             captcha = fields.get("captcha", "")
             invalid = fields.get("invalid", "")
-            if valid != "" or captcha != "" or invalid != "":
-                return _reload_cookies_line(valid or 0, captcha or 0, invalid or 0)
+            banned = fields.get("banned", "")
+            if valid != "" or captcha != "" or invalid != "" or banned != "":
+                return _reload_cookies_line(valid or 0, captcha or 0, invalid or 0, banned or 0)
         except Exception:
             pass
         return None

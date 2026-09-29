@@ -35,14 +35,9 @@ def _usable_link_code(link: Any, place_id: str) -> bool:
 
 
 def _classify_failure(message: str) -> str:
-    text = str(message or "").lower()
-    if "disabled for this universe" in text or "private servers are disabled" in text:
-        return "vip_disabled"
-    if "free-only" in text or "expectedprice" in text:
-        return "vip_paid"
-    if "no .rob housesecurity" in text or "no cookie" in text or "cookie" in text:
-        return "no_cookie"
-    return "vip_error"
+    from domain.roblox_private_servers import classify_private_server_failure
+
+    return classify_private_server_failure(message)
 
 
 def run_private_server_preflight(
@@ -53,7 +48,12 @@ def run_private_server_preflight(
     cfg_mgr: Any = None,
 ) -> Dict[str, Any]:
     """Attempt auto-create once per place. Never raises (fail-open)."""
-    outcome: Dict[str, Any] = {"created": [], "failures": [], "skipped_usernames": []}
+    outcome: Dict[str, Any] = {
+        "created": [],
+        "failures": [],
+        "skipped_usernames": [],
+        "public_fallback": [],
+    }
     try:
         return _run(cfg, accounts, games, game_mode, cfg_mgr, outcome)
     except Exception as exc:
@@ -68,6 +68,7 @@ def run_private_server_preflight(
 
 def _run(cfg, accounts, games, game_mode, cfg_mgr, outcome):
     from domain.games import effective_auto_flags, effective_place, game_for_account
+    from domain.roblox_private_servers import vip_unavailable_permanently
 
     cfg = cfg if isinstance(cfg, dict) else {}
     games = list(games or [])
@@ -240,13 +241,24 @@ def _run(cfg, accounts, games, game_mode, cfg_mgr, outcome):
             })
             continue
         reason = str(result.get("msg") or "Private server setup failed")
-        outcome["failures"].append({
+        reason_code = _classify_failure(reason)
+        entry = {
             "place_id": place,
             "game_name": game_name,
             "reason": reason,
-            "reason_code": _classify_failure(reason),
+            "reason_code": reason_code,
             "usernames": usernames,
-        })
+        }
+        if vip_unavailable_permanently(reason):
+            # VIP disabled / paid: this game simply has no private server.
+            # Do NOT skip those accounts — with several games open the
+            # others still work, so they join this game's public server
+            # instead. Reported so the UI can explain the fallback.
+            entry["fallback_public"] = True
+            outcome["failures"].append(entry)
+            outcome["public_fallback"].extend(u.strip().lower() for u in usernames)
+            continue
+        outcome["failures"].append(entry)
         outcome["skipped_usernames"].extend(u.strip().lower() for u in usernames)
 
     # Persist created links so launches reuse them silently.

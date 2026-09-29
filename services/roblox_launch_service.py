@@ -377,7 +377,13 @@ def launch(cls, acc: Account) -> Tuple[bool, str, str]:
                     _shared_fb = ""
             target_place = str(effective_place(getattr(acc, "place_id", ""), game, _shared_fb)).strip()
             if game is not None:
-                flags = effective_auto_flags(game)
+                # Master switch: the Game card toggle also applies here, so a
+                # pool game added with the per-game flag off still auto-creates.
+                flags = effective_auto_flags(
+                    game,
+                    cls.AUTO_CREATE_PRIVATE_SERVER_ENABLED,
+                    cls.AUTO_CREATE_PRIVATE_SERVER_FREE_ONLY,
+                )
                 auto_private_enabled = bool(flags["enabled"])
                 auto_private_free_only = bool(flags["free_only"])
             else:

@@ -495,6 +495,16 @@ class AccountDataStore:
             username, cookie = parse_cookie_line(line)
             if not cookie:
                 continue
+            if not username:
+                # Cookie-only line (no "username:" prefix). Recover the owner
+                # from the stored records so identity and the ban-by-name
+                # check still work instead of skipping the line.
+                try:
+                    from roblox_hybrid import username_for_cookie_in_store as _owner_for_cookie
+
+                    username = _owner_for_cookie(cookie)
+                except Exception:
+                    username = ""
             cookie_username = ""
             cookie_user_id = ""
             cookie_mismatch = False
@@ -552,20 +562,25 @@ class AccountDataStore:
                             errors.append(f"cookie belongs to {cookie_username}, not {username}")
                     else:
                         # Cookie is dead — identity cannot come from the cookie.
-                        # If the line carries a username, check public ban status
-                        # by username so terminated accounts can still be tracked
-                        # instead of being skipped entirely.
+                        # Fall back to the public API by username so banned
+                        # accounts are still tracked instead of being skipped.
+                        # resolve_ban_for_dead_cookie also recovers the owner
+                        # from the store, so a cookie-only paste works.
                         banned_by_name = False
+                        resolved_name = ""
                         ban_uid = ""
-                        if username:
+                        if username or cookie:
                             try:
-                                from roblox_hybrid import fetch_ban_status_by_username as _ban_by_name
+                                from roblox_hybrid import resolve_ban_for_dead_cookie as _resolve_dead
 
-                                _b, _uid, _d = _ban_by_name(username)
+                                _b, _name, _uid = _resolve_dead(cookie, username)
+                                resolved_name = str(_name or "")
                                 if _b is True:
                                     banned_by_name = True
                                     ban_uid = _uid
                                     cookie_user_id = _uid
+                                    if not username:
+                                        username = _name
                             except Exception:
                                 banned_by_name = False
                         if banned_by_name:
@@ -588,6 +603,28 @@ class AccountDataStore:
                             )
                             banned += 1
                             errors.append(f"{username} banned (cookie expired) — imported with Banned mark")
+                            continue
+                        if resolved_name:
+                            # The account itself is alive and not banned — only
+                            # this cookie is dead. Keep the account so the user
+                            # can see it and swap in a fresh cookie, instead of
+                            # dropping the line and losing the account entirely.
+                            if not username:
+                                username = resolved_name
+                            records.append(
+                                {
+                                    "username": username,
+                                    "cookie": cookie,
+                                    "cookie_username": resolved_name,
+                                    "cookie_user_id": cookie_user_id or ban_uid,
+                                    "cookie_mismatch": False,
+                                    "manual_status": "",
+                                    "import_status": "cookie_invalid",
+                                }
+                            )
+                            errors.append(
+                                f"{username} imported, but the cookie is not valid — paste a fresh cookie for this account"
+                            )
                             continue
                         errors.append(detail)
                         continue

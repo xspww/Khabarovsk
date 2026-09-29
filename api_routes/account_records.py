@@ -145,6 +145,29 @@ def validate_cookie_records_from_store(store: Any, validate_cookie: Any, audit: 
                 kept.append(normalized)
                 banned.append({"username": username or label, "reason": detail or BANNED_BLOCK_REASON})
                 continue
+            # Cookie is dead and there is no previous Banned mark. The cookie
+            # cannot confirm anything, but the public API still can — check
+            # ban by username so a banned account reads as Banned instead of
+            # being demoted to Invalid.
+            banned_by_name = False
+            ban_detail = ""
+            if username:
+                try:
+                    from roblox_hybrid import resolve_ban_for_dead_cookie as _resolve_dead
+
+                    _b, _name, _uid = _resolve_dead(cookie, username)
+                    if _b is True:
+                        banned_by_name = True
+                        ban_detail = "Account banned (Roblox isBanned=true)"
+                except Exception:
+                    banned_by_name = False
+            if banned_by_name:
+                normalized = mark_banned_cookie_record(store, record, ban_detail)
+                if not username:
+                    username = label
+                kept.append(normalized)
+                banned.append({"username": username, "reason": ban_detail or BANNED_BLOCK_REASON})
+                continue
             reason = detail or "invalid cookie"
             kept.append(mark_invalid_cookie_record(store, record, reason))
             invalid.append({"username": label, "reason": reason})

@@ -11,6 +11,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple, Optional
 from app_paths import EXECUTABLE_PATH, IS_COMPILED
 from account_hybrid import ACCOUNT_STORE, decrypt_cookie
@@ -55,6 +56,14 @@ _MULTI_ROBLOX_GUARD_MODE = "mutex"
 ROBLOX_HOME = "https://www.roblox.com/"
 AUTH_BASE = "https://auth.roblox.com/"
 USERS_BASE = "https://users.roblox.com/"
+USERMODERATION_BASE = "https://usermoderation.roblox.com/"
+# The not-approved endpoint rejects non-browser callers, so it needs a full UA.
+MODERATION_HEADERS = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
+    "Referer": "https://www.roblox.com/",
+}
 
 _SELECTED_ROBLOX_VERSION = ""
 
@@ -302,11 +311,88 @@ def _merge_owned_private_server(records: List[Dict[str, Any]], server: Dict[str,
     return merged
 
 
-def fetch_user_ban_status(user_id: str, timeout: float = 8.0) -> Tuple[Optional[bool], str]:
+def fetch_moderation_status(cookie: str, timeout: float = 8.0) -> Tuple[Optional[bool], str, Dict[str, Any]]:
+    """Read Roblox account moderation (suspension / ban) for a live cookie.
+
+    The public profile's isBanned only reports permanent terminations. A
+    temporary suspension leaves isBanned=false, so it is invisible there.
+    This endpoint is the only place Roblox exposes the active moderation
+    action for the signed-in account, including its type and end date.
+
+    Returns (is_moderated_or_None, detail, payload). None means the status
+    could not be read — either the cookie is no longer valid (401, Roblox
+    has already revoked it) or the request failed. A revoked cookie is NOT
+    evidence of a ban, so callers must never treat None as banned.
+    """
+    token = str(cookie or "").strip()
+    if not token:
+        return None, "", {}
+    url = f"{USERMODERATION_BASE}v1/not-approved"
+    req = urllib.request.Request(
+        url,
+        headers={**MODERATION_HEADERS, "Cookie": f".ROBLOSECURITY={token};"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            # Cookie revoked/expired. Says nothing about moderation state.
+            return None, "moderation status unavailable (cookie not valid)", {}
+        if exc.code == 429 or exc.code >= 500:
+            return None, f"moderation status transient (HTTP {exc.code})", {}
+        return None, f"moderation status HTTP {exc.code}", {}
+    except Exception as exc:
+        return None, f"moderation status transient: {exc}", {}
+    try:
+        data = json.loads(raw) if raw.strip() else {}
+    except Exception:
+        return None, "moderation status parse failed", {}
+    if not isinstance(data, dict):
+        return None, "moderation status parse failed", {}
+    # An active intervention is the only marker; an empty object means clean.
+    if data.get("interventionId") in (None, ""):
+        return False, "", {}
+    return True, _describe_moderation(data), data
+
+
+def _describe_moderation(data: Dict[str, Any]) -> str:
+    """Summarize a not-approved payload into a short human reason."""
+    kind = ""
+    try:
+        utterances = data.get("badUtterances")
+        if isinstance(utterances, list) and utterances:
+            first = utterances[0]
+            if isinstance(first, dict):
+                kind = str(first.get("utteranceText") or "").strip()
+    except Exception:
+        kind = ""
+    end_raw = str(data.get("endDate") or "").strip()
+    if end_raw:
+        try:
+            end = datetime.strptime(end_raw, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+            days = max(0, (end - datetime.now(timezone.utc)).days)
+            until = f" until {end:%Y-%m-%d} (~{days}d)"
+        except Exception:
+            until = ""
+    else:
+        until = " (no end date)"
+    if kind:
+        return f"Account suspended by Roblox: {kind}{until}"
+    return f"Account suspended by Roblox{until}"
+
+
+def fetch_user_ban_status(user_id: str, timeout: float = 8.0, trusted_id: bool = True) -> Tuple[Optional[bool], str]:
     """Check Roblox account-level ban via public profile (isBanned).
 
     Returns (is_banned_or_None, detail). None = unknown/transient, caller
     must NOT mark banned on unknown to avoid false positives.
+
+    trusted_id marks the user_id as coming from a real identity source
+    (an authenticated cookie or a username lookup). Only then does a 404
+    mean the account is gone. Roblox does not hand out every user_id, so a
+    404 on an unverified id just means "no public profile" and must stay
+    unknown instead of banning a healthy account.
     """
     uid = str(user_id or "").strip()
     if not uid.isdigit():
@@ -329,7 +415,9 @@ def fetch_user_ban_status(user_id: str, timeout: float = 8.0) -> Tuple[Optional[
             body = ""
         lowered = f"{exc.code} {body}".lower()
         if exc.code == 404:
-            return True, "Account not found (deleted/terminated)"
+            if trusted_id:
+                return True, "Account not found (deleted/terminated)"
+            return None, "ban check: no public profile for this id"
         if exc.code == 429 or exc.code >= 500:
             return None, f"ban check transient (HTTP {exc.code})"
         if "banned" in lowered or "terminat" in lowered:
@@ -393,6 +481,40 @@ def fetch_ban_status_by_username(username: str, timeout: float = 8.0) -> Tuple[O
     return banned, uid, ban_detail
 
 
+def username_for_cookie_in_store(cookie: str) -> str:
+    """Find the stored username that owns this cookie.
+
+    Lets a cookie-only paste resolve an identity even when the line carries
+    no "username:" prefix, so the ban check by name can still run.
+    """
+    token = str(cookie or "").strip()
+    if not token:
+        return ""
+    try:
+        for record in ACCOUNT_STORE.read_records(include_cookies=True):
+            if str((record or {}).get("cookie") or "").strip() != token:
+                continue
+            name = str((record or {}).get("username") or "").strip()
+            if name:
+                return name
+    except Exception:
+        pass
+    return ""
+
+
+def resolve_ban_for_dead_cookie(cookie: str, username_hint: str = "", timeout: float = 8.0) -> Tuple[Optional[bool], str, str]:
+    """Check ban for a cookie that can no longer authenticate.
+
+    The dead cookie cannot prove anything, so fall back to the public API by
+    username. Returns (is_banned_or_None, username, user_id). None = unknown.
+    """
+    name = str(username_hint or "").strip() or username_for_cookie_in_store(cookie)
+    if not name:
+        return None, "", ""
+    banned, uid, detail = fetch_ban_status_by_username(name, timeout=timeout)
+    return banned, name, uid
+
+
 def validate_cookie_details(cookie: str) -> Tuple[bool, str, str, Dict[str, Any]]:
     ok, data, detail = RobloxHTTP(cookie).authenticated_user()
     if not ok:
@@ -414,8 +536,22 @@ def validate_cookie_details(cookie: str) -> Tuple[bool, str, str, Dict[str, Any]
         return False, "", detail, {}
     username = str(data.get("name") or data.get("displayName") or "")
     user_id = str(data.get("id") or "")
-    # Cookie is valid — now check account-level ban. Banned cookies still
-    # return 200 here, so isBanned is the only reliable signal.
+    # Cookie is valid. Check the live moderation action first: it is the only
+    # signal that sees a temporary suspension, which isBanned reports as false.
+    moderation_banned, moderation_detail, _payload = fetch_moderation_status(cookie)
+    if moderation_banned is True:
+        try:
+            from services.ban_guard import BANNED_BLOCK_REASON as _BANNED_MSG
+        except Exception:
+            _BANNED_MSG = "Account banned (Roblox). Unmark to allow rejoin."
+        return False, username, moderation_detail or _BANNED_MSG, {
+            "username": username,
+            "user_id": user_id,
+            "is_banned": True,
+            "banned": True,
+        }
+    # No active intervention — fall back to the public profile, which still
+    # owns permanent terminations (those can outlive the cookie).
     if user_id:
         banned, ban_detail = fetch_user_ban_status(user_id)
         if banned is True:

@@ -763,26 +763,29 @@ def register(app, ctx: ApiContext) -> None:
         banned = bool(meta.get("is_banned") or meta.get("banned")) or bool(is_banned_text(detail))
         resolved_username = str(meta.get("username") or username or "")
         resolved_user_id = str(meta.get("user_id") or "")
-        if not ok and not banned and username_hint:
-            # Dead cookie with a typed username — check public ban status by
-            # name so the import preview can show the Banned mark.
+        if not ok and not banned:
+            # Cookie is dead, so it cannot confirm a ban on its own. Fall back
+            # to the public API by username. When the pasted line carried no
+            # "username:" prefix, recover the owner from the stored records so
+            # a cookie-only paste still gets a real answer.
             try:
-                from roblox_hybrid import fetch_ban_status_by_username as _ban_by_name2
+                from roblox_hybrid import resolve_ban_for_dead_cookie as _resolve_dead
 
-                _b, _uid, _d = _ban_by_name2(username_hint)
+                _b, _name, _uid = _resolve_dead(cookie, username_hint)
             except Exception:
-                _b, _uid, _d = None, "", ""
+                _b, _name, _uid = None, "", ""
+            if _name and not resolved_username:
+                resolved_username = _name
+            if _uid and not resolved_user_id:
+                resolved_user_id = _uid
             if _b is True:
                 return {
                     "ok": False,
-                    "username": username_hint,
-                    "user_id": _uid,
+                    "username": resolved_username or username_hint,
+                    "user_id": resolved_user_id,
                     "banned": True,
-                    "msg": _d or BANNED_BLOCK_REASON,
+                    "msg": "Account banned (Roblox isBanned=true)",
                 }
-            if _uid and not resolved_username:
-                resolved_username = username_hint
-                resolved_user_id = _uid
         return {
             "ok": ok,
             "username": resolved_username if (ok or banned or resolved_username) else "",

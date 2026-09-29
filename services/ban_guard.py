@@ -6,6 +6,8 @@ BANNED_REASON = "banned"
 BANNED_LABEL = "Banned"
 BANNED_BLOCK_REASON = "Account banned (Roblox). Unmark to allow rejoin."
 BANNED_IMPORT_STATUS = "banned"
+SUSPENDED_LABEL = "Suspended"
+SUSPENDED_BLOCK_REASON = "Account suspended by Roblox. Unmark to allow rejoin."
 
 
 def _lower(value: Any) -> str:
@@ -26,9 +28,16 @@ def is_banned_text(*values: Any) -> bool:
         or "user is banned" in text
     ):
         return True
-    # "terminated" alone is too broad (e.g. "session terminated").
-    # Only treat as account ban with account/user context.
-    if "terminat" in text and ("account" in text or "user" in text or "deleted" in text):
+    # A temporary suspension is not a ban, but it blocks the account just as
+    # hard, so it must hold the launch the same way. Phrased to match the
+    # summary built in roblox_hybrid.fetch_moderation_status.
+    if "suspended by roblox" in text or "account suspended" in text:
+        return True
+    # "terminated" alone is too broad (e.g. "session terminated", "connection
+    # terminated by user"). Only treat it as an account ban when the wording
+    # names the account itself. A bare "user" mention is far too common
+    # ("session terminated for user") and would ban healthy accounts.
+    if "terminat" in text and ("account" in text or "deleted" in text):
         return True
     return False
 

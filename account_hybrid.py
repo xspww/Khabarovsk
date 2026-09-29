@@ -490,6 +490,7 @@ class AccountDataStore:
     def import_cookie_lines(self, lines: Iterable[str], validator=None) -> Dict[str, Any]:
         records: List[Dict[str, Any]] = []
         errors: List[str] = []
+        banned = 0
         for line in lines:
             username, cookie = parse_cookie_line(line)
             if not cookie:
@@ -497,15 +498,52 @@ class AccountDataStore:
             cookie_username = ""
             cookie_user_id = ""
             cookie_mismatch = False
+            is_banned = False
+            ban_detail = ""
             if validator:
                 try:
                     validation = validator(cookie)
                     ok, validated, detail = validation[:3]
-                    if len(validation) >= 4 and isinstance(validation[3], dict):
-                        cookie_user_id = str(validation[3].get("user_id") or "")
-                        cookie_username = str(validation[3].get("username") or validated or "")
-                    else:
-                        cookie_username = str(validated or "")
+                    meta = validation[3] if len(validation) >= 4 and isinstance(validation[3], dict) else {}
+                    cookie_user_id = str(meta.get("user_id") or "")
+                    cookie_username = str(meta.get("username") or validated or "")
+                    try:
+                        from services.ban_guard import is_banned_text as _is_banned_text
+
+                        is_banned = bool(meta.get("is_banned") or meta.get("banned")) or bool(_is_banned_text(detail))
+                    except Exception:
+                        is_banned = bool(meta.get("is_banned") or meta.get("banned"))
+                    if is_banned:
+                        ban_detail = str(detail or "")
+                        if not username:
+                            username = str(validated or cookie_username or "")
+                        # Import anyway but marked banned so it never rejoins.
+                        if not username:
+                            errors.append("banned cookie missing username")
+                            continue
+                        try:
+                            from services.ban_guard import BANNED_BLOCK_REASON as _BANNED_MSG
+                            from services.ban_guard import BANNED_IMPORT_STATUS as _BANNED_STATUS
+                        except Exception:
+                            _BANNED_MSG = "Account banned (Roblox). Unmark to allow rejoin."
+                            _BANNED_STATUS = "banned"
+                        if cookie_username and username.strip().lower() != cookie_username.strip().lower():
+                            errors.append(f"{username} banned — cookie belongs to {cookie_username}, imported with Banned mark")
+                        else:
+                            errors.append(f"{username} banned — imported with Banned mark")
+                        records.append(
+                            {
+                                "username": username,
+                                "cookie": cookie,
+                                "cookie_username": cookie_username or username,
+                                "cookie_user_id": cookie_user_id,
+                                "cookie_mismatch": False,
+                                "manual_status": _BANNED_MSG,
+                                "import_status": _BANNED_STATUS,
+                            }
+                        )
+                        banned += 1
+                        continue
                     if ok:
                         if not username:
                             username = str(validated or "")
@@ -513,6 +551,44 @@ class AccountDataStore:
                             cookie_mismatch = True
                             errors.append(f"cookie belongs to {cookie_username}, not {username}")
                     else:
+                        # Cookie is dead — identity cannot come from the cookie.
+                        # If the line carries a username, check public ban status
+                        # by username so terminated accounts can still be tracked
+                        # instead of being skipped entirely.
+                        banned_by_name = False
+                        ban_uid = ""
+                        if username:
+                            try:
+                                from roblox_hybrid import fetch_ban_status_by_username as _ban_by_name
+
+                                _b, _uid, _d = _ban_by_name(username)
+                                if _b is True:
+                                    banned_by_name = True
+                                    ban_uid = _uid
+                                    cookie_user_id = _uid
+                            except Exception:
+                                banned_by_name = False
+                        if banned_by_name:
+                            try:
+                                from services.ban_guard import BANNED_BLOCK_REASON as _BANNED_MSG2
+                                from services.ban_guard import BANNED_IMPORT_STATUS as _BANNED_STATUS2
+                            except Exception:
+                                _BANNED_MSG2 = "Account banned (Roblox). Unmark to allow rejoin."
+                                _BANNED_STATUS2 = "banned"
+                            records.append(
+                                {
+                                    "username": username,
+                                    "cookie": cookie,
+                                    "cookie_username": username,
+                                    "cookie_user_id": ban_uid,
+                                    "cookie_mismatch": False,
+                                    "manual_status": _BANNED_MSG2,
+                                    "import_status": _BANNED_STATUS2,
+                                }
+                            )
+                            banned += 1
+                            errors.append(f"{username} banned (cookie expired) — imported with Banned mark")
+                            continue
                         errors.append(detail)
                         continue
                 except Exception as exc:
@@ -532,7 +608,10 @@ class AccountDataStore:
                 }
             )
         changed, merged = self.upsert_records(records)
-        return {"ok": True, "imported": changed, "errors": errors, "count": len(merged)}
+        result: Dict[str, Any] = {"ok": True, "imported": changed, "errors": errors, "count": len(merged)}
+        if banned:
+            result["banned"] = banned
+        return result
 
     @staticmethod
     def load_pending_imports() -> List[Dict[str, Any]]:

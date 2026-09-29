@@ -34,6 +34,13 @@ from domain.roblox_private_servers import (
 )
 
 USER_AGENT = "CronusLauncherHybrid/1.0"
+# Public (no-cookie) Roblox lookups get empty/filtered responses with a
+# non-browser UA, so these use browser-like headers instead.
+PUBLIC_HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json",
+    "Referer": "https://www.roblox.com/",
+}
 _MULTI_ROBLOX_LOCK = threading.RLock()
 _MULTI_ROBLOX_HANDLES: List[Tuple[str, int]] = []
 _MULTI_ROBLOX_HELPER: Optional[subprocess.Popen] = None
@@ -293,26 +300,225 @@ def _merge_owned_private_server(records: List[Dict[str, Any]], server: Dict[str,
     return merged
 
 
+def fetch_user_ban_status(user_id: str, timeout: float = 8.0) -> Tuple[Optional[bool], str]:
+    """Check Roblox account-level ban via public profile (isBanned).
+
+    Returns (is_banned_or_None, detail). None = unknown/transient, caller
+    must NOT mark banned on unknown to avoid false positives.
+    """
+    uid = str(user_id or "").strip()
+    if not uid.isdigit():
+        return None, ""
+    url = f"{USERS_BASE}v1/users/{uid}"
+    try:
+        req = urllib.request.Request(url, headers=dict(PUBLIC_HEADERS))
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            try:
+                data = json.loads(resp.read().decode("utf-8", errors="replace"))
+            except Exception:
+                return None, "ban check parse failed"
+            if isinstance(data, dict) and bool(data.get("isBanned", False)):
+                return True, "Account banned (Roblox isBanned=true)"
+            return False, ""
+    except urllib.error.HTTPError as exc:
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+        lowered = f"{exc.code} {body}".lower()
+        if exc.code == 404:
+            return True, "Account not found (deleted/terminated)"
+        if exc.code == 429 or exc.code >= 500:
+            return None, f"ban check transient (HTTP {exc.code})"
+        if "banned" in lowered or "terminat" in lowered:
+            return True, f"Account banned ({body[:120].strip() or exc.code})"
+        return None, f"ban check HTTP {exc.code}"
+    except Exception as exc:
+        return None, f"ban check transient: {exc}"
+
+
+def fetch_user_id_by_username(username: str, timeout: float = 8.0) -> Tuple[str, str]:
+    """Resolve a Roblox user_id from a username via public API (no cookie).
+
+    Returns (user_id_or_empty, detail). Empty user_id means unknown —
+    either the user does not exist or the lookup failed transiently.
+    """
+    name = str(username or "").strip()
+    if not name:
+        return "", "empty username"
+    body = json.dumps({"usernames": [name], "excludeBannedUsers": False}).encode("utf-8")
+    req = urllib.request.Request(
+        USERS_BASE + "v1/usernames/users",
+        data=body,
+        method="POST",
+        headers={**PUBLIC_HEADERS, "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            try:
+                data = json.loads(resp.read().decode("utf-8", errors="replace"))
+            except Exception:
+                return "", "username lookup parse failed"
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429 or exc.code >= 500:
+            return "", f"username lookup transient (HTTP {exc.code})"
+        return "", f"username lookup HTTP {exc.code}"
+    except Exception as exc:
+        return "", f"username lookup transient: {exc}"
+    items = data.get("data") if isinstance(data, dict) else []
+    if isinstance(items, list):
+        lowered = name.lower()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("requestedUsername") or "").lower() == lowered or str(item.get("name") or "").lower() == lowered:
+                uid = str(item.get("id") or "").strip()
+                if uid:
+                    return uid, ""
+    return "", "user not found"
+
+
+def fetch_ban_status_by_username(username: str, timeout: float = 8.0) -> Tuple[Optional[bool], str, str]:
+    """Check account-level ban by username (public API, no cookie needed).
+
+    Returns (is_banned_or_None, user_id, detail). None = unknown (user not
+    found or transient failure) — caller must NOT mark banned on unknown.
+    """
+    uid, detail = fetch_user_id_by_username(username, timeout=timeout)
+    if not uid:
+        return None, "", detail
+    banned, ban_detail = fetch_user_ban_status(uid, timeout=timeout)
+    return banned, uid, ban_detail
+
+
 def validate_cookie_details(cookie: str) -> Tuple[bool, str, str, Dict[str, Any]]:
     ok, data, detail = RobloxHTTP(cookie).authenticated_user()
-    if ok:
-        username = str(data.get("name") or data.get("displayName") or "")
-        return True, username, "ok", {"username": username, "user_id": str(data.get("id") or "")}
-    return False, "", detail, {}
+    if not ok:
+        try:
+            from services.ban_guard import is_banned_text as _is_banned_text
+        except Exception:
+            _is_banned_text = None  # type: ignore
+        if _is_banned_text is not None:
+            try:
+                if _is_banned_text(detail):
+                    username_guess = ""
+                    try:
+                        username_guess = str(data.get("name") or "") if isinstance(data, dict) else ""
+                    except Exception:
+                        username_guess = ""
+                    return False, username_guess, detail, {"username": username_guess, "user_id": "", "is_banned": True, "banned": True}
+            except Exception:
+                pass
+        return False, "", detail, {}
+    username = str(data.get("name") or data.get("displayName") or "")
+    user_id = str(data.get("id") or "")
+    # Cookie is valid — now check account-level ban. Banned cookies still
+    # return 200 here, so isBanned is the only reliable signal.
+    if user_id:
+        banned, ban_detail = fetch_user_ban_status(user_id)
+        if banned is True:
+            try:
+                from services.ban_guard import BANNED_BLOCK_REASON as _BANNED_MSG
+            except Exception:
+                _BANNED_MSG = "Account banned (Roblox). Unmark to allow rejoin."
+            return False, username, ban_detail or _BANNED_MSG, {
+                "username": username,
+                "user_id": user_id,
+                "is_banned": True,
+                "banned": True,
+            }
+        if banned is None:
+            # Transient (rate-limit/network): don't false-positive as banned.
+            return True, username, "ok", {
+                "username": username,
+                "user_id": user_id,
+                "is_banned": False,
+                "banned": False,
+                "ban_check": "unknown",
+                "ban_detail": ban_detail,
+            }
+    return True, username, "ok", {"username": username, "user_id": user_id, "is_banned": False, "banned": False}
 
 
 def validate_record_cookie_identity(record: Dict[str, Any], cookie: str, update_store: bool = True) -> Dict[str, Any]:
     username = str((record or {}).get("username") or "").strip()
     ok, cookie_username, detail, meta = validate_cookie_details(cookie)
+    try:
+        from services.ban_guard import (
+            BANNED_BLOCK_REASON as _BANNED_MSG,
+            BANNED_IMPORT_STATUS as _BANNED_STATUS,
+            is_banned_text as _is_banned_text,
+        )
+    except Exception:
+        _BANNED_MSG = "Account banned (Roblox). Unmark to allow rejoin."
+        _BANNED_STATUS = "banned"
+        _is_banned_text = lambda *a, **k: False  # type: ignore
+    is_banned = bool((meta or {}).get("is_banned") or (meta or {}).get("banned"))
+    if not is_banned:
+        try:
+            is_banned = bool(_is_banned_text(detail))
+        except Exception:
+            is_banned = False
+    if not is_banned:
+        # Cookie is dead so the ban API cannot confirm anything — but a
+        # previous Banned mark must survive Reload instead of flipping to
+        # Invalid (a terminated cookie stays dead forever).
+        try:
+            from services.ban_guard import is_banned_status_text as _is_banned_status2
+
+            if _is_banned_status2(
+                str((record or {}).get("manual_status") or ""),
+                str((record or {}).get("import_status") or ""),
+            ):
+                is_banned = True
+                if not detail:
+                    detail = "cookie expired, ban mark kept"
+        except Exception:
+            pass
     if not ok:
         if update_store and username:
-            if is_captcha_text(detail):
+            if is_banned:
+                ACCOUNT_STORE.update_record(
+                    username,
+                    {
+                        "manual_status": _BANNED_MSG,
+                        "import_status": _BANNED_STATUS,
+                        "cookie_username": str(
+                            cookie_username
+                            or (meta or {}).get("username")
+                            or (record or {}).get("cookie_username")
+                            or ""
+                        ),
+                        "cookie_user_id": str(
+                            (meta or {}).get("user_id") or (record or {}).get("cookie_user_id") or ""
+                        ),
+                        "cookie_mismatch": False,
+                    },
+                )
+            elif is_captcha_text(detail):
                 ACCOUNT_STORE.update_record(
                     username,
                     {"manual_status": CAPTCHA_BLOCK_REASON, "import_status": CAPTCHA_REASON},
                 )
             else:
                 ACCOUNT_STORE.update_record(username, {"cookie_mismatch": True, "import_status": "cookie_invalid"})
+        if is_banned:
+            return {
+                "ok": False,
+                "fatal": True,
+                "banned": True,
+                "msg": _BANNED_MSG,
+                "detail": detail or _BANNED_MSG,
+                "cookie_username": str(
+                    cookie_username
+                    or (meta or {}).get("username")
+                    or (record or {}).get("cookie_username")
+                    or ""
+                ),
+                "cookie_user_id": str(
+                    (meta or {}).get("user_id") or (record or {}).get("cookie_user_id") or ""
+                ),
+            }
         if is_captcha_text(detail):
             return {
                 "ok": False,
@@ -332,6 +538,18 @@ def validate_record_cookie_identity(record: Dict[str, Any], cookie: str, update_
         "cookie_mismatch": mismatch,
         "import_status": "cookie_mismatch" if mismatch else "",
     }
+    if not mismatch:
+        # Cookie is valid and not banned — clear a stale banned mark so an
+        # unbanned / replaced cookie rejoins again without manual unmark.
+        try:
+            prev_manual = str((record or {}).get("manual_status") or "")
+            prev_import = str((record or {}).get("import_status") or "")
+            from services.ban_guard import is_banned_status_text as _is_banned_status
+
+            if _is_banned_status(prev_manual, prev_import):
+                updates["manual_status"] = ""
+        except Exception:
+            pass
     if update_store and username:
         ACCOUNT_STORE.update_record(username, updates)
     if mismatch:

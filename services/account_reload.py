@@ -13,6 +13,7 @@ from services.captcha_guard import (
     is_account_captcha_required,
     set_account_captcha_hold,
 )
+from services.ban_guard import BANNED_BLOCK_REASON, BANNED_REASON, is_account_banned
 from services.auth_gate import AuthGateDecision
 
 
@@ -21,6 +22,19 @@ class AccountReconciliationError(ValueError):
 
 
 COOKIE_INVALID_IMPORT_STATUS = "cookie_invalid"
+
+
+def mark_banned_cookie_record(account_store: Any, record: Dict[str, Any], detail: str = "") -> Dict[str, Any]:
+    from services.ban_guard import BANNED_BLOCK_REASON, BANNED_IMPORT_STATUS
+
+    normalized = account_store.normalize_record(record)
+    normalized["manual_status"] = BANNED_BLOCK_REASON
+    normalized["import_status"] = BANNED_IMPORT_STATUS
+    normalized["cookie_mismatch"] = False
+    if detail:
+        # Keep ban evidence in description? No — keep record clean, log only.
+        pass
+    return normalized
 
 
 def mark_invalid_cookie_record(account_store: Any, record: Dict[str, Any], reason: str) -> Dict[str, Any]:
@@ -77,19 +91,25 @@ def _validated_replacement_accounts(accounts: List[Account]) -> List[Account]:
 def emit_reload_cookie_events(farm: Any, validation: Dict[str, Any]) -> None:
     valid_accounts = list(validation.get("valid_accounts") or [])
     captcha_accounts = list(validation.get("captcha_accounts") or [])
+    banned_accounts = list(validation.get("banned_accounts") or [])
     invalid_accounts = list(validation.get("invalid_accounts") or validation.get("removed_accounts") or [])
     valid_count = len(valid_accounts)
     invalid = int(validation.get("invalid") if validation.get("invalid") is not None else validation.get("removed") or 0)
     captcha = int(validation.get("captcha") or 0)
-    summary_level = "warning" if (invalid or captcha) else "success"
+    banned = int(validation.get("banned") or len(banned_accounts) or 0)
+    summary_level = "warning" if (invalid or captcha or banned) else "success"
+    summary = f"Reload Cookies checked: {valid_count} valid, {captcha} CAPTCHA, {invalid} invalid"
+    if banned:
+        summary += f", {banned} banned"
     farm._push_event(
         "cookie",
-        f"Reload Cookies checked: {valid_count} valid, {captcha} CAPTCHA, {invalid} invalid",
+        summary,
         severity=summary_level,
         reason="reload_cookies",
         valid=valid_count,
         captcha=captcha,
         invalid=invalid,
+        banned=banned,
     )
     for item in valid_accounts:
         username = str(item.get("username") or "Unknown")
@@ -110,6 +130,17 @@ def emit_reload_cookie_events(farm: Any, validation: Dict[str, Any]) -> None:
             severity="warn",
             reason=CAPTCHA_REASON,
             detail=detail,
+        )
+    for item in banned_accounts:
+        username = str(item.get("username") or "Unknown")
+        reason = str(item.get("reason") or "banned")
+        farm._push_event(
+            "cookie",
+            f"Reload Cookies banned: {username} - {reason}",
+            account=_find_runtime_account(farm, username),
+            severity="error",
+            reason="banned",
+            detail=reason,
         )
     for item in invalid_accounts:
         username = str(item.get("username") or "Unknown")
@@ -308,6 +339,7 @@ def _sync_running_farm_accounts(farm: Any, cfg_mgr: Any, new_accounts: List[Acco
     removed = 0
     workers_started = 0
     captcha_synced = 0
+    banned_synced = 0
     resumed = 0
     reconciled: List[Account] = []
 
@@ -330,9 +362,23 @@ def _sync_running_farm_accounts(farm: Any, cfg_mgr: Any, new_accounts: List[Acco
         reconciled.append(account)
         was_captcha = is_account_captcha_required(account)
         now_captcha = is_account_captcha_required(fresh)
+        was_banned = is_account_banned(account)
+        now_banned = is_account_banned(fresh)
         _sync_existing_runtime_account(account, fresh)
         synced += 1
-        if now_captcha:
+        if now_banned:
+            banned_synced += 1
+            from services.ban_guard import set_account_banned_hold
+
+            set_account_banned_hold(
+                account,
+                fresh.manual_status or BANNED_BLOCK_REASON,
+                source="reload_cookies",
+                runtime_writer=farm._runtime_state,
+            )
+            if farm._recovery:
+                farm._recovery.fail_account(account, BANNED_REASON, BANNED_BLOCK_REASON)
+        elif now_captcha:
             captcha_synced += 1
             set_account_captcha_hold(account, fresh.manual_status or CAPTCHA_BLOCK_REASON, source="reload_cookies", runtime_writer=farm._runtime_state)
             if farm._recovery:
@@ -344,6 +390,39 @@ def _sync_running_farm_accounts(farm: Any, cfg_mgr: Any, new_accounts: List[Acco
             elif was_captcha:
                 ok, _ = farm.resume_captcha_account(account._config_username)
                 if ok:
+                    resumed += 1
+            elif was_banned:
+                # Banned cleared (Reload valid / manual Unmark): restart dead
+                # worker so the account rejoins without a full restart.
+                try:
+                    workers = getattr(farm, "_workers", None) or {}
+                    worker = workers.get(account._config_username)
+                    alive = bool(worker is not None and worker.is_alive())
+                except Exception:
+                    alive = False
+                if not alive:
+                    if _start_added_worker(farm, account):
+                        workers_started += 1
+                        resumed += 1
+                    else:
+                        try:
+                            orchestrator = getattr(farm, "_runtime_orchestrator", None)
+                            if orchestrator is not None and hasattr(orchestrator, "request_evaluate"):
+                                orchestrator.request_evaluate(account, trigger="banned_cleared")
+                                resumed += 1
+                        except Exception:
+                            pass
+                else:
+                    try:
+                        worker.wake()
+                    except Exception:
+                        pass
+                    try:
+                        orchestrator = getattr(farm, "_runtime_orchestrator", None)
+                        if orchestrator is not None and hasattr(orchestrator, "request_evaluate"):
+                            orchestrator.request_evaluate(account, trigger="banned_cleared")
+                    except Exception:
+                        pass
                     resumed += 1
         _record_runtime_snapshot(farm, account)
 
@@ -361,6 +440,7 @@ def _sync_running_farm_accounts(farm: Any, cfg_mgr: Any, new_accounts: List[Acco
         runtime_removed=removed,
         workers_started=workers_started,
         captcha=captcha_synced,
+        banned=banned_synced,
         resumed=resumed,
     )
     return len(new_accounts)

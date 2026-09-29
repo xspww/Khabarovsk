@@ -10,6 +10,7 @@ from services.network_monitor import NET_ONLINE
 from services.process_service import ProcessManager
 from services.resource_monitor import get_rt_monitor
 from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_LABEL, is_account_captcha_required
+from services.ban_guard import BANNED_BLOCK_REASON, BANNED_LABEL, is_account_banned
 from runtime.account_worker import AccountWorker
 from runtime.account_selection import runtime_account_filter_reason
 from runtime.runtime_health import account_health_flags, build_runtime_health
@@ -246,12 +247,18 @@ class RuntimeViewModelBuilder:
                 state_color = "#38bdf8"
             cooldown_until = float(acc.cooldown_until or 0.0)
             cooldown_left = max(0, int(cooldown_until - time.time()))
+            banned_required = is_account_banned(acc)
             captcha_required = is_account_captcha_required(acc)
-            if captcha_required:
+            if banned_required:
+                state_label = BANNED_LABEL
+                state_color = "#ef4444"
+            elif captcha_required:
                 state_label = CAPTCHA_LABEL
                 state_color = "#f0c76f"
             blocked_reason = account_launch_block_reason(acc) or runtime_account_filter_reason(acc, cfg_snapshot)
-            if captcha_required:
+            if banned_required:
+                blocked_reason = BANNED_BLOCK_REASON
+            elif captcha_required:
                 blocked_reason = CAPTCHA_BLOCK_REASON
             if not blocked_reason and acc.last_crash_reason == "cookie_mismatch":
                 blocked_reason = acc.manual_status or acc.last_error or AccountWorker.REASON_MESSAGES.get("cookie_mismatch", "cookie_mismatch")
@@ -290,6 +297,8 @@ class RuntimeViewModelBuilder:
                 "launchable": launchable,
                 "blocked_reason": blocked_reason,
                 "captcha_required": bool(captcha_required),
+                "banned": bool(banned_required),
+                "import_status": getattr(acc, "import_status", ""),
                 "cookie_username": acc.cookie_username,
                 "cookie_user_id": acc.cookie_user_id,
                 "user_id": getattr(acc, "user_id", "") or acc.cookie_user_id,

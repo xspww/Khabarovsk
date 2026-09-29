@@ -100,11 +100,14 @@ export function renderRamCleanupPanel(e) {
   const pct = src && src.current ? num(src.current.percent, NaN) : NaN;
   const freed = src ? num(src.last_freed_mb, 0) : 0;
   let countdown = "";
-  if (enabled && src && num(src.next_check_in_seconds, 0) > 0) {
-    const s = Math.ceil(num(src.next_check_in_seconds, 0));
-    countdown = s >= 60 ? ` · Next check in ${Math.ceil(s / 60)} min` : ` · Next check in ${s}s`;
+  const nextIn = (src && src.next_clean_in_seconds != null)
+    ? num(src.next_clean_in_seconds, 0)
+    : num(src && src.next_check_in_seconds, 0);
+  if (enabled && nextIn > 0) {
+    const s = Math.ceil(nextIn);
+    countdown = s >= 60 ? ` · Next clean in ${Math.ceil(s / 60)} min` : ` · Next clean in ${s}s`;
   } else if (enabled) {
-    countdown = ` · Checks every ${interval} min`;
+    countdown = ` · Cleans every ${interval} min`;
   }
   const status = $("ram-cleanup-status");
   if (status) {
@@ -132,7 +135,7 @@ export async function saveRamCleanupPanel(e) {
   const payload = {
     enabled: $("ram-cleanup-enabled").checked,
     threshold_pct: clamp(Math.round(num($("ram-cleanup-threshold").value, 85)), 50, 95),
-    interval_min: clamp(Math.round(num($("ram-cleanup-interval").value, 15)), 5, 120),
+    interval_min: Math.max(5, Math.round(num($("ram-cleanup-interval").value, 15))),
   };
   try {
     const res = await api("/performance/ram-cleanup", "POST", payload);

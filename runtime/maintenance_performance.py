@@ -210,42 +210,58 @@ class MaintenancePerformanceMixin:
             pass
 
     def _apply_ram_cleanup(self):
-        """Auto RAM cleanup (MemReduct port): threshold + interval + 5min cooldown."""
+        """Auto RAM cleanup (MemReduct port): independent dual triggers.
+
+        - Threshold trigger: RAM >= threshold -> clean immediately, no
+          waiting for the interval.
+        - Interval trigger: every N minutes -> clean unconditionally.
+        Both still respect the 5min cooldown + admin requirement.
+        Runs every performance cycle (~15s) so threshold hits are prompt.
+        """
         if not bool(self._cfg.get("ram_cleanup_enabled", False)):
             return
         try:
             now = time.time()
-            interval_min = max(5, min(120, int(_num_cfg(self._cfg.get("ram_cleanup_interval_min", 15), 15))))
-            last_check = float(getattr(self, "_last_ram_cleanup_check_at", 0.0) or 0.0)
-            if last_check and (now - last_check) < (interval_min * 60.0):
-                return
-            self._last_ram_cleanup_check_at = now
             from services.ram_cleanup import RAM_CLEANUP
 
-            decision = RAM_CLEANUP.should_auto_clean(self._cfg, now)
+            decide = getattr(RAM_CLEANUP, "decide_auto_clean",
+                             RAM_CLEANUP.should_auto_clean)
+            decision = decide(self._cfg, now)
             if not decision.get("eligible"):
                 reason = str(decision.get("reason") or "")
+                if reason == "below_threshold":
+                    # Normal state (checked every ~15s) — stay silent to
+                    # avoid flooding the terminal.
+                    return
+                # Throttle repeated skip logs (threshold stays high while
+                # cooldown/admin blocks): at most once per 5 min.
+                last_skip = float(getattr(self, "_last_ram_cleanup_skip_log_at", 0.0) or 0.0)
+                if last_skip and (now - last_skip) < 300.0:
+                    return
+                self._last_ram_cleanup_skip_log_at = now
                 pct_text = f"{float(decision.get('percent') or 0):.1f}"
+                trigger = str(decision.get("trigger") or "")
                 if reason == "requires_admin":
                     flog_kv("PERFORMANCE", "ram_cleanup_skipped_no_admin", "warning",
-                            percent=pct_text, source="auto")
-                elif reason in ("below_threshold", "cooldown"):
-                    # Visible heartbeat: without this the scheduled check is
-                    # silent and looks like "not cleaning on time / no terminal".
+                            percent=pct_text, trigger=trigger, source="auto")
+                elif reason == "cooldown":
                     flog_kv("PERFORMANCE", "ram_cleanup_skipped",
                             reason=reason, percent=pct_text,
                             threshold=f"{float(decision.get('threshold') or 0):.1f}",
                             cooldown_remaining=decision.get("cooldown_remaining", 0),
-                            source="auto")
+                            trigger=trigger, source="auto")
                 return
+            trigger = str(decision.get("trigger") or "")
             result = RAM_CLEANUP.clean(source="auto")
             if result.get("ok"):
                 flog_kv("PERFORMANCE", "ram_cleanup_auto",
                         freed_mb=result.get("freed_mb", 0.0),
-                        percent=f"{float(decision.get('percent') or 0):.1f}", source="auto")
+                        percent=f"{float(decision.get('percent') or 0):.1f}",
+                        trigger=trigger, source="auto")
             else:
                 flog_kv("PERFORMANCE", "ram_cleanup_auto_failed", "warning",
-                        error=str(result.get("msg", ""))[:200], source="auto")
+                        error=str(result.get("msg", ""))[:200],
+                        trigger=trigger, source="auto")
         except Exception as exc:
             try:
                 flog_kv("PERFORMANCE", "ram_cleanup_auto_failed", "warning", error=str(exc), source="auto")

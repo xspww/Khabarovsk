@@ -133,6 +133,15 @@ def _num(value: Any, default: float) -> float:
         return default
 
 
+def _interval_min(value: Any, default: int = 15) -> int:
+    """Interval minutes: free upper bound, minimum 5."""
+    try:
+        parsed = int(float(value))
+    except Exception:
+        return int(default)
+    return max(5, parsed)
+
+
 def _win_version() -> tuple:
     try:
         v = sys.getwindowsversion()
@@ -181,20 +190,44 @@ class RamCleanupService:
         self._lock = threading.RLock()
         self._last_run_at = 0.0
         self._last_check_at = 0.0
+        self._interval_anchor_at = 0.0
         self._last_freed_mb = 0.0
         self._last_status: Dict[str, Any] = {}
+
+    def current_percent(self) -> float:
+        try:
+            return float(_ram_snapshot_mb().get("percent", 0.0) or 0.0)
+        except Exception:
+            return 0.0
+
+    def get_last_run_at(self) -> float:
+        with self._lock:
+            return float(self._last_run_at or 0.0)
+
+    def _next_clean_at(self, enabled: bool, interval_min: int,
+                       last_run: float, anchor: float) -> float:
+        if not enabled:
+            return 0.0
+        base = last_run or anchor
+        if not base:
+            return 0.0
+        try:
+            return float(base) + float(interval_min) * 60.0
+        except Exception:
+            return 0.0
 
     # -- stats --
     def snapshot(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
         snap = _ram_snapshot_mb()
         enabled = bool(cfg.get("ram_cleanup_enabled", False))
-        interval_min = max(5, min(120, int(_num(cfg.get("ram_cleanup_interval_min", 15), 15))))
+        interval_min = _interval_min(cfg.get("ram_cleanup_interval_min", 15))
         with self._lock:
             last_at = self._last_run_at
             last_check = self._last_check_at
+            anchor = self._interval_anchor_at
             freed = self._last_freed_mb
-        next_check_at = (last_check + interval_min * 60.0) if (enabled and last_check) else 0.0
-        next_in = max(0, int(next_check_at - time.time())) if next_check_at else 0
+        next_clean_at = self._next_clean_at(enabled, interval_min, last_at, anchor)
+        next_in = max(0, int(next_clean_at - time.time())) if next_clean_at else 0
         return {
             "ok": True,
             "enabled": enabled,
@@ -205,7 +238,12 @@ class RamCleanupService:
             "current": snap,
             "last_run_at": last_at,
             "last_check_at": last_check,
-            "next_check_at": next_check_at,
+            # Interval now means "clean every N min" (unconditional), so the
+            # countdown is time until the next clean. Keep next_check_* as an
+            # alias for older dashboard builds.
+            "next_clean_at": next_clean_at,
+            "next_clean_in_seconds": next_in,
+            "next_check_at": next_clean_at,
             "next_check_in_seconds": next_in,
             "last_freed_mb": round(float(freed), 1),
             "last": dict(self._last_status),
@@ -216,27 +254,57 @@ class RamCleanupService:
             return max(0.0, _CLEANUP_COOLDOWN_SECONDS - (now - self._last_run_at)) \
                 if self._last_run_at else 0.0
 
-    def should_auto_clean(self, cfg: Dict[str, Any], now: float | None = None) -> Dict[str, Any]:
+    def decide_auto_clean(self, cfg: Dict[str, Any], now: float | None = None) -> Dict[str, Any]:
+        """Independent dual-trigger decision.
+
+        - Threshold trigger: RAM percent >= threshold -> clean immediately,
+          no waiting for the interval.
+        - Interval trigger: time since last clean (or since first seen when
+          never cleaned) >= interval_min -> clean unconditionally.
+        """
         now = now if now is not None else time.time()
         if not bool(cfg.get("ram_cleanup_enabled", False)):
-            return {"eligible": False, "reason": "disabled"}
-        with self._lock:
-            self._last_check_at = now
+            return {"eligible": False, "reason": "disabled", "trigger": "none"}
         threshold = max(50.0, min(95.0, _num(cfg.get("ram_cleanup_threshold_pct", 85.0), 85.0)))
+        interval_min = _interval_min(cfg.get("ram_cleanup_interval_min", 15))
         snap = _ram_snapshot_mb()
-        if snap["percent"] < threshold:
+        percent = float(snap.get("percent", 0.0) or 0.0)
+        with self._lock:
+            if not self._interval_anchor_at:
+                self._interval_anchor_at = now
+            self._last_check_at = now
+            last_run = self._last_run_at
+            anchor = self._interval_anchor_at
+        base = last_run or anchor
+        interval_due = (now - base) >= (interval_min * 60.0) if base else False
+        threshold_hit = percent >= threshold
+        next_clean_at = self._next_clean_at(True, interval_min, last_run, anchor)
+        next_in = max(0, int(next_clean_at - now)) if next_clean_at else 0
+        common = {"percent": percent, "threshold": threshold,
+                  "interval_min": interval_min,
+                  "next_clean_in_seconds": next_in,
+                  "next_check_in_seconds": next_in}
+        if not threshold_hit and not interval_due:
             return {"eligible": False, "reason": "below_threshold",
-                    "percent": snap["percent"], "threshold": threshold}
+                    "trigger": "none", **common}
+        trigger = "threshold" if threshold_hit else "interval"
+        if threshold_hit and interval_due:
+            trigger = "threshold+interval"
         remaining = self._check_cooldown(now)
         if remaining > 0:
             return {"eligible": False, "reason": "cooldown",
                     "cooldown_remaining": round(remaining, 1),
-                    "percent": snap["percent"], "threshold": threshold}
+                    "trigger": trigger, **common}
         if not is_admin():
             return {"eligible": False, "reason": "requires_admin",
-                    "percent": snap["percent"], "threshold": threshold}
+                    "trigger": trigger, **common}
         return {"eligible": True, "reason": "ready",
-                "percent": snap["percent"], "threshold": threshold}
+                "trigger": trigger, **common}
+
+    def should_auto_clean(self, cfg: Dict[str, Any], now: float | None = None) -> Dict[str, Any]:
+        # Backward-compatible wrapper — now backed by the dual-trigger
+        # decision (threshold immediate, interval unconditional).
+        return self.decide_auto_clean(cfg, now)
 
     # -- core clean (MemReduct REDUCT_MASK_DEFAULT port) --
     def clean(self, source: str = "manual") -> Dict[str, Any]:
@@ -370,5 +438,5 @@ def normalize_ram_cleanup_settings(source: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "enabled": bool(source.get("ram_cleanup_enabled", source.get("enabled", False))),
         "threshold_pct": max(50.0, min(95.0, threshold)),
-        "interval_min": max(5, min(120, int(interval))),
+        "interval_min": _interval_min(interval),
     }

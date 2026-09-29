@@ -21,6 +21,7 @@ from services.ban_guard import (
     is_banned_status_text,
     is_banned_text,
     is_suspended_status_text,
+    is_suspended_text,
 )
 from services.captcha_guard import (
     CAPTCHA_BLOCK_REASON,

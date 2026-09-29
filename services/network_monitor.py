@@ -5,6 +5,8 @@ import time
 import urllib.request
 from core import flog, EventBus
 from typing import Optional
+
+import net_tls
 NET_ONLINE   = "ONLINE"
 NET_DEGRADED = "DEGRADED"
 NET_OFFLINE  = "OFFLINE"
@@ -68,7 +70,7 @@ class NetworkMonitor:
         try:
             req = urllib.request.Request(url, method="GET",
                                          headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
+            with net_tls.urlopen(req, timeout=timeout) as r:
                 r.read(64)
             return True
         except Exception:

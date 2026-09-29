@@ -13,6 +13,7 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Tuple, Optional
+import net_tls
 from app_paths import EXECUTABLE_PATH, IS_COMPILED
 from account_hybrid import ACCOUNT_STORE, decrypt_cookie
 from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, captcha_detail, is_captcha_text
@@ -171,7 +172,7 @@ class RobloxHTTP:
                 req_headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
         req = urllib.request.Request(url, data=body, method=method.upper(), headers=req_headers)
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as resp:
+            with net_tls.urlopen(req, timeout=timeout) as resp:
                 return resp.status, resp.read().decode("utf-8", errors="replace"), dict(resp.headers.items())
         except urllib.error.HTTPError as exc:
             response_headers = dict(exc.headers.items())
@@ -333,7 +334,7 @@ def fetch_moderation_status(cookie: str, timeout: float = 8.0) -> Tuple[Optional
         headers={**MODERATION_HEADERS, "Cookie": f".ROBLOSECURITY={token};"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with net_tls.urlopen(req, timeout=timeout) as resp:
             raw = resp.read().decode("utf-8", errors="replace")
     except urllib.error.HTTPError as exc:
         if exc.code == 401:
@@ -400,7 +401,7 @@ def fetch_user_ban_status(user_id: str, timeout: float = 8.0, trusted_id: bool =
     url = f"{USERS_BASE}v1/users/{uid}"
     try:
         req = urllib.request.Request(url, headers=dict(PUBLIC_HEADERS))
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with net_tls.urlopen(req, timeout=timeout) as resp:
             try:
                 data = json.loads(resp.read().decode("utf-8", errors="replace"))
             except Exception:
@@ -444,7 +445,7 @@ def fetch_user_id_by_username(username: str, timeout: float = 8.0) -> Tuple[str,
         headers={**PUBLIC_HEADERS, "Content-Type": "application/json"},
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with net_tls.urlopen(req, timeout=timeout) as resp:
             try:
                 data = json.loads(resp.read().decode("utf-8", errors="replace"))
             except Exception:

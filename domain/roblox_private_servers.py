@@ -9,6 +9,8 @@ import urllib.parse
 import urllib.request
 from typing import Any, Dict, List, Tuple, Optional
 
+import net_tls
+
 USER_AGENT = "CronusLauncherHybrid/1.0"
 ROBLOX_HOME = "https://www.roblox.com/"
 GAMES_BASE = "https://games.roblox.com/"
@@ -98,7 +100,7 @@ def resolve_vip_access_code(cookie: str, vip_link: str, timeout: float = 12.0) -
         },
     )
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with net_tls.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8", errors="replace")
             status = int(resp.status)
     except urllib.error.HTTPError as exc:
@@ -147,7 +149,7 @@ def universe_id_for_place(place_id: str, timeout: float = 8.0) -> Tuple[bool, st
     url = APIS_BASE + f"universes/v1/places/{urllib.parse.quote(place, safe='')}/universe"
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json, text/plain, */*"})
     try:
-        with urllib.request.urlopen(req, timeout=timeout) as resp:
+        with net_tls.urlopen(req, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8", errors="replace"))
     except urllib.error.HTTPError as exc:
         return False, "", f"Place to universe lookup failed ({exc.code})"

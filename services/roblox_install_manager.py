@@ -15,6 +15,8 @@ import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Callable, Optional
 
+import net_tls
+
 VERSION_RE = re.compile(r"^(?:version-)?[0-9a-fA-F]{16,64}$")
 # Official Roblox endpoints only. Do NOT use third-party version trackers
 # (e.g. weao.xyz) to decide which client to download.
@@ -626,7 +628,7 @@ class RobloxInstallManager:
         return self.fetch_official_latest_version()
 
     def fetch_official_latest_version(self) -> str:
-        with urllib.request.urlopen(urllib.request.Request(LATEST_VERSION_URL, headers={"User-Agent": CRONUS_USER_AGENT}), timeout=20) as response:
+        with net_tls.urlopen(urllib.request.Request(LATEST_VERSION_URL, headers={"User-Agent": CRONUS_USER_AGENT}), timeout=20) as response:
             data = json.loads(response.read().decode("utf-8", "replace"))
         version = data.get("clientVersionUpload") or data.get("version")
         return normalize_roblox_version(str(version or ""))
@@ -765,11 +767,11 @@ class RobloxInstallManager:
             pass
 
     def _download_text(self, url: str) -> str:
-        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "CronusLauncher/RT"}), timeout=45) as response:
+        with net_tls.urlopen(urllib.request.Request(url, headers={"User-Agent": "CronusLauncher/RT"}), timeout=45) as response:
             return response.read().decode("utf-8", "replace")
 
     def _download_file(self, url: str, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "CronusLauncher/RT"}), timeout=90) as response:
+        with net_tls.urlopen(urllib.request.Request(url, headers={"User-Agent": "CronusLauncher/RT"}), timeout=90) as response:
             with open(path, "wb") as fh:
                 shutil.copyfileobj(response, fh)

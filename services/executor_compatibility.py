@@ -6,6 +6,8 @@ import time
 import urllib.request
 from typing import Any, Callable, Dict, Iterable, Optional
 
+import net_tls
+
 
 WEAO_BASE = "https://weao.xyz/api"
 WEAO_USER_AGENT = "WEAO-3PService"
@@ -48,7 +50,7 @@ class ExecutorCompatibilityService:
             f"{WEAO_BASE}/{path.lstrip('/')}",
             headers={"User-Agent": WEAO_USER_AGENT, "Accept": "application/json"},
         )
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with net_tls.urlopen(request, timeout=15) as response:
             return json.loads(response.read().decode("utf-8", "replace"))
 
     def _fetch_official_roblox_version(self) -> str:
@@ -56,7 +58,7 @@ class ExecutorCompatibilityService:
             OFFICIAL_ROBLOX_VERSION_URL,
             headers={"User-Agent": OFFICIAL_USER_AGENT, "Accept": "application/json"},
         )
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with net_tls.urlopen(request, timeout=15) as response:
             data = json.loads(response.read().decode("utf-8", "replace"))
         version = str((data or {}).get("clientVersionUpload") or (data or {}).get("version") or "").strip()
         if not version:

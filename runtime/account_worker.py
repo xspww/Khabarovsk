@@ -6,6 +6,7 @@ import urllib.error
 import urllib.request
 from typing import Any, Dict, List, Optional
 
+import net_tls
 from core import (
     AccountState,
     cookie_identity_block_reason,
@@ -713,7 +714,7 @@ class AccountWorker(threading.Thread):
                     "Accept": "application/json",
                 },
             )
-            with urllib.request.urlopen(req, timeout=8) as resp:
+            with net_tls.urlopen(req, timeout=8) as resp:
                 data = __import__("json").loads(resp.read())
             username = data.get("name", "")
             user_id = str(data.get("id") or "")

@@ -11,6 +11,7 @@ import urllib.request
 import webbrowser
 from typing import Any, Dict, List, Optional, Tuple
 from fastapi import HTTPException, Request
+import net_tls
 from account_hybrid import ACCOUNT_STORE, audit_event
 from core import banned_block_reason, cookie_identity_block_reason, cookie_invalid_block_reason
 from roblox_hybrid import resolve_vip_access_code, validate_cookie_details
@@ -284,7 +285,7 @@ def register(app, ctx: ApiContext) -> None:
                 url,
                 headers={"User-Agent": f"Mozilla/5.0 {APP_USER_AGENT}", "Accept": "application/json, text/plain, */*"},
             )
-            with urllib.request.urlopen(req, timeout=8.0) as resp:
+            with net_tls.urlopen(req, timeout=8.0) as resp:
                 return json.loads(resp.read().decode("utf-8", errors="replace"))
 
         try:
@@ -352,7 +353,7 @@ def register(app, ctx: ApiContext) -> None:
                     f"https://www.roblox.com/games/{place}",
                     headers={"User-Agent": f"Mozilla/5.0 {APP_USER_AGENT}", "Accept": "text/html, */*"},
                 )
-                with urllib.request.urlopen(req, timeout=8.0) as resp:
+                with net_tls.urlopen(req, timeout=8.0) as resp:
                     page = resp.read().decode("utf-8", errors="replace")
                 title_match = re.search(r"<title>(.*?)</title>", page, flags=re.I | re.S)
                 if title_match:
@@ -567,7 +568,7 @@ def register(app, ctx: ApiContext) -> None:
                     url,
                     headers={"User-Agent": APP_USER_AGENT, "Accept": "application/json"},
                 )
-                with urllib.request.urlopen(req, timeout=8.0) as resp:
+                with net_tls.urlopen(req, timeout=8.0) as resp:
                     payload = json.loads(resp.read().decode("utf-8", errors="replace"))
                 for item in payload.get("data", []) if isinstance(payload, dict) else []:
                     uid = str(item.get("targetId") or "")

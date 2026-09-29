@@ -40,6 +40,7 @@ from urllib.parse import urlparse
 from typing import Any, Callable, Dict, List, Optional
 
 import app_paths
+import net_tls
 from services.app_version_check import HTTP_TIMEOUT_SECONDS, UPDATE_USER_AGENT, check_app_update
 from services.release_signing import verify_signature_manifest
 
@@ -190,7 +191,13 @@ def _download_once(
     if resume_from > 0:
         headers["Range"] = f"bytes={resume_from}-"
     request = urllib.request.Request(_validate_release_asset_url(url), headers=headers)
-    opener = urllib.request.build_opener(_HttpsOnlyRedirectHandler())
+    # The shared TLS context matters here: without it the download trusted
+    # ssl.create_default_context(), which on a frozen build can carry no CA
+    # at all, and the update died with CERTIFICATE_VERIFY_FAILED on user
+    # machines even though the version check (certifi) had just succeeded.
+    opener = urllib.request.build_opener(
+        _HttpsOnlyRedirectHandler(), net_tls.https_handler()
+    )
     with opener.open(request, timeout=max(120.0, float(HTTP_TIMEOUT_SECONDS or 20.0))) as response:
         try:
             status = int(getattr(response, "status", 200) or 200)
@@ -249,6 +256,18 @@ def _download(
             return
         except Exception as exc:
             last_exc = exc
+            if net_tls.looks_like_certificate_error(exc):
+                # Retrying a TLS trust failure three times only wastes the
+                # user's time, and the bare OpenSSL text ("unable to get local
+                # issuer certificate") does not say which trust store was used.
+                # Fail immediately with what was actually loaded.
+                raise RuntimeError(
+                    "TLS certificate verification failed for the release download"
+                    f" (trusted: {', '.join(net_tls.trust_sources()) or 'nothing'})"
+                    " - this machine's HTTPS may be inspected by a proxy whose CA is"
+                    " not trusted. Retry after installing that CA, or set SSL_CERT_FILE"
+                    " to a CA bundle the machine trusts."
+                ) from exc
             if progress:
                 try:
                     progress(0, 0)

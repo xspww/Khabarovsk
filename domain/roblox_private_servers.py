@@ -457,6 +457,74 @@ def _place_private_server_for(
     return fallback
 
 
+def classify_private_server_failure(message: str) -> str:
+    """Bucket a private-server failure message into a reason code.
+
+    Shared by the START preflight and the per-launch fallback so both agree
+    on what "this game simply has no private servers" means.
+    """
+    text = str(message or "").lower()
+    if "disabled for this universe" in text or "private servers are disabled" in text:
+        return "vip_disabled"
+    if "free-only" in text or "expectedprice" in text:
+        return "vip_paid"
+    if "cookie" in text or "no .rob housesecurity" in text:
+        return "no_cookie"
+    return "vip_error"
+
+
+def vip_unavailable_permanently(message: str) -> bool:
+    """True when the game itself cannot offer a private server.
+
+    Roblox will keep refusing forever, so retrying (or failing the launch)
+    is pointless: the account is better off joining a public server.
+    Transient problems (network, cookie) are NOT permanent.
+    """
+    return classify_private_server_failure(message) in {"vip_disabled", "vip_paid"}
+
+
+# How long a remembered "this game has no private servers" verdict is
+# trusted before asking Roblox again. Long enough that a rejoining farm
+# does not re-probe on every single launch, short enough that enabling
+# VIP servers on the game later still takes effect.
+VIP_UNAVAILABLE_TTL_SECONDS = 6 * 60 * 60
+
+
+def remembered_vip_unavailable(
+    records: Optional[List[Dict[str, Any]]],
+    place_id: Any,
+    now: Optional[float] = None,
+    ttl_seconds: float = VIP_UNAVAILABLE_TTL_SECONDS,
+) -> str:
+    """Return a cached permanent-failure reason for this place, or "".
+
+    Without this, every relaunch of an account on a VIP-less game would
+    spend three API calls (place->universe, my-private-servers,
+    enabled-in-universe) rediscovering the exact same permanent fact.
+    """
+    place = str(place_id or "").strip()
+    if not place:
+        return ""
+    current = float(now if now is not None else time.time())
+    for item in records or []:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("place_id") or "").strip() != place:
+            continue
+        if str(item.get("status") or "").strip().lower() != "error":
+            continue
+        error = str(item.get("error") or "").strip()
+        if not vip_unavailable_permanently(error):
+            continue
+        try:
+            synced_at = float(item.get("synced_at") or 0.0)
+        except Exception:
+            synced_at = 0.0
+        if synced_at and (current - synced_at) <= float(ttl_seconds or 0.0):
+            return error
+    return ""
+
+
 def _render_private_server_name(game_name: str, place_id: str = "") -> str:
     name = str(game_name or "").strip() or (f"Place {place_id}" if place_id else "Private Server")
     name = re.sub(r"\s+", " ", str(name or "")).strip()

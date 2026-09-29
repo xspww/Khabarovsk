@@ -29,8 +29,10 @@ from domain.roblox_private_servers import (
     parse_vip_components,
     parse_vip_link,
     private_servers_enabled_for_universe,
+    remembered_vip_unavailable,
     resolve_vip_access_code,
     universe_id_for_place,
+    vip_unavailable_permanently,
 )
 
 USER_AGENT = "CronusLauncherHybrid/1.0"
@@ -865,6 +867,7 @@ class HybridLauncher:
             job_id = ""
         client = RobloxHTTP(cookie)
         private_server_meta: Dict[str, Any] = {}
+        private_fallback_reason = ""
         auto_private_enabled = bool(
             target.get(
                 "auto_create_private_server_enabled",
@@ -911,6 +914,10 @@ class HybridLauncher:
                 }
             free_only = bool(target.get("auto_create_private_server_free_only", data.get("auto_create_private_server_free_only", True)))
             known_private_servers = list(data.get("owned_private_servers") or [])
+            # A game that had no private servers recently will not have one
+            # now either. Skip the three Roblox calls and reuse the stored
+            # verdict, otherwise every relaunch re-probes the same fact.
+            cached_unavailable = remembered_vip_unavailable(known_private_servers, place_id)
             for candidate_link in link_candidates:
                 components = parse_vip_components(candidate_link)
                 candidate_place = str(components.get("place_id") or "").strip()
@@ -929,76 +936,145 @@ class HybridLauncher:
                         "access_code": candidate_access_code,
                     }
                 )
-            private_result = ensure_owned_private_server(
-                client,
-                owner_user_id=str(identity.get("cookie_user_id") or data.get("cookie_user_id") or ""),
-                place_id=place_id,
-                free_only=free_only,
-                known_servers=known_private_servers,
+            private_result = (
+                {"ok": False, "msg": cached_unavailable, "place_id": place_id}
+                if cached_unavailable
+                else ensure_owned_private_server(
+                    client,
+                    owner_user_id=str(identity.get("cookie_user_id") or data.get("cookie_user_id") or ""),
+                    place_id=place_id,
+                    free_only=free_only,
+                    known_servers=known_private_servers,
+                )
             )
             if not private_result.get("ok"):
-                ACCOUNT_STORE.update_record(
-                    username,
-                    {
-                        "owned_private_servers": _merge_owned_private_server(
-                            list(data.get("owned_private_servers") or []),
-                            {
-                                "owner_user_id": str(identity.get("cookie_user_id") or data.get("cookie_user_id") or ""),
-                                "place_id": place_id,
-                                "universe_id": str(private_result.get("universe_id") or ""),
-                                "status": "error",
-                                "error": str(private_result.get("msg") or "private server creation failed"),
-                                "synced_at": time.time(),
-                            },
-                        )
-                    },
-                )
-                return {
-                    "ok": False,
-                    "fatal": True,
-                    "mode": "vip",
-                    "vip_resolved": False,
-                    "msg": str(private_result.get("msg") or "Private server setup failed"),
-                    "auto_private_server": True,
-                }
-            private_server_meta = dict(private_result)
-            vip_link = str(private_server_meta.get("link") or "").strip()
-            vip_resolution = {
-                "ok": True,
-                "place_id": str(private_server_meta.get("place_id") or place_id),
-                "access_code": str(private_server_meta.get("access_code") or ""),
-                "link_code": str(private_server_meta.get("join_code") or private_server_meta.get("access_code") or ""),
-                "source": f"owned_private_server:{private_server_meta.get('source') or 'unknown'}",
-            }
-            if not vip_link:
-                vip_link = build_owned_private_server_link(place_id, private_server_meta)
-            if not vip_resolution.get("access_code") and vip_link:
-                vip_resolution = resolve_vip_access_code(cookie, vip_link)
-                if not vip_resolution.get("ok"):
+                private_failure_msg = str(private_result.get("msg") or "private server creation failed")
+                if not cached_unavailable:
+                    ACCOUNT_STORE.update_record(
+                        username,
+                        {
+                            "owned_private_servers": _merge_owned_private_server(
+                                list(data.get("owned_private_servers") or []),
+                                {
+                                    "owner_user_id": str(identity.get("cookie_user_id") or data.get("cookie_user_id") or ""),
+                                    "place_id": place_id,
+                                    "universe_id": str(private_result.get("universe_id") or ""),
+                                    "status": "error",
+                                    "error": private_failure_msg,
+                                    "synced_at": time.time(),
+                                },
+                            )
+                        },
+                    )
+                # One game in the pool having no private servers must not
+                # sink the whole run: with multi-game setups the other maps
+                # still work. Only "VIP disabled / paid" is permanent, so
+                # give up on CREATING our own room.
+                #
+                # Careful: a permanent create failure does NOT mean the
+                # account cannot use a private server. A VIP link pasted
+                # from a friend still joins that exact room even when we
+                # are not allowed to create one (paid / free-only mode).
+                # So keep the best usable link and only drop to public
+                # when there is genuinely nothing to join.
+                if vip_unavailable_permanently(private_failure_msg):
+                    auto_private_enabled = False
+                    fallback_link = ""
+                    for candidate in link_candidates:
+                        if not candidate:
+                            continue
+                        cand_place, cand_code = parse_vip_link(candidate)
+                        if cand_place and cand_place != str(place_id):
+                            continue
+                        if not cand_code:
+                            continue
+                        fallback_link = candidate
+                        break
+                    if fallback_link:
+                        vip_link = fallback_link
+                        vip_resolution = {}
+                        vip_resolved = False
+                        private_fallback_reason = private_failure_msg
+                        try:
+                            from core import flog_kv
+
+                            flog_kv(
+                                "LAUNCH",
+                                "private_server_public_fallback",
+                                "warning",
+                                account=username,
+                                place_id=place_id,
+                                reason=private_failure_msg,
+                                joined_existing_vip=True,
+                            )
+                        except Exception:
+                            pass
+                    else:
+                        private_fallback_reason = private_failure_msg
+                        vip_link = ""
+                        links = []
+                        global_vip_link = ""
+                        try:
+                            from core import flog_kv
+
+                            flog_kv(
+                                "LAUNCH",
+                                "private_server_public_fallback",
+                                "warning",
+                                account=username,
+                                place_id=place_id,
+                                reason=private_failure_msg,
+                            )
+                        except Exception:
+                            pass
+                else:
                     return {
                         "ok": False,
                         "fatal": True,
-                        "msg": str(vip_resolution.get("msg") or "Owned private server invite resolve failed"),
                         "mode": "vip",
                         "vip_resolved": False,
+                        "msg": private_failure_msg,
                         "auto_private_server": True,
                     }
-            vip_resolved = True
-            place_id = place_id or str(vip_resolution.get("place_id") or "")
-            owned_servers = _merge_owned_private_server(list(data.get("owned_private_servers") or []), private_server_meta)
-            updated_vip_links = list(data.get("vip_links") or [])
-            if vip_link:
-                components = parse_vip_components(vip_link)
-                if (components.get("link_code") or components.get("access_code")) and vip_link not in updated_vip_links:
-                    updated_vip_links.insert(0, vip_link)
-            ACCOUNT_STORE.update_record(
-                username,
-                {
-                    "owned_private_servers": owned_servers,
-                    "vip_links": updated_vip_links,
-                    "place_id": place_id or data.get("place_id", ""),
-                },
-            )
+            else:
+                private_server_meta = dict(private_result)
+                vip_link = str(private_server_meta.get("link") or "").strip()
+                vip_resolution = {
+                    "ok": True,
+                    "place_id": str(private_server_meta.get("place_id") or place_id),
+                    "access_code": str(private_server_meta.get("access_code") or ""),
+                    "link_code": str(private_server_meta.get("join_code") or private_server_meta.get("access_code") or ""),
+                    "source": f"owned_private_server:{private_server_meta.get('source') or 'unknown'}",
+                }
+                if not vip_link:
+                    vip_link = build_owned_private_server_link(place_id, private_server_meta)
+                if not vip_resolution.get("access_code") and vip_link:
+                    vip_resolution = resolve_vip_access_code(cookie, vip_link)
+                    if not vip_resolution.get("ok"):
+                        return {
+                            "ok": False,
+                            "fatal": True,
+                            "msg": str(vip_resolution.get("msg") or "Owned private server invite resolve failed"),
+                            "mode": "vip",
+                            "vip_resolved": False,
+                            "auto_private_server": True,
+                        }
+                vip_resolved = True
+                place_id = place_id or str(vip_resolution.get("place_id") or "")
+                owned_servers = _merge_owned_private_server(list(data.get("owned_private_servers") or []), private_server_meta)
+                updated_vip_links = list(data.get("vip_links") or [])
+                if vip_link:
+                    components = parse_vip_components(vip_link)
+                    if (components.get("link_code") or components.get("access_code")) and vip_link not in updated_vip_links:
+                        updated_vip_links.insert(0, vip_link)
+                ACCOUNT_STORE.update_record(
+                    username,
+                    {
+                        "owned_private_servers": owned_servers,
+                        "vip_links": updated_vip_links,
+                        "place_id": place_id or data.get("place_id", ""),
+                    },
+                )
         elif not vip_link:
             if isinstance(links, list) and links:
                 vip_link = str(links[0] or "").strip()
@@ -1052,6 +1128,7 @@ class HybridLauncher:
             "launch_uri_preview": re.sub(r"(gameinfo:)[^+]+", r"\1[REDACTED]", uri),
             "attempted_vip": attempted_vip,
             "auto_private_server": bool(auto_private_enabled),
+            "private_server_public_fallback": private_fallback_reason,
             "owned_private_server_id": str(private_server_meta.get("private_server_id") or ""),
             "private_server_source": str(private_server_meta.get("source") or ""),
             "private_server_owner_user_id": str(private_server_meta.get("owner_user_id") or ""),

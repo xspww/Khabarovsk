@@ -254,12 +254,22 @@ def effective_auto_flags(
     legacy_enabled: Any = False,
     legacy_free_only: Any = True,
 ) -> Dict[str, bool]:
+    """Resolve the auto-create flags for a launch.
+
+    The Game card toggle is a MASTER switch: turning it on enables
+    auto-create for every game in the pool, including games added later
+    (which are created with the per-game flag off). A game can still turn
+    it on for itself while the master switch is off, so the two are OR'd.
+    """
+    legacy_on = _bool(legacy_enabled, False)
     if game is not None:
         return {
-            "enabled": _bool(game.get("auto_create_private_server_enabled"), False),
-            "free_only": _bool(game.get("auto_create_private_server_free_only"), True),
+            "enabled": _bool(game.get("auto_create_private_server_enabled"), False) or legacy_on,
+            "free_only": _bool(
+                game.get("auto_create_private_server_free_only"), _bool(legacy_free_only, True)
+            ),
         }
-    return {"enabled": _bool(legacy_enabled, False), "free_only": _bool(legacy_free_only, True)}
+    return {"enabled": legacy_on, "free_only": _bool(legacy_free_only, True)}
 
 
 def describe_target(game: Optional[Mapping[str, Any]], place_id: Any = "") -> str:

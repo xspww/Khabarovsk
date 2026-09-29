@@ -310,10 +310,17 @@ def register(app, ctx: ApiContext) -> None:
                 }
                 return result
             # START-time Auto Create Private Server preflight: attempt the
-            # creation once per place up front. Disabled/paid games fail
-            # here so those accounts are skipped (the rest still run) and
-            # the UI can toast instead of failing mid-run.
-            preflight: dict = {"created": [], "failures": [], "skipped_usernames": []}
+            # creation once per place up front. Games with no private
+            # servers at all (VIP disabled / paid) are reported but NOT
+            # skipped — those accounts join the public server so a single
+            # VIP-less game cannot hold back the other games. Genuine
+            # errors (cookie, transient) still skip.
+            preflight: dict = {
+                "created": [],
+                "failures": [],
+                "skipped_usernames": [],
+                "public_fallback": [],
+            }
             try:
                 from services.private_server_preflight import run_private_server_preflight
 
@@ -359,6 +366,13 @@ def register(app, ctx: ApiContext) -> None:
                 msg += f"; {_blocked_summary(blocked)}"
             if preflight_skipped:
                 msg += f"; {len(preflight_skipped)} skipped (private server unavailable)"
+            public_fallback = [
+                str(name or "").strip()
+                for name in (preflight.get("public_fallback") or [])
+                if str(name or "").strip()
+            ]
+            if public_fallback:
+                msg += f"; {len(public_fallback)} joining public server (game has no VIP)"
             result = {
                 "ok": True,
                 "accepted": True,
@@ -369,6 +383,7 @@ def register(app, ctx: ApiContext) -> None:
                 "blocked": blocked,
                 "private_server_preflight": preflight,
                 "preflight_skipped": preflight_skipped[:10],
+                "preflight_public_fallback": public_fallback[:10],
             }
             return result
         except Exception as e:

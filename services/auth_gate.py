@@ -48,8 +48,24 @@ def evaluate_account_auth_gate(account: Any) -> AuthGateDecision:
     except Exception:
         pass
     try:
-        from services.ban_guard import BANNED_BLOCK_REASON, BANNED_REASON, is_account_banned
+        from services.ban_guard import (
+            BANNED_BLOCK_REASON,
+            BANNED_REASON,
+            SUSPENDED_BLOCK_REASON,
+            SUSPENDED_REASON,
+            is_account_banned,
+            is_account_suspended,
+        )
 
+        # A suspension blocks the launch like a ban but keeps its own reason so
+        # the dashboard can label it instead of reporting a permanent ban.
+        if is_account_suspended(account):
+            return AuthGateDecision(
+                blocked=True,
+                reason_key=SUSPENDED_REASON,
+                reason=SUSPENDED_BLOCK_REASON,
+                category="suspended",
+            )
         if is_account_banned(account):
             return AuthGateDecision(
                 blocked=True,
@@ -132,6 +148,24 @@ def mark_account_auth_quarantined(
             try:
                 runtime_writer.set_recovery(account, status="banned", reason="banned", inflight=False)
                 runtime_writer.set_cooldown(account, 0.0, reason="banned")
+            except Exception:
+                pass
+    elif decision.reason_key == "suspended" or decision.category == "suspended":
+        try:
+            from services.ban_guard import set_account_suspended_hold
+
+            set_account_suspended_hold(
+                account,
+                decision.reason or "",
+                source=source or "auth_gate",
+                runtime_writer=runtime_writer,
+            )
+        except Exception:
+            pass
+        if runtime_writer is not None:
+            try:
+                runtime_writer.set_recovery(account, status="suspended", reason="suspended", inflight=False)
+                runtime_writer.set_cooldown(account, 0.0, reason="suspended")
             except Exception:
                 pass
     else:

@@ -21,6 +21,8 @@ from domain.account_model import (
     cookie_invalid_block_reason,
     is_account_banned,
     is_account_finished,
+    is_account_suspended,
+    suspended_block_reason,
 )
 from domain.states import (
     AccountState,
@@ -69,6 +71,8 @@ __all__ = [
     "cookie_identity_block_reason",
     "cookie_invalid_block_reason",
     "is_account_banned",
+    "is_account_suspended",
+    "suspended_block_reason",
     "flog",
     "flog_kv",
     "flog_struct",

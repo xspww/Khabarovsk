@@ -527,20 +527,36 @@ class AccountDataStore:
                         ban_detail = str(detail or "")
                         if not username:
                             username = str(validated or cookie_username or "")
-                        # Import anyway but marked banned so it never rejoins.
+                        # Import anyway but marked so it never rejoins. A
+                        # suspension keeps its own mark: it blocks the account
+                        # like a ban but is not permanent.
                         if not username:
                             errors.append("banned cookie missing username")
                             continue
                         try:
                             from services.ban_guard import BANNED_BLOCK_REASON as _BANNED_MSG
                             from services.ban_guard import BANNED_IMPORT_STATUS as _BANNED_STATUS
+                            from services.ban_guard import SUSPENDED_BLOCK_REASON as _SUSP_MSG
+                            from services.ban_guard import SUSPENDED_IMPORT_STATUS as _SUSP_STATUS
+                            from services.ban_guard import is_suspended_text as _is_suspended
                         except Exception:
                             _BANNED_MSG = "Account banned (Roblox). Unmark to allow rejoin."
                             _BANNED_STATUS = "banned"
+                            _SUSP_MSG = "Account suspended by Roblox. Unmark to allow rejoin."
+                            _SUSP_STATUS = "suspended"
+                            _is_suspended = lambda *a, **k: False  # type: ignore
+                        suspended = bool(meta.get("is_suspended") or meta.get("suspended")) or bool(
+                            _is_suspended(ban_detail)
+                        )
+                        mark_msg = _SUSP_MSG if suspended else _BANNED_MSG
+                        mark_status = _SUSP_STATUS if suspended else _BANNED_STATUS
+                        word = "suspended" if suspended else "banned"
                         if cookie_username and username.strip().lower() != cookie_username.strip().lower():
-                            errors.append(f"{username} banned — cookie belongs to {cookie_username}, imported with Banned mark")
+                            errors.append(
+                                f"{username} {word} — cookie belongs to {cookie_username}, imported with {word.capitalize()} mark"
+                            )
                         else:
-                            errors.append(f"{username} banned — imported with Banned mark")
+                            errors.append(f"{username} {word} — imported with {word.capitalize()} mark")
                         records.append(
                             {
                                 "username": username,
@@ -548,8 +564,8 @@ class AccountDataStore:
                                 "cookie_username": cookie_username or username,
                                 "cookie_user_id": cookie_user_id,
                                 "cookie_mismatch": False,
-                                "manual_status": _BANNED_MSG,
-                                "import_status": _BANNED_STATUS,
+                                "manual_status": mark_msg,
+                                "import_status": mark_status,
                             }
                         )
                         banned += 1

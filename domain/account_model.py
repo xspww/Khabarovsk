@@ -376,6 +376,23 @@ def banned_block_reason(*values: object) -> str:
     return ""
 
 
+def suspended_block_reason(*values: object) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        lowered = text.lower()
+        if not lowered:
+            continue
+        if lowered.strip() == "suspended":
+            try:
+                from services.ban_guard import SUSPENDED_BLOCK_REASON as _SUSPENDED_MSG
+            except Exception:
+                _SUSPENDED_MSG = "Account suspended by Roblox. Unmark to allow rejoin."
+            return _SUSPENDED_MSG
+        if "suspended by roblox" in lowered or "account suspended" in lowered:
+            return text
+    return ""
+
+
 def is_account_banned(acc: Any) -> bool:
     try:
         from services.ban_guard import is_account_banned as _is_banned
@@ -385,7 +402,17 @@ def is_account_banned(acc: Any) -> bool:
         return False
 
 
+def is_account_suspended(acc: Any) -> bool:
+    try:
+        from services.ban_guard import is_account_suspended as _is_suspended
+
+        return bool(_is_suspended(acc))
+    except Exception:
+        return False
+
+
 FINISHED_STATUS = "Finished"
+SUSPENDED_BLOCK_REASON_FALLBACK = "Account suspended by Roblox. Unmark to allow rejoin."
 
 
 def is_account_finished(acc: Any) -> bool:
@@ -406,6 +433,14 @@ def is_account_finished(acc: Any) -> bool:
 def account_launch_block_reason(acc: Account) -> str:
     if is_account_finished(acc):
         return FINISHED_STATUS
+    # A suspension blocks the launch just as hard as a ban, but it reports its
+    # own reason so the dashboard can label it correctly.
+    if is_account_suspended(acc):
+        return suspended_block_reason(
+            getattr(acc, "manual_status", ""),
+            getattr(acc, "import_status", ""),
+            getattr(acc, "last_error", ""),
+        ) or SUSPENDED_BLOCK_REASON_FALLBACK
     try:
         from services.ban_guard import BANNED_BLOCK_REASON, is_account_banned as _is_banned
 
@@ -422,6 +457,13 @@ def account_launch_block_reason(acc: Account) -> str:
     )
     if banned:
         return banned
+    suspended = suspended_block_reason(
+        getattr(acc, "manual_status", ""),
+        getattr(acc, "import_status", ""),
+        getattr(acc, "last_error", ""),
+    )
+    if suspended:
+        return suspended
     try:
         from services.captcha_guard import CAPTCHA_BLOCK_REASON, is_account_captcha_required
 

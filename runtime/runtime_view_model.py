@@ -10,7 +10,14 @@ from services.network_monitor import NET_ONLINE
 from services.process_service import ProcessManager
 from services.resource_monitor import get_rt_monitor
 from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_LABEL, is_account_captcha_required
-from services.ban_guard import BANNED_BLOCK_REASON, BANNED_LABEL, is_account_banned
+from services.ban_guard import (
+    BANNED_BLOCK_REASON,
+    BANNED_LABEL,
+    SUSPENDED_BLOCK_REASON,
+    SUSPENDED_LABEL,
+    is_account_banned,
+    is_account_suspended,
+)
 from runtime.account_worker import AccountWorker
 from runtime.account_selection import runtime_account_filter_reason
 from runtime.runtime_health import account_health_flags, build_runtime_health
@@ -248,15 +255,24 @@ class RuntimeViewModelBuilder:
             cooldown_until = float(acc.cooldown_until or 0.0)
             cooldown_left = max(0, int(cooldown_until - time.time()))
             banned_required = is_account_banned(acc)
+            suspended_required = is_account_suspended(acc)
+            # The payload reports the two separately so the dashboard can label
+            # a suspension instead of calling it a permanent ban.
+            permanent_ban_required = banned_required and not suspended_required
             captcha_required = is_account_captcha_required(acc)
-            if banned_required:
+            if suspended_required:
+                state_label = SUSPENDED_LABEL
+                state_color = "#f97316"
+            elif banned_required:
                 state_label = BANNED_LABEL
                 state_color = "#ef4444"
             elif captcha_required:
                 state_label = CAPTCHA_LABEL
                 state_color = "#f0c76f"
             blocked_reason = account_launch_block_reason(acc) or runtime_account_filter_reason(acc, cfg_snapshot)
-            if banned_required:
+            if suspended_required:
+                blocked_reason = SUSPENDED_BLOCK_REASON
+            elif banned_required:
                 blocked_reason = BANNED_BLOCK_REASON
             elif captcha_required:
                 blocked_reason = CAPTCHA_BLOCK_REASON
@@ -297,7 +313,8 @@ class RuntimeViewModelBuilder:
                 "launchable": launchable,
                 "blocked_reason": blocked_reason,
                 "captcha_required": bool(captcha_required),
-                "banned": bool(banned_required),
+                "banned": bool(permanent_ban_required),
+                "suspended": bool(suspended_required),
                 "import_status": getattr(acc, "import_status", ""),
                 "cookie_username": acc.cookie_username,
                 "cookie_user_id": acc.cookie_user_id,

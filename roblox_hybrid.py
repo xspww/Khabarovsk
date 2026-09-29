@@ -541,14 +541,35 @@ def validate_cookie_details(cookie: str) -> Tuple[bool, str, str, Dict[str, Any]
     moderation_banned, moderation_detail, _payload = fetch_moderation_status(cookie)
     if moderation_banned is True:
         try:
-            from services.ban_guard import BANNED_BLOCK_REASON as _BANNED_MSG
+            from services.ban_guard import (
+                BANNED_BLOCK_REASON as _BANNED_MSG,
+                is_suspended_text as _is_suspended,
+            )
         except Exception:
             _BANNED_MSG = "Account banned (Roblox). Unmark to allow rejoin."
+            _is_suspended = lambda *a, **k: False  # type: ignore
+        # A suspension blocks the account just as hard as a ban, but it is not
+        # permanent, so it is tracked under its own mark and label.
+        if _is_suspended(moderation_detail):
+            try:
+                from services.ban_guard import SUSPENDED_BLOCK_REASON as _SUSP_MSG
+            except Exception:
+                _SUSP_MSG = "Account suspended by Roblox. Unmark to allow rejoin."
+            return False, username, moderation_detail or _SUSP_MSG, {
+                "username": username,
+                "user_id": user_id,
+                "is_banned": True,
+                "banned": True,
+                "is_suspended": True,
+                "suspended": True,
+            }
         return False, username, moderation_detail or _BANNED_MSG, {
             "username": username,
             "user_id": user_id,
             "is_banned": True,
             "banned": True,
+            "is_suspended": False,
+            "suspended": False,
         }
     # No active intervention — fall back to the public profile, which still
     # owns permanent terminations (those can outlive the cookie).

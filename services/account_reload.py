@@ -25,15 +25,24 @@ COOKIE_INVALID_IMPORT_STATUS = "cookie_invalid"
 
 
 def mark_banned_cookie_record(account_store: Any, record: Dict[str, Any], detail: str = "") -> Dict[str, Any]:
-    from services.ban_guard import BANNED_BLOCK_REASON, BANNED_IMPORT_STATUS
+    from services.ban_guard import (
+        BANNED_BLOCK_REASON,
+        BANNED_IMPORT_STATUS,
+        SUSPENDED_BLOCK_REASON,
+        SUSPENDED_IMPORT_STATUS,
+        is_suspended_status_text,
+        is_suspended_text,
+    )
 
     normalized = account_store.normalize_record(record)
-    normalized["manual_status"] = BANNED_BLOCK_REASON
-    normalized["import_status"] = BANNED_IMPORT_STATUS
+    # Keep an existing suspension a suspension — a dead cookie cannot tell the
+    # two apart, so never silently promote it to a permanent ban.
+    suspended = is_suspended_text(detail) or is_suspended_status_text(
+        (record or {}).get("manual_status"), (record or {}).get("import_status")
+    )
+    normalized["manual_status"] = SUSPENDED_BLOCK_REASON if suspended else BANNED_BLOCK_REASON
+    normalized["import_status"] = SUSPENDED_IMPORT_STATUS if suspended else BANNED_IMPORT_STATUS
     normalized["cookie_mismatch"] = False
-    if detail:
-        # Keep ban evidence in description? No — keep record clean, log only.
-        pass
     return normalized
 
 

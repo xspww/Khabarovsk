@@ -11,8 +11,11 @@ from services.captcha_guard import (
 from services.ban_guard import (
     BANNED_BLOCK_REASON,
     BANNED_IMPORT_STATUS,
+    SUSPENDED_BLOCK_REASON,
     is_banned_status_text,
     is_banned_text,
+    is_suspended_status_text,
+    is_suspended_text,
 )
 from runtime.account_selection import runtime_account_allowlist
 from .settings_state import _apply_game_defaults
@@ -101,6 +104,7 @@ def validate_cookie_records_from_store(store: Any, validate_cookie: Any, audit: 
     invalid: List[Dict[str, str]] = []
     captcha: List[Dict[str, str]] = []
     banned: List[Dict[str, str]] = []
+    suspended: List[Dict[str, str]] = []
     valid: List[Dict[str, str]] = []
     for record in records:
         username = str(record.get("username") or "").strip()
@@ -116,18 +120,21 @@ def validate_cookie_records_from_store(store: Any, validate_cookie: Any, audit: 
         except Exception as exc:
             raise RuntimeError(f"Cookie validation unavailable for {label}: {exc}") from exc
         meta = meta or {}
-        is_banned = bool(meta.get("is_banned") or meta.get("banned")) or bool(is_banned_text(detail))
+        is_suspended = bool(meta.get("is_suspended") or meta.get("suspended")) or bool(is_suspended_text(detail))
+        is_banned = (
+            bool(meta.get("is_banned") or meta.get("banned")) or bool(is_banned_text(detail))
+        ) and not is_suspended
         if not ok:
-            if is_captcha_text(detail) and not is_banned:
+            if is_captcha_text(detail) and not is_banned and not is_suspended:
                 normalized = store.normalize_record(record)
                 normalized["manual_status"] = CAPTCHA_BLOCK_REASON
                 normalized["import_status"] = CAPTCHA_REASON
                 kept.append(normalized)
                 captcha.append({"username": label, "reason": detail or CAPTCHA_REASON})
                 continue
-            if is_banned:
+            if is_banned or is_suspended:
                 normalized = mark_banned_cookie_record(store, record, detail)
-                # Preserve identity so the card still shows who is banned.
+                # Preserve identity so the card still shows who is blocked.
                 validated_username = str(meta.get("username") or cookie_username or "").strip()
                 if validated_username:
                     normalized["cookie_username"] = validated_username
@@ -136,14 +143,22 @@ def validate_cookie_records_from_store(store: Any, validate_cookie: Any, audit: 
                         username = validated_username
                 normalized["cookie_user_id"] = str(meta.get("user_id") or normalized.get("cookie_user_id") or "")
                 kept.append(normalized)
-                banned.append({"username": username or label, "reason": detail or BANNED_BLOCK_REASON})
+                if is_suspended:
+                    suspended.append({"username": username or label, "reason": detail or SUSPENDED_BLOCK_REASON})
+                else:
+                    banned.append({"username": username or label, "reason": detail or BANNED_BLOCK_REASON})
                 continue
-            if is_banned_status_text(record.get("manual_status"), record.get("import_status")):
-                # Cookie is dead so ban cannot be re-confirmed — keep the
-                # previous Banned mark instead of flipping to Invalid.
-                normalized = mark_banned_cookie_record(store, record, detail or "cookie expired, ban mark kept")
+            if is_banned_status_text(record.get("manual_status"), record.get("import_status")) or is_suspended_status_text(
+                record.get("manual_status"), record.get("import_status")
+            ):
+                # Cookie is dead so the state cannot be re-confirmed — keep the
+                # previous mark instead of flipping to Invalid.
+                normalized = mark_banned_cookie_record(store, record, detail or "cookie expired, mark kept")
                 kept.append(normalized)
-                banned.append({"username": username or label, "reason": detail or BANNED_BLOCK_REASON})
+                if is_suspended_status_text(normalized.get("manual_status"), normalized.get("import_status")):
+                    suspended.append({"username": username or label, "reason": detail or SUSPENDED_BLOCK_REASON})
+                else:
+                    banned.append({"username": username or label, "reason": detail or BANNED_BLOCK_REASON})
                 continue
             # Cookie is dead and there is no previous Banned mark. The cookie
             # cannot confirm anything, but the public API still can — check
@@ -200,12 +215,15 @@ def validate_cookie_records_from_store(store: Any, validate_cookie: Any, audit: 
         audit("reload_cookie_invalid", item.get("username", ""), False, reason=item.get("reason", ""))
     for item in banned:
         audit("reload_cookie_banned", item.get("username", ""), False, reason=item.get("reason", ""))
+    for item in suspended:
+        audit("reload_cookie_suspended", item.get("username", ""), False, reason=item.get("reason", ""))
     flog_kv(
         "ACCOUNT_DATA",
         "reload_cookie_validation",
         kept=len(kept),
         invalid=len(invalid),
         banned=len(banned),
+        suspended=len(suspended),
         total=len(records),
     )
     return {
@@ -215,11 +233,13 @@ def validate_cookie_records_from_store(store: Any, validate_cookie: Any, audit: 
         "invalid": len(invalid),
         "captcha": len(captcha),
         "banned": len(banned),
+        "suspended": len(suspended),
         "valid_accounts": valid,
         "removed_accounts": [],
         "invalid_accounts": invalid,
         "captcha_accounts": captcha,
         "banned_accounts": banned,
+        "suspended_accounts": suspended,
     }
 def find_account_record(store: Any, username: str, include_cookie: bool = True) -> Optional[Dict[str, Any]]:
     wanted = str(username or "").strip().lower()

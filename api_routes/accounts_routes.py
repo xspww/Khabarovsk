@@ -20,6 +20,7 @@ from services.ban_guard import (
     clear_account_banned_hold,
     is_banned_status_text,
     is_banned_text,
+    is_suspended_status_text,
 )
 from services.captcha_guard import (
     CAPTCHA_BLOCK_REASON,
@@ -36,6 +37,21 @@ from .settings_state import _normalize_window_size_settings
 from .context import ApiContext
 
 APP_USER_AGENT = "CronusLauncher/RT"
+
+
+def _is_moderation_mark(record: Dict[str, Any]) -> bool:
+    """True when the record carries a Banned or Suspended mark.
+
+    Unmark has to clear both: a suspension blocks the account like a ban but
+    is not permanent, so it is tracked under its own import_status.
+    """
+    if not isinstance(record, dict):
+        return False
+    return is_banned_status_text(record.get("manual_status"), record.get("import_status")) or bool(
+        is_suspended_status_text(record.get("manual_status"), record.get("import_status"))
+    )
+
+
 def _reset_account_runtime_for_finish(farm: Any, acc: Any) -> None:
     """Drop pending recovery/cooldown so a Finished account stays quiet."""
     if acc is None:
@@ -483,10 +499,13 @@ def register(app, ctx: ApiContext) -> None:
         msg = f"Checked cookies: {valid_count} valid"
         captcha_count = int(validation.get("captcha") or 0)
         banned_count = int(validation.get("banned") or len(validation.get("banned_accounts") or []) or 0)
+        suspended_count = int(validation.get("suspended") or 0)
         if captcha_count:
             msg += f", {captcha_count} need CAPTCHA"
         if invalid_count:
             msg += f", marked {invalid_count} invalid"
+        if suspended_count:
+            msg += f", marked {suspended_count} suspended"
         if banned_count:
             msg += f", marked {banned_count} banned"
         if allowlist_result.get("allowlist_cleared"):
@@ -501,6 +520,7 @@ def register(app, ctx: ApiContext) -> None:
                 captcha=captcha_count,
                 invalid=invalid_count,
                 banned=banned_count,
+                suspended=suspended_count,
                 count=count,
             )
         except Exception:
@@ -760,10 +780,12 @@ def register(app, ctx: ApiContext) -> None:
             raise HTTPException(400, "cookie required")
         ok, username, detail, meta = validate_cookie_details(cookie)
         meta = meta or {}
-        banned = bool(meta.get("is_banned") or meta.get("banned")) or bool(is_banned_text(detail))
+        suspended = bool(meta.get("is_suspended") or meta.get("suspended")) or bool(is_suspended_text(detail))
+        banned = (bool(meta.get("is_banned") or meta.get("banned")) or bool(is_banned_text(detail))) and not suspended
+        blocked = banned or suspended
         resolved_username = str(meta.get("username") or username or "")
         resolved_user_id = str(meta.get("user_id") or "")
-        if not ok and not banned:
+        if not ok and not blocked:
             # Cookie is dead, so it cannot confirm a ban on its own. Fall back
             # to the public API by username. When the pasted line carried no
             # "username:" prefix, recover the owner from the stored records so
@@ -784,13 +806,15 @@ def register(app, ctx: ApiContext) -> None:
                     "username": resolved_username or username_hint,
                     "user_id": resolved_user_id,
                     "banned": True,
+                    "suspended": False,
                     "msg": "Account banned (Roblox isBanned=true)",
                 }
         return {
             "ok": ok,
-            "username": resolved_username if (ok or banned or resolved_username) else "",
+            "username": resolved_username if (ok or blocked or resolved_username) else "",
             "user_id": resolved_user_id,
             "banned": banned,
+            "suspended": suspended,
             "msg": detail if not ok else "",
         }
 
@@ -913,8 +937,8 @@ def register(app, ctx: ApiContext) -> None:
         record = _find_account_record(username, include_cookie=False)
         if not record:
             raise HTTPException(404, "Account not found")
-        if not is_banned_status_text(record.get("manual_status"), record.get("import_status")):
-            result = {"ok": True, "cleared": False, "msg": f"{username} is not marked banned"}
+        if not _is_moderation_mark(record):
+            result = {"ok": True, "cleared": False, "msg": f"{username} is not marked Banned or Suspended"}
             finish_idempotent_request(idem, result)
             return result
         updated = ACCOUNT_STORE.update_record(username, {"manual_status": "", "import_status": ""})
@@ -972,7 +996,7 @@ def register(app, ctx: ApiContext) -> None:
                         pass
         except Exception:
             pass
-        result = {"ok": True, "cleared": True, "msg": f"Cleared Banned mark: {username}"}
+        result = {"ok": True, "cleared": True, "msg": f"Cleared moderation mark: {username}"}
         finish_idempotent_request(idem, result)
         return result
 
@@ -997,7 +1021,7 @@ def register(app, ctx: ApiContext) -> None:
             if not record:
                 missing.append(username)
                 continue
-            if not is_banned_status_text(record.get("manual_status"), record.get("import_status")):
+            if not _is_moderation_mark(record):
                 skipped.append(username)
                 continue
             updated = ACCOUNT_STORE.update_record(username, {"manual_status": "", "import_status": ""})
@@ -1049,6 +1073,6 @@ def register(app, ctx: ApiContext) -> None:
                         pass
         except Exception:
             pass
-        return {"ok": True, "cleared": cleared, "missing": missing, "skipped": skipped, "msg": f"Cleared Banned: {len(cleared)}"}
+        return {"ok": True, "cleared": cleared, "missing": missing, "skipped": skipped, "msg": f"Cleared moderation marks: {len(cleared)}"}
     # Web UI routes
     # Cronus Launcher dashboard is served by system_routes.py.

@@ -80,6 +80,7 @@ def _normalize_window_size_settings(ctx: ApiContext, body: Optional[Dict[str, An
         1,
         3600,
     )
+    hide_enabled = bool(body.get("hide_enabled", body.get("roblox_window_hide_enabled", ctx.cfg_mgr.get("roblox_window_hide_enabled", False))))
     return {
         "enabled": enabled,
         "unlock_size_enabled": unlock_size_enabled,
@@ -94,11 +95,24 @@ def _normalize_window_size_settings(ctx: ApiContext, body: Optional[Dict[str, An
         "arrange_margin": arrange_margin,
         "auto_minimize_enabled": auto_minimize_enabled,
         "auto_minimize_seconds": auto_minimize_seconds,
+        "hide_enabled": hide_enabled,
     }
 
 
 def _window_size_status(ctx: ApiContext) -> Dict[str, Any]:
     settings = _normalize_window_size_settings(ctx, {})
+    visible_count = 0
+    hidden_count = 0
+    try:
+        visible_count = len(ProcessManager._visible_roblox_windows(include_minimized=True) or [])
+    except Exception:
+        visible_count = 0
+    try:
+        hidden_fn = getattr(ProcessManager, "_hidden_roblox_windows", None)
+        if callable(hidden_fn):
+            hidden_count = len(hidden_fn() or [])
+    except Exception:
+        hidden_count = 0
     return {
         "ok": True,
         "enabled": settings["enabled"],
@@ -114,6 +128,9 @@ def _window_size_status(ctx: ApiContext) -> Dict[str, Any]:
         "arrange_margin": settings["arrange_margin"],
         "auto_minimize_enabled": settings["auto_minimize_enabled"],
         "auto_minimize_seconds": settings["auto_minimize_seconds"],
+        "hide_enabled": settings["hide_enabled"],
+        "visible_windows": visible_count,
+        "hidden_windows": hidden_count,
         "presets": [{"value": key, "width": value[0], "height": value[1]} for key, value in WINDOW_SIZE_PRESETS.items()],
     }
 

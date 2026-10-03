@@ -152,7 +152,8 @@ class MaintenancePerformanceMixin:
     def _enforce_window_resize(self):
         target = _window_resize_target_from_config(self._cfg)
         arrange = _window_arrange_settings_from_config(self._cfg)
-        if not target and not arrange:
+        hide_enabled = bool(self._cfg.get("roblox_window_hide_enabled", False))
+        if not target and not arrange and not hide_enabled:
             self._last_window_resize_at = time.time()
             # Still run auto-minimize even when resize/arrange are off.
             self._enforce_auto_minimize()
@@ -165,6 +166,24 @@ class MaintenancePerformanceMixin:
         if (now - self._last_window_resize_at) < seconds:
             return
         self._last_window_resize_at = now
+        if hide_enabled:
+            try:
+                hide_result = ProcessService.hide_roblox_windows(reason="auto_window_hide_cycle")
+                if int(hide_result.get("hidden") or 0) > 0:
+                    flog_kv(
+                        "WINDOW",
+                        "auto_window_hide_cycle",
+                        hidden=hide_result.get("hidden", 0),
+                        count=hide_result.get("count", 0),
+                        seconds=f"{seconds:.1f}",
+                    )
+            except Exception:
+                pass
+            try:
+                self._enforce_auto_minimize()
+            except Exception:
+                pass
+            return
         if arrange:
             width, height, columns, rows, gap, margin = arrange
             result = ProcessService.arrange_roblox_windows(
@@ -300,10 +319,14 @@ class MaintenancePerformanceMixin:
 
             windows = []
             try:
-                # Prefer visible-only snapshot so already-minimized windows are skipped.
+                # Minimized windows are already minimized: skip them so we
+                # don't re-minimize + spam logs every cycle.
                 fn = getattr(ProcessManager, "_visible_roblox_windows", None)
                 if callable(fn):
-                    windows = fn() or []
+                    try:
+                        windows = fn(include_minimized=False) or []
+                    except TypeError:
+                        windows = [w for w in (fn() or []) if not w.get("iconic")]
                 else:
                     list_fn = getattr(ProcessManager, "list_live_game_processes", None)
                     if callable(list_fn):

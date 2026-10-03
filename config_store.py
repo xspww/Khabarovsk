@@ -153,6 +153,7 @@ DEFAULTS: Dict[str, Any] = {
     "roblox_window_arrange_rows": 4,
     "roblox_window_arrange_gap": 0,
     "roblox_window_arrange_margin": 0,
+    "roblox_window_hide_enabled": False,
     "multi_roblox_enabled": True,
     "multi_roblox_guard_self_heal_enabled": True,
     "multi_roblox_guard_self_heal_delay_seconds": 5.0,

@@ -60,10 +60,17 @@ def minimize_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
         user32 = ctypes.windll.user32
         SW_MINIMIZE = 6
         minimized: List[Dict[str, Any]] = []
+        skipped_minimized = 0
         for item in windows:
             hwnd = int(item.get("hwnd") or 0)
             if not hwnd:
                 continue
+            try:
+                if bool(item.get("iconic")) or bool(user32.IsIconic(ctypes.c_void_p(hwnd))):
+                    skipped_minimized += 1
+                    continue
+            except Exception:
+                pass
             ok = bool(user32.ShowWindow(ctypes.c_void_p(hwnd), SW_MINIMIZE))
             if ok:
                 minimized.append({"pid": int(item.get("pid") or 0), "hwnd": hwnd})
@@ -75,10 +82,122 @@ def minimize_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
                 minimized=len(minimized),
                 pids=",".join(str(item.get("pid")) for item in minimized),
             )
-        return {"ok": True, "count": len(windows), "minimized": len(minimized), "windows": windows}
+        return {"ok": True, "count": len(windows), "minimized": len(minimized), "skipped_minimized": skipped_minimized, "windows": windows}
     except Exception as exc:
         flog_kv("WINDOW", "minimize_roblox_windows_failed", "warning", error=str(exc), count=len(windows))
         return {"ok": False, "count": len(windows), "minimized": 0, "error": str(exc), "windows": windows}
+
+
+def unminimize_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Manual-action helper: restore minimized windows before arrange/resize.
+
+    Never call from auto cycles (would flicker + defeat auto-minimize).
+    """
+    if not windows:
+        return {"ok": True, "count": 0, "restored": 0, "windows": []}
+    try:
+        user32 = ctypes.windll.user32
+        SW_RESTORE = 9
+        restored: List[Dict[str, Any]] = []
+        for item in windows:
+            hwnd = int(item.get("hwnd") or 0)
+            if not hwnd:
+                continue
+            try:
+                iconic = bool(item.get("iconic"))
+            except Exception:
+                iconic = False
+            try:
+                if not iconic:
+                    iconic = bool(user32.IsIconic(ctypes.c_void_p(hwnd)))
+            except Exception:
+                pass
+            if not iconic:
+                continue
+            try:
+                user32.ShowWindow(ctypes.c_void_p(hwnd), SW_RESTORE)
+                restored.append({"pid": int(item.get("pid") or 0), "hwnd": hwnd})
+            except Exception:
+                continue
+        if restored:
+            flog_kv(
+                "WINDOW",
+                "unminimized_roblox_windows",
+                count=len(windows),
+                restored=len(restored),
+                pids=",".join(str(item.get("pid")) for item in restored),
+            )
+        return {"ok": True, "count": len(windows), "restored": len(restored), "windows": windows}
+    except Exception as exc:
+        flog_kv("WINDOW", "unminimize_roblox_windows_failed", "warning", error=str(exc), count=len(windows))
+        return {"ok": False, "count": len(windows), "restored": 0, "error": str(exc), "windows": windows}
+
+
+def hide_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """SW_HIDE: remove from screen + taskbar, process keeps running."""
+    if not windows:
+        return {"ok": True, "count": 0, "hidden": 0, "windows": []}
+    try:
+        user32 = ctypes.windll.user32
+        SW_HIDE = 0
+        hidden: List[Dict[str, Any]] = []
+        for item in windows:
+            hwnd = int(item.get("hwnd") or 0)
+            if not hwnd:
+                continue
+            try:
+                if not bool(user32.IsWindowVisible(ctypes.c_void_p(hwnd))):
+                    continue
+            except Exception:
+                pass
+            try:
+                user32.ShowWindow(ctypes.c_void_p(hwnd), SW_HIDE)
+                hidden.append({"pid": int(item.get("pid") or 0), "hwnd": hwnd})
+            except Exception:
+                continue
+        if hidden:
+            flog_kv(
+                "WINDOW",
+                "hidden_roblox_windows",
+                count=len(windows),
+                hidden=len(hidden),
+                pids=",".join(str(item.get("pid")) for item in hidden),
+            )
+        return {"ok": True, "count": len(windows), "hidden": len(hidden), "windows": windows}
+    except Exception as exc:
+        flog_kv("WINDOW", "hide_roblox_windows_failed", "warning", error=str(exc), count=len(windows))
+        return {"ok": False, "count": len(windows), "hidden": 0, "error": str(exc), "windows": windows}
+
+
+def show_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """SW_RESTORE hidden windows (process was still running)."""
+    if not windows:
+        return {"ok": True, "count": 0, "shown": 0, "windows": []}
+    try:
+        user32 = ctypes.windll.user32
+        SW_RESTORE = 9
+        shown: List[Dict[str, Any]] = []
+        for item in windows:
+            hwnd = int(item.get("hwnd") or 0)
+            if not hwnd:
+                continue
+            try:
+                user32.ShowWindow(ctypes.c_void_p(hwnd), SW_RESTORE)
+                shown.append({"pid": int(item.get("pid") or 0), "hwnd": hwnd})
+            except Exception:
+                continue
+        if shown:
+            flog_kv(
+                "WINDOW",
+                "shown_roblox_windows",
+                count=len(windows),
+                shown=len(shown),
+                pids=",".join(str(item.get("pid")) for item in shown),
+            )
+        return {"ok": True, "count": len(windows), "shown": len(shown), "windows": windows}
+    except Exception as exc:
+        flog_kv("WINDOW", "show_roblox_windows_failed", "warning", error=str(exc), count=len(windows))
+        return {"ok": False, "count": len(windows), "shown": 0, "error": str(exc), "windows": windows}
 
 
 def resize_windows(windows: List[Dict[str, Any]], width: int, height: int, unlock_size: bool = True) -> Dict[str, Any]:
@@ -111,10 +230,22 @@ def resize_windows(windows: List[Dict[str, Any]], width: int, height: int, unloc
         resized: List[Dict[str, Any]] = []
         failed: List[Dict[str, Any]] = []
         skipped = 0
+        skipped_minimized = 0
         for item in windows:
             hwnd = int(item.get("hwnd") or 0)
             if not hwnd:
                 continue
+            try:
+                if bool(item.get("iconic")) or bool(user32.IsIconic(ctypes.c_void_p(hwnd))):
+                    # SetWindowPos on an iconic window is a no-op for its
+                    # normal position (verified live). Skip here; the window
+                    # keeps its grid slot via enumeration order and is fixed
+                    # on restore/next visible cycle. Manual rearrange restores
+                    # first via unminimize_windows.
+                    skipped_minimized += 1
+                    continue
+            except Exception:
+                pass
             current_width = int(item.get("width") or 0)
             current_height = int(item.get("height") or 0)
             if current_width == width and current_height == height:
@@ -172,6 +303,7 @@ def resize_windows(windows: List[Dict[str, Any]], width: int, height: int, unloc
             "count": len(windows),
             "resized": len(resized),
             "skipped": skipped,
+            "skipped_minimized": skipped_minimized,
             "failed": len(failed),
             "width": width,
             "height": height,
@@ -278,6 +410,7 @@ def arrange_windows(
 
         arranged: List[Dict[str, Any]] = []
         failed: List[Dict[str, Any]] = []
+        skipped_minimized = 0
         for index, item in enumerate(windows):
             hwnd = int(item.get("hwnd") or 0)
             if not hwnd:
@@ -286,6 +419,16 @@ def arrange_windows(
             col = index % effective_columns
             x = work_left + margin + (col * (tile_width + gap))
             y = work_top + margin + (row * (tile_height + gap))
+            try:
+                if bool(item.get("iconic")) or bool(user32.IsIconic(ctypes.c_void_p(hwnd))):
+                    # Reserve the grid slot but don't touch the minimized
+                    # window: SetWindowPos is a no-op on iconic windows.
+                    # It is fixed on restore/next visible cycle; manual
+                    # rearrange restores first via unminimize_windows.
+                    skipped_minimized += 1
+                    continue
+            except Exception:
+                pass
             style = int(get_window_long(ctypes.c_void_p(hwnd), GWL_STYLE) or 0)
             if compact_required:
                 compact_style = (
@@ -338,6 +481,7 @@ def arrange_windows(
             "count": len(windows),
             "arranged": len(arranged),
             "failed": len(failed),
+            "skipped_minimized": skipped_minimized,
             "width": tile_width,
             "height": tile_height,
             "requested_width": target_width,
@@ -385,6 +529,11 @@ def restore_window_styles(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
             hwnd = int(item.get("hwnd") or 0)
             if not hwnd:
                 continue
+            try:
+                if bool(item.get("iconic")) or bool(user32.IsIconic(ctypes.c_void_p(hwnd))):
+                    user32.ShowWindow(ctypes.c_void_p(hwnd), 9)
+            except Exception:
+                pass
             style = int(get_window_long(ctypes.c_void_p(hwnd), GWL_STYLE) or 0)
             if (style & WS_CAPTION) and (style & WS_THICKFRAME):
                 continue

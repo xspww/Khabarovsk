@@ -214,6 +214,13 @@ def register(app, ctx: ApiContext) -> None:
         return _window_size_status(ctx)
 
     def _apply_window_size_settings(settings: dict, reason: str):
+        # Manual action: restore minimized windows first so arrange/resize
+        # applies immediately instead of reporting 0. Auto cycles never call
+        # this (they skip iconic to avoid flicker).
+        try:
+            ProcessService.unminimize_roblox_windows(reason=reason)
+        except Exception:
+            pass
         if settings["arrange_enabled"]:
             return ProcessService.arrange_roblox_windows(
                 settings["width"],
@@ -260,6 +267,7 @@ def register(app, ctx: ApiContext) -> None:
             "roblox_window_arrange_rows": settings["arrange_rows"],
             "roblox_window_arrange_gap": settings["arrange_gap"],
             "roblox_window_arrange_margin": settings["arrange_margin"],
+            "roblox_window_hide_enabled": settings["hide_enabled"],
             "auto_minimize_enabled": settings.get("auto_minimize_enabled", False),
             "auto_minimize_seconds": settings.get("auto_minimize_seconds", 10),
         })
@@ -323,6 +331,66 @@ def register(app, ctx: ApiContext) -> None:
             resized=resize_result.get("resized", 0),
             count=resize_result.get("count", 0),
         )
+        return payload
+
+    @app.post("/api/performance/window-hide")
+    async def api_hide_roblox_windows(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        cfg_mgr.update({"roblox_window_hide_enabled": True})
+        cfg_mgr.save()
+        if hasattr(farm, "apply_config_snapshot"):
+            try:
+                farm.apply_config_snapshot()
+            except Exception:
+                pass
+        result = ProcessService.hide_roblox_windows(reason="api_window_hide")
+        try:
+            hidden = int(result.get("hidden") or 0)
+            count = int(result.get("count") or 0)
+        except Exception:
+            hidden, count = 0, 0
+        audit_event("window_hide", hidden=hidden, count=count)
+        return {"ok": True, "hidden": hidden, "count": count, "hide_enabled": True, "msg": f"hidden {hidden} Roblox window(s)"}
+
+    @app.post("/api/performance/window-show")
+    async def api_show_roblox_windows(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        cfg_mgr.update({"roblox_window_hide_enabled": False})
+        cfg_mgr.save()
+        if hasattr(farm, "apply_config_snapshot"):
+            try:
+                farm.apply_config_snapshot()
+            except Exception:
+                pass
+        try:
+            settings = _normalize_window_size_settings(ctx, body)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        show_result = ProcessService.show_roblox_windows(reason="api_window_show")
+        try:
+            shown = int(show_result.get("shown") or 0)
+        except Exception:
+            shown = 0
+        arrange_result: dict = {}
+        if settings["enabled"] or settings["arrange_enabled"]:
+            arrange_result = _apply_window_size_settings(settings, "api_window_show_arrange")
+        audit_event("window_show", shown=shown, arranged=arrange_result.get("arranged", 0))
+        payload = _window_size_status(ctx)
+        payload.update({
+            "shown": shown,
+            "arrange_result": arrange_result,
+            "msg": f"shown {shown} Roblox window(s)",
+        })
         return payload
 
     @app.get("/api/performance/ram-cleanup")

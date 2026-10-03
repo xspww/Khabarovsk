@@ -166,6 +166,50 @@
   };
   moveWindowControlsTop();
 
+  const ensureVisibilityCard = () => {
+    try { document.getElementById('window-hide-row')?.remove(); } catch (_) {}
+    if (document.getElementById('window-visibility-card')) return;
+    const anchor = document.getElementById('window-settings-card');
+    if (!anchor || !anchor.parentElement) return;
+    const card = document.createElement('section');
+    card.className = 'queue-card';
+    card.id = 'window-visibility-card';
+    card.innerHTML = '<div class="queue-card-head"><div class="queue-card-title">Visibility<div class="hint">Show or hide game windows</div></div></div><div class="queue-rows"><div class="queue-row"><div class="queue-row-copy"><strong>Hide Roblox windows</strong><div class="hint">Hidden from screen and taskbar, games keep running. Turn off to show again.</div></div><div class="queue-row-input"><div class="toggle-row"><input id="window-hide-enabled" type="checkbox"><span hidden></span></div></div></div></div>';
+    anchor.after(card);
+    const toggle = card.querySelector('#window-hide-enabled');
+    const syncToggle = async () => {
+      if (!toggle || toggle.disabled) return;
+      try {
+        const res = await fetch('/api/performance/window-size', { headers: { ...apiHeaders() } });
+        const data = await res.json().catch(() => ({}));
+        if (typeof data.hide_enabled === 'boolean') {
+          toggle.checked = !!data.hide_enabled;
+        } else {
+          const hidden = Number(data.hidden_windows || 0);
+          const visible = Number(data.visible_windows || 0);
+          toggle.checked = hidden > 0 && visible === 0;
+        }
+      } catch (_) {}
+    };
+    toggle?.addEventListener('change', async () => {
+      toggle.disabled = true;
+      try {
+        const path = toggle.checked ? '/api/performance/window-hide' : '/api/performance/window-show';
+        const res = await fetch(path, { method: 'POST', headers: { ...apiHeaders(), 'Content-Type': 'application/json' }, body: '{}' });
+        const data = await res.json().catch(() => ({}));
+        showResultToast(data.msg || (toggle.checked ? 'Roblox windows hidden' : 'Roblox windows shown'));
+      } catch (e) {
+        showResultToast(String(e?.message || e));
+      } finally {
+        toggle.disabled = false;
+        syncToggle();
+      }
+    });
+    syncToggle();
+  };
+  ensureVisibilityCard();
+  new MutationObserver(() => { if (!document.hidden) ensureVisibilityCard(); }).observe(document.body, { childList: true, subtree: true });
+
   document.querySelector('#nav button[data-view="troubleshoot"] .nav-text')?.replaceChildren('Exploits Manager');
   document.querySelector('#view-troubleshoot .page-head .title')?.replaceChildren('Exploits Manager');
   const currentVersionLabel = document.querySelector('#view-troubleshoot .install-status');

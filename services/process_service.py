@@ -29,8 +29,11 @@ from services.process_proof_policy import (
 )
 from services.process_window_ops import (
     arrange_roblox_windows as _arrange_roblox_windows,
+    hide_roblox_windows as _hide_roblox_windows,
     resize_roblox_windows as _resize_roblox_windows,
     restore_roblox_window_styles as _restore_roblox_window_styles,
+    show_roblox_windows as _show_roblox_windows,
+    unminimize_roblox_windows as _unminimize_roblox_windows,
 )
 from services.resource_monitor import get_rt_monitor
 
@@ -750,6 +753,9 @@ class ProcessService:
     resize_roblox_windows = staticmethod(_resize_roblox_windows)
     arrange_roblox_windows = staticmethod(_arrange_roblox_windows)
     restore_roblox_window_styles = staticmethod(_restore_roblox_window_styles)
+    unminimize_roblox_windows = staticmethod(_unminimize_roblox_windows)
+    hide_roblox_windows = staticmethod(_hide_roblox_windows)
+    show_roblox_windows = staticmethod(_show_roblox_windows)
 
 
 class ProcessManager(_ProcessBackend):

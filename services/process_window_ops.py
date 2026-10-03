@@ -85,6 +85,66 @@ def arrange_roblox_windows(
     return result
 
 
+def unminimize_roblox_windows(
+    exclude_pids: Optional[List[int]] = None,
+    reason: str = "",
+    account: Any = None,
+    idempotency_key: str = "",
+) -> Dict[str, Any]:
+    result = _ProcessBackend.unminimize_roblox_windows(exclude_pids=exclude_pids)
+    flog_kv(
+        "WINDOW",
+        "process_window_unminimize",
+        account=_account_name(account) if account is not None else "",
+        restored=result.get("restored", 0),
+        count=result.get("count", 0),
+        reason=reason,
+        process_action="unminimize_roblox_windows",
+        idempotency_key=idempotency_key,
+    )
+    return result
+
+
+def hide_roblox_windows(
+    exclude_pids: Optional[List[int]] = None,
+    reason: str = "",
+    account: Any = None,
+    idempotency_key: str = "",
+) -> Dict[str, Any]:
+    result = _ProcessBackend.hide_roblox_windows(exclude_pids=exclude_pids)
+    flog_kv(
+        "WINDOW",
+        "process_window_hide",
+        account=_account_name(account) if account is not None else "",
+        hidden=result.get("hidden", 0),
+        count=result.get("count", 0),
+        reason=reason,
+        process_action="hide_roblox_windows",
+        idempotency_key=idempotency_key,
+    )
+    return result
+
+
+def show_roblox_windows(
+    exclude_pids: Optional[List[int]] = None,
+    reason: str = "",
+    account: Any = None,
+    idempotency_key: str = "",
+) -> Dict[str, Any]:
+    result = _ProcessBackend.show_roblox_windows(exclude_pids=exclude_pids)
+    flog_kv(
+        "WINDOW",
+        "process_window_show",
+        account=_account_name(account) if account is not None else "",
+        shown=result.get("shown", 0),
+        count=result.get("count", 0),
+        reason=reason,
+        process_action="show_roblox_windows",
+        idempotency_key=idempotency_key,
+    )
+    return result
+
+
 def restore_roblox_window_styles(
     reason: str = "",
     account: Any = None,

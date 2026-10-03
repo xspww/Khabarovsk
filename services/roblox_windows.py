@@ -52,7 +52,46 @@ def _window_snapshot_for_pid(cls, pid: Optional[int]) -> Dict[str, Any]:
 def _count_visible_windows_for_pid(cls, pid: Optional[int]) -> int:
     return int(cls._window_snapshot_for_pid(pid).get("count") or 0)
 
-def _visible_roblox_windows(cls) -> List[Dict[str, Any]]:
+def _placement_normal_rect(user32: Any, hwnd: int) -> Optional[Tuple[int, int, int, int]]:
+    """Return the restored (normal) rect for a window, even when minimized.
+
+    SetWindowPos on an iconic window is a no-op for its normal position
+    (verified live: returns True but rcNormal never moves), so callers need
+    the normal rect to reserve grid slots without touching minimized windows.
+    """
+    try:
+        class POINT(ctypes.Structure):
+            _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+        class RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", ctypes.c_long),
+                ("top", ctypes.c_long),
+                ("right", ctypes.c_long),
+                ("bottom", ctypes.c_long),
+            ]
+
+        class WINDOWPLACEMENT(ctypes.Structure):
+            _fields_ = [
+                ("length", ctypes.c_uint),
+                ("flags", ctypes.c_uint),
+                ("showCmd", ctypes.c_uint),
+                ("ptMinPosition", POINT),
+                ("ptMaxPosition", POINT),
+                ("rcNormalPosition", RECT),
+            ]
+
+        placement = WINDOWPLACEMENT()
+        placement.length = ctypes.sizeof(WINDOWPLACEMENT)
+        if not user32.GetWindowPlacement(ctypes.c_void_p(hwnd), ctypes.byref(placement)):
+            return None
+        rc = placement.rcNormalPosition
+        return int(rc.left), int(rc.top), int(rc.right), int(rc.bottom)
+    except Exception:
+        return None
+
+
+def _visible_roblox_windows(cls, include_minimized: bool = True) -> List[Dict[str, Any]]:
     windows: List[Dict[str, Any]] = []
     try:
         proc_meta: Dict[int, Dict[str, Any]] = {}
@@ -88,26 +127,39 @@ def _visible_roblox_windows(cls) -> List[Dict[str, Any]]:
             meta = proc_meta.get(pid)
             if not meta:
                 return True
-            rect = RECT()
-            if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            iconic = bool(user32.IsIconic(hwnd))
+            if iconic and not include_minimized:
                 return True
-            width = max(0, int(rect.right - rect.left))
-            height = max(0, int(rect.bottom - rect.top))
+            if iconic:
+                normal = _placement_normal_rect(user32, hwnd)
+                if not normal:
+                    return True
+                left, top, right, bottom = normal
+                width = max(0, right - left)
+                height = max(0, bottom - top)
+            else:
+                rect = RECT()
+                if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                    return True
+                left, top, right, bottom = int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)
+                width = max(0, right - left)
+                height = max(0, bottom - top)
             area = width * height
             if width < 60 or height < 45 or area <= 0:
                 return True
             windows.append({
                 "pid": pid,
                 "hwnd": int(hwnd),
-                "left": int(rect.left),
-                "top": int(rect.top),
-                "right": int(rect.right),
-                "bottom": int(rect.bottom),
+                "left": left,
+                "top": top,
+                "right": right,
+                "bottom": bottom,
                 "width": width,
                 "height": height,
                 "area": area,
                 "created": float(meta.get("created") or 0.0),
                 "name": str(meta.get("name") or ""),
+                "iconic": iconic,
             })
             return True
 
@@ -126,11 +178,11 @@ def _visible_roblox_windows(cls) -> List[Dict[str, Any]]:
     return sorted(by_pid.values(), key=lambda item: (float(item.get("created") or 0.0), int(item.get("pid") or 0)))
 
 def minimize_roblox_windows(cls) -> Dict[str, Any]:
-    return minimize_windows(cls._visible_roblox_windows())
+    return minimize_windows(cls._visible_roblox_windows(include_minimized=False))
 
 def resize_roblox_windows(cls, width: int, height: int, unlock_size: bool = True, exclude_pids: Optional[List[int]] = None) -> Dict[str, Any]:
     excluded = {int(pid) for pid in (exclude_pids or []) if pid}
-    windows = [item for item in cls._visible_roblox_windows() if int(item.get("pid") or 0) not in excluded]
+    windows = [item for item in cls._visible_roblox_windows(include_minimized=True) if int(item.get("pid") or 0) not in excluded]
     return resize_windows(windows, width, height, unlock_size=unlock_size)
 
 def _primary_monitor_work_area(cls) -> Dict[str, int]:
@@ -149,11 +201,119 @@ def arrange_roblox_windows(
     rows: Optional[int] = None,
 ) -> Dict[str, Any]:
     excluded = {int(pid) for pid in (exclude_pids or []) if pid}
-    windows = [item for item in cls._visible_roblox_windows() if int(item.get("pid") or 0) not in excluded]
+    windows = [item for item in cls._visible_roblox_windows(include_minimized=True) if int(item.get("pid") or 0) not in excluded]
     return arrange_windows(windows, width, height, columns, gap, margin, unlock_size=unlock_size, resize=resize, rows=rows)
 
 def restore_roblox_window_styles(cls) -> Dict[str, Any]:
-    return restore_window_styles(cls._visible_roblox_windows())
+    return restore_window_styles(cls._visible_roblox_windows(include_minimized=True))
+
+def unminimize_roblox_windows(cls, exclude_pids: Optional[List[int]] = None) -> Dict[str, Any]:
+    """Manual-action helper: restore minimized Roblox windows so arrange/resize applies immediately.
+
+    Auto cycles must NOT call this (would flicker + defeat auto-minimize).
+    """
+    from services.window_control import unminimize_windows
+
+    excluded = {int(pid) for pid in (exclude_pids or []) if pid}
+    windows = [item for item in cls._visible_roblox_windows(include_minimized=True) if int(item.get("pid") or 0) not in excluded]
+    return unminimize_windows(windows)
+
+def _hidden_roblox_windows(cls) -> List[Dict[str, Any]]:
+    """Windows hidden via SW_HIDE: process alive, IsWindowVisible=False.
+
+    Filters out tiny helper/message windows (0x0, 16x16) so hidden count
+    reflects real game windows. Picks largest per pid like visible.
+    """
+    windows: List[Dict[str, Any]] = []
+    try:
+        proc_meta: Dict[int, Dict[str, Any]] = {}
+        for proc in cls._iter_roblox_processes(game_only=True):
+            try:
+                proc_meta[int(proc.pid)] = {
+                    "created": float(proc.create_time() or 0.0),
+                    "name": str(proc.name() or ""),
+                }
+            except Exception:
+                continue
+        if not proc_meta:
+            return []
+        user32 = ctypes.windll.user32
+        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_long)
+
+        class RECT(ctypes.Structure):
+            _fields_ = [
+                ("left", ctypes.c_long),
+                ("top", ctypes.c_long),
+                ("right", ctypes.c_long),
+                ("bottom", ctypes.c_long),
+            ]
+
+        def _enum_callback(hwnd, lparam):
+            try:
+                if bool(user32.IsWindowVisible(hwnd)):
+                    return True
+            except Exception:
+                return True
+            win_pid = ctypes.c_ulong(0)
+            try:
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(win_pid))
+            except Exception:
+                return True
+            pid = int(win_pid.value or 0)
+            meta = proc_meta.get(pid)
+            if not meta:
+                return True
+            rect = RECT()
+            try:
+                if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                    return True
+            except Exception:
+                return True
+            width = max(0, int(rect.right - rect.left))
+            height = max(0, int(rect.bottom - rect.top))
+            area = width * height
+            if width < 60 or height < 45 or area <= 0:
+                return True
+            windows.append({
+                "pid": pid,
+                "hwnd": int(hwnd),
+                "left": int(rect.left),
+                "top": int(rect.top),
+                "right": int(rect.right),
+                "bottom": int(rect.bottom),
+                "width": width,
+                "height": height,
+                "area": area,
+                "created": float(meta.get("created") or 0.0),
+                "name": str(meta.get("name") or ""),
+                "visible": False,
+            })
+            return True
+
+        user32.EnumWindows(WNDENUMPROC(_enum_callback), 0)
+    except Exception as exc:
+        flog_kv("WINDOW", "enumerate_hidden_roblox_windows_failed", "warning", error=str(exc))
+        return []
+    by_pid: Dict[int, Dict[str, Any]] = {}
+    for item in windows:
+        current = by_pid.get(int(item.get("pid") or 0))
+        if current is None or int(item.get("area") or 0) > int(current.get("area") or 0):
+            by_pid[int(item.get("pid"))] = item
+    return sorted(by_pid.values(), key=lambda item: (float(item.get("created") or 0.0), int(item.get("pid") or 0)))
+
+def hide_roblox_windows(cls, exclude_pids: Optional[List[int]] = None) -> Dict[str, Any]:
+    from services.window_control import hide_windows
+
+    excluded = {int(pid) for pid in (exclude_pids or []) if pid}
+    windows = [item for item in cls._visible_roblox_windows(include_minimized=True) if int(item.get("pid") or 0) not in excluded]
+    return hide_windows(windows)
+
+def show_roblox_windows(cls, exclude_pids: Optional[List[int]] = None) -> Dict[str, Any]:
+    from services.window_control import show_windows
+
+    excluded = {int(pid) for pid in (exclude_pids or []) if pid}
+    windows = [item for item in cls._hidden_roblox_windows() if int(item.get("pid") or 0) not in excluded]
+    return show_windows(windows)
 
 def is_not_responding(cls, pid: Optional[int]) -> bool:
     """
@@ -245,6 +405,11 @@ def _get_pid_window_rect(cls, pid: Optional[int]) -> Optional[Tuple[int, int, in
         def _enum_callback(hwnd, lparam):
             if not user32.IsWindowVisible(hwnd):
                 return True
+            try:
+                if user32.IsIconic(hwnd):
+                    return True
+            except Exception:
+                pass
             win_pid = ctypes.c_ulong(0)
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(win_pid))
             if win_pid.value != pid:
@@ -255,7 +420,7 @@ def _get_pid_window_rect(cls, pid: Optional[int]) -> Optional[Tuple[int, int, in
             width = max(0, int(rect.right - rect.left))
             height = max(0, int(rect.bottom - rect.top))
             area = width * height
-            if width >= 300 and height >= 200 and area > 0:
+            if width >= 60 and height >= 45 and area > 0:
                 rects.append((area, int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)))
             return True
 

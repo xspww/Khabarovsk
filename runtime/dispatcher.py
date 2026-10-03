@@ -76,7 +76,8 @@ class Dispatcher(threading.Thread):
     def _apply_window_resize_after_launch(self, acc: Account) -> None:
         target = _window_resize_target_from_config(self._cfg)
         arrange = _window_arrange_settings_from_config(self._cfg)
-        if not target and not arrange:
+        hide_enabled = bool(self._cfg.get("roblox_window_hide_enabled", False))
+        if not target and not arrange and not hide_enabled:
             return
         if arrange:
             width, height, columns, rows, gap, margin = arrange
@@ -94,7 +95,7 @@ class Dispatcher(threading.Thread):
             )
             changed = int(result.get("arranged") or 0)
             event = "post_launch_arrange"
-        else:
+        elif target:
             width, height = target
             result = ProcessService.resize_roblox_windows(
                 width,
@@ -105,6 +106,10 @@ class Dispatcher(threading.Thread):
             )
             changed = int(result.get("resized") or 0)
             event = "post_launch_resize"
+        else:
+            result = {}
+            changed = 0
+            event = "post_launch_hide"
         if changed > 0:
             flog_kv(
                 "WINDOW",
@@ -113,10 +118,15 @@ class Dispatcher(threading.Thread):
                 arranged=result.get("arranged", 0),
                 resized=result.get("resized", 0),
                 count=result.get("count", 0),
-                width=width,
-                height=height,
+                width=result.get("width", ""),
+                height=result.get("height", ""),
                 columns=result.get("columns", ""),
             )
+        if hide_enabled:
+            try:
+                ProcessService.hide_roblox_windows(reason="post_launch_window_hide", account=acc)
+            except Exception:
+                pass
 
     def _record_transaction(self, acc: Account, snapshot: Dict[str, Any], session_status: str = "active"):
         if not self._runtime_store:

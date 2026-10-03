@@ -81,7 +81,7 @@ def register(app, ctx: ApiContext) -> None:
             "roblox_window_unlock_size_enabled", "roblox_window_resize_enabled", "roblox_window_size_preset", "roblox_window_width",
             "roblox_window_height", "roblox_window_resize_interval_seconds",
             "roblox_window_arrange_enabled", "roblox_window_arrange_columns", "roblox_window_arrange_rows",
-            "roblox_window_arrange_gap", "roblox_window_arrange_margin",
+            "roblox_window_arrange_gap", "roblox_window_arrange_margin", "roblox_window_hide_enabled",
             "multi_roblox_enabled", "rt_rotation_enabled",
             "runtime_account_allowlist",
             "start_on_boot", "start_farming_on_boot", "auto_update_on_boot",
@@ -188,7 +188,7 @@ def register(app, ctx: ApiContext) -> None:
             if normalized_cpu["apply_all"]:
                 normalized_cpu["accounts"] = {}
             updates["cpu_limiter_accounts"] = normalized_cpu["accounts"]
-        if any(k in updates for k in ("roblox_window_unlock_size_enabled", "roblox_window_resize_enabled", "roblox_window_size_preset", "roblox_window_width", "roblox_window_height", "roblox_window_resize_interval_seconds", "roblox_window_arrange_enabled", "roblox_window_arrange_columns", "roblox_window_arrange_rows", "roblox_window_arrange_gap", "roblox_window_arrange_margin")):
+        if any(k in updates for k in ("roblox_window_unlock_size_enabled", "roblox_window_resize_enabled", "roblox_window_size_preset", "roblox_window_width", "roblox_window_height", "roblox_window_resize_interval_seconds", "roblox_window_arrange_enabled", "roblox_window_arrange_columns", "roblox_window_arrange_rows", "roblox_window_arrange_gap", "roblox_window_arrange_margin", "roblox_window_hide_enabled")):
             try:
                 normalized_window = _normalize_window_size_settings(ctx, {
                     "unlock_size_enabled": updates.get("roblox_window_unlock_size_enabled", cfg_mgr.get("roblox_window_unlock_size_enabled", True)),
@@ -202,6 +202,7 @@ def register(app, ctx: ApiContext) -> None:
                     "arrange_rows": updates.get("roblox_window_arrange_rows", cfg_mgr.get("roblox_window_arrange_rows", 4)),
                     "arrange_gap": updates.get("roblox_window_arrange_gap", cfg_mgr.get("roblox_window_arrange_gap", 0)),
                     "arrange_margin": updates.get("roblox_window_arrange_margin", cfg_mgr.get("roblox_window_arrange_margin", 0)),
+                    "hide_enabled": updates.get("roblox_window_hide_enabled", cfg_mgr.get("roblox_window_hide_enabled", False)),
                 })
             except ValueError as exc:
                 raise HTTPException(400, str(exc))
@@ -216,6 +217,7 @@ def register(app, ctx: ApiContext) -> None:
             updates["roblox_window_arrange_rows"] = normalized_window["arrange_rows"]
             updates["roblox_window_arrange_gap"] = normalized_window["arrange_gap"]
             updates["roblox_window_arrange_margin"] = normalized_window["arrange_margin"]
+            updates["roblox_window_hide_enabled"] = normalized_window["hide_enabled"]
         if "popup_disconnected_enabled" in updates:
             updates["popup_disconnected_enabled"] = bool(updates["popup_disconnected_enabled"])
         if "popup_scan_interval_seconds" in updates:

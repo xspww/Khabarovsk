@@ -4,7 +4,6 @@ import time
 from typing import Any, Dict, Optional
 from runtime.runtime_state_manager import RuntimeStateManager
 from core import flog_kv, Account
-from services.captcha_guard import CAPTCHA_REASON
 from services.roblox_log_evidence import CachedLogEvidenceCollector, collect_recent_log_evidence
 
 _RUNTIME_STATE = RuntimeStateManager(logger=flog_kv)
@@ -341,10 +340,9 @@ def assess_liveness(
         if inspect_ui and dialog.get("matched") and not dialog.get("error_code"):
             log_evidence = _collect_popup_log_evidence()
             dialog = _merge_log_evidence_into_dialog(cls, dialog, log_evidence)
-        if dialog.get("matched") and str(dialog.get("reason_key") or "") == CAPTCHA_REASON:
-            reason_key = CAPTCHA_REASON
-            state = "captcha"
-        elif dialog.get("matched") and dialog.get("recovery_allowed"):
+        # Captcha is owned by runtime/captcha_detector.py — this dialog carries
+        # disconnects only, never a captcha verdict.
+        if dialog.get("matched") and dialog.get("recovery_allowed"):
             reason_key = str(dialog.get("reason_key") or "connection_error")
             if reason_key == "teleport_timeout":
                 state = "teleporting"

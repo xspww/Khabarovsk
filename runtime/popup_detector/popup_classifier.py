@@ -12,7 +12,6 @@ from runtime.recovery_context import (
     TELEPORT_FAILURE,
     VISUAL_DISCONNECT,
 )
-from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON
 
 
 @dataclass(frozen=True)
@@ -110,19 +109,31 @@ def classify_popup_observation(
             **visual_meta,
         )
 
-    detail = str(text_features.get("detail") or "")
-    if text_features.get("has_captcha"):
-        return PopupClassification(True, "hold", CAPTCHA_REASON, CAPTCHA_REASON, detail or CAPTCHA_BLOCK_REASON, code, score, dict(confidence["breakdown"]), False, False, "text", visual_strength, **visual_meta)
+    # Captcha is owned by runtime/captcha_detector.py — popup detector must
+    # never claim it, otherwise a Security Verification page would trigger
+    # a disconnect rejoin (or a captcha hold from the wrong pipeline).
+    if text_features.get("has_captcha") and not code:
+        return PopupClassification(
+            matched=False,
+            confidence=score,
+            confidence_breakdown=dict(confidence.get("breakdown") or {}),
+            recovery_allowed=False,
+            evidence_source=evidence_source,
+            visual_strength=visual_strength,
+            **visual_meta,
+        )
     if visual_features.get("captcha_challenge"):
-        visual_detail = "visual_captcha_challenge"
-        if visual_features:
-            visual_detail += (
-                f" source={visual_features.get('source', '')}"
-                f" strength={visual_strength}"
-                f" stage={visual_features.get('visual_stage', '')}"
-                f" score={visual_features.get('captcha_score', '')}"
-            )
-        return PopupClassification(True, "hold", CAPTCHA_REASON, CAPTCHA_REASON, visual_detail, code, score, dict(confidence["breakdown"]), False, False, "visual_captcha", visual_strength, **visual_meta)
+        return PopupClassification(
+            matched=False,
+            confidence=score,
+            confidence_breakdown=dict(confidence.get("breakdown") or {}),
+            recovery_allowed=False,
+            evidence_source=evidence_source,
+            visual_strength=visual_strength,
+            **visual_meta,
+        )
+
+    detail = str(text_features.get("detail") or "")
     if code == "277":
         return PopupClassification(True, "rejoin", "network_drop", NETWORK_DISCONNECT, detail, code, score, dict(confidence["breakdown"]), False, True, "error_code", visual_strength, **visual_meta)
     if code == "278":

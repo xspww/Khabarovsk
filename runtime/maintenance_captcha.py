@@ -5,7 +5,7 @@ from typing import Any, Dict
 
 from core import flog_kv
 from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_account_captcha_required, set_account_captcha_hold
-from services.process_service import ProcessManager, ProcessService
+from services.process_service import ProcessService
 
 # Roblox shows an auto-passing "Security Verification" page that looks like a
 # captcha for a moment. A single sighting must never kill the game: only after
@@ -43,12 +43,7 @@ def detect_and_hold_captcha(owner: Any, acc: Any, pid: int, source: str) -> bool
     if not pid:
         return False
     try:
-        dialog = ProcessManager.inspect_disconnect_dialog(
-            pid,
-            prepare=True,
-            process_idle=False,
-            sample_count=2,
-        )
+        from runtime.captcha_detector import inspect_captcha
     except Exception as exc:
         flog_kv(
             "CAPTCHA",
@@ -60,11 +55,28 @@ def detect_and_hold_captcha(owner: Any, acc: Any, pid: int, source: str) -> bool
             error=str(exc),
         )
         return False
-    if not dialog.get("matched") or str(dialog.get("reason_key") or "") != CAPTCHA_REASON:
+    try:
+        cookie = str(getattr(acc, "cookie", "") or "")
+        found = inspect_captcha(pid, cookie=cookie, window=True, api=True)
+    except Exception as exc:
+        flog_kv(
+            "CAPTCHA",
+            "timeout_probe_failed",
+            "warning",
+            account=acc.display_name,
+            pid=pid,
+            source=source,
+            error=str(exc),
+        )
         return False
-    dialog = dict(dialog)
-    dialog.setdefault("detail", "Roblox Security verification CAPTCHA visible")
-    dialog.setdefault("evidence_source", source)
+    if not found.get("matched") or str(found.get("reason_key") or "") != CAPTCHA_REASON:
+        return False
+    dialog = {
+        "detail": str(found.get("detail") or "Roblox Security verification CAPTCHA visible"),
+        "evidence_source": str(found.get("evidence_source") or source),
+        "popup_confidence": float(found.get("popup_confidence", found.get("confidence", 1.0)) or 0.0),
+        "confidence": float(found.get("confidence", 1.0) or 0.0),
+    }
     # This path runs only for already-stuck accounts (Lua silent past the
     # timeout), where a captcha is the likely cause -> hold immediately.
     return handle_watchdog_captcha(owner, acc, pid, dialog, require_confirm=False)

@@ -7,7 +7,6 @@ from services.captcha_guard import CAPTCHA_REASON
 from runtime.lua_liveness_policy import LUA_WAITING_STATUS, lua_liveness_required, lua_wait_timeout_seconds
 from runtime.maintenance_captcha import (
     clear_captcha_suspicion,
-    detect_and_hold_captcha,
     handle_watchdog_captcha,
 )
 from runtime.maintenance_lua_timeout import emit_lua_wait_timeout_recovery, handle_in_game_lua_wait_timeout
@@ -410,12 +409,22 @@ class MaintenanceLivenessMixin:
                     source=log_evidence.get("source", "roblox_log"),
                 )
 
-            if state == "captcha" or str(dialog.get("reason_key") or "") == CAPTCHA_REASON:
-                handle_watchdog_captcha(self, acc, pid, dialog)
-                continue
+            # Captcha runs on its own detector (window text only, no screenshots).
+            # It shares the popup scan budget so there is no extra overhead.
+            if popup_enabled and (
+                popup_periodic_allowed
+                or old_state in {"suspect_frozen", "frozen", "reconnecting", "teleporting"}
+            ):
+                try:
+                    from runtime.captcha_detector import inspect_captcha_window
 
-            if inspect_ui and str(dialog.get("reason_key") or "") != CAPTCHA_REASON:
-                # Inspected and no captcha present -> a previous captcha
+                    cap = inspect_captcha_window(pid)
+                except Exception:
+                    cap = {"matched": False}
+                if cap.get("matched") and str(cap.get("reason_key") or "") == CAPTCHA_REASON:
+                    handle_watchdog_captcha(self, acc, pid, dict(cap))
+                    continue
+                # Probed and no captcha present -> a previous captcha
                 # suspicion (auto-passing security page) is gone; reset it so a
                 # later transient page cannot confirm against stale evidence.
                 clear_captcha_suspicion(acc)

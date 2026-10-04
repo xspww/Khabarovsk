@@ -174,9 +174,14 @@
     const card = document.createElement('section');
     card.className = 'queue-card';
     card.id = 'window-visibility-card';
-    card.innerHTML = '<div class="queue-card-head"><div class="queue-card-title">Visibility<div class="hint">Show or hide game windows</div></div></div><div class="queue-rows"><div class="queue-row"><div class="queue-row-copy"><strong>Hide Roblox windows</strong><div class="hint">Hidden from screen and taskbar, games keep running. Turn off to show again.</div></div><div class="queue-row-input"><div class="toggle-row"><input id="window-hide-enabled" type="checkbox"><span hidden></span></div></div></div></div>';
+    card.innerHTML = '<div class="queue-card-head"><div class="queue-card-title">Visibility<div class="hint">Show or hide game windows</div></div></div><div class="queue-rows"><div class="queue-row"><div class="queue-row-copy"><strong>Hide Roblox windows</strong><div class="hint">Hidden from screen and taskbar, still listed as Roblox in Task Manager.</div></div><div class="queue-row-input"><div class="toggle-row"><input id="window-hide-enabled" type="checkbox"><span hidden></span></div></div></div></div>';
     anchor.after(card);
     const toggle = card.querySelector('#window-hide-enabled');
+    const markWindowSizeDirty = () => {
+      try {
+        if (window.__cronusMarkDirty) window.__cronusMarkDirty('window-size');
+      } catch (_) {}
+    };
     const syncToggle = async () => {
       if (!toggle || toggle.disabled) return;
       try {
@@ -191,19 +196,9 @@
         }
       } catch (_) {}
     };
-    toggle?.addEventListener('change', async () => {
-      toggle.disabled = true;
-      try {
-        const path = toggle.checked ? '/api/performance/window-hide' : '/api/performance/window-show';
-        const res = await fetch(path, { method: 'POST', headers: { ...apiHeaders(), 'Content-Type': 'application/json' }, body: '{}' });
-        const data = await res.json().catch(() => ({}));
-        showResultToast(data.msg || (toggle.checked ? 'Roblox windows hidden' : 'Roblox windows shown'));
-      } catch (e) {
-        showResultToast(String(e?.message || e));
-      } finally {
-        toggle.disabled = false;
-        syncToggle();
-      }
+    toggle?.addEventListener('change', () => {
+      // Staged only: the shared Windows savebar (Save/Reset) applies it.
+      markWindowSizeDirty();
     });
     syncToggle();
   };

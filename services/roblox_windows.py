@@ -127,6 +127,11 @@ def _visible_roblox_windows(cls, include_minimized: bool = True) -> List[Dict[st
             meta = proc_meta.get(pid)
             if not meta:
                 return True
+            try:
+                if bool(user32.GetPropW(ctypes.c_void_p(int(hwnd)), "CronusTaskbarHidden")):
+                    return True
+            except Exception:
+                pass
             iconic = bool(user32.IsIconic(hwnd))
             if iconic and not include_minimized:
                 return True
@@ -219,10 +224,12 @@ def unminimize_roblox_windows(cls, exclude_pids: Optional[List[int]] = None) -> 
     return unminimize_windows(windows)
 
 def _hidden_roblox_windows(cls) -> List[Dict[str, Any]]:
-    """Windows hidden via SW_HIDE: process alive, IsWindowVisible=False.
+    """Windows hidden via minimize+DeleteTab (taskbar prop) or legacy SW_HIDE.
 
-    Filters out tiny helper/message windows (0x0, 16x16) so hidden count
-    reflects real game windows. Picks largest per pid like visible.
+    New mode keeps IsWindowVisible=True so Task Manager still lists each
+    client as its own Roblox app. Legacy SW_HIDE windows (visible=False)
+    are still included so Show restores them too. Filters out tiny
+    helper/message windows. Picks largest per pid like visible.
     """
     windows: List[Dict[str, Any]] = []
     try:
@@ -250,9 +257,14 @@ def _hidden_roblox_windows(cls) -> List[Dict[str, Any]]:
 
         def _enum_callback(hwnd, lparam):
             try:
-                if bool(user32.IsWindowVisible(hwnd)):
-                    return True
+                visible = bool(user32.IsWindowVisible(hwnd))
             except Exception:
+                return True
+            try:
+                taskbar_hidden = bool(user32.GetPropW(ctypes.c_void_p(int(hwnd)), "CronusTaskbarHidden"))
+            except Exception:
+                taskbar_hidden = False
+            if visible and not taskbar_hidden:
                 return True
             win_pid = ctypes.c_ulong(0)
             try:
@@ -263,30 +275,46 @@ def _hidden_roblox_windows(cls) -> List[Dict[str, Any]]:
             meta = proc_meta.get(pid)
             if not meta:
                 return True
-            rect = RECT()
             try:
-                if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-                    return True
+                iconic = bool(user32.IsIconic(hwnd))
             except Exception:
-                return True
-            width = max(0, int(rect.right - rect.left))
-            height = max(0, int(rect.bottom - rect.top))
+                iconic = False
+            if iconic:
+                # Minimized windows report a 160x28 off-screen rect via
+                # GetWindowRect, so use the restored (normal) rect instead.
+                normal = _placement_normal_rect(user32, int(hwnd))
+                if not normal:
+                    return True
+                left, top, right, bottom = normal
+                width = max(0, right - left)
+                height = max(0, bottom - top)
+            else:
+                rect = RECT()
+                try:
+                    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                        return True
+                except Exception:
+                    return True
+                left, top, right, bottom = int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)
+                width = max(0, right - left)
+                height = max(0, bottom - top)
             area = width * height
             if width < 60 or height < 45 or area <= 0:
                 return True
             windows.append({
                 "pid": pid,
                 "hwnd": int(hwnd),
-                "left": int(rect.left),
-                "top": int(rect.top),
-                "right": int(rect.right),
-                "bottom": int(rect.bottom),
+                "left": left,
+                "top": top,
+                "right": right,
+                "bottom": bottom,
                 "width": width,
                 "height": height,
                 "area": area,
                 "created": float(meta.get("created") or 0.0),
                 "name": str(meta.get("name") or ""),
-                "visible": False,
+                "visible": visible,
+                "taskbar_hidden": taskbar_hidden,
             })
             return True
 
@@ -306,6 +334,21 @@ def hide_roblox_windows(cls, exclude_pids: Optional[List[int]] = None) -> Dict[s
 
     excluded = {int(pid) for pid in (exclude_pids or []) if pid}
     windows = [item for item in cls._visible_roblox_windows(include_minimized=True) if int(item.get("pid") or 0) not in excluded]
+    try:
+        # Re-hide windows the user restored manually: still prop-marked and
+        # back on screen, so _visible excludes them but auto-hide must catch them.
+        seen_hwnds = {int(item.get("hwnd") or 0) for item in windows}
+        for item in cls._hidden_roblox_windows():
+            if not bool(item.get("taskbar_hidden")) or not bool(item.get("visible")):
+                continue
+            if int(item.get("pid") or 0) in excluded:
+                continue
+            if int(item.get("hwnd") or 0) in seen_hwnds:
+                continue
+            windows.append(item)
+            seen_hwnds.add(int(item.get("hwnd") or 0))
+    except Exception:
+        pass
     return hide_windows(windows)
 
 def show_roblox_windows(cls, exclude_pids: Optional[List[int]] = None) -> Dict[str, Any]:

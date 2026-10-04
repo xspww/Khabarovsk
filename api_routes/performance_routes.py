@@ -251,10 +251,26 @@ def register(app, ctx: ApiContext) -> None:
         except ValueError as exc:
             raise HTTPException(400, str(exc))
         resize_result = {"ok": True, "count": 0, "resized": 0, "skipped": 0}
+        show_result: dict = {}
+        if not settings["hide_enabled"]:
+            # Turning hide off (or keeping it off): restore hidden windows
+            # first so resize/arrange below applies to every client.
+            try:
+                show_result = ProcessService.show_roblox_windows(reason="api_window_size_apply_show")
+            except Exception:
+                show_result = {}
         if settings["enabled"] or settings["arrange_enabled"]:
             resize_result = _apply_window_size_settings(settings, "api_window_size_apply")
         else:
             resize_result = ProcessService.restore_roblox_window_styles(reason="api_window_size_apply")
+        hide_result: dict = {}
+        if settings["hide_enabled"]:
+            # Turning hide on: arrange first, then take windows off
+            # screen + taskbar (they stay listed as Roblox in Task Manager).
+            try:
+                hide_result = ProcessService.hide_roblox_windows(reason="api_window_size_apply_hide")
+            except Exception:
+                hide_result = {}
         cfg_mgr.update({
             "roblox_window_unlock_size_enabled": settings["unlock_size_enabled"],
             "roblox_window_resize_enabled": settings["enabled"],
@@ -280,6 +296,8 @@ def register(app, ctx: ApiContext) -> None:
             pass
         payload = _window_size_status(ctx)
         payload["resize_result"] = resize_result
+        payload["show_result"] = show_result
+        payload["hide_result"] = hide_result
         if settings["arrange_enabled"]:
             payload["msg"] = f"arranged {int(resize_result.get('arranged') or 0)} Roblox window(s)"
         elif settings["enabled"]:

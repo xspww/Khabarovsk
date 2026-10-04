@@ -133,28 +133,170 @@ def unminimize_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
         return {"ok": False, "count": len(windows), "restored": 0, "error": str(exc), "windows": windows}
 
 
+_TASKBAR_HIDDEN_PROP = "CronusTaskbarHidden"
+
+
+def _is_taskbar_hidden(user32: Any, hwnd: int) -> bool:
+    try:
+        return bool(user32.GetPropW(ctypes.c_void_p(hwnd), _TASKBAR_HIDDEN_PROP))
+    except Exception:
+        return False
+
+
+def _mark_taskbar_hidden(user32: Any, hwnd: int) -> None:
+    try:
+        user32.SetPropW(ctypes.c_void_p(hwnd), _TASKBAR_HIDDEN_PROP, ctypes.c_void_p(1))
+    except Exception:
+        pass
+
+
+def _unmark_taskbar_hidden(user32: Any, hwnd: int) -> None:
+    try:
+        user32.RemovePropW(ctypes.c_void_p(hwnd), _TASKBAR_HIDDEN_PROP)
+    except Exception:
+        pass
+
+
+def _acquire_taskbar() -> Optional[Dict[str, Any]]:
+    """Create an ITaskbarList instance for AddTab/DeleteTab. Returns None on failure."""
+    try:
+        ole32 = ctypes.windll.ole32
+
+        class GUID(ctypes.Structure):
+            _fields_ = [
+                ("Data1", ctypes.c_ulong),
+                ("Data2", ctypes.c_ushort),
+                ("Data3", ctypes.c_ushort),
+                ("Data4", ctypes.c_ubyte * 8),
+            ]
+
+        clsid = GUID(
+            0x56FDF344,
+            0xFD6D,
+            0x11D0,
+            (ctypes.c_ubyte * 8)(0x95, 0x8A, 0x00, 0x60, 0x97, 0xC9, 0xA0, 0x90),
+        )
+        iid = GUID(
+            0x56FDF342,
+            0xFD6D,
+            0x11D0,
+            (ctypes.c_ubyte * 8)(0x95, 0x8A, 0x00, 0x60, 0x97, 0xC9, 0xA0, 0x90),
+        )
+        try:
+            ole32.CoInitializeEx(None, 0x2)
+        except Exception:
+            pass
+        ole32.CoCreateInstance.argtypes = [
+            ctypes.POINTER(GUID),
+            ctypes.c_void_p,
+            ctypes.c_ulong,
+            ctypes.POINTER(GUID),
+            ctypes.POINTER(ctypes.c_void_p),
+        ]
+        ole32.CoCreateInstance.restype = ctypes.c_long
+        ppv = ctypes.c_void_p(0)
+        hr = int(ole32.CoCreateInstance(ctypes.byref(clsid), None, 1, ctypes.byref(iid), ctypes.byref(ppv)))
+        if hr != 0 or not ppv.value:
+            return None
+        obj_addr = int(ppv.value)
+        try:
+            vtbl_addr = ctypes.cast(obj_addr, ctypes.POINTER(ctypes.c_void_p)).contents.value
+        except Exception:
+            return None
+        if not vtbl_addr:
+            return None
+        return {"obj": obj_addr, "vtbl": int(vtbl_addr)}
+    except Exception:
+        return None
+
+
+def _taskbar_vfunc(acq: Dict[str, Any], index: int, hwnd: int = 0, no_hwnd: bool = False) -> bool:
+    try:
+        ptrsize = ctypes.sizeof(ctypes.c_void_p)
+        func_addr = ctypes.cast(
+            int(acq["vtbl"]) + int(index) * ptrsize,
+            ctypes.POINTER(ctypes.c_void_p),
+        ).contents.value
+        if not func_addr:
+            return False
+        if no_hwnd:
+            proto = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p)
+            return int(proto(func_addr)(ctypes.c_void_p(int(acq["obj"])))) == 0
+        proto = ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p)
+        return int(proto(func_addr)(ctypes.c_void_p(int(acq["obj"])), ctypes.c_void_p(int(hwnd)))) == 0
+    except Exception:
+        return False
+
+
+def _release_taskbar(acq: Optional[Dict[str, Any]]) -> None:
+    if not acq:
+        return
+    try:
+        ptrsize = ctypes.sizeof(ctypes.c_void_p)
+        func_addr = ctypes.cast(
+            int(acq["vtbl"]) + 2 * ptrsize,
+            ctypes.POINTER(ctypes.c_void_p),
+        ).contents.value
+        if func_addr:
+            proto = ctypes.WINFUNCTYPE(ctypes.c_ulong, ctypes.c_void_p)
+            proto(func_addr)(ctypes.c_void_p(int(acq["obj"])))
+    except Exception:
+        pass
+
+
 def hide_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """SW_HIDE: remove from screen + taskbar, process keeps running."""
+    """Minimize + ITaskbarList::DeleteTab: off screen, no taskbar button.
+
+    Window stays IsWindowVisible=True so Task Manager keeps listing it as
+    its own Roblox app instead of grouping it under Cronus background.
+    Process keeps running. Idempotent via window prop + iconic check.
+    """
     if not windows:
         return {"ok": True, "count": 0, "hidden": 0, "windows": []}
     try:
         user32 = ctypes.windll.user32
-        SW_HIDE = 0
+        SW_MINIMIZE = 6
+        SW_RESTORE = 9
         hidden: List[Dict[str, Any]] = []
-        for item in windows:
-            hwnd = int(item.get("hwnd") or 0)
-            if not hwnd:
-                continue
-            try:
-                if not bool(user32.IsWindowVisible(ctypes.c_void_p(hwnd))):
+        skipped_hidden = 0
+        acq = _acquire_taskbar()
+        if acq:
+            _taskbar_vfunc(acq, 3, no_hwnd=True)
+        try:
+            for item in windows:
+                hwnd = int(item.get("hwnd") or 0)
+                if not hwnd:
                     continue
-            except Exception:
-                pass
-            try:
-                user32.ShowWindow(ctypes.c_void_p(hwnd), SW_HIDE)
-                hidden.append({"pid": int(item.get("pid") or 0), "hwnd": hwnd})
-            except Exception:
-                continue
+                try:
+                    visible = bool(user32.IsWindowVisible(ctypes.c_void_p(hwnd)))
+                except Exception:
+                    visible = True
+                if not visible:
+                    # Migrate legacy SW_HIDE windows to the new mode.
+                    try:
+                        user32.ShowWindow(ctypes.c_void_p(hwnd), SW_RESTORE)
+                    except Exception:
+                        pass
+                try:
+                    iconic = bool(user32.IsIconic(ctypes.c_void_p(hwnd)))
+                except Exception:
+                    iconic = False
+                if iconic and _is_taskbar_hidden(user32, hwnd):
+                    skipped_hidden += 1
+                    continue
+                try:
+                    if acq:
+                        _taskbar_vfunc(acq, 5, hwnd=hwnd)
+                except Exception:
+                    pass
+                try:
+                    user32.ShowWindow(ctypes.c_void_p(hwnd), SW_MINIMIZE)
+                    _mark_taskbar_hidden(user32, hwnd)
+                    hidden.append({"pid": int(item.get("pid") or 0), "hwnd": hwnd})
+                except Exception:
+                    continue
+        finally:
+            _release_taskbar(acq)
         if hidden:
             flog_kv(
                 "WINDOW",
@@ -163,29 +305,44 @@ def hide_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
                 hidden=len(hidden),
                 pids=",".join(str(item.get("pid")) for item in hidden),
             )
-        return {"ok": True, "count": len(windows), "hidden": len(hidden), "windows": windows}
+        return {"ok": True, "count": len(windows), "hidden": len(hidden), "skipped_hidden": skipped_hidden, "windows": windows}
     except Exception as exc:
         flog_kv("WINDOW", "hide_roblox_windows_failed", "warning", error=str(exc), count=len(windows))
         return {"ok": False, "count": len(windows), "hidden": 0, "error": str(exc), "windows": windows}
 
 
 def show_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """SW_RESTORE hidden windows (process was still running)."""
+    """AddTab + SW_RESTORE. Handles new minimize+DeleteTab hides and legacy SW_HIDE."""
     if not windows:
         return {"ok": True, "count": 0, "shown": 0, "windows": []}
     try:
         user32 = ctypes.windll.user32
         SW_RESTORE = 9
         shown: List[Dict[str, Any]] = []
-        for item in windows:
-            hwnd = int(item.get("hwnd") or 0)
-            if not hwnd:
-                continue
-            try:
-                user32.ShowWindow(ctypes.c_void_p(hwnd), SW_RESTORE)
-                shown.append({"pid": int(item.get("pid") or 0), "hwnd": hwnd})
-            except Exception:
-                continue
+        acq = _acquire_taskbar()
+        if acq:
+            _taskbar_vfunc(acq, 3, no_hwnd=True)
+        try:
+            for item in windows:
+                hwnd = int(item.get("hwnd") or 0)
+                if not hwnd:
+                    continue
+                try:
+                    _unmark_taskbar_hidden(user32, hwnd)
+                except Exception:
+                    pass
+                try:
+                    if acq:
+                        _taskbar_vfunc(acq, 4, hwnd=hwnd)
+                except Exception:
+                    pass
+                try:
+                    user32.ShowWindow(ctypes.c_void_p(hwnd), SW_RESTORE)
+                    shown.append({"pid": int(item.get("pid") or 0), "hwnd": hwnd})
+                except Exception:
+                    continue
+        finally:
+            _release_taskbar(acq)
         if shown:
             flog_kv(
                 "WINDOW",

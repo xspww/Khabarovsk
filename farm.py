@@ -364,6 +364,9 @@ class FarmController:
     def stop(self):
         return self._lifecycle.stop()
 
+    def stop_fast(self):
+        return self._lifecycle.stop_fast()
+
     def set_accounts(self, accounts: List[Account]):
         self._accounts = accounts
         try:

@@ -531,6 +531,29 @@ def _maybe_prompt_startup_update() -> bool:
     return True
 
 
+def _fast_exit(code: int = 0) -> None:
+    """Exit immediately so the console/terminal closes with the window.
+
+    Window-close already did the load-bearing cleanup (fast farm stop +
+    instance-state clear). Anything left is daemon threads (uvicorn,
+    workers, monitors) that must not keep the terminal alive. os._exit
+    skips interpreter teardown/joins, so the cmd window closes at once.
+    """
+    try:
+        _clear_instance_state()
+    except Exception:
+        pass
+    try:
+        sys.stdout.flush()
+    except Exception:
+        pass
+    try:
+        sys.stderr.flush()
+    except Exception:
+        pass
+    os._exit(int(code))
+
+
 def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
     if fastapi_app is not None or farm_controller is not None:
         configure(fastapi_app, farm_controller)
@@ -624,6 +647,7 @@ def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
             on_first_show=_console_finish_after_window_show,
         ):
             _console_status("shutdown", "Cronus window closed")
+            _fast_exit(0)
             return
     except Exception as exc:
         flog_kv("MAIN", "desktop_webview_failed", "warning", error=str(exc))
@@ -636,11 +660,20 @@ def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
             pass
     except KeyboardInterrupt:
         _console_status("shutdown", "Ctrl+C received; stopping farm")
-        _, farm = _require_configured()
-        if farm.running:
-            farm.stop()
-        _clear_instance_state()
-        sys.exit(0)
+        try:
+            _, farm = _require_configured()
+            fast_stop = getattr(farm, "stop_fast", None)
+            if callable(fast_stop):
+                fast_stop()
+            elif farm.running:
+                farm.stop()
+        except Exception:
+            pass
+        _fast_exit(0)
+    # Shutdown was requested via /api/app/shutdown (already os._exit(0)s
+    # itself) or the loop above ended: never linger, exit at once so the
+    # terminal closes together with the program.
+    _fast_exit(0)
 
 
 INSTANCE_TOKEN = _INSTANCE_TOKEN

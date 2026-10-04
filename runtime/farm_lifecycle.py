@@ -271,6 +271,71 @@ class FarmLifecycleService:
             message += f", {len(blocked_accounts)} blocked"
         farm._push_event("system", message, severity="success" if launchable_count else "warning")
 
+    def stop_fast(self) -> None:
+        """Fast window-close path: signal + kill Roblox, skip long joins.
+
+        Full stop() joins every worker/dispatcher/maintenance with 2s
+        timeouts sequentially (10s+ with several accounts), which is what
+        kept the console hanging after the window was already gone.
+        All those threads are daemon, so they die with os._exit anyway.
+        This does only the load-bearing steps synchronously: signal stop,
+        kill bound Roblox processes, persist runtime, release the guard.
+        """
+        farm = self._farm
+        try:
+            farm._shutting_down = True
+        except Exception:
+            pass
+        try:
+            farm._stop.set()
+        except Exception:
+            pass
+        try:
+            farm.running = False
+        except Exception:
+            pass
+        try:
+            farm._bump_status_revision()
+        except Exception:
+            pass
+        try:
+            if farm._recovery:
+                farm._recovery.stop()
+        except Exception:
+            pass
+        try:
+            if farm._queue:
+                farm._queue.cancel_all("farm_stop_fast")
+        except Exception:
+            pass
+        try:
+            farm._cancel_commands_for_shutdown()
+        except Exception:
+            pass
+        try:
+            for acc in list(getattr(farm, "_accounts", None) or []):
+                try:
+                    if getattr(acc, "pid", 0):
+                        ProcessService.safe_kill_bound_process(
+                            acc,
+                            None,
+                            reason="farm_stop_fast",
+                        )
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        try:
+            farm.cfg_mgr.save_runtime(farm._accounts)
+        except Exception:
+            pass
+        try:
+            from roblox_hybrid import release_multi_roblox_guard
+
+            release_multi_roblox_guard()
+        except Exception:
+            pass
+
     def stop(self) -> None:
         farm = self._farm
         if not farm.running:

@@ -397,8 +397,6 @@ class DesktopWindow:
                     #CronusTitleBar {
                         background-color: #0c0d13;
                         border-bottom: 1px solid #20232c;
-                        border-top-left-radius: 10px;
-                        border-top-right-radius: 10px;
                     }
                     #CronusTitle {
                         font-family: "Kanit", "Segoe UI", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif;
@@ -518,8 +516,11 @@ background-color: #26161b;
         window = RoundedMainWindow()
         window.setWindowTitle(APP_NAME)
         window.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
-        window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        window.setStyleSheet("QMainWindow { background: transparent; }")
+        # Opaque shell: WebView2 is a native HWND child and cannot be
+        # clipped by a translucent Qt mask (airspace). Translucency caused
+        # the buggy fringe/black corners. Outer rounding comes from DWM only.
+        window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
+        window.setStyleSheet("QMainWindow { background: #0a0b10; }")
         if not icon.isNull():
             window.setWindowIcon(icon)
         # Opaque WebView2 view: no translucency, no alpha compositing.
@@ -533,20 +534,30 @@ background-color: #26161b;
         container.setStyleSheet(
             """
             QWidget#CronusWindowShell {
-background: #0a0b10;
-                 border: 1px solid #20232c;
-                border-radius: 10px;
+                background: #0a0b10;
+                border: 1px solid #20232c;
+                border-radius: 0px;
             }
             """
         )
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(1, 1, 1, 1)
+        layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         title_bar = TitleBar(window)
         layout.addWidget(title_bar)
         layout.addWidget(view, 1)
         window.setCentralWidget(container)
-        window.resize(1280, 820)
+        # Initial size matched to the Storm Launcher reference screenshot
+        # (compact ~4:3 login window, not wide 1280x820).
+        window.resize(1024, 768)
+        window.setMinimumSize(880, 600)
+        try:
+            _screen = app_qt.primaryScreen()
+            if _screen is not None:
+                _geo = _screen.availableGeometry()
+                window.move(_geo.center() - window.rect().center())
+        except Exception:
+            pass
         _apply_windows_rounded_corners(window)
         window.show()
         window.raise_()
@@ -573,9 +584,17 @@ background: #0a0b10;
                 title_timer.stop()
             except Exception:
                 pass
+            # Fast close: window is already gone, never block on the full
+            # graceful stop() (sequential 2s joins = 10s+ hang). stop_fast()
+            # signals workers, kills Roblox, persists runtime, releases the
+            # guard — daemon threads die with the process exit in run_desktop.
             try:
                 if farm is not None and bool(getattr(farm, "running", False)):
-                    farm.stop()
+                    fast_stop = getattr(farm, "stop_fast", None)
+                    if callable(fast_stop):
+                        fast_stop()
+                    else:
+                        farm.stop()
             except Exception as exc:
                 flog_kv("MAIN", "desktop_shutdown_stop_farm_failed", "warning", reason=reason, error=str(exc))
             try:

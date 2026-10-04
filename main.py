@@ -317,6 +317,14 @@ if __name__ == "__main__":
     EXECUTOR_TRACKER.start()
     try:
         run_desktop(app, farm)
+        # Normal return (duplicate instance / update park / fallback):
+        # never linger in interpreter teardown — close the terminal at once.
+        try:
+            import os as _os
+
+            _os._exit(0)
+        except Exception:
+            pass
     except Exception as exc:
         # A fatal boot error used to kill the new version silently during
         # self-update: its window closed, the updater saw "API never answered"

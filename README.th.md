@@ -28,7 +28,7 @@
   <a href="#ข้อมูลและความเป็นส่วนตัว">ความเป็นส่วนตัว</a>
 </p>
 
-![แดชบอร์ด Cronus Launcher](assets/screenshot-dashboard.png)
+<img width="1024" height="768" alt="sadc" src="https://github.com/user-attachments/assets/baf120ff-95ba-4d66-91b3-099c9648a08b" />
 
 ## ภาพรวม
 

@@ -208,8 +208,11 @@ export function renderVirtualMemoryPanel(e) {
   }
   const hint = $("vm-size-hint");
   if (hint) {
+    const maxUsable = (vm.max_custom_gb != null)
+      ? vm.max_custom_gb
+      : ((vm.free_gb != null) ? Math.max(1, Math.min(64, Math.floor(vm.free_gb - 5))) : 64);
     hint.textContent = vm.free_gb != null
-      ? `Up to ${vm.free_gb} GB available on the system drive`
+      ? `Up to ${maxUsable} GB usable (keeps 5 GB headroom)`
       : "Up to -- GB available on the system drive";
   }
   if (!isDirty && active !== "vm-size") {
@@ -254,7 +257,18 @@ export async function applyVirtualMemoryPanel(e) {
   const { $, api, toast, renderVirtualMemory, modal } = e;
   const size = clamp(Math.round(num($("vm-size").value, 16)), 1, 64);
   const notice = $("vm-notice");
+  const applyBtn = document.getElementById("vm-apply");
+  const revertBtn = document.getElementById("vm-revert");
+  const freeGb = num(e.VIRTUAL_MEMORY && e.VIRTUAL_MEMORY.free_gb, NaN);
+  if (Number.isFinite(freeGb) && freeGb > 0 && freeGb < size + 5) {
+    const msg = `Not enough free space on C: (${freeGb} GB free, need ~${size + 5} GB headroom)`;
+    setNotice(notice, msg, "error", "Apply blocked");
+    toast(msg, "error");
+    return { ok: false, msg };
+  }
   try {
+    if (applyBtn) applyBtn.disabled = true;
+    if (revertBtn) revertBtn.disabled = true;
     if (notice) delete notice.dataset.sticky;
     setNotice(notice, "Writing the new pagefile setting to Windows…", "info", "Applying");
     const res = await api("/performance/virtual-memory/apply", "POST", { mode: "custom", size_gb: size });
@@ -280,24 +294,39 @@ export async function applyVirtualMemoryPanel(e) {
     setNotice(notice, err.message, "error", "Apply failed");
     toast(err.message, "error");
     return null;
+  } finally {
+    if (applyBtn) applyBtn.disabled = false;
+    if (revertBtn) revertBtn.disabled = false;
   }
 }
 
 export async function revertVirtualMemoryPanel(e) {
   const { api, toast, renderVirtualMemory } = e;
   const notice = document.getElementById("vm-notice");
+  const applyBtn = document.getElementById("vm-apply");
+  const revertBtn = document.getElementById("vm-revert");
   try {
+    if (applyBtn) applyBtn.disabled = true;
+    if (revertBtn) revertBtn.disabled = true;
     if (notice) delete notice.dataset.sticky;
     setNotice(notice, "Restoring Windows-managed pagefile…", "info", "Working");
     const res = await api("/performance/virtual-memory/apply", "POST", { mode: "system_managed", size_gb: 16 });
     renderVirtualMemory(res);
-    setNotice(notice, "Back to System Managed. Reboot Windows to take effect.", "warn", "Reboot required");
-    if (notice) notice.dataset.sticky = "1";
-    toast("Reverted to System Managed — reboot to take effect", "warning");
+    if (res && res.ok) {
+      setNotice(notice, "Back to System Managed. Reboot Windows to take effect.", "warn", "Reboot required");
+      if (notice) notice.dataset.sticky = "1";
+      toast("Reverted to System Managed — reboot to take effect", "warning");
+    } else {
+      setNotice(notice, (res && res.msg) || "Revert failed", "error", "Revert failed");
+      toast((res && res.msg) || "Revert failed", "error");
+    }
     return res;
   } catch (err) {
     setNotice(notice, err.message, "error", "Revert failed");
     toast(err.message, "error");
     return null;
+  } finally {
+    if (applyBtn) applyBtn.disabled = false;
+    if (revertBtn) revertBtn.disabled = false;
   }
 }

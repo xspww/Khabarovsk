@@ -22,8 +22,9 @@ import json
 import subprocess
 import base64
 import os
+import time
 from ctypes import wintypes
-from typing import Any, Dict
+from typing import Any, Dict, Tuple
 
 try:
     import psutil  # type: ignore
@@ -33,6 +34,11 @@ except Exception:  # pragma: no cover
 VM_MIN_GB = 1
 VM_MAX_GB = 64
 VM_PRESET_MULTIPLIERS = (1.0, 1.5, 2.0, 3.0)
+# Windows write is refused unless this much free space stays untouched.
+VM_HEADROOM_GB = 5
+# How long the UAC (non-admin) path waits for the elevated write to land.
+VM_VERIFY_TIMEOUT_S = 15
+VM_VERIFY_INTERVAL_S = 2
 
 
 def is_admin() -> bool:
@@ -118,6 +124,14 @@ def status() -> Dict[str, Any]:
         "total_ram_gb": total_gb,
         "system_drive": "C:",
         "free_gb": free_gb,
+        "min_gb": VM_MIN_GB,
+        "max_gb": VM_MAX_GB,
+        # Largest custom size the backend will accept (free - headroom).
+        # free <= 0 means the query failed -> fall back to VM_MAX_GB and
+        # let apply() report the real error.
+        "max_custom_gb": max(VM_MIN_GB, min(VM_MAX_GB, int(free_gb - VM_HEADROOM_GB)))
+        if free_gb > 0 else VM_MAX_GB,
+        "headroom_gb": VM_HEADROOM_GB,
         "presets": presets,
         "is_admin": is_admin(),
         "managed_by_windows": True,
@@ -152,7 +166,9 @@ def status() -> Dict[str, Any]:
             if name.lower().startswith("c:"):
                 c_entry = s
                 break
-        if auto and not c_entry:
+        # When Windows manages the pagefile it ignores any stale custom
+        # entry, so report system_managed whenever auto is on.
+        if auto:
             payload["current"] = {"mode": "system_managed", "size_gb": None}
         elif c_entry:
             try:
@@ -165,8 +181,9 @@ def status() -> Dict[str, Any]:
                                   "initial_mb": c_entry.get("InitialSize"),
                                   "maximum_mb": c_entry.get("MaximumSize")}
         else:
-            payload["current"] = {"mode": "system_managed" if auto else "custom",
-                                  "size_gb": None}
+            # auto is handled above, so reaching here means unmanaged
+            # with no usable C: entry.
+            payload["current"] = {"mode": "custom", "size_gb": None}
     except Exception as exc:
         payload["ok"] = False
         payload["msg"] = f"parse failed: {exc}"
@@ -223,6 +240,51 @@ def _encoded_command(script: str) -> list:
             "-ExecutionPolicy", "Bypass", "-EncodedCommand", blob]
 
 
+def _current_matches(current: Any, mode: str, size_gb: int) -> bool:
+    """True when a fresh status() reading matches what apply() requested."""
+    if not isinstance(current, dict):
+        return False
+    if mode == "system_managed":
+        return current.get("mode") == "system_managed"
+    if current.get("mode") != "custom":
+        return False
+    try:
+        # Writes are always whole GB (int * 1024 MB), so the re-read
+        # must be exact; 0.1 only absorbs float/round noise, never 0.5.
+        return abs(float(current.get("size_gb") or 0) - float(size_gb)) < 0.1
+    except Exception:
+        return False
+
+
+def _describe_current(current: Any) -> str:
+    """Human-readable current setting for failure messages (never 'None')."""
+    if isinstance(current, dict):
+        mode = current.get("mode")
+        size = current.get("size_gb")
+        if mode == "custom" and size is not None:
+            return f"custom {size} GB"
+        if mode:
+            return str(mode).replace("_", " ")
+    return "unknown — check after reboot"
+
+
+def _wait_for_setting(mode: str, size_gb: int,
+                      timeout_s: int = VM_VERIFY_TIMEOUT_S) -> Tuple[bool, Dict[str, Any]]:
+    """Poll status() until the requested setting is visible (UAC path)."""
+    last: Dict[str, Any] = {}
+    deadline = time.monotonic() + max(1, int(timeout_s))
+    while True:
+        try:
+            last = status()
+        except Exception as exc:
+            last = {"ok": False, "msg": str(exc)}
+        if last.get("ok") and _current_matches(last.get("current"), mode, size_gb):
+            return True, last
+        if time.monotonic() >= deadline:
+            return False, last
+        time.sleep(VM_VERIFY_INTERVAL_S)
+
+
 def apply(mode: str, size_gb: int) -> Dict[str, Any]:
     """Apply pagefile setting with UAC elevation. Returns ok/reboot_required."""
     if os.name != "nt":
@@ -230,12 +292,12 @@ def apply(mode: str, size_gb: int) -> Dict[str, Any]:
     settings = normalize_virtual_memory_settings({"mode": mode, "size_gb": size_gb})
     mode = settings["mode"]
     size_gb = settings["size_gb"]
-    # Safety: refuse if free space is smaller than requested (leave 5GB headroom).
+    # Safety: refuse if free space is smaller than requested (leave headroom).
     # free <= 0 means the query failed -> skip the check, let Windows report.
     free = system_drive_free_gb("C:\\")
-    if mode == "custom" and free > 0 and free < (size_gb + 5):
+    if mode == "custom" and free > 0 and free < (size_gb + VM_HEADROOM_GB):
         return {"ok": False,
-                "msg": f"Not enough free space on C: ({free:.1f} GB free, need ~{size_gb + 5} GB headroom)"}
+                "msg": f"Not enough free space on C: ({free:.1f} GB free, need ~{size_gb + VM_HEADROOM_GB} GB headroom)"}
     script = _build_apply_script(mode, size_gb)
     cmd = _encoded_command(script)
     try:
@@ -246,8 +308,17 @@ def apply(mode: str, size_gb: int) -> Dict[str, Any]:
                 return {"ok": False,
                         "msg": (proc.stderr or out or f"exit {proc.returncode}").strip()[-800:]}
             current = status()
+            if current.get("ok") and not _current_matches(current.get("current"), mode, size_gb):
+                failure: Dict[str, Any] = {
+                    "ok": False,
+                    "msg": f"Windows did not confirm the new setting (still {_describe_current(current.get('current'))})",
+                }
+                if isinstance(current.get("current"), dict):
+                    failure["current"] = current.get("current")
+                return failure
             return {"ok": True, "mode": mode, "size_gb": size_gb if mode == "custom" else None,
                     "reboot_required": True,
+                    "verified": bool(current.get("ok")),
                     "msg": "Applied — reboot Windows to take effect",
                     "current": current.get("current")}
         # UAC handoff (same pattern as services/app_updater.py runas).
@@ -265,11 +336,18 @@ def apply(mode: str, size_gb: int) -> Dict[str, Any]:
         if not code or code <= 32:
             return {"ok": False, "requires_admin": True,
                     "msg": "Administrator approval was not granted"}
-        import time as _t
-        _t.sleep(4)
-        current = status()
+        matched, current = _wait_for_setting(mode, size_gb)
+        if not matched:
+            failure = {
+                "ok": False,
+                "msg": f"Elevated change not confirmed (still {_describe_current(current.get('current'))}) — approve the UAC prompt and retry",
+            }
+            if isinstance(current.get("current"), dict):
+                failure["current"] = current.get("current")
+            return failure
         return {"ok": True, "mode": mode, "size_gb": size_gb if mode == "custom" else None,
                 "reboot_required": True,
+                "verified": True,
                 "msg": "Applied — reboot Windows to take effect",
                 "current": current.get("current")}
     except Exception as exc:

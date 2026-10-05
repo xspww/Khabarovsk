@@ -513,9 +513,12 @@ def register(app, ctx: ApiContext) -> None:
     async def api_apply_virtual_memory(request: Request):
         from services import virtual_memory as _vm
 
-        body = await request.json()
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
         if not isinstance(body, dict):
-            raise HTTPException(400, "Expected object")
+            body = {}
         mode = str(body.get("mode", body.get("virtual_memory_mode", cfg_mgr.get("virtual_memory_mode", "system_managed"))) or "system_managed")
         try:
             size_gb = int(float(body.get("size_gb", body.get("virtual_memory_size_gb", cfg_mgr.get("virtual_memory_size_gb", 16))) or 16))

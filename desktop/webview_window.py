@@ -208,7 +208,7 @@ def _set_app_user_model_id() -> None:
 
 def _bundled_kanit_candidates() -> list:
     candidates: list = []
-    for name in ("Kanit-Regular.ttf", "Kanit-Medium.ttf"):
+    for name in ("Inter-Regular.ttf", "Inter-Medium.ttf", "Inter-Bold.ttf", "Kanit-Regular.ttf", "Kanit-Medium.ttf"):
         for base in (
             resource_path("assets", "fonts", name),
             os.path.join(APP_ROOT_DIR, "assets", "fonts", name),
@@ -225,7 +225,7 @@ def _load_bundled_kanit_fonts() -> bool:
         flog_kv("MAIN", "desktop_font_qt_unavailable", "debug", error=str(exc))
         return False
     try:
-        if "Kanit" in QFontDatabase.families():
+        if "Inter" in QFontDatabase.families() and "Kanit" in QFontDatabase.families():
             return True
     except Exception:
         pass
@@ -240,11 +240,11 @@ def _load_bundled_kanit_fonts() -> bool:
         except Exception as exc:
             flog_kv("MAIN", "desktop_font_load_failed", "warning", path=path, error=str(exc))
     try:
-        if "Kanit" in QFontDatabase.families():
+        if "Inter" in QFontDatabase.families():
             if loaded_any:
                 from core import flog
 
-                flog("[MAIN] Bundled Kanit fonts loaded for Qt widgets")
+                flog("[MAIN] Bundled Inter/Kanit fonts loaded for Qt widgets")
             return True
     except Exception:
         pass
@@ -301,7 +301,7 @@ class DesktopWindow:
             return False
         try:
             from PySide6.QtCore import QPoint, QSize, QTimer, Qt, QCoreApplication
-            from PySide6.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
+            from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
             from PySide6.QtWidgets import (
                 QApplication,
                 QFrame,
@@ -369,7 +369,21 @@ class DesktopWindow:
                 self._title_label = QLabel(self)
                 self._title_label.setObjectName("CronusTitle")
                 self._title_label.setTextFormat(Qt.TextFormat.RichText)
-                self._title_label.setText(f'<span>{APP_NAME}</span> <span style="color: #5c616b;">- {app_display_version()}</span>')
+                # NOTE: QLabel with RichText renders via QTextDocument, which
+                # ignores the QSS font-family and uses the widget/QApp font
+                # instead. So the font must be set in BOTH places:
+                # QFont (for the document default) + inline HTML style.
+                try:
+                    _title_font = QFont("Inter", 9)
+                    _title_font.setWeight(QFont.Weight.Medium)
+                    self._title_label.setFont(_title_font)
+                except Exception:
+                    pass
+                _title_font_stack = "'Inter','Kanit','Segoe UI','Leelawadee UI',Tahoma,'Noto Sans Thai',sans-serif"
+                self._title_label.setText(
+                    f'<span style="font-family: {_title_font_stack}; font-weight: 500;">{APP_NAME}</span> '
+                    f'<span style="font-family: {_title_font_stack}; font-weight: 500; color: #5c616b;">- {app_display_version()}</span>'
+                )
                 self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
                 self._title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
                 layout = QHBoxLayout(self)
@@ -399,7 +413,7 @@ class DesktopWindow:
                         border-bottom: 1px solid #20232c;
                     }
                     #CronusTitle {
-                        font-family: "Kanit", "Segoe UI", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif;
+                        font-family: "Inter", "Kanit", "Segoe UI", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif;
                         color: #9aa0ab;
                         font-size: 12px;
                         font-weight: 500;
@@ -506,7 +520,7 @@ background-color: #26161b;
             if _kanit_ok:
                 from PySide6.QtGui import QFont
 
-                app_qt.setFont(QFont("Kanit", 9))
+                app_qt.setFont(QFont("Inter", 9))
         except Exception as exc:
             flog_kv("MAIN", "desktop_font_apply_failed", "debug", error=str(exc))
         icon_path = resource_path("assets", APP_ICON_FILE)

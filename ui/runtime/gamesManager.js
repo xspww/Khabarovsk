@@ -253,7 +253,8 @@
       ".cronus-gitem .p{font-size:11px;color:#7f838c;font-family:monospace}",
       ".cronus-gitem .tick{color:#4ade80;font-weight:800;padding:0 4px}",
       ".cronus-bulkbar{display:flex;gap:8px;align-items:center;min-width:0}",
-      "#cronus-bulk-btn{height:33px;white-space:nowrap;flex:none}",
+      "#cronus-bulk-btn{height:33px;white-space:nowrap;flex:none;display:inline-flex;align-items:center;gap:7px}",
+      "#cronus-bulk-btn .btn-icon{width:14px;height:14px;flex:0 0 14px}",
     ].join("\n");
     document.head.appendChild(st);
   }
@@ -372,11 +373,30 @@
     } catch (error) { toast(error.message); }
   }
 
-  // ── Per-row game picker + badge in the accounts table ─────────────
-  function selectedUsernames() {
-    return Array.from(document.querySelectorAll('#accounts-table tr.selected[data-user]'))
+  // ── Bulk game picker: one click applies to ALL accounts ─────────────
+  // No row selection needed. The button opens the game list and the
+  // picked game is assigned to every account via /accounts/assign-game.
+  const BULK_ICON_SVG = `<svg class="btn-icon" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="m23 5h-1c-.552 0-1 .448-1 1v5c0 .551-.449 1-1 1h-1v-5c0-2.757-2.243-5-5-5h-9c-2.757 0-5 2.243-5 5v10c0 2.757 2.243 5 5 5h9c2.757 0 5-2.243 5-5v-3h1c1.654 0 3-1.346 3-3v-4c.552 0 1-.448 1-1s-.448-1-1-1zm-6 12c0 1.654-1.346 3-3 3h-9c-1.654 0-3-1.346-3-3v-10c0-1.654 1.346-3 3-3h9c1.654 0 3 1.346 3 3zm-7.5-1.5c0 .553-.448 1-1 1h-1v1c0 .553-.448 1-1 1s-1-.447-1-1v-1h-1c-.552 0-1-.447-1-1s.448-1 1-1h1v-1c0-.552.448-1 1-1s1 .448 1 1v1h1c.552 0 1 .447 1 1zm5.5 0c0 .828-.672 1.5-1.5 1.5s-1.5-.672-1.5-1.5.672-1.5 1.5-1.5 1.5.672 1.5 1.5zm-1.5-9.5h-8c-.827 0-1.5.673-1.5 1.5v2c0 .827.673 1.5 1.5 1.5h8c.827 0 1.5-.673 1.5-1.5v-2c0-.827-.673-1.5-1.5-1.5zm-.5 3h-7v-1h7z"/></svg>`;
+
+  function allUsernames() {
+    // Union DOM rows + ACCOUNT_GAMES map: filter/search may hide rows
+    // from the DOM, but "all" must still cover every account.
+    // Dedupe case-insensitively, preferring the DOM's original casing.
+    const fromRows = Array.from(document.querySelectorAll('#accounts-table tr[data-user]'))
       .map((row) => String(row.dataset.user || "").trim())
       .filter(Boolean);
+    const fromMap = Object.keys(ACCOUNT_GAMES || {})
+      .map((u) => String(u || "").trim())
+      .filter(Boolean);
+    const seen = new Set();
+    const out = [];
+    for (const u of fromRows.concat(fromMap)) {
+      const key = u.toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(u);
+    }
+    return out;
   }
 
   function ensureBulkBar() {
@@ -390,7 +410,7 @@
     const bar = document.createElement("div");
     bar.className = "cronus-bulkbar";
     bar.id = "cronus-bulk-game";
-    bar.innerHTML = `<button type="button" class="btn ghost" id="cronus-bulk-btn" title="Assign selected accounts to a game">Set game</button>`;
+    bar.innerHTML = `<button type="button" class="btn ghost has-icon" id="cronus-bulk-btn" title="Set game for all accounts">${BULK_ICON_SVG}<span>Set game</span></button>`;
     tools.appendChild(bar);
     bar.querySelector("#cronus-bulk-btn").addEventListener("click", (e) => {
       e.stopPropagation();
@@ -400,11 +420,16 @@
   }
 
   function updateBulkLabel() {
+    // Label is now static ("Set game") — no selection count.
+    // Kept as a function because refresh paths call it after every fetch.
+    // Repair legacy buttons rendered without the icon (cached HTML).
     const btn = document.querySelector("#cronus-bulk-btn");
     if (!btn) return;
-    const n = selectedUsernames().length;
-    const label = n > 0 ? `Set game (${n})` : "Set game";
-    if (btn.textContent !== label) btn.textContent = label;
+    if (!btn.querySelector("svg")) {
+      btn.classList.add("has-icon");
+      btn.title = "Set game for all accounts";
+      btn.innerHTML = `${BULK_ICON_SVG}<span>Set game</span>`;
+    }
   }
 
   function currentGameId(user) {
@@ -509,9 +534,9 @@
 
   function openBulkPop(anchor) {
     if (GAME_MODE !== "per_account") return;
-    const users = selectedUsernames();
+    const users = allUsernames();
     if (!users.length) {
-      toast("Select accounts first (click rows)", "info");
+      toast("No accounts yet", "info");
       return;
     }
     if (pop && popUser === "bulk") { closePop(); return; } // toggle
@@ -522,14 +547,15 @@
     pop = document.createElement("div");
     pop.className = "online-popover cronus-game-pop";
     pop.dataset.user = "bulk";
-    pop.innerHTML = `<div class="cronus-gpop-head"><span>Set game · ${users.length} selected</span><button type="button" data-close="1" title="Close">✕</button></div>`
+    pop.innerHTML = `<div class="cronus-gpop-head"><span>Set game · All ${users.length}</span><button type="button" data-close="1" title="Close">✕</button></div>`
       + GAMES.map((g) => gameItemHtml(g, allSame(String(g.id || "")))).join("")
       + noGameHtml(noneSet);
     wirePopItems(async (gid) => {
       await api("/accounts/assign-game", "POST", { usernames: users, game_id: gid });
-      users.forEach((u) => { ACCOUNT_GAMES[String(u).toLowerCase()] = gid; });
+      users.forEach((u) => { ACCOUNT_GAMES[String(u).toLowerCase()] = String(gid || ""); });
       refreshRowBadges();
       notifyGamesChanged();
+      toast(gid ? `Game set for ${users.length} accounts` : `Cleared game for ${users.length} accounts`);
     });
     preloadThumbs("bulk", () => {
       closePop();
@@ -570,8 +596,8 @@
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") closePop();
     });
-    // Row selection toggles only classes (no re-render), so refresh the
-    // bulk button count on row clicks directly.
+    // No selection tracking needed (bulk = all accounts), but keep the
+    // hook so legacy buttons without the icon get repaired on row clicks.
     document.querySelector("#accounts-table")?.addEventListener("click", () => {
       setTimeout(updateBulkLabel, 0);
     });

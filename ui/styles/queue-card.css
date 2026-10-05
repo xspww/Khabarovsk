@@ -410,7 +410,8 @@ body[data-game-mode="shared"] #accounts-table .game-cell{cursor:default}
 .cronus-gitem .tick{color:#4ade80;font-weight:800;padding:0 4px}
 #view-accounts .account-tools{grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px}
 .cronus-bulkbar{display:flex;gap:8px;align-items:center;min-width:0}
-#cronus-bulk-btn{height:33px;white-space:nowrap;flex:none}
+#cronus-bulk-btn{height:33px;white-space:nowrap;flex:none;display:inline-flex;align-items:center;gap:7px}
+#cronus-bulk-btn .btn-icon{width:14px;height:14px;flex:0 0 14px}
 /* Never show the removed Collection card, even if cached HTML injects it */
 #cronus-games-panel,
 #cronus-games-card{

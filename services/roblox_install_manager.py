@@ -428,13 +428,13 @@ class RobloxInstallManager:
     def _format_blockers(self, blockers: List[Dict[str, Any]]) -> str:
         if not blockers:
             return ""
-        shown = ", ".join(
-            f"{item.get('name') or 'Process'} (PID {item.get('pid')})"
-            for item in blockers[:4]
-        )
-        if len(blockers) > 4:
-            shown += f", +{len(blockers) - 4} more"
-        return f"Close Roblox-related apps first: {shown}"
+        # Keep the install banner to one short line so it does not wrap to
+        # 2 lines and shift layout on every poll. Full PID details stay in
+        # the `blockers` array for debugging/tooltips.
+        count = len(blockers)
+        if count == 1:
+            return "Close Roblox first (1 app running)"
+        return f"Close Roblox first ({count} apps running)"
 
     def full_wipe(self) -> Dict[str, Any]:
         removed: List[str] = []

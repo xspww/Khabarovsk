@@ -4,7 +4,7 @@
 
 <h1 align="center">Cronus Launcher</h1>
 
-<p align="center">Roblox account manager with auto-rejoin.</p>
+<p align="center">Multi-account Roblox launcher with automatic rejoin, resource controls, and executor support.</p>
 
 <p align="center">
   <a href="https://github.com/xspww/Khabarovsk/releases"><img src="https://img.shields.io/github/v/release/xspww/Khabarovsk?label=release" alt="release" /></a>
@@ -18,56 +18,64 @@
 </p>
 
 <p align="center">
-  <a href="#functions">Features</a> •
+  <a href="#overview">Overview</a> •
+  <a href="#features">Features</a> •
   <a href="#requirements">Requirements</a> •
-  <a href="#install">Install</a> •
+  <a href="#installation">Installation</a> •
   <a href="#quick-start-from-source">Quick Start</a> •
-  <a href="#build-the-exe">Build</a> •
-  <a href="#in-game-lua-script">Lua</a> •
-  <a href="#data-and-privacy">Privacy</a> •
-  <a href="#intention">Intention</a>
+  <a href="#build-from-source">Build</a> •
+  <a href="#in-game-lua-script">Lua Script</a> •
+  <a href="#data-and-privacy">Privacy</a>
 </p>
 
-<img width="1280" height="820" alt="r1" src="https://github.com/user-attachments/assets/84c32026-0316-46bb-999b-4c4b5f6b9698" />
+![Cronus Launcher dashboard](assets/screenshot-dashboard.png)
 
-## Functions
+## Overview
 
-The launcher provides the functions below:
+Cronus Launcher manages multiple Roblox accounts from a single desktop dashboard. It monitors game sessions, rejoins automatically on disconnect, and keeps CPU, memory, and graphics load under control when running several clients on one machine.
 
-- 👥 Manage more than one account: like a Roblox account manager.
-- 🔄 Automatic rejoin: the program rejoins the game for you, even while you sleep.
-- ⚡ Reduce system load: you can limit CPU use and lower graphics load during sessions with more than one instance.
-- 🧩 Work with executors: restarts the Roblox script executor for you when the executor updates, and pauses rejoining when Roblox itself updates.
-- 🔒 Protect secrets: the launcher encrypts account cookies and credentials on the host with Windows DPAPI.
+## Features
+
+- **Multi-account management** — Add, organize, and launch multiple Roblox accounts from one dashboard.
+- **Automatic rejoin** — Detect disconnections and rejoin the configured server without manual intervention.
+- **Resource controls** — CPU limiter, RAM management, FPS limit, low-graphics mode, and window layout controls for multi-instance sessions.
+- **Executor support** — Track executor compatibility against the official Roblox version, with optional auto-relaunch flow.
+- **Roblox version management** — Check the official client version, install or update the player, and clean up old versions.
+- **Local-first security** — Account cookies and credentials are encrypted on the host with Windows DPAPI and never sent to external servers.
 
 ## Requirements
 
-The host must meet the requirements below:
+| Component | Requirement |
+| --------- | ----------- |
+| OS | Windows 10 or Windows 11, 64-bit |
+| Runtime (release build) | None — the `.exe` from Releases is standalone |
+| Runtime (from source) | Python 3.11 or later |
+| Game client | Roblox Player installed on the host |
 
-- Run Windows 10 or Windows 11 64-bit.
-- Run Python 3.11 or later.
-- Have Roblox installed on the host.
+## Installation
 
-## Install
+Recommended for most users. No Python required.
 
-The easy way is the compiled build from the Releases page.
-No Python is needed for this option.
-
-1. Open `https://github.com/xspww/Khabarovsk/releases`.
+1. Open the [Releases page](https://github.com/xspww/Khabarovsk/releases).
 2. Download `CronusLauncher-<version>.exe` and run it.
-3. The portable build `CronusLauncher-<version>-portable.zip` unpacks to two files: `CronusLauncher.exe` and `Api.lua`. The exe keeps that stable name so updates replace it in place; `Api.lua` is the Lua loader to paste into your executor.
+3. Optional portable build: `CronusLauncher-<version>-portable.zip` contains `CronusLauncher.exe` and `Api.lua`. The executable keeps a stable file name so in-place updates replace it; `Api.lua` is the loader script to run in your executor.
 
-The in-app updater supports compiled release builds on Windows and needs an internet connection. If the exe is in a protected folder such as `Program Files`, the updater requests administrator approval before writing. If the account has no administrator access, move the exe to a user-writable folder. Source runs do not self-update.
-
-The release workflow signs the executable and portable archive with the project's release key. The app checks that signature and the SHA256 digest before installing an update. The signing key is managed by the project; users do not need to install certificates or configure update settings. Because the executable does not use a commercial Windows publisher certificate, Windows SmartScreen may still show its usual warning for a new download. Download only from the Releases page above. SHA256 checks detect damaged downloads; the release signature proves that an update came from this project.
+### Verify the download
 
 ```powershell
-(Get-FileHash CronusLauncher-2.5.1.exe -Algorithm SHA256).Hash
+(Get-FileHash CronusLauncher-<version>.exe -Algorithm SHA256).Hash
 ```
 
-## Quick Start (from source)
+Compare the output with the SHA256 value published on the release page.
 
-Complete the steps below:
+### Updates and signatures
+
+- The in-app updater works with compiled release builds on Windows and requires an internet connection. It does not apply to source checkouts.
+- Each release artifact is signed with the project release key. The application verifies the signature and SHA256 digest before installing an update. No certificate setup is required on the user side.
+- The executable is not signed with a commercial Windows publisher certificate, so Windows SmartScreen may show a warning on first run. Download only from the Releases page linked above.
+- If the executable is stored in a protected location such as `Program Files`, the updater requests administrator approval before writing. Without administrator access, move the executable to a user-writable folder.
+
+## Quick Start (from source)
 
 1. Clone the repository:
 
@@ -82,22 +90,19 @@ cd Khabarovsk
 python -m pip install -r requirements.txt
 ```
 
-3. Start the launcher with one of the methods below.
-To use the batch runner, run the command below:
+3. Start the launcher using one of the following methods:
 
 ```powershell
 .\Run.cmd
 ```
 
-To use Python, run the command below:
-
 ```powershell
 python main.py
 ```
 
-The launcher starts the local service on 127.0.0.1 and opens the desktop dashboard window.
+The launcher starts the local service on `127.0.0.1` and opens the desktop dashboard.
 
-## Build the exe
+## Build from source
 
 ```powershell
 python -m pip install -r requirements.txt pyinstaller
@@ -105,33 +110,28 @@ python -c "from PIL import Image; Image.open('assets/cronus_icon.png').save('ass
 pyinstaller cronus_launcher.spec
 ```
 
-The output is `dist/CronusLauncher.exe`.
-Releases are built the same way by GitHub Actions when a `v*` tag is pushed.
-The tag must match `APP_VERSION` in `version.py`.
+Output: `dist/CronusLauncher.exe`
+
+GitHub Actions builds releases the same way when a `v*` tag is pushed. The tag must match `APP_VERSION` in `version.py`.
 
 ## In-Game Lua Script
 
-A loader script (small program that loads telemetry code into the game) speeds up rejoin events.
-To send telemetry data and rejoin faster, run the file below in the Roblox executor:
+The loader script accelerates rejoin telemetry when executed inside the game client. Run the following file in your Roblox executor:
 
 ```text
 lua/run_in_executor.lua
 ```
 
-The portable zip ships this same file as `Api.lua` next to the exe.
+The portable release archive ships the same file as `Api.lua` next to the executable.
 
 ## Data and Privacy
 
-The launcher stores runtime configuration and account state on the host at the path below:
+Runtime configuration and account state are stored locally at:
 
 ```text
 %LOCALAPPDATA%\Cronus Launcher\data
 ```
 
-The launcher encrypts account cookies with Windows DPAPI on the host.
-The launcher never sends cookies to external servers.
-The launcher never commits cookies to the repository.
-When a new version is out, the launcher shows a button that opens the Releases page so you can download the new exe yourself. The data folder above is never touched.
-
-## Intention
-This program was built for AFK farmers to save costs. It is open source — feel free to modify it however you like.
+- Account cookies are encrypted with Windows DPAPI on the host.
+- Cookies are never transmitted to external servers and are never committed to the repository.
+- When a new version is available, the launcher provides a button that opens the Releases page. The local data directory is left untouched during updates.

@@ -203,6 +203,7 @@ class MaintenanceModerationMixin:
                 SUSPENDED_BLOCK_REASON,
                 SUSPENDED_REASON,
                 is_account_banned,
+                is_account_permanently_banned,
                 is_account_suspended,
                 set_account_banned_hold,
             )
@@ -212,6 +213,11 @@ class MaintenanceModerationMixin:
             return True
         if suspended and is_account_suspended(acc):
             return True
+        try:
+            if suspended and is_account_permanently_banned(acc):
+                return True
+        except Exception:
+            pass
         reason_key = SUSPENDED_REASON if suspended else BANNED_REASON
         block_msg = SUSPENDED_BLOCK_REASON if suspended else BANNED_BLOCK_REASON
         label = "suspended" if suspended else "banned"

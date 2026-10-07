@@ -237,7 +237,15 @@ class RuntimeViewModelBuilder:
             state_label = meta["label"]
             state_color = meta["color"]
             active_runtime_action = bool(acc.recovery_inflight or account_command)
-            if recovery_step == "Rejoining" and (active_runtime_action or display_state != AccountState.IN_GAME):
+            game_closed = (
+                str(acc.recovery_status or "").strip().lower() == "game_unavailable"
+                or "game_unavailable" in str(acc.last_recovery_reason or "").lower()
+                or "game_unavailable" in str(acc.last_crash_reason or "").lower()
+            )
+            if game_closed and display_state != AccountState.IN_GAME:
+                state_label = "Game Close"
+                state_color = "#fcd34d"
+            elif recovery_step == "Rejoining" and (active_runtime_action or display_state != AccountState.IN_GAME):
                 state_label = "Rejoining"
                 state_color = "#a1a1aa"
             elif recovery_step == "Disconnected" and display_state != AccountState.IN_GAME:

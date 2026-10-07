@@ -543,6 +543,57 @@ def register(app, ctx: ApiContext) -> None:
         finally:
             farm.finish_command(key, command["command_id"], ok=ok, error=error, response=result)
 
+    @app.post("/api/accounts/captcha/resume")
+    async def api_resume_captcha_bulk(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Expected object")
+        raw_names = body.get("usernames", [])
+        if isinstance(raw_names, str):
+            raw_names = [raw_names]
+        if not isinstance(raw_names, list):
+            raise HTTPException(400, "usernames must be a list")
+        names = [str(n or "").strip() for n in raw_names if str(n or "").strip()]
+        if not names:
+            raise HTTPException(400, "usernames required")
+        try:
+            from services.captcha_guard import is_account_captcha_required
+        except Exception:
+            is_account_captcha_required = lambda _a: False  # type: ignore
+        resumed: list = []
+        skipped: list = []
+        missing: list = []
+        for username in names:
+            acc = farm._find_account(username) if hasattr(farm, "_find_account") else None
+            if acc is None:
+                missing.append(username)
+                continue
+            try:
+                needs = bool(is_account_captcha_required(acc))
+            except Exception:
+                needs = False
+            if not needs:
+                skipped.append(username)
+                continue
+            try:
+                ok, _msg = farm.resume_captcha_account(username)
+            except Exception:
+                ok = False
+            if ok:
+                resumed.append(username)
+            else:
+                skipped.append(username)
+        msg = f"Resumed CAPTCHA: {len(resumed)}"
+        if skipped:
+            msg += f", skipped {len(skipped)} (not captcha)"
+        if missing:
+            msg += f", missing {len(missing)}"
+        flog_kv("API", "captcha_resume_bulk", resumed=len(resumed), skipped=len(skipped), missing=len(missing))
+        return {"ok": True, "resumed": resumed, "skipped": skipped, "missing": missing, "msg": msg}
+
     @app.post("/api/account/{username}/captcha/focus")
     def api_focus_captcha(username: str, request: Request):
         key = f"account:{username}"

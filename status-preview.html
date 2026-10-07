@@ -1,3 +1,15 @@
+<!DOCTYPE html>
+<html lang="th"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>STATUS Preview + icons</title><style>
+body{margin:0;background:#0b0c10;color:#f2f3f5;font-family:Inter,Kanit,Segoe UI,sans-serif;padding:28px}
+.wrap{max-width:1000px;margin:0 auto}
+h1{font-size:17px;margin:0 0 6px} p.sub{color:#8d9099;font-size:12px;margin:0 0 16px}
+.accounts-table-card{background:#101116;border:1px solid #1f2128;border-radius:10px;overflow:hidden}
+.table-wrap{overflow:auto} table{width:100%;border-collapse:collapse;min-width:760px}
+thead th{height:36px;background:#101116;color:#53565e;font:800 10px monospace;text-transform:uppercase;letter-spacing:.6px;text-align:left;padding:0 14px}
+tbody tr{height:50px;border-top:1px solid rgba(255,255,255,.055)} tbody tr:first-child{border-top:none}
+tbody tr:nth-child(odd){background:#14151a} tbody tr:nth-child(even){background:#0f1014}
+td{padding:0 14px;font-size:13px} .num{color:#53565e;font:700 12px monospace;width:40px} .meta{font-family:monospace;font-size:11px;color:#8d9099} .hex{font-family:monospace;font-size:11px;color:#53565e} .desc{font-size:12px;color:#6c707d}
+/* REAL CSS from accounts-dashboard.css */
 #view-accounts{gap:0}
 #view-accounts .page-head{height:54px;margin-bottom:12px;background:#0d0e12}
 #view-accounts .page-head .title{font-size:16px;font-weight:800;color:#f2f3f5}
@@ -158,3 +170,27 @@
 @media(max-width:820px){
   .res-cards{grid-template-columns:1fr}
 }
+
+</style></head><body><div class="wrap">
+<h1>STATUS Preview พร้อม icon จริง (CSS จริง 100%)</h1>
+<p class="sub">ใช้ .accounts-table-card .status.* ตัวเดียวกับ dashboard — icon มาจาก :before + mask SVG ในไฟล์จริง</p>
+<div class="accounts-table-card"><div class="table-wrap"><table>
+<thead><tr><th>#</th><th>STATUS</th><th>class</th><th>สี text/bg/border</th><th>หมายเหตุ</th></tr></thead><tbody>
+<tr><td class="num">1</td><td><span class="status online">Online</span></td><td class="meta">online</td><td class="hex">#4ade80 / #11231f / #1b3d32</td><td class="desc">In Game เสถียร</td></tr>
+<tr><td class="num">2</td><td><span class="status queued">Queued</span></td><td class="meta">queued</td><td class="hex">#93c5fd / #141f36 / #1e3358</td><td class="desc">รอคิว</td></tr>
+<tr><td class="num">3</td><td><span class="status idled">Idled</span></td><td class="meta">idled</td><td class="hex">#8d9099 / #18191e / #252b45</td><td class="desc">Idle/Ready - ในรูปคุณ</td></tr>
+<tr><td class="num">4</td><td><span class="status finished">Finished</span></td><td class="meta">finished</td><td class="hex">#a7adb8 / #1b1d22 / #33363f</td><td class="desc">manual Finished - ในรูปคุณ</td></tr>
+<tr><td class="num">5</td><td><span class="status recovery launching">Launching</span></td><td class="meta">recovery launching</td><td class="hex">#fcd34d / #261e14 / #48341b</td><td class="desc">LAUNCHING</td></tr>
+<tr><td class="num">6</td><td><span class="status recovery">Rejoining</span></td><td class="meta">recovery</td><td class="hex">#fcd34d / #261e14 / #48341b</td><td class="desc">VERIFY/CRASH/FAILED</td></tr>
+<tr><td class="num">7</td><td><span class="status recovery">Checking</span></td><td class="meta">recovery</td><td class="hex">#fcd34d / #261e14 / #48341b</td><td class="desc">suspect</td></tr>
+<tr><td class="num">8</td><td><span class="status cooldown">Cooldown</span></td><td class="meta">cooldown</td><td class="hex">#fcd34d / #261e14 / #48341b</td><td class="desc">COOLDOWN</td></tr>
+<tr><td class="num">9</td><td><span class="status network">Disconnected</span></td><td class="meta">network</td><td class="hex">#fcd34d / #261e14 / #48341b</td><td class="desc">NETWORK_LOST</td></tr>
+<tr><td class="num">10</td><td><span class="status locked">Game Close</span></td><td class="meta">locked</td><td class="hex">#fcd34d / #261e14 / #48341b</td><td class="desc">แมพปิดอัพเดท (game_unavailable) + lock.svg</td></tr>
+<tr><td class="num">11</td><td><span class="status recovery lua">Waiting For Lua</span></td><td class="meta">recovery lua</td><td class="hex">#38bdf8 / #11232e / #193f52</td><td class="desc">รอ Lua</td></tr>
+<tr><td class="num">12</td><td><span class="status captcha">Captcha</span></td><td class="meta">captcha</td><td class="hex">#d8b4fe / #221633 / #3d235c</td><td class="desc">ต้องแก้เอง</td></tr>
+<tr><td class="num">13</td><td><span class="status invalid">Invalid</span></td><td class="meta">invalid</td><td class="hex">#fb923c / #261a12 / #4c2815</td><td class="desc">cookie_invalid</td></tr>
+<tr><td class="num">14</td><td><span class="status blocked">Blocked</span></td><td class="meta">blocked</td><td class="hex">#f87171 / #26141a / #461c28</td><td class="desc">Guard Failed / Cookie Mismatch</td></tr>
+<tr><td class="num">15</td><td><span class="status suspended">Suspended</span></td><td class="meta">suspended</td><td class="hex">#f87171 / #26141a / #461c28</td><td class="desc">user-forbidden-alt แดง</td></tr>
+<tr><td class="num">16</td><td><span class="status banned">Banned</span></td><td class="meta">banned</td><td class="hex">#f87171 / #26141a / #461c28</td><td class="desc">user-forbidden-alt แดง</td></tr>
+</tbody></table></div></div>
+</div></body></html>

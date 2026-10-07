@@ -959,7 +959,14 @@ class RecoveryCoordinator:
         with acc._lock:
             launch_fail_count = acc.launch_fail_count
             active_vip = acc.active_vip
-            if (
+            if is_game_down:
+                # Map down, not a bad link: keep VIP affinity so the reopen
+                # rejoins the same private server instead of drifting public.
+                if active_vip:
+                    acc.launch_strategy = "vip_preferred"
+                else:
+                    acc.launch_strategy = "public_only"
+            elif (
                 active_vip and acc.place_id and
                 launch_fail_count >= int(self._cfg.get("launch_public_fallback_threshold", 2) or 2)
             ):
@@ -988,7 +995,7 @@ class RecoveryCoordinator:
         if active_vip and acc._vip_tracker and not is_game_down:
             # Game-down is not the link's fault — do not blacklist it.
             acc._vip_tracker.mark_crash(active_vip)
-        if acc.place_id and active_vip and launch_fail_count >= int(self._cfg.get("launch_public_fallback_threshold", 2) or 2):
+        if not is_game_down and acc.place_id and active_vip and launch_fail_count >= int(self._cfg.get("launch_public_fallback_threshold", 2) or 2):
             flog(
                 f"[RECOVERY] {acc.display_name} switching launch strategy to public fallback "
                 f"after {launch_fail_count} launch failures",

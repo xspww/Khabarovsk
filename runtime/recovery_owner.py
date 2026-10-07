@@ -52,7 +52,7 @@ class RecoveryOwnerRegistry:
             same_runtime = int(owner.get("runtime_generation", -1)) == int(runtime_generation or 0)
             same_recovery = int(owner.get("recovery_generation", -1)) == int(recovery_generation or 0)
             if same_runtime and same_recovery:
-                if str(reason or "") in {"launch_fail", "watchdog_timeout"} and state_name in {"LAUNCHING", "VERIFY"}:
+                if str(reason or "") in {"launch_fail", "game_unavailable", "watchdog_timeout"} and state_name in {"LAUNCHING", "VERIFY"}:
                     replaced = self._active_recoveries.pop(account_id, None) or {}
                     return {
                         "accepted": True,

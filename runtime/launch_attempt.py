@@ -153,7 +153,16 @@ class LaunchAttempt:
                 if controller._transaction_update(acc, status="failed", step="launch_failed", reason=str(safe_detail or "launch_failed"), server_validation="launch_failed", expected=launch_guard):
                     controller._bus.emit(EventName.LAUNCH_FAILED, account=acc, reason=safe_detail)
                 if attempted_vip and acc._vip_tracker:
-                    acc._vip_tracker.mark_crash(attempted_vip)
+                    try:
+                        from runtime.recovery_policy import is_game_unavailable_detail as _is_game_down
+
+                        _game_down = bool(_is_game_down(safe_detail))
+                    except Exception:
+                        _game_down = False
+                    # Game closed for update: the VIP link is not at fault.
+                    # Blacklisting it would delay the rejoin when the map reopens.
+                    if not _game_down:
+                        acc._vip_tracker.mark_crash(attempted_vip)
                 return False
             flog(f"[LAUNCH] Sent for {acc.display_name} ({safe_detail[:80]})")
             with acc._lock:

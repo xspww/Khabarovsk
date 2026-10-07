@@ -459,13 +459,43 @@ class Dispatcher(threading.Thread):
                     if worker:
                         worker.wake()
                 else:
+                    # Preserve the specific launch failure recorded by
+                    # LaunchAttempt (e.g. "VIP invite did not expose
+                    # accessCode (200)" when the map is closed for update).
+                    # Forwarding only generic "launch_failed" hid game-down
+                    # from recovery, so the budget tripped FAILED and the map
+                    # reopening never rejoined.
+                    specific_detail = ""
+                    try:
+                        with acc._lock:
+                            specific_detail = str(
+                                acc.last_transaction_failure_reason
+                                or acc.last_transaction_reason
+                                or ""
+                            )
+                    except Exception:
+                        specific_detail = ""
+                    if not specific_detail.strip() or specific_detail.strip().lower() in {
+                        "launch_failed",
+                        "launch_sent",
+                        "dispatcher_launch",
+                    }:
+                        specific_detail = "launch_failed"
                     rolled_back = self._finish_transaction(acc, "rolled_back", "launch_failed", server_validation="launch_failed", expected=tx_guard)
                     if rolled_back:
+                        # Keep the specific reason on the account so the
+                        # dashboard/log still shows WHY the launch failed
+                        # even though the transaction itself rolled back.
+                        try:
+                            with acc._lock:
+                                acc.last_transaction_failure_reason = specific_detail
+                        except Exception:
+                            pass
                         self._runtime_owner.handle_runtime_signal(
                             acc,
                             "launch_failure",
                             "launch_failed",
-                            payload={"detail": "launch_failed"},
+                            payload={"detail": specific_detail},
                             expected_runtime_generation=tx_guard.get("runtime_generation"),
                             expected_session_id=str(tx_guard.get("session_id", "") or ""),
                             expected_launch_nonce=str(tx_guard.get("launch_nonce", "") or ""),

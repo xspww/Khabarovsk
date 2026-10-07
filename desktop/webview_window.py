@@ -563,8 +563,8 @@ background-color: #26161b;
         window.setCentralWidget(container)
         # Initial size matched to the Storm Launcher reference screenshot
         # (compact ~4:3 login window, not wide 1280x820).
-        window.resize(1024, 768)
-        window.setMinimumSize(880, 600)
+        window.resize(1124, 843)
+        window.setMinimumSize(966, 659)
         try:
             _screen = app_qt.primaryScreen()
             if _screen is not None:

@@ -647,9 +647,10 @@ class AccountWorker(threading.Thread):
             try:
                 from domain.account_model import is_account_finished as _is_finished
                 from services.ban_guard import is_account_banned as _is_banned_mid
+                from services.ban_guard import is_account_suspended as _is_suspended_mid
 
-                if _is_finished(acc) or _is_banned_mid(acc):
-                    # Marked Finished/Banned mid-run: sit idle, no rejoin, no actions.
+                if _is_finished(acc) or _is_banned_mid(acc) or _is_suspended_mid(acc):
+                    # Marked Finished/Banned/Suspended mid-run: sit idle, no rejoin, no actions.
                     self._wake.wait(timeout=2.0)
                     self._wake.clear()
                     continue
@@ -720,6 +721,16 @@ class AccountWorker(threading.Thread):
             user_id = str(data.get("id") or "")
             if not username:
                 return (False, "", "no username in response", True)
+            # Authenticated OK — check live moderation first (temporary
+            # suspension is invisible to isBanned), then permanent ban.
+            try:
+                from roblox_hybrid import fetch_moderation_status
+
+                mod_banned, mod_detail, _mod_payload = fetch_moderation_status(cookie.strip())
+            except Exception:
+                mod_banned, mod_detail = None, ""
+            if mod_banned is True and mod_detail:
+                return (False, username, mod_detail, False)
             # Authenticated OK — check account-level ban (banned cookies still 200).
             if user_id:
                 try:
@@ -744,6 +755,18 @@ class AccountWorker(threading.Thread):
             captcha = captcha_detail(e.code, body, headers)
             if captcha:
                 return False, "", captcha, False
+            # 403 "User is moderated" still answers the moderation endpoint —
+            # probe it so a suspension reads as Suspended, not Invalid.
+            try:
+                lowered_body = f"HTTP {e.code} {body}".lower()
+                if e.code == 403 and ("moderated" in lowered_body or "banned" in lowered_body):
+                    from roblox_hybrid import fetch_moderation_status as _fetch_mod
+
+                    _mb, _md, _mp = _fetch_mod(cookie.strip())
+                    if _mb is True and _md:
+                        return False, "", _md, False
+            except Exception:
+                pass
             try:
                 from services.ban_guard import is_banned_text as _is_banned_text
 

@@ -296,6 +296,19 @@ def handle_lua_rejoin_event(
             )
         except Exception as e:
             return farm._lua_event_handler_error(acc, event_name, e)
+        try:
+            _code = str(event_payload.get("error_code") or "")
+            _low = f"{event_payload.get('detail','')} {reason}".lower()
+            if _code in {"267", "268", "273"} or "bann" in _low or "suspend" in _low or "terminat" in _low:
+                maint = getattr(farm, "_maintenance", None)
+                prio = getattr(maint, "request_moderation_check", None) if maint is not None else None
+                if callable(prio):
+                    try:
+                        prio(acc._config_username)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
         worker = farm._workers.get(acc._config_username)
         if worker:
             worker.wake()

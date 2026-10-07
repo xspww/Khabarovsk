@@ -84,3 +84,9 @@
   height: 14px;
 }
 
+/* Zoom lock: disable pinch-zoom gesture, keep normal pan/scroll. */
+html, body {
+  touch-action: pan-x pan-y;
+  overscroll-behavior: none;
+}
+

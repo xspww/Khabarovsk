@@ -13,7 +13,14 @@ from services.captcha_guard import (
     is_account_captcha_required,
     set_account_captcha_hold,
 )
-from services.ban_guard import BANNED_BLOCK_REASON, BANNED_REASON, is_account_banned
+from services.ban_guard import (
+    BANNED_BLOCK_REASON,
+    BANNED_REASON,
+    SUSPENDED_BLOCK_REASON,
+    SUSPENDED_REASON,
+    is_account_banned,
+    is_account_suspended,
+)
 from services.auth_gate import AuthGateDecision
 
 
@@ -101,13 +108,17 @@ def emit_reload_cookie_events(farm: Any, validation: Dict[str, Any]) -> None:
     valid_accounts = list(validation.get("valid_accounts") or [])
     captcha_accounts = list(validation.get("captcha_accounts") or [])
     banned_accounts = list(validation.get("banned_accounts") or [])
+    suspended_accounts = list(validation.get("suspended_accounts") or [])
     invalid_accounts = list(validation.get("invalid_accounts") or validation.get("removed_accounts") or [])
     valid_count = len(valid_accounts)
     invalid = int(validation.get("invalid") if validation.get("invalid") is not None else validation.get("removed") or 0)
     captcha = int(validation.get("captcha") or 0)
     banned = int(validation.get("banned") or len(banned_accounts) or 0)
-    summary_level = "warning" if (invalid or captcha or banned) else "success"
+    suspended = int(validation.get("suspended") or len(suspended_accounts) or 0)
+    summary_level = "warning" if (invalid or captcha or banned or suspended) else "success"
     summary = f"Reload Cookies checked: {valid_count} valid, {captcha} CAPTCHA, {invalid} invalid"
+    if suspended:
+        summary += f", {suspended} suspended"
     if banned:
         summary += f", {banned} banned"
     farm._push_event(
@@ -119,6 +130,7 @@ def emit_reload_cookie_events(farm: Any, validation: Dict[str, Any]) -> None:
         captcha=captcha,
         invalid=invalid,
         banned=banned,
+        suspended=suspended,
     )
     for item in valid_accounts:
         username = str(item.get("username") or "Unknown")
@@ -149,6 +161,17 @@ def emit_reload_cookie_events(farm: Any, validation: Dict[str, Any]) -> None:
             account=_find_runtime_account(farm, username),
             severity="error",
             reason="banned",
+            detail=reason,
+        )
+    for item in suspended_accounts:
+        username = str(item.get("username") or "Unknown")
+        reason = str(item.get("reason") or "suspended")
+        farm._push_event(
+            "cookie",
+            f"Reload Cookies suspended: {username} - {reason}",
+            account=_find_runtime_account(farm, username),
+            severity="error",
+            reason="suspended",
             detail=reason,
         )
     for item in invalid_accounts:
@@ -372,10 +395,40 @@ def _sync_running_farm_accounts(farm: Any, cfg_mgr: Any, new_accounts: List[Acco
         was_captcha = is_account_captcha_required(account)
         now_captcha = is_account_captcha_required(fresh)
         was_banned = is_account_banned(account)
-        now_banned = is_account_banned(fresh)
+        was_suspended = is_account_suspended(account)
+        was_moderated = was_banned or was_suspended
+        now_suspended = is_account_suspended(fresh)
+        now_banned = is_account_banned(fresh) and not now_suspended
         _sync_existing_runtime_account(account, fresh)
         synced += 1
-        if now_banned:
+        if now_suspended:
+            banned_synced += 1
+            from services.ban_guard import set_account_suspended_hold
+
+            set_account_suspended_hold(
+                account,
+                fresh.manual_status or SUSPENDED_BLOCK_REASON,
+                source="reload_cookies",
+                runtime_writer=farm._runtime_state,
+            )
+            try:
+                with account._lock:
+                    _pid = account.pid
+                    _gen = account.runtime_generation
+            except Exception:
+                _pid, _gen = None, 0
+            if _pid:
+                try:
+                    from services.process_service import ProcessService
+
+                    ProcessService.safe_kill_bound_process(
+                        account, farm._state_mgr, reason="reload_suspended", expected_runtime_generation=_gen
+                    )
+                except Exception:
+                    pass
+            if farm._recovery:
+                farm._recovery.fail_account(account, SUSPENDED_REASON, SUSPENDED_BLOCK_REASON)
+        elif now_banned:
             banned_synced += 1
             from services.ban_guard import set_account_banned_hold
 
@@ -385,6 +438,21 @@ def _sync_running_farm_accounts(farm: Any, cfg_mgr: Any, new_accounts: List[Acco
                 source="reload_cookies",
                 runtime_writer=farm._runtime_state,
             )
+            try:
+                with account._lock:
+                    _pid = account.pid
+                    _gen = account.runtime_generation
+            except Exception:
+                _pid, _gen = None, 0
+            if _pid:
+                try:
+                    from services.process_service import ProcessService
+
+                    ProcessService.safe_kill_bound_process(
+                        account, farm._state_mgr, reason="reload_banned", expected_runtime_generation=_gen
+                    )
+                except Exception:
+                    pass
             if farm._recovery:
                 farm._recovery.fail_account(account, BANNED_REASON, BANNED_BLOCK_REASON)
         elif now_captcha:
@@ -400,7 +468,7 @@ def _sync_running_farm_accounts(farm: Any, cfg_mgr: Any, new_accounts: List[Acco
                 ok, _ = farm.resume_captcha_account(account._config_username)
                 if ok:
                     resumed += 1
-            elif was_banned:
+            elif was_moderated:
                 # Banned cleared (Reload valid / manual Unmark): restart dead
                 # worker so the account rejoins without a full restart.
                 try:

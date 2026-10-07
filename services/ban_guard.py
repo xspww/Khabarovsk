@@ -44,6 +44,7 @@ def is_banned_text(*values: Any) -> bool:
         or "roblox ban" in text
         or text.strip() == "banned"
         or "user is banned" in text
+        or "user is moderated" in text
     ):
         return True
     # "terminated" alone is too broad (e.g. "session terminated", "connection
@@ -211,6 +212,10 @@ def _set_moderation_hold(
         account.last_recovery_reason = reason
         account.recovery_scheduled_at = 0.0
         account.last_state_reason = source or reason
+        try:
+            account.import_status = SUSPENDED_IMPORT_STATUS if str(reason or "").lower() == SUSPENDED_REASON else BANNED_IMPORT_STATUS
+        except Exception:
+            pass
         if runtime_writer is not None:
             try:
                 if hasattr(runtime_writer, "set_recovery"):
@@ -235,20 +240,25 @@ def _set_moderation_hold(
 
 def clear_account_banned_hold(account: Any, runtime_writer: Any = None) -> bool:
     was_banned = is_account_banned(account)
+    try:
+        was_suspended = is_account_suspended(account)
+    except Exception:
+        was_suspended = False
+    was_moderated = bool(was_banned or was_suspended)
     lock = getattr(account, "_lock", None)
 
     def _clear() -> None:
-        if is_banned_status_text(getattr(account, "manual_status", "")):
+        if is_banned_status_text(getattr(account, "manual_status", "")) or is_suspended_status_text(getattr(account, "manual_status", "")):
             account.manual_status = ""
-        if is_banned_status_text(getattr(account, "last_error", "")):
+        if is_banned_status_text(getattr(account, "last_error", "")) or is_suspended_status_text(getattr(account, "last_error", "")):
             account.last_error = ""
-        if _lower(getattr(account, "last_crash_reason", "")) == BANNED_REASON:
+        if _lower(getattr(account, "last_crash_reason", "")) in (BANNED_REASON, SUSPENDED_REASON):
             account.last_crash_reason = ""
-        if _lower(getattr(account, "last_recovery_reason", "")) == BANNED_REASON:
+        if _lower(getattr(account, "last_recovery_reason", "")) in (BANNED_REASON, SUSPENDED_REASON):
             account.last_recovery_reason = ""
-        if is_banned_status_text(getattr(account, "last_state_reason", "")):
+        if is_banned_status_text(getattr(account, "last_state_reason", "")) or is_suspended_status_text(getattr(account, "last_state_reason", "")):
             account.last_state_reason = ""
-        if is_banned_status_text(getattr(account, "import_status", "")):
+        if is_banned_status_text(getattr(account, "import_status", "")) or is_suspended_status_text(getattr(account, "import_status", "")):
             account.import_status = ""
         account.recovery_scheduled_at = 0.0
         account.session_checked = False
@@ -288,4 +298,4 @@ def clear_account_banned_hold(account: Any, runtime_writer: Any = None) -> bool:
     else:
         _clear()
     persist_account_banned_status(account, active=False)
-    return was_banned
+    return was_moderated

@@ -63,6 +63,22 @@ ACTIVE_SLOT_STATES = {
 }
 
 
+def _is_game_unavailable_detail(text: str) -> bool:
+    """Thin wrapper — canonical helper lives in recovery_policy (single owner).
+
+    Game closed for update surfaces as VIP-invite/Unauthorized details;
+    those are transient and must retry slowly forever, never FAILED.
+    """
+    try:
+        from runtime.recovery_policy import is_game_unavailable_detail as _canonical_check
+    except Exception:
+        return False
+    try:
+        return bool(_canonical_check(text))
+    except Exception:
+        return False
+
+
 class RecoveryCoordinator:
     """Central recovery/rejoin controller. Every path that wants recovery reports here."""
 
@@ -439,6 +455,17 @@ class RecoveryCoordinator:
         window_seconds = max(1.0, float(cfg.get("recovery_budget_window_seconds", 300) or 300))
         if not enabled or bucket == "manual" or bool(policy_for(canonical).get("fatal")):
             return ""
+        if canonical == "game_unavailable":
+            # Map down for update: external/transient. Retry slowly forever —
+            # burning the circuit-breaker budget here is what stuck accounts
+            # on "Rejoining" (FAILED) with no retry when the map reopens.
+            # Prune the window so the counter cannot grow unbounded.
+            acc.recovery_budget_attempts = [
+                float(ts)
+                for ts in list(getattr(acc, "recovery_budget_attempts", []) or [])
+                if (now - float(ts)) <= window_seconds
+            ]
+            return ""
         attempts = [
             float(ts)
             for ts in list(getattr(acc, "recovery_budget_attempts", []) or [])
@@ -761,10 +788,26 @@ class RecoveryCoordinator:
         context: Optional[RecoveryAttemptContext] = None,
     ):
         canonical = _canonical_recovery_reason(reason_key, context)
+        detail_text = " ".join(
+            part for part in (
+                str(reason_msg or ""),
+                str(getattr(context, "detail", "") or "") if context else "",
+                str(reason_key or ""),
+            )
+            if part
+        )
+        if _is_game_unavailable_detail(detail_text):
+            # Kicked because the map shut down for an update (e.g. Teleport
+            # Unauthorized). The client is dead so normal crash cleanup still
+            # runs, but the retry must be slow/indefinite and budget-exempt —
+            # otherwise 8 quick launch failures trip FAILED and the map
+            # reopening never rejoins.
+            canonical = "game_unavailable"
         display_reason = _display_recovery_reason(reason_key, canonical, reason_msg, context)
         policy = policy_for(canonical)
         bucket = str(policy.get("bucket") or "crash")
         is_network_recovery = bucket == "network" or canonical in {"connection_error", "network_drop"}
+        is_game_down = canonical == "game_unavailable"
         if canonical == "session_conflict":
             attempt = self._session_conflicts.record(
                 acc._config_username,
@@ -782,8 +825,8 @@ class RecoveryCoordinator:
             status="recovering",
             bucket=bucket,
             reason_msg=reason_msg,
-            count_crash=not is_network_recovery,
-            count_fail=not is_network_recovery,
+            count_crash=not is_network_recovery and not is_game_down,
+            count_fail=not is_network_recovery and not is_game_down,
             context=context,
         )
         if not ctx:
@@ -812,7 +855,8 @@ class RecoveryCoordinator:
                 kill_reason=kill_result.get("reason", ""),
                 **(context.to_dict() if context else {}),
             )
-        if active_vip and acc._vip_tracker:
+        if active_vip and acc._vip_tracker and not is_game_down:
+            # Game-down is not the link's fault — do not blacklist it.
             acc._vip_tracker.mark_crash(active_vip)
 
         self._state_mgr.transition(acc, AccountState.CRASH, reason=canonical, force=True)
@@ -887,7 +931,9 @@ class RecoveryCoordinator:
             set_account_captcha_hold(acc, reason, source="launch_failure", runtime_writer=self._runtime_state)
             self.fail_account(acc, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
             return
-        if "server full" in reason_l or "experience is full" in reason_l:
+        if _is_game_unavailable_detail(reason):
+            canonical = "game_unavailable"
+        elif "server full" in reason_l or "experience is full" in reason_l:
             canonical = "server_full"
         elif "cookie" in reason_l or "auth" in reason_l or "login" in reason_l:
             canonical = "auth_failure"
@@ -897,6 +943,7 @@ class RecoveryCoordinator:
             canonical = "launch_fail"
         policy = policy_for(canonical)
         bucket = str(policy.get("bucket") or "launch")
+        is_game_down = canonical == "game_unavailable"
         ctx = self._begin_recovery(
             acc,
             canonical,
@@ -904,7 +951,7 @@ class RecoveryCoordinator:
             bucket=bucket,
             reason_msg=reason,
             count_crash=False,
-            count_fail=True,
+            count_fail=not is_game_down,
         )
         if not ctx:
             self._persist_runtime(force=True)
@@ -928,7 +975,7 @@ class RecoveryCoordinator:
             EventName.ACCOUNT_CRASH,
             account=acc,
             reason=canonical,
-            reason_msg=RECOVERY_REASON_MESSAGES["launch_fail"],
+            reason_msg=RECOVERY_REASON_MESSAGES.get(canonical, RECOVERY_REASON_MESSAGES["launch_fail"]),
         )
         if bool(policy.get("fatal")):
             self.fail_account(acc, canonical, RECOVERY_REASON_MESSAGES.get(canonical, canonical))
@@ -938,7 +985,8 @@ class RecoveryCoordinator:
             flog(f"[RECOVERY] Auto rejoin disabled - not scheduling launch retry for {acc.display_name}", "warning")
             self._persist_runtime()
             return
-        if active_vip and acc._vip_tracker:
+        if active_vip and acc._vip_tracker and not is_game_down:
+            # Game-down is not the link's fault — do not blacklist it.
             acc._vip_tracker.mark_crash(active_vip)
         if acc.place_id and active_vip and launch_fail_count >= int(self._cfg.get("launch_public_fallback_threshold", 2) or 2):
             flog(
@@ -1037,6 +1085,115 @@ class RecoveryCoordinator:
             reason_msg=reason_msg,
         )
         self._persist_runtime(force=True)
+
+    def maybe_revive_transient_failed(self, acc: Account, trigger: str = "periodic_reconcile") -> bool:
+        """Auto-revive FAILED accounts stuck by transient game-down budget.
+
+        Before this fix, 8 quick "VIP invite did not expose accessCode"
+        launch failures inside 300s tripped recovery_budget_exceeded ->
+        FAILED forever (evaluate holds "already_failed"). The map reopening
+        later never rejoined — the card just sat on "Rejoining" (frontend
+        maps FAILED to Rejoining) with zero retries.
+
+        Revive only transient failures (budget/launch/game_unavailable),
+        only when the failure is old enough that an immediate requeue will
+        not hot-loop, and never for auth/captcha/ban blocks.
+        Returns True when the account was revived and requeued.
+        """
+        try:
+            min_age = max(
+                30.0,
+                float(self._cfg.get("failed_transient_revive_seconds", 90) or 90),
+            )
+        except Exception:
+            min_age = 90.0
+        min_age = min(600.0, max(30.0, min_age))
+        now = time.time()
+        with acc._lock:
+            if acc.desired_state != AccountState.IN_GAME:
+                return False
+            if acc.state != AccountState.FAILED:
+                return False
+            crash_reason = str(acc.last_crash_reason or "").strip().lower()
+            recovery_reason = str(acc.last_recovery_reason or "").strip().lower()
+            last_at = max(
+                float(acc.last_recovery_at or 0.0),
+                float(acc.last_state_change_at or 0.0),
+            )
+            age = (now - last_at) if last_at else 1e9
+        transient_markers = (
+            "recovery_budget_exceeded",
+            "launch_fail",
+            "game_unavailable",
+            "launch_backoff",
+            "vip invite did not expose accesscode",
+            "joinprivategame",
+            "unauthorized",
+            "teleport failed",
+        )
+        haystack = f"{crash_reason} {recovery_reason}"
+        if not any(marker in haystack for marker in transient_markers):
+            return False
+        # Auth blocks are terminal — never auto-revive (evaluator re-fails them).
+        try:
+            gate = evaluate_account_auth_gate(acc)
+            if gate.blocked:
+                return False
+        except Exception:
+            pass
+        if age < min_age:
+            return False
+        # Budget window has slid past: drop stale attempts so the revived
+        # account does not instantly re-trip FAILED on the next failure.
+        try:
+            window_seconds = max(
+                1.0,
+                float(self._cfg.get("recovery_budget_window_seconds", 300) or 300),
+            )
+            with acc._lock:
+                acc.recovery_budget_attempts = [
+                    float(ts)
+                    for ts in list(getattr(acc, "recovery_budget_attempts", []) or [])
+                    if (now - float(ts)) <= window_seconds
+                ]
+                acc.fail_count = 0
+                acc.retry_count = 0
+                acc.crash_retry_count = 0
+                acc.network_retry_count = 0
+                acc.session_retry_count = 0
+                # Keep launch_fail_count for game_unavailable backoff growth;
+                # reset only a runaway counter so delay restarts from ~30s.
+                try:
+                    if int(acc.launch_fail_count or 0) > 20:
+                        acc.launch_fail_count = 10
+                except Exception:
+                    pass
+                self._runtime_state.set_cooldown(acc, 0.0, reason="transient_failed_revive")
+                self._runtime_state.set_recovery(
+                    acc, status="queued", reason="transient_failed_revive", inflight=True,
+                )
+        except Exception:
+            return False
+        self._log_recovery_decision(
+            "transient_failed_revived",
+            acc,
+            "recovery_budget_exceeded",
+            trigger=trigger,
+            age=f"{age:.1f}",
+        )
+        try:
+            self._state_mgr.transition(acc, AccountState.READY, reason="transient_failed_revive", force=True)
+        except Exception:
+            return False
+        try:
+            self._queue_account(acc, f"{trigger}:transient_failed_revive")
+        except Exception:
+            return False
+        try:
+            self._persist_runtime(force=True)
+        except Exception:
+            pass
+        return True
 
     def mark_network_lost(self, acc: Account, trigger: str = "network_lost"):
         if acc.desired_state != AccountState.IN_GAME or acc.state == AccountState.FAILED:

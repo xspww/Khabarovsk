@@ -69,6 +69,20 @@ def handle_disconnect_dialog_rejoin(owner: Any, acc: Any, pid: Any, dialog: Dict
     reason_key = str(dialog.get("reason_key") or "connection_error")
     detail = str(dialog.get("detail") or "")
     error_code = str(dialog.get("error_code") or "")
+    # Ban/suspend kick shows up as a 267/273 disconnect first — prioritise a
+    # live moderation probe so the RT monitor confirms Suspended vs Banned
+    # on the next tick instead of waiting out the full 15 min interval.
+    try:
+        lowered = f"{detail} {reason_key}".lower()
+        if error_code in {"267", "268", "273"} or "bann" in lowered or "suspend" in lowered or "terminat" in lowered:
+            prio = getattr(owner, "request_moderation_check", None)
+            if callable(prio):
+                try:
+                    prio(getattr(acc, "_config_username", "") or getattr(acc, "username", ""))
+                except Exception:
+                    pass
+    except Exception:
+        pass
     flog_kv(
         "WATCHDOG",
         "disconnect_dialog_rejoin_signal",

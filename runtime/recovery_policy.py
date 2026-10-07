@@ -44,6 +44,9 @@ RECOVERY_POLICIES = {
     "multi_roblox_guard_failed": {"bucket": "session", "cap": 0.0, "fatal": True},
     "server_full": {"bucket": "launch", "cap": 20.0, "fatal": False},
     "launch_fail": {"bucket": "launch", "cap": 45.0, "fatal": False},
+    # Game closed for update / VIP invite temporarily unresolvable.
+    # Transient and external: retry slowly forever, never FAILED.
+    "game_unavailable": {"bucket": "launch", "cap": 120.0, "fatal": False},
     "recovery_budget_exceeded": {"bucket": "session", "cap": 0.0, "fatal": True},
 }
 
@@ -51,6 +54,51 @@ RECOVERY_POLICIES = {
 def canonical_reason(reason_key: str) -> str:
     reason_key = str(reason_key or "")
     return REASON_ALIASES.get(reason_key, reason_key)
+
+
+def is_game_unavailable_detail(text: str) -> bool:
+    """True when a launch/crash detail means the map itself is down.
+
+    Game closed for update (or private link temporarily dead) surfaces as:
+    - "VIP invite did not expose accessCode (200)" (invite page without
+      joinPrivateGame marker — the map/VIP is inactive)
+    - "joinPrivateGame marker not found"
+    - "Teleport failed: Enum.TeleportResult.Unauthorized" (kicked because
+      the server shut down for an update)
+    These are external and transient: retry slowly forever, never FAILED.
+    Auth/cookie/ban/captcha failures are NOT game-down and must not match.
+    """
+    lowered = str(text or "").strip().lower()
+    if not lowered:
+        return False
+    # Definitive game-down signals first — "unauthorized" contains the
+    # substring "auth", so the auth guard below must not swallow it.
+    definitive = (
+        "did not expose accesscode",
+        "joinprivategame",
+        "teleportresult.unauthorized",
+        "teleport failed",
+        "unauthorized",
+    )
+    if any(sig in lowered for sig in definitive):
+        return True
+    # Auth problems are separate categories — never treat them as game-down.
+    if "cookie" in lowered or ".roblosecurity" in lowered:
+        return False
+    if "captcha" in lowered or "banned" in lowered or "suspended" in lowered:
+        return False
+    if "auth failure" in lowered or "auth-ticket" in lowered or "authentication" in lowered or "login" in lowered:
+        return False
+    signatures = (
+        "server shutdown",
+        "servers are restarting",
+        "place is inactive",
+        "experience is closed",
+        "game update",
+        "game is updating",
+        "under maintenance",
+    )
+    return any(sig in lowered for sig in signatures)
 
 
 def policy_for(reason_key: str) -> Dict[str, Any]:
@@ -112,6 +160,11 @@ def adaptive_recovery_delay(
         return min(15.0, 3.0 + (network_retry * 1.5))
     if canonical == "launch_fail":
         return min(45.0, compute_backoff(max(1, launch_retry), base=4, cap=45))
+    if canonical == "game_unavailable":
+        # Map closed for update / private link temporarily dead.
+        # Back off hard so we do not hammer Roblox while the map is down,
+        # but keep retrying indefinitely — the map coming back must rejoin.
+        return min(120.0, 30.0 + max(0, launch_retry - 1) * 15.0)
     if canonical == "server_full":
         return min(20.0, rejoin_base + max(0, launch_retry - 1) * 3.0)
     if canonical in {"process_crash", "watchdog_timeout", "loading_freeze", "teleport_timeout"}:

@@ -73,6 +73,12 @@ class RecoveryEvaluator:
             r._log_hold(acc, trigger, "stopped_or_not_desired")
             return
         if current == AccountState.FAILED:
+            try:
+                revive = getattr(r, "maybe_revive_transient_failed", None)
+                if callable(revive) and bool(revive(acc, trigger)):
+                    return
+            except Exception:
+                pass
             r._log_hold(acc, trigger, "already_failed")
             return
         auth_gate = evaluate_account_auth_gate(acc)

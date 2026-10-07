@@ -10,6 +10,7 @@ from runtime.orphan_sweeper import RuntimeOrphanSweeper
 from runtime.runtime_scheduler import RuntimeScheduler, RuntimeScheduledJob
 from services.process_service import ProcessManager
 from runtime.maintenance_liveness import MaintenanceLivenessMixin
+from runtime.maintenance_moderation import MaintenanceModerationMixin
 from runtime.maintenance_performance import MaintenancePerformanceMixin
 from runtime.maintenance_queue import MaintenanceQueueMixin
 from runtime.supervisor_runtime import SupervisorRuntime
@@ -17,6 +18,7 @@ from runtime.supervisor_runtime import SupervisorRuntime
 
 class SystemMaintenance(
     MaintenanceLivenessMixin,
+    MaintenanceModerationMixin,
     MaintenanceQueueMixin,
     MaintenancePerformanceMixin,
     threading.Thread,
@@ -56,6 +58,7 @@ class SystemMaintenance(
         self._last_popup_scan_at: Dict[str, float] = {}
         self._last_popup_batch_at = 0.0
         self._popup_scan_cursor = 0
+        self._moderation_last_check: Dict[str, float] = {}
         self._owns_scheduler = scheduler is None
         self._scheduler = scheduler or RuntimeScheduler(
             stop=stop,
@@ -116,12 +119,17 @@ class SystemMaintenance(
         queue_interval = self._maintenance_interval("maintenance_queue_interval_seconds", 10.0, 5.0, 60.0)
         performance_interval = self._maintenance_interval("maintenance_performance_interval_seconds", 15.0, 10.0, 60.0)
         housekeeping_interval = self._maintenance_interval("maintenance_housekeeping_interval_seconds", 20.0, 15.0, 120.0)
+        try:
+            moderation_tick = max(15.0, min(120.0, float(self._cfg.get("moderation_check_tick_seconds", 30) or 30)))
+        except Exception:
+            moderation_tick = 30.0
         jobs = [
             ("maintenance:liveness", liveness_interval, self._run_liveness, "maintenance_liveness"),
             ("maintenance:queue", queue_interval, self._run_queue, "maintenance_queue"),
             ("maintenance:performance", performance_interval, self._run_performance, "maintenance_performance"),
             ("maintenance:housekeeping", housekeeping_interval, self._run_housekeeping, "maintenance_housekeeping"),
             ("maintenance:reconcile", self._reconcile_interval(), self._run_reconcile, "periodic_reconcile"),
+            ("maintenance:moderation", moderation_tick, self._run_moderation, "maintenance_moderation"),
             # Auto-minimize needs seconds granularity (user sets 1-3600s).
             # Performance runs every 10-60s so a dedicated 5s job keeps the
             # "minimize after N seconds" promise without EnumWindows spam

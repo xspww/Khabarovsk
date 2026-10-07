@@ -519,6 +519,45 @@ def resolve_ban_for_dead_cookie(cookie: str, username_hint: str = "", timeout: f
 def validate_cookie_details(cookie: str) -> Tuple[bool, str, str, Dict[str, Any]]:
     ok, data, detail = RobloxHTTP(cookie).authenticated_user()
     if not ok:
+        # 403 "User is moderated" means the cookie is still good enough for
+        # the moderation endpoint even though authenticated/ fails. Probe it
+        # before giving up so a 6-month suspension reads as Suspended, not Invalid.
+        try:
+            _mod_banned, _mod_detail, _mod_payload = fetch_moderation_status(cookie)
+        except Exception:
+            _mod_banned, _mod_detail, _mod_payload = None, "", {}
+        if _mod_banned is True and _mod_detail:
+            try:
+                from services.ban_guard import is_suspended_text as _is_susp_mod
+            except Exception:
+                _is_susp_mod = lambda *a, **k: False  # type: ignore
+            _is_susp = False
+            try:
+                _is_susp = bool(_is_susp_mod(_mod_detail))
+            except Exception:
+                _is_susp = False
+            _uid = ""
+            try:
+                _uid = str((_mod_payload or {}).get("punishedUserId") or "")
+            except Exception:
+                _uid = ""
+            if _is_susp:
+                return False, "", _mod_detail, {
+                    "username": "",
+                    "user_id": _uid,
+                    "is_banned": True,
+                    "banned": True,
+                    "is_suspended": True,
+                    "suspended": True,
+                }
+            return False, "", _mod_detail, {
+                "username": "",
+                "user_id": _uid,
+                "is_banned": True,
+                "banned": True,
+                "is_suspended": False,
+                "suspended": False,
+            }
         try:
             from services.ban_guard import is_banned_text as _is_banned_text
         except Exception:

@@ -460,6 +460,130 @@ def register(app, ctx: ApiContext) -> None:
         finally:
             farm.finish_command("global", command["command_id"], ok=ok, error=error, response=result)
 
+    @app.get("/api/roblox/running-clients")
+    def api_roblox_running_clients():
+        from services.process_service import ProcessManager
+
+        try:
+            live = ProcessManager.list_live_game_processes()
+        except Exception:
+            live = []
+        pid_to_account: dict[int, dict] = {}
+        try:
+            for acc in list(getattr(farm, "_accounts", []) or []):
+                try:
+                    with acc._lock:
+                        pid = int(getattr(acc, "pid", 0) or 0)
+                        if not pid:
+                            continue
+                        pid_to_account[pid] = {
+                            "username": str(getattr(acc, "_config_username", "") or ""),
+                            "display": str(getattr(acc, "display_name", "") or ""),
+                            "state": str(getattr(getattr(acc, "state", ""), "name", "") or ""),
+                        }
+                except Exception:
+                    continue
+        except Exception:
+            pass
+        items = []
+        for entry in live if isinstance(live, list) else []:
+            try:
+                pid = int((entry or {}).get("pid") or 0)
+            except Exception:
+                continue
+            if not pid:
+                continue
+            owner = pid_to_account.get(pid) or {}
+            items.append({
+                "pid": pid,
+                "account": str(owner.get("username") or ""),
+                "display": str(owner.get("display") or ""),
+                "state": str(owner.get("state") or ""),
+                "rss_mb": float((entry or {}).get("rss_mb") or 0.0),
+                "windows": int((entry or {}).get("windows") or 0),
+                "exe": str((entry or {}).get("name") or "RobloxPlayerBeta.exe"),
+            })
+        return {"ok": True, "clients": items, "count": len(items)}
+
+    @app.post("/api/roblox/close-pids")
+    async def api_close_pids_roblox(request: Request):
+        from services.process_service import ProcessManager
+
+        body = await request.json()
+        raw_pids = (body or {}).get("pids", []) if isinstance(body, dict) else []
+        if not isinstance(raw_pids, list):
+            raise HTTPException(400, "pids must be a list")
+        wanted: list[int] = []
+        for raw in raw_pids:
+            try:
+                pid = int(raw)
+            except Exception:
+                continue
+            if pid > 0 and pid not in wanted:
+                wanted.append(pid)
+        # Re-verify every PID against the live Roblox game list at kill
+        # time so a forged PID can never kill an arbitrary process.
+        try:
+            live_pids = {int((e or {}).get("pid") or 0) for e in (ProcessManager.list_live_game_processes() or [])}
+        except Exception:
+            live_pids = set()
+        live_pids.discard(0)
+        try:
+            bound: dict[int, str] = {}
+            for acc in list(getattr(farm, "_accounts", []) or []):
+                try:
+                    with acc._lock:
+                        pid = int(getattr(acc, "pid", 0) or 0)
+                        if pid:
+                            bound[pid] = str(getattr(acc, "_config_username", "") or "")
+                except Exception:
+                    continue
+        except Exception:
+            bound = {}
+        closed: list[int] = []
+        skipped: list[int] = []
+        for pid in wanted:
+            if pid not in live_pids:
+                skipped.append(pid)
+                continue
+            username = bound.get(pid, "")
+            if username:
+                ok, _message = farm.kill_account_pid(username, reason="api_close_pids_roblox")
+                if ok:
+                    closed.append(pid)
+                else:
+                    skipped.append(pid)
+            else:
+                try:
+                    if ProcessManager.kill_pid(pid):
+                        closed.append(pid)
+                    else:
+                        skipped.append(pid)
+                except Exception:
+                    skipped.append(pid)
+        flog_kv(
+            "API",
+            "close_pids_roblox",
+            account="*",
+            closed=len(closed),
+            requested=len(wanted),
+        )
+        closed_count = len(closed)
+        if closed_count == 0:
+            close_msg = "No running Roblox clients to close"
+        elif closed_count == 1:
+            close_msg = "Closed 1 Roblox client"
+        else:
+            close_msg = f"Closed {closed_count} Roblox clients"
+        return {
+            "ok": True,
+            "closed_pids": closed,
+            "closed": closed,
+            "closed_count": closed_count,
+            "skipped_pids": skipped,
+            "msg": close_msg,
+        }
+
     @app.post("/api/roblox/close-selected")
     async def api_close_selected_roblox(request: Request):
         body = await request.json()

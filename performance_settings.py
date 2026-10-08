@@ -77,6 +77,79 @@ def is_readonly(path: str) -> bool:
         return False
 
 
+def _resolve_roblox_settings_path(path: Optional[str] = None) -> str:
+    """Resolve and validate the Roblox settings file path.
+
+    Only the official ``GlobalBasicSettings_13.xml`` inside
+    ``%LOCALAPPDATA%\\Roblox`` is allowed, to prevent arbitrary file
+    deletion through the API.
+    """
+    from pathlib import Path
+
+    target = path or DEFAULT_ROBLOX_SETTINGS_PATH
+    local = os.path.expandvars(r"%LOCALAPPDATA%")
+    allowed_dir = os.path.normcase(os.path.abspath(os.path.join(local, "Roblox")))
+    resolved = os.path.normcase(os.path.abspath(str(target)))
+    if os.path.basename(resolved).lower() != "globalbasicsettings_13.xml":
+        raise ValueError("Only GlobalBasicSettings_13.xml can be deleted")
+    if os.path.dirname(resolved) != allowed_dir:
+        raise ValueError("Only %LOCALAPPDATA%\\Roblox\\GlobalBasicSettings_13.xml can be deleted")
+    # Keep a readable (non-normalized) absolute path for responses.
+    try:
+        return str(Path(str(target)).absolute())
+    except Exception:
+        return os.path.abspath(str(target))
+
+
+def roblox_settings_status(path: Optional[str] = None) -> Dict[str, Any]:
+    target = _resolve_roblox_settings_path(path)
+    exists = os.path.exists(target)
+    payload: Dict[str, Any] = {
+        "ok": True,
+        "path": target,
+        "exists": exists,
+        "read_only": is_readonly(target) if exists else False,
+        "size": 0,
+        "msg": "ok" if exists else "not found",
+    }
+    if exists:
+        try:
+            payload["size"] = int(os.path.getsize(target))
+        except OSError:
+            payload["size"] = 0
+    return payload
+
+
+def delete_roblox_settings_file(path: Optional[str] = None) -> Dict[str, Any]:
+    """Delete GlobalBasicSettings_13.xml so Roblox recreates it on next launch."""
+    import ctypes
+
+    target = _resolve_roblox_settings_path(path)
+    if not os.path.exists(target):
+        return {"ok": True, "deleted": False, "path": target, "exists": False, "msg": "File not found (nothing to delete)"}
+    if os.path.isdir(target):
+        raise ValueError("Refusing to delete a directory")
+    # Clear read-only / hidden / system flags so os.remove() succeeds.
+    try:
+        os.chmod(target, stat.S_IREAD | stat.S_IWRITE)
+    except OSError:
+        pass
+    if os.name == "nt":
+        try:
+            attrs = ctypes.windll.kernel32.GetFileAttributesW(str(target))
+            if attrs != 0xFFFFFFFF:
+                ctypes.windll.kernel32.SetFileAttributesW(str(target), 0x80)  # FILE_ATTRIBUTE_NORMAL
+        except Exception:
+            pass
+    try:
+        os.remove(target)
+    except PermissionError as exc:
+        raise PermissionError(f"Cannot delete settings file (close Roblox first): {exc}")
+    except OSError as exc:
+        raise OSError(f"Delete failed: {exc}")
+    return {"ok": True, "deleted": True, "path": target, "exists": False, "msg": "Deleted GlobalBasicSettings_13.xml"}
+
+
 def set_readonly(path: str, readonly: bool) -> None:
     mode = os.stat(path).st_mode
     if readonly:

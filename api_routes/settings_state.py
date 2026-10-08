@@ -195,7 +195,10 @@ def _fps_limiter_status(ctx: ApiContext, path: str = DEFAULT_ROBLOX_SETTINGS_PAT
         "auto_process_priority_enabled": bool(ctx.cfg_mgr.get("auto_process_priority_enabled", False)),
         "process_priority": priority,
     }
-    if file_status.get("framerate_cap") is not None:
+    # Only mirror the file value while the limiter is ON. When OFF the file
+    # holds the uncap value (0) but the UI must keep showing the remembered
+    # limit instead of snapping to 0 / stale 15.
+    if payload["enabled"] and file_status.get("framerate_cap") is not None:
         payload["fps_limit"] = int(file_status.get("framerate_cap") or configured_limit)
     return payload
 

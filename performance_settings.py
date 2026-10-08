@@ -13,6 +13,7 @@ DEFAULT_ROBLOX_SETTINGS_PATH = os.path.join(
 )
 
 FPS_MIN = 1
+FPS_UNLOCKED_CAP = 0
 GRAPHICS_QUALITY_MIN = 1
 GRAPHICS_QUALITY_MAX = 10
 GRAPHICS_LOW_DEFAULT_LEVEL = 1
@@ -297,12 +298,18 @@ def apply_performance_settings_file(
     if original_readonly:
         set_readonly(target, False)
     try:
-        should_write = bool(fps_enabled or graphics_auto_enabled)
-        if should_write:
-            with open(target, "r", encoding="utf-8", errors="replace") as f:
-                text = f.read()
+        # Always write: enabling sets the cap, disabling resets to uncap (0)
+        # so OFF truly works instead of leaving a stale value like 15.
+        # Readonly is re-applied below only if FPS or graphics is still on.
+        with open(target, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
         if fps_enabled:
             next_text, changed = _FRAMERATE_RE.subn(rf"\g<1>{fps}\g<3>", text, count=1)
+            if changed < 1:
+                raise ValueError("FramerateCap setting not found in GlobalBasicSettings_13.xml.")
+            text = next_text
+        else:
+            next_text, changed = _FRAMERATE_RE.subn(rf"\g<1>{FPS_UNLOCKED_CAP}\g<3>", text, count=1)
             if changed < 1:
                 raise ValueError("FramerateCap setting not found in GlobalBasicSettings_13.xml.")
             text = next_text
@@ -310,19 +317,17 @@ def apply_performance_settings_file(
             text, changed_total = _apply_named_settings(text, _graphics_low_values(quality))
             if changed_total < 1:
                 raise ValueError("Roblox graphics settings not found in GlobalBasicSettings_13.xml.")
-        if should_write:
-            with open(target, "w", encoding="utf-8", newline="") as f:
-                f.write(text)
+        with open(target, "w", encoding="utf-8", newline="") as f:
+            f.write(text)
         success = True
     finally:
         set_readonly(target, bool(fps_enabled or graphics_auto_enabled) if success else original_readonly)
 
     payload = read_fps_settings(target)
-    actual_cap = int(payload.get("framerate_cap") or fps)
     payload.update({
         "ok": True,
         "enabled": bool(fps_enabled),
-        "fps_limit": fps if fps_enabled else actual_cap,
+        "fps_limit": int(fps),
         "graphics_low_enabled": bool(graphics_auto_enabled),
         "graphics_auto_enabled": bool(graphics_auto_enabled),
         "graphics_quality_level": quality,

@@ -13,27 +13,56 @@
     return document.getElementById(id);
   }
 
-  function toast(message) {
-    const el = $("toast");
-    if (el) {
-      el.textContent = String(message || "");
-      el.classList.add("show");
-      clearTimeout(toast._t);
-      toast._t = setTimeout(() => el.classList.remove("show"), 3200);
-    }
+  function escHtml(value) {
+    const node = document.createElement("span");
+    node.textContent = String(value || "");
+    return node.innerHTML;
   }
 
-  function setNotice(message, isError) {
+  // Project-style notifications: same stacked .toast-item cards as
+  // components/feedback.js (success/warning/error/info + icons, max 4, 3.2s).
+  const TOAST_ICONS = {
+    success: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#22c55e"/><path d="M8.2 12.2l2.6 2.6 4.5-5" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    warning: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#f59e0b"/><path d="M12 7.5v5.2" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16.2" r="1.2" fill="white"/></svg>',
+    error: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#ef4444"/><path d="M15 9l-6 6M9 9l6 6" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>',
+    info: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#3b82f6"/><path d="M12 11v5" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="8" r="1.2" fill="white"/></svg>',
+  };
+
+  function pickKind(message) {
+    const s = String(message || "").toLowerCase();
+    if (/error|failed|invalid|cannot|denied|missing|required/i.test(s)) return "error";
+    if (/not found|nothing to delete/i.test(s)) return "info";
+    if (/unsaved|save changes/i.test(s)) return "warning";
+    return "success";
+  }
+
+  function notify(message, type) {
+    const box = $("toast");
+    const text = String(message || "").trim();
+    if (!text || !box) return;
+    const kind = type || pickKind(text);
+    while (box.children.length >= 4) {
+      if (box.firstElementChild) box.firstElementChild.remove();
+      else break;
+    }
+    const node = document.createElement("div");
+    node.className = "toast-item toast-" + kind;
+    node.innerHTML = `<span class="toast-icon">${TOAST_ICONS[kind] || TOAST_ICONS.info}</span><span class="toast-text">${escHtml(text)}</span>`;
+    box.appendChild(node);
+    requestAnimationFrame(() => node.classList.add("show"));
+    setTimeout(() => {
+      node.classList.remove("show");
+      node.classList.add("hide");
+      setTimeout(() => node.remove(), 200);
+    }, 3200);
+  }
+
+  function clearNotice() {
     const el = $("roblox-settings-notice");
     if (!el) return;
-    el.classList.remove("notice-error", "notice-success", "notice-info", "notice-warning");
-    if (!message || message === "ok") {
-      el.textContent = "";
-      el.classList.remove("show");
-      return;
-    }
-    el.textContent = String(message);
-    el.classList.add("show", isError ? "notice-error" : "notice-warning");
+    el.textContent = "";
+    el.classList.remove("show", "notice-error", "notice-success", "notice-info", "notice-warning");
+    el.hidden = true;
   }
 
   async function refresh() {
@@ -51,11 +80,11 @@
       const pathEl = $("roblox-settings-path");
       if (pathEl && data.path) pathEl.textContent = String(data.path);
       if (btn) btn.disabled = false;
-      if (!data.exists) setNotice("File not found — Roblox will recreate it on next launch", false);
-      else setNotice("", false);
+      clearNotice();
     } catch (err) {
       if (stateEl) stateEl.textContent = "-";
-      setNotice(err?.message || "Status check failed", true);
+      if (btn) btn.disabled = false;
+      clearNotice();
     }
   }
 
@@ -64,7 +93,6 @@
     if (!btn || btn.disabled) return;
     if (!confirm("Delete GlobalBasicSettings_13.xml?\nRoblox will recreate default settings on next launch.")) return;
     btn.disabled = true;
-    setNotice("Deleting...", false);
     try {
       const res = await fetch("/api/performance/roblox-settings/delete", {
         method: "POST",
@@ -73,11 +101,9 @@
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || data.msg || res.statusText);
-      toast(data.msg || "Deleted");
-      setNotice(data.msg || "Deleted", false);
+      notify(data.msg || "Deleted");
     } catch (err) {
-      setNotice(err?.message || "Delete failed", true);
-      toast(err?.message || "Delete failed");
+      notify(err?.message || "Delete failed", "error");
     } finally {
       await refresh();
     }

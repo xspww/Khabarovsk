@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import re
 import sys
+import threading
 import time
 from importlib import metadata as importlib_metadata
 from importlib import util as importlib_util
@@ -214,44 +215,247 @@ ROBLOX_INSTALLER = RobloxInstallManager(
 
 
 _EXECUTOR_RESUME_AFTER_UPDATE = False
+_EXECUTOR_UPDATE_LOCK = threading.RLock()
+_EXECUTOR_UPDATE_IN_PROGRESS = ""
+
+
+def _executor_auto_rejoin_wanted() -> bool:
+    try:
+        return bool(cfg_mgr.get("auto_rejoin", True))
+    except Exception:
+        return True
+
+
+def _executor_wait_roblox_gone(timeout_seconds: float = 30.0) -> bool:
+    deadline = time.time() + max(1.0, float(timeout_seconds or 30.0))
+    while time.time() < deadline:
+        try:
+            if not ProcessManager.snapshot_pids():
+                blockers = ROBLOX_INSTALLER.find_install_blockers()
+                if not blockers:
+                    return True
+        except Exception:
+            return True
+        time.sleep(1.0)
+    try:
+        return not bool(ProcessManager.snapshot_pids()) and not bool(ROBLOX_INSTALLER.find_install_blockers())
+    except Exception:
+        return False
+
+
+def _executor_resume_farm(reason: str) -> bool:
+    """Restart farm after update/pause. Uses relaunch flow when enabled."""
+    global _EXECUTOR_RESUME_AFTER_UPDATE
+    if not _executor_auto_rejoin_wanted():
+        _EXECUTOR_RESUME_AFTER_UPDATE = False
+        return False
+    if bool(getattr(farm, "running", False)):
+        _EXECUTOR_RESUME_AFTER_UPDATE = False
+        return True
+    try:
+        relaunch_enabled = bool(cfg_mgr.get("executor_relaunch_enabled", False))
+    except Exception:
+        relaunch_enabled = False
+    if relaunch_enabled:
+        try:
+            supported, _why = EXECUTOR_RELAUNCHER.relaunch_support()
+        except Exception:
+            supported = False
+        if supported:
+            # Compatibility monitor + Auto Relaunch: executor is usable
+            # again, so close Roblox/Executor, reopen, verify loader, rejoin.
+            # allow_stopped_farm=True is the resume path (farm was stopped).
+            if EXECUTOR_RELAUNCHER.request_relaunch(reason, allow_stopped_farm=True):
+                _EXECUTOR_RESUME_AFTER_UPDATE = False
+                flog_kv("EXECUTOR", "resume_relaunch_requested", reason=reason)
+                return True
+    try:
+        farm.start()
+        _EXECUTOR_RESUME_AFTER_UPDATE = False
+        flog_kv("EXECUTOR", "auto_resume_started", reason=reason)
+        return True
+    except Exception as exc:
+        flog_kv("EXECUTOR", "auto_resume_failed", "warning", error=exc, reason=reason)
+        return False
+
+
+def _executor_auto_update_worker(latest: str, resume: bool) -> None:
+    global _EXECUTOR_UPDATE_IN_PROGRESS, _EXECUTOR_RESUME_AFTER_UPDATE
+    normalized = str(latest or "").strip()
+    try:
+        flog_kv("EXECUTOR", "auto_update_worker_started", version=normalized, resume=resume)
+        if resume:
+            _EXECUTOR_RESUME_AFTER_UPDATE = True
+        # Stop farm first so the install job is not blocked by guard_running.
+        try:
+            if bool(getattr(farm, "running", False)):
+                farm.stop()
+        except Exception as exc:
+            flog_kv("EXECUTOR", "auto_update_stop_failed", "warning", error=exc)
+        try:
+            if hasattr(farm, "close_all_roblox"):
+                farm.close_all_roblox(reason="roblox_version_update")
+        except Exception:
+            pass
+        try:
+            ProcessManager.kill_all_roblox_clients(wait_seconds=4.0)
+        except Exception:
+            pass
+        _executor_wait_roblox_gone(30.0)
+        accepted = False
+        last_msg = ""
+        for attempt in range(1, 4):
+            try:
+                result = ROBLOX_INSTALLER.start_update_both(normalized)
+            except Exception as exc:
+                last_msg = str(exc)
+                flog_kv("EXECUTOR", "auto_update_start_failed", "warning", error=exc, attempt=attempt)
+                time.sleep(5)
+                continue
+            if isinstance(result, dict) and result.get("accepted"):
+                accepted = True
+                break
+            last_msg = str((result or {}).get("msg") or "install blocked")
+            flog_kv("EXECUTOR", "auto_update_blocked_retry", "warning", msg=last_msg, attempt=attempt)
+            try:
+                ProcessManager.kill_all_roblox_clients(wait_seconds=4.0)
+            except Exception:
+                pass
+            _executor_wait_roblox_gone(15.0)
+            time.sleep(5)
+        if not accepted:
+            flog_kv("EXECUTOR", "auto_update_gave_up", "warning", msg=last_msg, version=normalized)
+            try:
+                EXECUTOR_TRACKER.refresh()
+            except Exception:
+                pass
+            return
+        # Wait for the install job (official CDN download + validate +
+        # old-version cleanup) before rejoining on the new client.
+        deadline = time.time() + 600
+        final_job: dict = {}
+        while time.time() < deadline:
+            try:
+                final_job = dict(ROBLOX_INSTALLER.status().get("job") or {})
+            except Exception:
+                final_job = {}
+            if not final_job.get("active"):
+                break
+            time.sleep(2.0)
+        if final_job.get("active"):
+            flog_kv("EXECUTOR", "auto_update_timeout", "warning", version=normalized)
+            return
+        if not final_job.get("ok", True):
+            flog_kv("EXECUTOR", "auto_update_job_failed", "warning", error=final_job.get("error") or final_job.get("msg"), version=normalized)
+            try:
+                EXECUTOR_TRACKER.refresh()
+            except Exception:
+                pass
+            return
+        flog_kv(
+            "EXECUTOR",
+            "auto_update_done",
+            version=normalized,
+            removed_old_versions=final_job.get("removed_old_versions", ""),
+            msg=final_job.get("msg", ""),
+        )
+        try:
+            fresh = EXECUTOR_TRACKER.refresh()
+        except Exception:
+            fresh = {}
+        # Rejoin only when the farm was running/paused for this update AND
+        # the selected Executor is usable on the new Roblox version.
+        # Otherwise stay stopped (manual stop stays stopped; incompatible
+        # executor waits for the compatible transition below to resume).
+        if str(fresh.get("state") or "") == "compatible":
+            if resume:
+                _executor_resume_farm("roblox_version_updated_compatible")
+            else:
+                flog_kv("EXECUTOR", "auto_update_done_staying_stopped", version=normalized)
+        else:
+            flog_kv("EXECUTOR", "auto_update_wait_executor", state=str(fresh.get("state") or "unknown"), version=normalized)
+    finally:
+        with _EXECUTOR_UPDATE_LOCK:
+            if _EXECUTOR_UPDATE_IN_PROGRESS == str(normalized or "").strip().lower():
+                _EXECUTOR_UPDATE_IN_PROGRESS = ""
 
 
 def _executor_base_transition(event: str, payload: dict) -> None:
     """Keep the farm safe around known executor incompatibility transitions."""
-    global _EXECUTOR_RESUME_AFTER_UPDATE
+    global _EXECUTOR_RESUME_AFTER_UPDATE, _EXECUTOR_UPDATE_IN_PROGRESS
     latest = str(payload.get("latest_version") or "").strip().lower()
     auto_update = bool(cfg_mgr.get("roblox_auto_update_enabled", False))
-    installed = ROBLOX_INSTALLER.list_installed() + ROBLOX_INSTALLER.list_exploitstrap_installed()
-    needs_update = bool(latest and any(str(item.get("version") or "").strip().lower() != latest for item in installed))
+    try:
+        installed = ROBLOX_INSTALLER.list_installed() + ROBLOX_INSTALLER.list_exploitstrap_installed()
+    except Exception:
+        installed = []
+    needs_update = bool(
+        latest
+        and (
+            not installed
+            or any(str(item.get("version") or "").strip().lower() != latest for item in installed)
+        )
+    )
     if auto_update and needs_update and event not in {"api_error", "disabled"}:
-        _EXECUTOR_RESUME_AFTER_UPDATE = bool(farm.running)
-        try:
-            if farm.running:
-                farm.stop()
-            farm.close_all_roblox(reason="roblox_version_update")
-            ROBLOX_INSTALLER.start_update_both(latest)
-        except Exception as exc:
-            flog_kv("EXECUTOR", "auto_update_start_failed", "warning", error=exc)
+        normalized = str(payload.get("latest_version") or "").strip()
+        with _EXECUTOR_UPDATE_LOCK:
+            if _EXECUTOR_UPDATE_IN_PROGRESS == latest and ROBLOX_INSTALLER.is_job_active():
+                return
+            if _EXECUTOR_UPDATE_IN_PROGRESS:
+                return
+            _EXECUTOR_UPDATE_IN_PROGRESS = latest
+        # Resume only if the farm was running or was paused by the monitor.
+        # A manually stopped farm must stay stopped (a poll must never
+        # start the farm on its own).
+        resume = bool(getattr(farm, "running", False)) or _EXECUTOR_RESUME_AFTER_UPDATE
+        # Heavy stop/download work must not block the tracker poll thread.
+        threading.Thread(
+            target=_executor_auto_update_worker,
+            args=(normalized, resume),
+            name="ExecutorAutoUpdate",
+            daemon=True,
+        ).start()
         return
     if event == "incompatible":
+        # Remember to rejoin once the selected Executor is usable again.
+        # (Previously this flag was only set on the update path, so an
+        # incompatible -> compatible cycle never rejoined.)
+        if bool(getattr(farm, "running", False)):
+            _EXECUTOR_RESUME_AFTER_UPDATE = bool(_executor_auto_rejoin_wanted())
         try:
             if farm.running:
                 farm.stop()
-            farm.close_all_roblox(reason="executor_incompatible")
+            try:
+                farm.close_all_roblox(reason="executor_incompatible")
+            except Exception:
+                pass
+            try:
+                ProcessManager.kill_all_roblox_clients(wait_seconds=4.0)
+            except Exception:
+                pass
         except Exception as exc:
             flog_kv("EXECUTOR", "incompatible_shutdown_failed", "warning", error=exc)
     elif event == "compatible" and _EXECUTOR_RESUME_AFTER_UPDATE:
-        _EXECUTOR_RESUME_AFTER_UPDATE = False
-        try:
-            farm.start()
-        except Exception as exc:
-            flog_kv("EXECUTOR", "auto_resume_failed", "warning", error=exc)
+        # Plain resume (no executor version change). Version-change resumes
+        # go through the relaunch flow in _executor_transition below.
+        if not bool(payload.get("became_compatible")) and not bool(payload.get("executor_version_changed")):
+            _executor_resume_farm("executor_became_compatible")
 
 
 def _executor_transition(event: str, payload: dict) -> None:
+    global _EXECUTOR_RESUME_AFTER_UPDATE
     _executor_base_transition(event, payload)
     if event == "compatible" and (payload.get("became_compatible") or payload.get("executor_version_changed")):
-        EXECUTOR_RELAUNCHER.request_relaunch("weao_compatibility_or_executor_version_changed")
+        # Selected Executor is usable again (Roblox updated and/or executor
+        # updated): close Roblox + Executor, reopen, verify Lua loader, rejoin.
+        # Mid-session this relaunches in place; after an update/pause resume
+        # it is allowed to start the stopped farm again.
+        farm_running = bool(getattr(farm, "running", False))
+        if farm_running:
+            if EXECUTOR_RELAUNCHER.request_relaunch("weao_compatibility_or_executor_version_changed"):
+                _EXECUTOR_RESUME_AFTER_UPDATE = False
+        elif _EXECUTOR_RESUME_AFTER_UPDATE:
+            _executor_resume_farm("weao_compatibility_or_executor_version_changed")
 
 
 EXECUTOR_TRACKER = ExecutorCompatibilityService(

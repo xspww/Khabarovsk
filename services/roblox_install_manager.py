@@ -226,14 +226,31 @@ class RobloxInstallManager:
         self._store_latest_version(version)
         self._run_install_version(version)
 
+    def exploitstrap_root(self) -> Optional[Path]:
+        local = os.environ.get("LOCALAPPDATA", "").strip()
+        if not local:
+            return None
+        return Path(local) / EXPLOITSTRAP_DIR_NAME
+
+    def is_job_active(self) -> bool:
+        with self._lock:
+            return bool(self._job.get("active"))
+
     def _run_update_both(self, version: str) -> None:
+        # Official-only compliance: `version` must be the exact
+        # clientVersionUpload string from clientsettingscdn.roblox.com.
+        # Packages are fetched only from setup.rbxcdn.com manifests and
+        # installed byte-identical (no patches/mods) so the client stays
+        # an official build. WEAO is never consulted here.
         normalized = normalize_roblox_version(version)
         local = os.environ.get("LOCALAPPDATA", "").strip()
         if not local:
             raise RuntimeError("LOCALAPPDATA is not available")
-        roots = [Path(local) / "Roblox", Path(local) / EXPLOITSTRAP_DIR_NAME]
+        # Install targets: Local Roblox (registered + protocol) and the
+        # ExploitStrap-managed client (same official packages, no mods).
+        install_roots = [Path(local) / "Roblox", Path(local) / EXPLOITSTRAP_DIR_NAME]
         self._set_job("Downloading", version=normalized, progress="Updating Roblox clients")
-        for root in roots:
+        for root in install_roots:
             target = root / "Versions" / normalized
             target.mkdir(parents=True, exist_ok=True)
             self._set_job("Installing", version=normalized, progress=f"Installing {root.name}")
@@ -242,11 +259,33 @@ class RobloxInstallManager:
                 self.write_app_settings(target)
                 self.register_protocols(target / ROBLOX_EXE)
             self.validate_install(target / ROBLOX_EXE, require_protocol=root.name.lower() == "roblox")
+        # Keep the previous client until the new manifest has downloaded and
+        # passed validation for BOTH roots. Only then remove older version
+        # directories (Auto update deletes old versions).
+        removed = 0
+        cleanup_roots: List[Path] = list(self.roblox_roots())
+        exploitstrap = self.exploitstrap_root()
+        if exploitstrap is not None and all(str(exploitstrap).lower() != str(existing).lower() for existing in cleanup_roots):
+            cleanup_roots.append(exploitstrap)
+        for root in cleanup_roots:
             versions_dir = root / "Versions"
+            if not versions_dir.is_dir():
+                continue
+            is_roblox_root = root.name.lower() == "roblox" and self._safe_roblox_root(root)
+            is_exploitstrap_root = root.name.lower() == EXPLOITSTRAP_DIR_NAME.lower()
+            if not (is_roblox_root or is_exploitstrap_root):
+                continue
             for child in versions_dir.iterdir():
-                if child.is_dir() and child.name.lower().startswith("version-") and child.name.lower() != normalized.lower():
-                    shutil.rmtree(child, ignore_errors=True)
-        self._set_job("Done", version=normalized, msg=f"Updated Roblox and ExploitStrap to {normalized}", progress="Done")
+                if not child.is_dir() or not child.name.lower().startswith("version-"):
+                    continue
+                if child.name.lower() == normalized.lower():
+                    continue
+                try:
+                    shutil.rmtree(child, ignore_errors=False)
+                    removed += 1
+                except Exception as exc:
+                    self.logger(f"[ROBLOX_INSTALL] remove old version failed: {child} ({exc})")
+        self._set_job("Done", version=normalized, removed_old_versions=removed, msg=f"Updated Roblox and ExploitStrap to {normalized} (removed {removed} old)", progress="Done")
 
     def _run_install_version(self, version: str) -> None:
         normalized = normalize_roblox_version(version)

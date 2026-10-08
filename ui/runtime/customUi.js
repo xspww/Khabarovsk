@@ -232,28 +232,36 @@
       const body = document.getElementById('modal-body');
       const foot = document.getElementById('modal-foot');
       if (!backdrop || !title || !body || !foot) return;
-      const rows = Array.from(document.querySelectorAll('#accounts-table tr[data-user]'));
-      const statusOf = (row) => {
-        const pill = row.querySelector('.status');
-        const label = pill?.textContent?.trim() || 'Unknown';
-        const cls = String(pill?.className || '').toLowerCase();
-        const key = ['online', 'captcha', 'invalid', 'blocked', 'queued', 'launching', 'rejoining', 'cooldown', 'lua', 'checking', 'disconnected'].find((k) => cls.includes(k)) || (/idle/.test(cls) ? 'idle' : 'unknown');
-        return { label, key };
+      // List only Roblox clients actually running on this machine
+      // (verified live PIDs). Show the bound account name when known.
+      const stateKeyOf = (state) => {
+        const map = { IN_GAME: 'online', QUEUED: 'queued', LAUNCHING: 'launching', COOLDOWN: 'cooldown' };
+        return map[String(state || '').toUpperCase()] || 'unknown';
       };
-      // Pre-check accounts that actually have a live client (less clicking).
-      const isRunning = (key) => key === 'online' || key === 'lua';
+      const stateLabelOf = (state) => {
+        const s = String(state || '').trim();
+        if (!s) return '';
+        return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase().replace(/_/g, ' ');
+      };
+      const renderCloseList = (clients) => {
+        if (!clients.length) return '<div class="v-empty">No running Roblox clients.</div>';
+        return clients.map((client) => {
+          const pid = Number(client.pid) || 0;
+          const name = String(client.display || client.account || '').trim() || `PID ${pid}`;
+          const bound = Boolean(client.account);
+          const key = bound ? stateKeyOf(client.state) : 'unknown';
+          const label = bound ? (stateLabelOf(client.state) || 'Running') : 'Unmanaged';
+          const sub = !bound && client.rss_mb ? ` · ${Math.round(client.rss_mb)} MB` : '';
+          return `<label class="close-pick is-checked"><input type="checkbox" data-close-pid="${pid}" checked><span class="close-check" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="close-name">${escPick(name)}${bound ? '' : ` <span class="hint">PID ${pid}</span>`}</span><span class="close-st st-${key}">${escPick(label)}${escPick(sub)}</span></label>`;
+        }).join('');
+      };
       title.textContent = 'Close Roblox';
-      body.innerHTML = `<div class="v-sub">Select the accounts whose Roblox clients should close.</div><div class="selected-close-list">${rows.length ? rows.map((row) => {
-        const user = row.dataset.user;
-        const st = statusOf(row);
-        const checked = isRunning(st.key) ? ' checked' : '';
-        return `<label class="close-pick${checked ? ' is-checked' : ''}"><input type="checkbox" data-close-user="${escPick(user)}"${checked}><span class="close-check" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="close-name">${escPick(row.querySelector('.name')?.textContent?.trim() || user)}</span><span class="close-st st-${st.key}">${escPick(st.label)}</span></label>`;
-      }).join('') : '<div class="v-empty">No accounts found.</div>'}</div>`;
+      body.innerHTML = `<div class="v-sub">Select the running Roblox clients to close.</div><div class="selected-close-list"><div class="v-empty">Loading running clients…</div></div>`;
       foot.innerHTML = '<div class="close-pick-foot"><div class="close-pick-tools"><button class="btn ghost" id="close-select-all">Select All</button><button class="btn ghost" id="close-clear">Clear</button></div><button class="btn danger" id="close-selected-confirm">Close Selected</button></div>';
       backdrop.hidden = false;
       const confirmBtn = document.getElementById('close-selected-confirm');
       const syncPick = () => {
-        const boxes = Array.from(body.querySelectorAll('[data-close-user]'));
+        const boxes = Array.from(body.querySelectorAll('[data-close-pid]'));
         const n = boxes.filter((input) => input.checked).length;
         boxes.forEach((input) => input.closest('.close-pick')?.classList.toggle('is-checked', input.checked));
         if (confirmBtn) {
@@ -262,13 +270,26 @@
         }
       };
       body.querySelector('.selected-close-list')?.addEventListener('change', syncPick);
-      document.getElementById('close-select-all')?.addEventListener('click', () => { body.querySelectorAll('[data-close-user]').forEach((input) => { input.checked = true; }); syncPick(); });
-      document.getElementById('close-clear')?.addEventListener('click', () => { body.querySelectorAll('[data-close-user]').forEach((input) => { input.checked = false; }); syncPick(); });
+      document.getElementById('close-select-all')?.addEventListener('click', () => { body.querySelectorAll('[data-close-pid]').forEach((input) => { input.checked = true; }); syncPick(); });
+      document.getElementById('close-clear')?.addEventListener('click', () => { body.querySelectorAll('[data-close-pid]').forEach((input) => { input.checked = false; }); syncPick(); });
       syncPick();
+      fetch('/api/roblox/running-clients', { cache: 'no-store', headers: { ...apiHeaders() } })
+        .then((response) => response.json())
+        .then((result) => {
+          const clients = Array.isArray(result?.clients) ? result.clients : [];
+          const list = body.querySelector('.selected-close-list');
+          if (list) list.innerHTML = renderCloseList(clients);
+          syncPick();
+        })
+        .catch(() => {
+          const list = body.querySelector('.selected-close-list');
+          if (list) list.innerHTML = '<div class="v-empty">Could not load running clients.</div>';
+          syncPick();
+        });
       document.getElementById('close-selected-confirm')?.addEventListener('click', async () => {
-        const usernames = Array.from(body.querySelectorAll('[data-close-user]:checked')).map((input) => input.dataset.closeUser).filter(Boolean);
-        if (!usernames.length) return;
-        const response = await fetch('/api/roblox/close-selected', { method: 'POST', headers: { ...apiHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ usernames }) });
+        const pids = Array.from(body.querySelectorAll('[data-close-pid]:checked')).map((input) => Number(input.dataset.closePid) || 0).filter(Boolean);
+        if (!pids.length) return;
+        const response = await fetch('/api/roblox/close-pids', { method: 'POST', headers: { ...apiHeaders(), 'Content-Type': 'application/json' }, body: JSON.stringify({ pids }) });
         const result = await response.json();
         backdrop.hidden = true;
         showResultToast(result.msg || 'Roblox closed');

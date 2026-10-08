@@ -105,7 +105,7 @@ class ExecutorCompatibilityService:
                 selected = ""
             state = "unknown" if not selected_row else ("compatible" if selected_row["supported"] else "incompatible")
             installed_versions = [str(value or "").strip() for value in self.get_installed_versions() if str(value or "").strip()]
-            payload = {"ok": True, "state": state, "executors": rows, "selected": selected, "selected_status": selected_row, "latest_version": latest, "installed_versions": installed_versions, "needs_update": bool(latest and any(value.lower() != latest.lower() for value in installed_versions)), "error": "", "checked_at": time.time()}
+            payload = {"ok": True, "state": state, "executors": rows, "selected": selected, "selected_status": selected_row, "latest_version": latest, "installed_versions": installed_versions, "needs_update": bool(latest and (not installed_versions or any(value.lower() != latest.lower() for value in installed_versions))), "error": "", "checked_at": time.time()}
         except Exception as exc:
             payload = {"ok": False, "state": "api_error", "executors": [], "selected": self.selected_name(), "latest_version": "", "error": str(exc), "checked_at": time.time()}
         with self._lock:

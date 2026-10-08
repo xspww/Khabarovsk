@@ -79,6 +79,7 @@ _REMOVED_CONFIG_KEYS = {
     "home_rejoin_grace_seconds",
     "home_rejoin_hold_seconds",
     "home_rejoin_require_server_evidence",
+    "terminal_visible",
 }
 
 

@@ -4,9 +4,11 @@ from fastapi import HTTPException, Request
 from account_hybrid import audit_event
 from core import flog_kv
 from performance_settings import (
+    delete_roblox_settings_file,
     normalize_fps_limit,
     normalize_graphics_quality,
     normalize_process_priority,
+    roblox_settings_status,
 )
 from services.cpu_limiter import CPU_LIMITER
 from services.process_service import ProcessService
@@ -168,6 +170,44 @@ def register(app, ctx: ApiContext) -> None:
         )
         return payload
 
+
+    @app.get("/api/performance/roblox-settings")
+    def api_get_roblox_settings():
+        try:
+            return roblox_settings_status()
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except Exception as exc:
+            flog_kv("PERFORMANCE", "roblox_settings_status_failed", "error", error=str(exc))
+            raise HTTPException(500, str(exc))
+
+    @app.post("/api/performance/roblox-settings/delete")
+    async def api_delete_roblox_settings(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        # Optional explicit confirmation from the Card UI.
+        # Deleting without confirm is still allowed for API callers.
+        try:
+            payload = delete_roblox_settings_file()
+        except PermissionError as exc:
+            raise HTTPException(409, str(exc))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc))
+        except Exception as exc:
+            flog_kv("PERFORMANCE", "roblox_settings_delete_failed", "error", error=str(exc))
+            raise HTTPException(500, str(exc))
+        audit_event(
+            "roblox_settings_delete",
+            deleted=payload.get("deleted", False),
+            path=payload.get("path", ""),
+        )
+        return payload
 
     @app.get("/api/performance/cpu-limiter")
     def api_get_cpu_limiter():

@@ -9,7 +9,7 @@
 .modal.vmanager .modal-title{font-size:17px;font-weight:750}
 .v-sub{color:#8d9099;font-size:13px;margin:2px 0 14px}
 .vchoices{display:grid;gap:10px}
-.vchoice{display:grid;grid-template-columns:minmax(0,1fr) 40px 40px;align-items:center;gap:14px;border:1px solid #1f2128;background:#14151a;border-radius:10px;padding:12px 14px}.vchoice.exploitstrap-choice{grid-template-columns:28px minmax(0,1fr) 40px 40px}
+.vchoice{display:grid;grid-template-columns:minmax(0,1fr) 40px 40px;align-items:center;gap:14px;border:1px solid #1f2128;background:#14151a;border-radius:10px;padding:12px 14px}
 .vchoice:hover{border-color:#2e3038;background:#1a1b21}
 
 .vchoice-copy{min-width:0}

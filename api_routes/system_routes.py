@@ -241,12 +241,11 @@ def register(app, ctx: ApiContext) -> None:
     @app.get("/api/troubleshoot/roblox-install/versions")
     def api_roblox_install_versions():
         versions = roblox_installer.list_installed()
-        exploitstrap_versions = roblox_installer.list_exploitstrap_installed()
         latest_status = roblox_installer._latest_version_status()
         latest_version = str(latest_status.get("version") or "").strip().lower()
         # Defensive dedup: same version hash can appear under multiple install
-        # roots. The picker only shows version+source, so identical rows would
-        # look like duplicated "Roblox LAST" entries and flicker when the
+        # roots. The picker only shows version, so identical rows would
+        # look like duplicated entries and flicker when the
         # frontend tries to clean them up after paint.
         seen_keys = set()
         deduped_versions = []
@@ -257,15 +256,6 @@ def register(app, ctx: ApiContext) -> None:
             seen_keys.add(key)
             deduped_versions.append(item)
         versions = deduped_versions
-        seen_es = set()
-        deduped_es = []
-        for item in exploitstrap_versions:
-            key = ("exploitstrap", str(item.get("version") or "").strip().lower())
-            if not key[1] or key in seen_es:
-                continue
-            seen_es.add(key)
-            deduped_es.append(item)
-        exploitstrap_versions = deduped_es
         items = []
         for index, item in enumerate(versions):
             version = str(item.get("version") or "").strip()
@@ -279,22 +269,10 @@ def register(app, ctx: ApiContext) -> None:
                 "root": str(item.get("root") or ""),
                 "modified": float(item.get("modified") or 0),
                 "is_latest": is_latest,
-                "source": str(item.get("source") or "roblox"),
-                "launcher": str(item.get("launcher") or "Roblox"),
-                "launcher_path": str(item.get("launcher_path") or ""),
-                "launcher_version": str(item.get("launcher_version") or ""),
-            })
-        for item in exploitstrap_versions:
-            items.append({
-                "version": str(item.get("version") or ""),
-                "path": str(item.get("path") or ""),
-                "root": str(item.get("root") or ""),
-                "modified": float(item.get("modified") or 0),
-                "is_latest": False,
-                "source": "exploitstrap",
-                "launcher": "ExploitStrap",
-                "launcher_path": str(item.get("launcher_path") or ""),
-                "launcher_version": str(item.get("launcher_version") or ""),
+                "source": "roblox",
+                "launcher": "Roblox",
+                "launcher_path": "",
+                "launcher_version": "",
             })
         return {
             "ok": True,
@@ -310,13 +288,9 @@ def register(app, ctx: ApiContext) -> None:
             raise HTTPException(400, "Expected object")
         requested_version = str(body.get("version") or "").strip().lower()
         requested_source = str(body.get("source") or "roblox").strip().lower()
-        if not requested_version or requested_source not in {"roblox", "exploitstrap"}:
+        if not requested_version or requested_source != "roblox":
             raise HTTPException(400, "Invalid version selection")
-        candidates = (
-            roblox_installer.list_exploitstrap_installed()
-            if requested_source == "exploitstrap"
-            else roblox_installer.list_installed()
-        )
+        candidates = roblox_installer.list_installed()
         match = next(
             (item for item in candidates if str(item.get("version") or "").strip().lower() == requested_version),
             None,

@@ -306,7 +306,7 @@ def _executor_auto_update_worker(latest: str, resume: bool) -> None:
         last_msg = ""
         for attempt in range(1, 4):
             try:
-                result = ROBLOX_INSTALLER.start_update_both(normalized)
+                result = ROBLOX_INSTALLER.start_update_official(normalized)
             except Exception as exc:
                 last_msg = str(exc)
                 flog_kv("EXECUTOR", "auto_update_start_failed", "warning", error=exc, attempt=attempt)
@@ -386,7 +386,7 @@ def _executor_base_transition(event: str, payload: dict) -> None:
     latest = str(payload.get("latest_version") or "").strip().lower()
     auto_update = bool(cfg_mgr.get("roblox_auto_update_enabled", False))
     try:
-        installed = ROBLOX_INSTALLER.list_installed() + ROBLOX_INSTALLER.list_exploitstrap_installed()
+        installed = ROBLOX_INSTALLER.list_installed()
     except Exception:
         installed = []
     needs_update = bool(
@@ -463,7 +463,6 @@ EXECUTOR_TRACKER = ExecutorCompatibilityService(
     on_transition=_executor_transition,
     get_installed_versions=lambda: [
         *(item.get("version", "") for item in ROBLOX_INSTALLER.list_installed()),
-        *(item.get("version", "") for item in ROBLOX_INSTALLER.list_exploitstrap_installed()),
     ],
     logger=flog,
 )

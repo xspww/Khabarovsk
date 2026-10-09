@@ -70,7 +70,7 @@ _SELECTED_ROBLOX_VERSION = ""
 
 
 def set_selected_roblox_version(version: str = "") -> None:
-    """Pin launches to a specific installed Roblox version ('' = OS default)."""
+    """Pin launches to a specific installed official Roblox version ('' = OS default)."""
     global _SELECTED_ROBLOX_VERSION
     _SELECTED_ROBLOX_VERSION = str(version or "").strip()
 
@@ -79,14 +79,6 @@ def _roblox_version_exe(version: str) -> str:
     name = str(version or "").strip()
     if not name:
         return ""
-    exploitstrap_prefix = "exploitstrap:"
-    if name.lower().startswith(exploitstrap_prefix):
-        name = name[len(exploitstrap_prefix):].strip()
-        local = os.environ.get("LOCALAPPDATA", "").strip()
-        if local:
-            candidate = os.path.join(local, "ExploitStrap", "Versions", name, "RobloxPlayerBeta.exe")
-            if os.path.isfile(candidate):
-                return candidate
     roots = []
     for env_name in ("LOCALAPPDATA", "ProgramFiles(x86)", "ProgramFiles"):
         value = os.environ.get(env_name, "").strip()

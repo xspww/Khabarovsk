@@ -276,6 +276,65 @@ class RecoveryDedupeTracker:
         return {"ignore": False}
 
 
+class RecoveryGate:
+    """Single owner for the signal-path duplicate verdict.
+
+    Router and coordinator both leverage gate.check(...) instead of each
+    running their own suppression. The state stores keep their keys and
+    lifetimes; the order and the verdict live here so the decision table
+    is testable with fakes and only one stage can win.
+    """
+
+    def __init__(self, owner: Any, dedupe: Any, duplicate_window: float):
+        self._owner = owner
+        self._dedupe = dedupe
+        self._duplicate_window = max(1.0, float(duplicate_window or 1.0))
+        self._recent_signals: Dict[Tuple[str, str, str, int], float] = {}
+        self._lock = threading.Lock()
+
+    def clear(self) -> None:
+        with self._lock:
+            self._recent_signals.clear()
+
+    def check(
+        self,
+        *,
+        account_key: str,
+        ctx: RecoveryAttemptContext,
+        signal_name: str,
+        reason_key: str,
+        recovery_generation: int,
+        now: float | None = None,
+    ) -> Dict[str, Any]:
+        now = time.time() if now is None else float(now)
+        block = self._owner.block_reason(str(account_key or ""), ctx)
+        if block.get("blocked"):
+            return {"ignored": True, "event": "recovery_ignored", "fields": dict(block)}
+        ctx_fields = ctx.to_dict()
+        deduped = self._dedupe.check_and_mark(ctx, now=now)
+        if deduped.get("ignore"):
+            fields = {key: value for key, value in deduped.items() if key not in ctx_fields and key != "reason"}
+            return {"ignored": True, "event": "recovery_ignored", "fields": fields}
+        signal_key = duplicate_signal_key(account_key, signal_name, reason_key, recovery_generation)
+        with self._lock:
+            last_seen = float(self._recent_signals.get(signal_key, 0.0) or 0.0)
+            if last_seen and (now - last_seen) < self._duplicate_window:
+                return {
+                    "ignored": True,
+                    "event": "recovery_duplicate_suppressed",
+                    "fields": {
+                        "signal": signal_name,
+                        "recovery_generation": recovery_generation,
+                        "age": f"{now - last_seen:.2f}",
+                    },
+                }
+            self._recent_signals[signal_key] = now
+            if len(self._recent_signals) > 512:
+                cutoff = now - max(self._duplicate_window * 4, 60.0)
+                self._recent_signals = {key: ts for key, ts in self._recent_signals.items() if ts >= cutoff}
+        return {"ignored": False}
+
+
 class SessionConflictTracker:
     def __init__(self):
         self._attempts: Dict[str, List[float]] = {}

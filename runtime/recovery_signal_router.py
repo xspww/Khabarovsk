@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import threading
-import time
-from typing import Optional, Any, Callable, Dict, Tuple
+from typing import Optional, Any, Callable, Dict
 from domain.states import RuntimeSignal, is_recovery_signal, normalize_runtime_signal
 from runtime.recovery_context import SESSION_CONFLICT
-from runtime.recovery_policy import context_from_signal, duplicate_signal_key
+from runtime.recovery_policy import context_from_signal
 from runtime.recovery_support import _enrich_visual_disconnect_payload_with_log
 from runtime.lua_liveness_policy import lua_event_source
 from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
@@ -21,22 +19,15 @@ class RecoverySignalRouter:
         runtime_state: RuntimeStateManager,
         is_closed: Callable[[], bool],
         log_decision: Callable[..., None],
-        active_recovery_blocks: Callable[..., bool],
-        dedupe_recovery_context: Callable[..., bool],
-        duplicate_window: float,
+        recovery_gate: Any,
     ):
         self._runtime_state = runtime_state
         self._is_closed = is_closed
         self._log_decision = log_decision
-        self._active_recovery_blocks = active_recovery_blocks
-        self._dedupe_recovery_context = dedupe_recovery_context
-        self._duplicate_window = max(1.0, float(duplicate_window or 1.0))
-        self._recent_signals: Dict[Tuple[str, str, str, int], float] = {}
-        self._lock = threading.Lock()
+        self._recovery_gate = recovery_gate
 
     def clear(self) -> None:
-        with self._lock:
-            self._recent_signals.clear()
+        self._recovery_gate.clear()
 
     def route(
         self,
@@ -137,11 +128,21 @@ class RecoverySignalRouter:
                 )
                 recovery.fail_account(acc, auth_gate.reason_key, auth_gate.reason)
                 return True
-            if self._active_recovery_blocks(acc, context, reason_key):
-                return True
-            if self._dedupe_recovery_context(context, acc, reason_key):
-                return True
-            if self._suppress_duplicate_signal(acc, account_key, signal_name, reason_key, current_recovery_generation, context):
+            verdict = self._recovery_gate.check(
+                account_key=account_key,
+                ctx=context,
+                signal_name=signal_name,
+                reason_key=reason_key,
+                recovery_generation=current_recovery_generation,
+            )
+            if verdict.get("ignored"):
+                self._log_decision(
+                    verdict.get("event", "recovery_ignored"),
+                    acc,
+                    reason_key,
+                    **verdict.get("fields", {}),
+                    **context.to_dict(),
+                )
                 return True
 
         self._log_decision(
@@ -154,36 +155,6 @@ class RecoverySignalRouter:
         if not self._dispatch(recovery, acc, signal_name, reason_key, payload, context, expected_runtime_generation, expected_session_id, expected_launch_nonce, expected_transaction_id):
             return False
         return True
-
-    def _suppress_duplicate_signal(
-        self,
-        acc: Any,
-        account_key: str,
-        signal_name: str,
-        reason_key: str,
-        recovery_generation: int,
-        context: Any,
-    ) -> bool:
-        signal_key = duplicate_signal_key(account_key, signal_name, reason_key, recovery_generation)
-        now = time.time()
-        with self._lock:
-            last_seen = float(self._recent_signals.get(signal_key, 0.0) or 0.0)
-            if last_seen and (now - last_seen) < self._duplicate_window:
-                self._log_decision(
-                    "recovery_duplicate_suppressed",
-                    acc,
-                    reason_key,
-                    signal=signal_name,
-                    recovery_generation=recovery_generation,
-                    age=f"{now - last_seen:.2f}",
-                    **context.to_dict(),
-                )
-                return True
-            self._recent_signals[signal_key] = now
-            if len(self._recent_signals) > 512:
-                cutoff = now - max(self._duplicate_window * 4, 60.0)
-                self._recent_signals = {key: ts for key, ts in self._recent_signals.items() if ts >= cutoff}
-        return False
 
     def _dispatch(
         self,

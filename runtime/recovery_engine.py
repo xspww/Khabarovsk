@@ -15,7 +15,7 @@ from runtime.recovery_context import RecoveryAttemptContext
 from runtime.recovery_evaluator import RecoveryEvaluator
 from runtime.recovery_owner import RecoveryOwnerRegistry
 from runtime.recovery_storm import RecoveryStormController
-from runtime.recovery_policy import RecoveryDedupeTracker, SessionConflictTracker, adaptive_recovery_delay, build_recovery_log_payload, canonical_reason, canonical_recovery_reason as _canonical_recovery_reason, display_recovery_reason as _display_recovery_reason, is_game_unavailable_detail as _is_game_unavailable_detail, kill_local_duplicate_for_session_conflict, policy_for
+from runtime.recovery_policy import RecoveryDedupeTracker, SessionConflictTracker, RecoveryGate, adaptive_recovery_delay, build_recovery_log_payload, canonical_reason, canonical_recovery_reason as _canonical_recovery_reason, display_recovery_reason as _display_recovery_reason, is_game_unavailable_detail as _is_game_unavailable_detail, kill_local_duplicate_for_session_conflict, policy_for
 from runtime.recovery_signal_router import RecoverySignalRouter
 from runtime.recovery_support import RECOVERY_REASON_MESSAGES, compute_backoff
 from runtime.lua_liveness_policy import lua_liveness_required, mark_waiting_for_lua
@@ -70,13 +70,16 @@ class RecoveryCoordinator:
         self._account_runtime = self._runtime_orchestrator.account_runtime
         self._duplicate_window = max(1.0, float(cfg.get("recovery_duplicate_window", 8) or 8))
         self._recovery_dedupe = RecoveryDedupeTracker(float(cfg.get("recovery_dedupe_window_seconds", 3) or 3))
+        self._recovery_gate = RecoveryGate(
+            owner=self._owner_registry,
+            dedupe=self._recovery_dedupe,
+            duplicate_window=self._duplicate_window,
+        )
         self._signal_router = RecoverySignalRouter(
             self._runtime_state,
             is_closed=self._is_closed,
             log_decision=self._log_recovery_decision,
-            active_recovery_blocks=self._active_recovery_blocks,
-            dedupe_recovery_context=self._dedupe_recovery_context,
-            duplicate_window=self._duplicate_window,
+            recovery_gate=self._recovery_gate,
         )
         self._session_conflicts = SessionConflictTracker()
         self._owns_scheduler = scheduler is None
@@ -135,22 +138,6 @@ class RecoveryCoordinator:
         except Exception as exc:
             flog_kv("RECOVERY", "queue_cancel_failed", "warning", error=exc)
         flog_kv("RECOVERY", "coordinator_stopped", pending_cancelled=pending, active_cancelled=active)
-
-    def _dedupe_recovery_context(self, ctx: RecoveryAttemptContext, acc: Account, reason_key: str) -> bool:
-        result = self._recovery_dedupe.check_and_mark(ctx)
-        if not result.get("ignore"):
-            return False
-        ctx_fields = ctx.to_dict()
-        result_fields = {key: value for key, value in result.items() if key not in ctx_fields and key != "reason"}
-        self._log_recovery_decision("recovery_ignored", acc, reason_key, **result_fields, **ctx_fields)
-        return True
-
-    def _active_recovery_blocks(self, acc: Account, ctx: RecoveryAttemptContext, reason_key: str) -> bool:
-        result = self._owner_registry.block_reason(acc._config_username, ctx)
-        if not result.get("blocked"):
-            return False
-        self._log_recovery_decision("recovery_ignored", acc, reason_key, **result, **ctx.to_dict())
-        return True
 
     def _kill_local_duplicate_for_session_conflict(self, acc: Account, ctx: RecoveryAttemptContext) -> int:
         try:

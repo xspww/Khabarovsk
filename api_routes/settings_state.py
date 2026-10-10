@@ -20,6 +20,15 @@ def _int_setting(value, default: int, min_value: int, max_value: int) -> int:
     return max(min_value, min(parsed, max_value))
 
 
+def _float_setting(value, default: float, min_value: float, max_value: float) -> float:
+    """Single owner for silent-clamp float parsing (route modules leverage this)."""
+    try:
+        parsed = float(value)
+    except Exception:
+        parsed = float(default)
+    return max(min_value, min(parsed, max_value))
+
+
 WINDOW_SIZE_PRESETS: Dict[str, Tuple[int, int]] = {
     "200x150": (200, 150),
     "240x180": (240, 180),

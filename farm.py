@@ -249,6 +249,186 @@ class FarmController:
             None,
         )
 
+    def mark_account_finished(self, acc: Any) -> None:
+        """Drop pending recovery/cooldown so a Finished account stays quiet.
+
+        Single owner for finish-side runtime reset — route modules leverage
+        this instead of reaching into farm privates directly.
+        """
+        if acc is None:
+            return
+        try:
+            from core import AccountState as _AccountState
+
+            runtime_state = getattr(self, "_runtime_state", None)
+            if runtime_state is not None:
+                with acc._lock:
+                    if hasattr(runtime_state, "clear_recovery"):
+                        runtime_state.clear_recovery(acc, reason="account_finished", inflight=False)
+                    runtime_state.set_cooldown(acc, 0.0, reason="account_finished")
+                    try:
+                        runtime_state.set_desired(acc, _AccountState.IDLE, reason="account_finished")
+                    except Exception:
+                        pass
+                    # Clear stale markers so the card does not stick on Rejoining.
+                    # Must mirror revive: recovery_view keys off these texts +
+                    # last_recovery_at, so clear them all and stamp the reason.
+                    try:
+                        acc.last_crash_reason = ""
+                        acc.last_recovery_reason = ""
+                        acc.last_state_reason = "account_finished"
+                        acc.last_recovery_at = 0.0
+                        acc.last_rejoin_trigger = ""
+                        acc.recovery_scheduled_at = 0.0
+                        acc.recovery_inflight = False
+                        acc.recovery_status = ""
+                        acc.pid_missing_since = 0.0
+                    except Exception:
+                        pass
+                    try:
+                        acc.sync_runtime("account_finished")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        try:
+            worker = (getattr(self, "_workers", None) or {}).get(
+                getattr(acc, "_config_username", "")
+            )
+            if worker is not None:
+                worker.wake()
+        except Exception:
+            pass
+        try:
+            if hasattr(self, "_bump_status_revision"):
+                self._bump_status_revision()
+        except Exception:
+            pass
+
+    def revive_unfinished_account(self, username: str) -> bool:
+        """Give an Unfinished account a clean relaunch while the farm runs.
+
+        Single owner for unfinished-revive — route modules leverage this
+        instead of reimplementing worker/state manipulation past the seam.
+        """
+        from core import flog_kv as _flog_kv
+
+        acc = self._find_account(username)
+        if acc is None:
+            return False
+        try:
+            from services.process_service import ProcessManager
+
+            with acc._lock:
+                pid = acc.pid
+                try:
+                    alive = bool(pid) and bool(
+                        ProcessManager.is_bound_game_alive(
+                            pid,
+                            owner_key=acc._config_username,
+                            expected_identity=acc.bound_process_identity,
+                        )
+                    )
+                except Exception:
+                    alive = False
+                if not alive:
+                    acc.pid = None
+                    acc.bound_process_identity = None
+                    acc.pid_missing_since = 0.0
+        except Exception:
+            pass
+        try:
+            from core import AccountState as _AccountState
+
+            runtime_state = getattr(self, "_runtime_state", None)
+            if runtime_state is not None:
+                with acc._lock:
+                    if hasattr(runtime_state, "clear_recovery"):
+                        runtime_state.clear_recovery(acc, reason="account_unfinished", inflight=False)
+                    runtime_state.set_cooldown(acc, 0.0, reason="account_unfinished")
+                    try:
+                        runtime_state.set_desired(acc, _AccountState.IN_GAME, reason="account_unfinished")
+                    except Exception:
+                        pass
+                    # Drop stale Rejoining markers (kill/crash/rejoin text + old timestamps).
+                    try:
+                        acc.last_crash_reason = ""
+                        acc.last_recovery_reason = ""
+                        acc.last_state_reason = "account_unfinished"
+                        acc.last_recovery_at = 0.0
+                        acc.recovery_scheduled_at = 0.0
+                        acc.last_rejoin_trigger = ""
+                        acc.pid_missing_since = 0.0
+                        acc.recovery_inflight = False
+                        acc.recovery_status = ""
+                        acc.sync_runtime("account_unfinished")
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+        try:
+            from services.account_reload import (
+                _prepare_added_runtime_account,
+                _start_added_worker,
+            )
+
+            if not _prepare_added_runtime_account(self, acc):
+                return False
+            # Force public state back to IDLE so worker + recovery can launch fresh.
+            # Without this, state != IN_GAME branch in AccountWorker just sleeps.
+            try:
+                from core import AccountState as _AccountState2
+
+                state_mgr = getattr(self, "_state_mgr", None)
+                if state_mgr is not None:
+                    try:
+                        state_mgr.transition(acc, _AccountState2.IDLE, reason="account_unfinished", force=True)
+                    except Exception:
+                        pass
+                else:
+                    rs = getattr(self, "_runtime_state", None)
+                    if rs is not None and hasattr(rs, "transition_public"):
+                        try:
+                            rs.transition_public(acc, _AccountState2.IDLE, reason="account_unfinished", force=True)
+                        except Exception:
+                            pass
+            except Exception:
+                pass
+            started = bool(_start_added_worker(self, acc))
+            # Critical: wake is not enough — queue a fresh evaluate like manual resume.
+            try:
+                orchestrator = getattr(self, "_runtime_orchestrator", None)
+                if orchestrator is not None and hasattr(orchestrator, "request_evaluate"):
+                    orchestrator.request_evaluate(acc, trigger="account_unfinished")
+            except Exception:
+                pass
+            try:
+                worker = (getattr(self, "_workers", None) or {}).get(acc._config_username)
+                if worker is not None:
+                    worker.wake()
+            except Exception:
+                pass
+            try:
+                if hasattr(self, "_bump_status_revision"):
+                    self._bump_status_revision()
+                if hasattr(self, "_push_event"):
+                    self._push_event(
+                        "system",
+                        f"Unfinished relaunch: {acc.display_name}",
+                        account=acc,
+                        severity="success",
+                        reason="account_unfinished",
+                    )
+            except Exception:
+                pass
+            try:
+                _flog_kv("API", "account_unfinished_relaunched", account=acc.display_name)
+            except Exception:
+                pass
+            return started
+        except Exception:
+            return False
+
     def _command_capability(self, action: str, account: str = "") -> Tuple[bool, str, Optional[Account]]:
         acc = self._find_account(account) if account else None
         if action == "start":

@@ -27,14 +27,6 @@ from services.process_proof_policy import (
     process_proof_allowed_for_state,
     required_process_proof_for_state,
 )
-from services.process_window_ops import (
-    arrange_roblox_windows as _arrange_roblox_windows,
-    hide_roblox_windows as _hide_roblox_windows,
-    resize_roblox_windows as _resize_roblox_windows,
-    restore_roblox_window_styles as _restore_roblox_window_styles,
-    show_roblox_windows as _show_roblox_windows,
-    unminimize_roblox_windows as _unminimize_roblox_windows,
-)
 from services.resource_monitor import get_rt_monitor
 
 
@@ -750,12 +742,157 @@ class ProcessService:
         )
         return int(killed or 0)
 
-    resize_roblox_windows = staticmethod(_resize_roblox_windows)
-    arrange_roblox_windows = staticmethod(_arrange_roblox_windows)
-    restore_roblox_window_styles = staticmethod(_restore_roblox_window_styles)
-    unminimize_roblox_windows = staticmethod(_unminimize_roblox_windows)
-    hide_roblox_windows = staticmethod(_hide_roblox_windows)
-    show_roblox_windows = staticmethod(_show_roblox_windows)
+    @staticmethod
+    def resize_roblox_windows(
+        width: int,
+        height: int,
+        unlock_size: bool = True,
+        exclude_pids: Optional[List[int]] = None,
+        reason: str = "",
+        account: Any = None,
+        idempotency_key: str = "",
+    ) -> Dict[str, Any]:
+        result = _ProcessBackend.resize_roblox_windows(width, height, unlock_size=unlock_size, exclude_pids=exclude_pids)
+        flog_kv(
+            "WINDOW",
+            "process_window_resize",
+            account=_account_name(account) if account is not None else "",
+            width=width,
+            height=height,
+            unlock_size=unlock_size,
+            resized=result.get("resized", 0),
+            count=result.get("count", 0),
+            reason=reason,
+            process_action="resize_roblox_windows",
+            idempotency_key=idempotency_key,
+        )
+        return result
+
+    @staticmethod
+    def arrange_roblox_windows(
+        width: int,
+        height: int,
+        columns: int = 6,
+        gap: int = 2,
+        margin: int = 0,
+        unlock_size: bool = True,
+        resize: bool = True,
+        rows: Optional[int] = None,
+        exclude_pids: Optional[List[int]] = None,
+        reason: str = "",
+        account: Any = None,
+        idempotency_key: str = "",
+    ) -> Dict[str, Any]:
+        result = _ProcessBackend.arrange_roblox_windows(
+            width,
+            height,
+            columns=columns,
+            gap=gap,
+            margin=margin,
+            unlock_size=unlock_size,
+            resize=resize,
+            rows=rows,
+            exclude_pids=exclude_pids,
+        )
+        flog_kv(
+            "WINDOW",
+            "process_window_arrange",
+            account=_account_name(account) if account is not None else "",
+            width=width,
+            height=height,
+            columns=columns,
+            rows=result.get("rows", rows or ""),
+            gap=result.get("gap", gap),
+            gap_auto=result.get("gap_auto", False),
+            margin=margin,
+            unlock_size=unlock_size,
+            resize=resize,
+            arranged=result.get("arranged", 0),
+            count=result.get("count", 0),
+            reason=reason,
+            process_action="arrange_roblox_windows",
+            idempotency_key=idempotency_key,
+        )
+        return result
+
+    @staticmethod
+    def unminimize_roblox_windows(
+        exclude_pids: Optional[List[int]] = None,
+        reason: str = "",
+        account: Any = None,
+        idempotency_key: str = "",
+    ) -> Dict[str, Any]:
+        result = _ProcessBackend.unminimize_roblox_windows(exclude_pids=exclude_pids)
+        flog_kv(
+            "WINDOW",
+            "process_window_unminimize",
+            account=_account_name(account) if account is not None else "",
+            restored=result.get("restored", 0),
+            count=result.get("count", 0),
+            reason=reason,
+            process_action="unminimize_roblox_windows",
+            idempotency_key=idempotency_key,
+        )
+        return result
+
+    @staticmethod
+    def hide_roblox_windows(
+        exclude_pids: Optional[List[int]] = None,
+        reason: str = "",
+        account: Any = None,
+        idempotency_key: str = "",
+    ) -> Dict[str, Any]:
+        result = _ProcessBackend.hide_roblox_windows(exclude_pids=exclude_pids)
+        flog_kv(
+            "WINDOW",
+            "process_window_hide",
+            account=_account_name(account) if account is not None else "",
+            hidden=result.get("hidden", 0),
+            count=result.get("count", 0),
+            reason=reason,
+            process_action="hide_roblox_windows",
+            idempotency_key=idempotency_key,
+        )
+        return result
+
+    @staticmethod
+    def show_roblox_windows(
+        exclude_pids: Optional[List[int]] = None,
+        reason: str = "",
+        account: Any = None,
+        idempotency_key: str = "",
+    ) -> Dict[str, Any]:
+        result = _ProcessBackend.show_roblox_windows(exclude_pids=exclude_pids)
+        flog_kv(
+            "WINDOW",
+            "process_window_show",
+            account=_account_name(account) if account is not None else "",
+            shown=result.get("shown", 0),
+            count=result.get("count", 0),
+            reason=reason,
+            process_action="show_roblox_windows",
+            idempotency_key=idempotency_key,
+        )
+        return result
+
+    @staticmethod
+    def restore_roblox_window_styles(
+        reason: str = "",
+        account: Any = None,
+        idempotency_key: str = "",
+    ) -> Dict[str, Any]:
+        result = _ProcessBackend.restore_roblox_window_styles()
+        flog_kv(
+            "WINDOW",
+            "process_window_restore",
+            account=_account_name(account) if account is not None else "",
+            restored=result.get("restored", 0),
+            count=result.get("count", 0),
+            reason=reason,
+            process_action="restore_roblox_window_styles",
+            idempotency_key=idempotency_key,
+        )
+        return result
 
 
 class ProcessManager(_ProcessBackend):

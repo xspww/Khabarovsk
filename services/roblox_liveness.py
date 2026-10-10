@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional
 from runtime.runtime_state_manager import RuntimeStateManager
 from core import flog_kv, Account
 from services.roblox_log_evidence import CachedLogEvidenceCollector, collect_recent_log_evidence
+from services.process_proof_policy import score_resource_signals
 
 _RUNTIME_STATE = RuntimeStateManager(logger=flog_kv)
 _POPUP_LOG_EVIDENCE_WINDOW_SECONDS = 120.0
@@ -159,9 +160,7 @@ def multi_signal_validate(
             score += 40.0
         if created_after_launch:
             score += 12.0
-        score += min(15.0, float(windows) * 7.0)
-        score += min(12.0, ram_mb / 120.0)
-        score += min(10.0, cpu * 2.0)
+        score += score_resource_signals(windows, ram_mb, cpu)
         if entry.get("exe"):
             score += 5.0
         if "roblox" in str(entry.get("cmdline") or "").lower():

@@ -8,6 +8,7 @@ from runtime.recovery_context import (
     SESSION_CONFLICT,
     normalize_disconnect_category,
     priority_for_signal,
+    reason_for_category,
 )
 
 
@@ -54,6 +55,51 @@ RECOVERY_POLICIES = {
 def canonical_reason(reason_key: str) -> str:
     reason_key = str(reason_key or "")
     return REASON_ALIASES.get(reason_key, reason_key)
+
+
+_SPECIFIC_PROCESS_RECOVERY_REASONS = {
+    "process_crash",
+    "watchdog_timeout",
+    "loading_freeze",
+    "teleport_timeout",
+}
+
+
+def canonical_recovery_reason(reason_key: str, context: RecoveryAttemptContext | None = None) -> str:
+    """Single owner for reason canonicalization.
+
+    Raw reason -> alias map, then category reconciliation: a PROCESS_CRASH
+    context keeps a specific crash reason, anything else resolves through
+    the category table so every caller shares one taxonomy.
+    """
+    canonical = canonical_reason(reason_key)
+    if not context or not context.category:
+        return canonical
+    category = str(context.category or "").strip().upper()
+    if category == "PROCESS_CRASH" and canonical in _SPECIFIC_PROCESS_RECOVERY_REASONS:
+        return canonical
+    return reason_for_category(category, canonical)
+
+
+def display_recovery_reason(reason_key: str, canonical: str, reason_msg: str = "", context: RecoveryAttemptContext | None = None) -> str:
+    """Single owner for the human-facing reason override (lua wait)."""
+    trigger = str(getattr(context, "trigger", "") or "").strip().lower() if context else ""
+    detail = " ".join(
+        part for part in (
+            str(reason_msg or "").strip().lower(),
+            str(getattr(context, "detail", "") or "").strip().lower() if context else "",
+        )
+        if part
+    )
+    raw = str(reason_key or "").strip().lower()
+    if raw == "lua_wait_timeout" or trigger == "lua_wait_timeout" or "waiting for lua" in detail or "lua did not confirm" in detail:
+        return "lua_wait_timeout"
+    return canonical
+
+
+def duplicate_signal_key(account_key: str, signal_name: str, reason_key: str, recovery_generation: int) -> Tuple[str, str, str, int]:
+    """Single owner for router dedupe-key construction (canonicalized)."""
+    return (str(account_key or ""), str(signal_name or ""), canonical_reason(reason_key), int(recovery_generation or 0))
 
 
 def is_game_unavailable_detail(text: str) -> bool:

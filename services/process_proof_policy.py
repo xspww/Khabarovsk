@@ -50,6 +50,22 @@ def allows_destructive_process_action(level: Any) -> bool:
     return normalize_process_proof_level(level) == PROOF_STRONG
 
 
+def score_resource_signals(windows: Any = 0, rss_mb: Any = 0.0, cpu: Any = 0.0) -> float:
+    """Single owner for the shared resource-signal weights.
+
+    Both the single-process validator and the multi-signal ranker leverage
+    this so the windows/RAM/CPU math cannot drift between the two seams.
+    """
+    try:
+        return (
+            min(15.0, float(windows or 0) * 7.0)
+            + min(12.0, float(rss_mb or 0.0) / 120.0)
+            + min(10.0, float(cpu or 0.0) * 2.0)
+        )
+    except Exception:
+        return 0.0
+
+
 def classify_process_proof(
     validation: Dict[str, Any],
     *,
@@ -104,4 +120,5 @@ __all__ = [
     "process_proof_allowed_for_state",
     "required_process_proof_for_state",
     "is_at_least_process_proof",
+    "score_resource_signals",
 ]

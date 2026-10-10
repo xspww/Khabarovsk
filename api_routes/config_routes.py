@@ -9,19 +9,12 @@ from services.executor_relauncher import EXECUTOR_NAMES
 from .settings_state import (
     _apply_game_defaults,
     _cpu_limiter_settings_from_config,
+    _float_setting,
     _int_setting,
     _normalize_window_size_settings,
 )
 from runtime.account_selection import runtime_account_allowlist
 from .context import ApiContext
-
-
-def _float_setting(value, default: float, min_value: float, max_value: float) -> float:
-    try:
-        parsed = float(value)
-    except Exception:
-        parsed = float(default)
-    return max(min_value, min(parsed, max_value))
 
 
 def register(app, ctx: ApiContext) -> None:

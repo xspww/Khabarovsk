@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from core import flog, flog_kv
 from runtime.runtime_state_manager import RuntimeStateManager
 from services.browser_tracker import extract_browser_tracker_id, tracker_matches
+from services.process_proof_policy import score_resource_signals
 from services.resource_monitor import get_rt_monitor
 
 ROBLOX_GAME_NAMES = {"robloxplayerbeta.exe"}
@@ -224,9 +225,7 @@ def validate_game_process(
             confidence += 35.0
         if tracker_matches(expected_browser_tracker_id, observed_tracker):
             confidence += 40.0
-        confidence += min(15.0, float(info["windows"]) * 7.0)
-        confidence += min(12.0, float(info["rss_mb"]) / 120.0)
-        confidence += min(10.0, float(info["cpu"]) * 2.0)
+        confidence += score_resource_signals(info["windows"], info["rss_mb"], info["cpu"])
         result["ok"] = True
         result["reason"] = "ok"
         result["confidence"] = round(confidence, 1)

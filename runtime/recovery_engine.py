@@ -11,48 +11,15 @@ from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_capt
 from runtime.runtime_state_manager import RuntimeStateManager
 from runtime.runtime_orchestrator import RuntimeOrchestrator
 from runtime.runtime_scheduler import RuntimeScheduler, RuntimeScheduledJob
-from runtime.recovery_context import reason_for_category, RecoveryAttemptContext
+from runtime.recovery_context import RecoveryAttemptContext
 from runtime.recovery_evaluator import RecoveryEvaluator
 from runtime.recovery_owner import RecoveryOwnerRegistry
 from runtime.recovery_storm import RecoveryStormController
-from runtime.recovery_policy import RecoveryDedupeTracker, SessionConflictTracker, adaptive_recovery_delay, build_recovery_log_payload, canonical_reason, kill_local_duplicate_for_session_conflict, policy_for
+from runtime.recovery_policy import RecoveryDedupeTracker, SessionConflictTracker, adaptive_recovery_delay, build_recovery_log_payload, canonical_reason, canonical_recovery_reason as _canonical_recovery_reason, display_recovery_reason as _display_recovery_reason, is_game_unavailable_detail as _is_game_unavailable_detail, kill_local_duplicate_for_session_conflict, policy_for
 from runtime.recovery_signal_router import RecoverySignalRouter
 from runtime.recovery_support import RECOVERY_REASON_MESSAGES, compute_backoff
 from runtime.lua_liveness_policy import lua_liveness_required, mark_waiting_for_lua
 from services.network_monitor import NetworkMonitor
-
-
-_SPECIFIC_PROCESS_RECOVERY_REASONS = {
-    "process_crash",
-    "watchdog_timeout",
-    "loading_freeze",
-    "teleport_timeout",
-}
-
-
-def _canonical_recovery_reason(reason_key: str, context: Optional[RecoveryAttemptContext] = None) -> str:
-    canonical = canonical_reason(reason_key)
-    if not context or not context.category:
-        return canonical
-    category = str(context.category or "").strip().upper()
-    if category == "PROCESS_CRASH" and canonical in _SPECIFIC_PROCESS_RECOVERY_REASONS:
-        return canonical
-    return reason_for_category(category, canonical)
-
-
-def _display_recovery_reason(reason_key: str, canonical: str, reason_msg: str = "", context: Optional[RecoveryAttemptContext] = None) -> str:
-    trigger = str(getattr(context, "trigger", "") or "").strip().lower() if context else ""
-    detail = " ".join(
-        part for part in (
-            str(reason_msg or "").strip().lower(),
-            str(getattr(context, "detail", "") or "").strip().lower() if context else "",
-        )
-        if part
-    )
-    raw = str(reason_key or "").strip().lower()
-    if raw == "lua_wait_timeout" or trigger == "lua_wait_timeout" or "waiting for lua" in detail or "lua did not confirm" in detail:
-        return "lua_wait_timeout"
-    return canonical
 
 
 ACTIVE_SLOT_STATES = {
@@ -61,22 +28,6 @@ ACTIVE_SLOT_STATES = {
     AccountState.VERIFY,
     AccountState.IN_GAME,
 }
-
-
-def _is_game_unavailable_detail(text: str) -> bool:
-    """Thin wrapper — canonical helper lives in recovery_policy (single owner).
-
-    Game closed for update surfaces as VIP-invite/Unauthorized details;
-    those are transient and must retry slowly forever, never FAILED.
-    """
-    try:
-        from runtime.recovery_policy import is_game_unavailable_detail as _canonical_check
-    except Exception:
-        return False
-    try:
-        return bool(_canonical_check(text))
-    except Exception:
-        return False
 
 
 class RecoveryCoordinator:

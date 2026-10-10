@@ -132,6 +132,10 @@ DEFAULTS: Dict[str, Any] = {
     "ram_cleanup_enabled":      False,
     "ram_cleanup_threshold_pct": 85.0,
     "ram_cleanup_interval_min": 15,
+    "process_trim_enabled":     False,
+    "process_trim_threshold_mb": 1200,
+    "process_trim_cooldown_sec": 300,
+    "process_trim_max_per_cycle": 1,
     "virtual_memory_mode":      "system_managed",
     "virtual_memory_size_gb":   16,
     "fps_limiter_enabled":      False,
@@ -139,6 +143,8 @@ DEFAULTS: Dict[str, Any] = {
     "graphics_auto_enabled":    False,
     "graphics_low_enabled":     False,
     "graphics_quality_level":   1,
+    "roblox_volume_muted":      False,
+    "roblox_volume_level":      10,
     "auto_process_priority_enabled": False,
     "process_priority":         "low",
     "cpu_limiter_enabled":      False,
@@ -188,6 +194,16 @@ class ConfigManager:
         had_lua_timeout = "lua_timeout_seconds" in raw
         legacy_use_lua = raw.get("use_lua")
         legacy_lua_wait_timeout = raw.get("lua_wait_timeout")
+        # Migrate volume scale 0-100 (percent) to 0-10 (in-game menu scale).
+        # Runs before validation clamps, so e.g. stored 50 becomes 5, not 10.
+        try:
+            _legacy_vol = raw.get("roblox_volume_level")
+            if isinstance(_legacy_vol, bool):
+                pass
+            elif isinstance(_legacy_vol, (int, float)) and float(_legacy_vol) > 10:
+                raw["roblox_volume_level"] = int(round(float(_legacy_vol) / 10.0))
+        except Exception:
+            pass
         raw = validate_config_payload(raw, DEFAULTS)
 
         # Migration from old config filenames/keys

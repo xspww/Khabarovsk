@@ -173,6 +173,13 @@ def _roblox_runtime_restart_required(ctx: ApiContext) -> Dict[str, Any]:
     }
 
 
+def _volume_status_from_config(ctx: ApiContext) -> Dict[str, Any]:
+    return {
+        "roblox_volume_muted": bool(ctx.cfg_mgr.get("roblox_volume_muted", False)),
+        "roblox_volume_level": _int_setting(ctx.cfg_mgr.get("roblox_volume_level", 10), 10, 0, 10),
+    }
+
+
 def _fps_limiter_status(ctx: ApiContext, path: str = DEFAULT_ROBLOX_SETTINGS_PATH) -> Dict[str, Any]:
     file_status = read_fps_settings(path)
     runtime_status = _roblox_runtime_restart_required(ctx)
@@ -194,6 +201,7 @@ def _fps_limiter_status(ctx: ApiContext, path: str = DEFAULT_ROBLOX_SETTINGS_PAT
         "graphics_quality_level": graphics_quality,
         "auto_process_priority_enabled": bool(ctx.cfg_mgr.get("auto_process_priority_enabled", False)),
         "process_priority": priority,
+        **_volume_status_from_config(ctx),
     }
     # Only mirror the file value while the limiter is ON. When OFF the file
     # holds the uncap value (0) but the UI must keep showing the remembered
@@ -218,6 +226,7 @@ def _graphics_status(ctx: ApiContext, path: str = DEFAULT_ROBLOX_SETTINGS_PATH) 
         "graphics_quality_level": graphics_quality,
         "auto_process_priority_enabled": bool(ctx.cfg_mgr.get("auto_process_priority_enabled", False)),
         "process_priority": priority,
+        **_volume_status_from_config(ctx),
     }
     return payload
 
@@ -270,6 +279,23 @@ def _ram_cleanup_status(ctx: ApiContext) -> Dict[str, Any]:
     }
     try:
         return RAM_CLEANUP.snapshot(cfg)
+    except Exception as exc:
+        return {"ok": False, "msg": str(exc), **cfg}
+
+
+def _process_trim_status(ctx: ApiContext) -> Dict[str, Any]:
+    try:
+        from services.process_trim import PROCESS_TRIM
+    except Exception as exc:
+        return {"ok": False, "msg": f"process trim unavailable: {exc}"}
+    cfg = {
+        "process_trim_enabled": ctx.cfg_mgr.get("process_trim_enabled", False),
+        "process_trim_threshold_mb": ctx.cfg_mgr.get("process_trim_threshold_mb", 1200),
+        "process_trim_cooldown_sec": ctx.cfg_mgr.get("process_trim_cooldown_sec", 300),
+        "process_trim_max_per_cycle": ctx.cfg_mgr.get("process_trim_max_per_cycle", 1),
+    }
+    try:
+        return PROCESS_TRIM.snapshot(cfg)
     except Exception as exc:
         return {"ok": False, "msg": str(exc), **cfg}
 

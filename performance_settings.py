@@ -17,7 +17,11 @@ FPS_UNLOCKED_CAP = 0
 GRAPHICS_QUALITY_MIN = 1
 GRAPHICS_QUALITY_MAX = 10
 GRAPHICS_LOW_DEFAULT_LEVEL = 1
+VOLUME_MIN = 0
+VOLUME_MAX = 10
+VOLUME_DEFAULT_LEVEL = 10
 _FRAMERATE_RE = re.compile(r'(<int\s+name="FramerateCap"\s*>)(-?\d+)(</int>)', re.IGNORECASE)
+_VOLUME_RE = re.compile(r'(<float\s+name="MasterVolume"\s*>)(.*?)(</float>)', re.IGNORECASE | re.DOTALL)
 _SETTING_PATTERNS = {
     "graphics_optimization_mode": ("token", "GraphicsOptimizationMode"),
     "graphics_quality_level": ("int", "GraphicsQualityLevel"),
@@ -64,6 +68,42 @@ def normalize_process_priority(value: Any, default: str = "low") -> str:
     if priority not in SUPPORTED_PROCESS_PRIORITIES:
         raise ValueError("Process priority must be one of: low, below_normal, normal, above_normal, high")
     return priority
+
+
+def normalize_roblox_volume(value: Any, default: int = VOLUME_DEFAULT_LEVEL) -> int:
+    try:
+        level = int(float(value))
+    except Exception:
+        level = int(default)
+    if level < VOLUME_MIN or level > VOLUME_MAX:
+        raise ValueError(
+            f"Roblox volume must be between {VOLUME_MIN} and {VOLUME_MAX}"
+        )
+    return level
+
+
+def volume_level_to_file_value(level: int, muted: bool = False) -> str:
+    if bool(muted):
+        return "0"
+    level = normalize_roblox_volume(level)
+    if level <= 0:
+        return "0"
+    if level >= 10:
+        return "1"
+    # Roblox stores MasterVolume as 0..1 float; UI scale is 0..10 like the in-game menu.
+    text = f"{level / 10.0:.4f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def volume_file_value_to_level(raw: Any) -> Optional[int]:
+    try:
+        value = float(str(raw or "").strip())
+    except Exception:
+        return None
+    if value != value:  # NaN guard
+        return None
+    value = max(0.0, min(1.0, value))
+    return int(round(value * 10))
 
 
 def is_readonly(path: str) -> bool:
@@ -217,6 +257,12 @@ def read_fps_settings(path: Optional[str] = None) -> Dict[str, Any]:
     payload["framerate_cap"] = int(match.group(2))
     for key, (tag, name) in _SETTING_PATTERNS.items():
         payload[key] = _read_named_setting(text, tag, name)
+    volume_match = _VOLUME_RE.search(text)
+    payload["master_volume"] = volume_match.group(2).strip() if volume_match else None
+    payload["volume_level_current"] = volume_file_value_to_level(payload.get("master_volume"))
+    payload["volume_muted_current"] = (
+        payload["volume_level_current"] is not None and int(payload["volume_level_current"]) <= 0
+    )
     try:
         payload["graphics_quality_level_current"] = normalize_graphics_quality(payload.get("saved_quality_level"))
     except ValueError:
@@ -242,6 +288,8 @@ def apply_graphics_settings_file(
     path: Optional[str] = None,
     readonly_after: Optional[bool] = None,
     quality_level: Any = GRAPHICS_LOW_DEFAULT_LEVEL,
+    volume_muted: Optional[bool] = None,
+    volume_level: Any = None,
 ) -> Dict[str, Any]:
     target = path or DEFAULT_ROBLOX_SETTINGS_PATH
     if not os.path.exists(target):
@@ -251,20 +299,47 @@ def apply_graphics_settings_file(
     original_readonly = is_readonly(target)
     success = False
     quality = normalize_graphics_quality(quality_level)
-    if bool(graphics_low_enabled):
+    volume_touched = volume_muted is not None or volume_level is not None
+    resolved_volume_muted: Optional[bool] = None
+    resolved_volume_level: Optional[int] = None
+    if volume_touched:
+        resolved_volume_muted = bool(volume_muted) if volume_muted is not None else False
+        resolved_volume_level = normalize_roblox_volume(
+            VOLUME_DEFAULT_LEVEL if volume_level is None else volume_level
+        )
+    if bool(graphics_low_enabled) or volume_touched:
         if original_readonly:
             set_readonly(target, False)
         try:
             with open(target, "r", encoding="utf-8", errors="replace") as f:
                 text = f.read()
-            text, changed_total = _apply_named_settings(text, _graphics_low_values(quality))
-            if changed_total < 1:
-                raise ValueError("Roblox graphics settings not found in GlobalBasicSettings_13.xml.")
+            if bool(graphics_low_enabled):
+                text, changed_total = _apply_named_settings(text, _graphics_low_values(quality))
+                if changed_total < 1:
+                    raise ValueError("Roblox graphics settings not found in GlobalBasicSettings_13.xml.")
+            if volume_touched:
+                next_text, changed = _VOLUME_RE.subn(
+                    rf"\g<1>{volume_level_to_file_value(resolved_volume_level, resolved_volume_muted)}\g<3>",
+                    text,
+                    count=1,
+                )
+                if changed < 1:
+                    raise ValueError("Roblox volume setting (MasterVolume) not found in GlobalBasicSettings_13.xml.")
+                text = next_text
             with open(target, "w", encoding="utf-8", newline="") as f:
                 f.write(text)
             success = True
         finally:
-            set_readonly(target, bool(readonly_after) if readonly_after is not None else True)
+            if readonly_after is not None:
+                set_readonly(target, bool(readonly_after))
+            else:
+                # Lock the file when graphics is on, or when volume is
+                # non-default (muted / lowered) so Roblox cannot revert it.
+                lock_volume = bool(
+                    volume_touched
+                    and (bool(resolved_volume_muted) or int(resolved_volume_level or 10) < 10)
+                )
+                set_readonly(target, bool(graphics_low_enabled or lock_volume))
     elif readonly_after is not None:
         set_readonly(target, bool(readonly_after))
     payload = read_fps_settings(target)
@@ -273,6 +348,54 @@ def apply_graphics_settings_file(
         "graphics_low_enabled": bool(graphics_low_enabled),
         "graphics_auto_enabled": bool(graphics_low_enabled),
         "graphics_quality_level": quality,
+        "read_only": is_readonly(target),
+    })
+    if volume_touched:
+        payload.update({
+            "roblox_volume_muted": bool(resolved_volume_muted),
+            "roblox_volume_level": int(resolved_volume_level or 0),
+        })
+    return payload
+
+
+def apply_volume_settings_file(
+    volume_muted: bool = False,
+    volume_level: Any = VOLUME_DEFAULT_LEVEL,
+    path: Optional[str] = None,
+    readonly_after: Optional[bool] = None,
+) -> Dict[str, Any]:
+    target = path or DEFAULT_ROBLOX_SETTINGS_PATH
+    if not os.path.exists(target):
+        raise FileNotFoundError(
+            "Roblox settings file not found. Open Roblox once so it can create GlobalBasicSettings_13.xml."
+        )
+    muted = bool(volume_muted)
+    level = normalize_roblox_volume(volume_level)
+    original_readonly = is_readonly(target)
+    success = False
+    if original_readonly:
+        set_readonly(target, False)
+    try:
+        with open(target, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        next_text, changed = _VOLUME_RE.subn(
+            rf"\g<1>{volume_level_to_file_value(level, muted)}\g<3>", text, count=1
+        )
+        if changed < 1:
+            raise ValueError("Roblox volume setting (MasterVolume) not found in GlobalBasicSettings_13.xml.")
+        with open(target, "w", encoding="utf-8", newline="") as f:
+            f.write(next_text)
+        success = True
+    finally:
+        if readonly_after is not None:
+            set_readonly(target, bool(readonly_after))
+        else:
+            set_readonly(target, bool(muted or level < 10) if success else original_readonly)
+    payload = read_fps_settings(target)
+    payload.update({
+        "ok": True,
+        "roblox_volume_muted": muted,
+        "roblox_volume_level": level,
         "read_only": is_readonly(target),
     })
     return payload
@@ -284,10 +407,19 @@ def apply_performance_settings_file(
     graphics_auto_enabled: bool = False,
     path: Optional[str] = None,
     graphics_quality_level: Any = GRAPHICS_LOW_DEFAULT_LEVEL,
+    volume_muted: Optional[bool] = None,
+    volume_level: Any = None,
 ) -> Dict[str, Any]:
     target = path or DEFAULT_ROBLOX_SETTINGS_PATH
     fps = normalize_fps_limit(fps_limit)
     quality = normalize_graphics_quality(graphics_quality_level)
+    volume_touched = volume_muted is not None or volume_level is not None
+    resolved_volume_muted = bool(volume_muted) if volume_muted is not None else False
+    resolved_volume_level: Optional[int] = None
+    if volume_touched:
+        resolved_volume_level = normalize_roblox_volume(
+            VOLUME_DEFAULT_LEVEL if volume_level is None else volume_level
+        )
     if not os.path.exists(target):
         raise FileNotFoundError(
             "Roblox settings file not found. Open Roblox once so it can create GlobalBasicSettings_13.xml."
@@ -317,11 +449,24 @@ def apply_performance_settings_file(
             text, changed_total = _apply_named_settings(text, _graphics_low_values(quality))
             if changed_total < 1:
                 raise ValueError("Roblox graphics settings not found in GlobalBasicSettings_13.xml.")
+        if volume_touched:
+            next_text, changed = _VOLUME_RE.subn(
+                rf"\g<1>{volume_level_to_file_value(resolved_volume_level, resolved_volume_muted)}\g<3>",
+                text,
+                count=1,
+            )
+            if changed < 1:
+                raise ValueError("Roblox volume setting (MasterVolume) not found in GlobalBasicSettings_13.xml.")
+            text = next_text
         with open(target, "w", encoding="utf-8", newline="") as f:
             f.write(text)
         success = True
     finally:
-        set_readonly(target, bool(fps_enabled or graphics_auto_enabled) if success else original_readonly)
+        lock_volume = bool(
+            volume_touched
+            and (bool(resolved_volume_muted) or int(resolved_volume_level or 10) < 10)
+        )
+        set_readonly(target, bool(fps_enabled or graphics_auto_enabled or lock_volume) if success else original_readonly)
 
     payload = read_fps_settings(target)
     payload.update({
@@ -332,6 +477,11 @@ def apply_performance_settings_file(
         "graphics_auto_enabled": bool(graphics_auto_enabled),
         "graphics_quality_level": quality,
     })
+    if volume_touched:
+        payload.update({
+            "roblox_volume_muted": bool(resolved_volume_muted),
+            "roblox_volume_level": int(resolved_volume_level or 0),
+        })
     return payload
 
 

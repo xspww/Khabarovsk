@@ -81,7 +81,7 @@
     setTimeout(_ensureGridPicker, 1500);
   }
 
-  const apiHeaders = () => {
+  window.__paintRange = (el) => {try{if(!el||el.type!=="range")return;const min=Number(el.min),max=Number(el.max),val=Number(el.value);if(!Number.isFinite(min)||!Number.isFinite(max)||max<=min)return;const pct=Math.max(0,Math.min(100,((Number.isFinite(val)?val:min)-min)/(max-min)*100));el.style.setProperty("--fill",pct.toFixed(1)+"%")}catch(_){}};document.addEventListener("input",(e)=>{const r=e.target instanceof Element?e.target.closest(".volume-level-row input[type=range]"):null;if(r)window.__paintRange(r)},true);const apiHeaders = () => {
     const token = document.querySelector('meta[name="cronus-api-token"]')?.content || '';
     return token ? { 'X-Cronus-Token': token } : {};
   };
@@ -334,9 +334,21 @@
     }, true);
   };
   syncLimiterActions();
-  // Replaced 100ms polling with MutationObserver (perf)
-  const _limiterRoot = document.getElementById('limiter-save')?.closest('.card') || document.body;
-  new MutationObserver(() => { if (!document.hidden) syncLimiterActions(); }).observe(_limiterRoot, { attributes: true, subtree: true, attributeFilter: ['class'] });
+  // Safety net: the dashboard owns savebar visibility (single unified
+  // limiter pair; the graphics pair stays hidden as click-targets). Re-sync
+  // after dashboard updates — it toggles `hidden`, not just classes, so
+  // observe both and run deferred to win ordering races.
+  const _limiterRoot = document.getElementById('view-limiter') || document.getElementById('limiter-save')?.closest('.page-head') || document.body;
+  let _limiterSyncQueued = false;
+  const _queueLimiterSync = () => {
+    if (_limiterSyncQueued || document.hidden) return;
+    _limiterSyncQueued = true;
+    requestAnimationFrame(() => {
+      _limiterSyncQueued = false;
+      try { syncLimiterActions(); } catch (_) {}
+    });
+  };
+  new MutationObserver(_queueLimiterSync).observe(_limiterRoot, { attributes: true, subtree: true, attributeFilter: ['class', 'hidden'] });
 
   // Floating description editor: the dashboard renders the editor inline in
   // the row and handles save/cancel/toolbar itself. We only lift the editor

@@ -4,10 +4,12 @@ from fastapi import HTTPException, Request
 from account_hybrid import audit_event
 from core import flog_kv
 from performance_settings import (
+    apply_volume_settings_file,
     delete_roblox_settings_file,
     normalize_fps_limit,
     normalize_graphics_quality,
     normalize_process_priority,
+    normalize_roblox_volume,
     roblox_settings_status,
 )
 from services.cpu_limiter import CPU_LIMITER
@@ -19,6 +21,7 @@ from .settings_state import (
     _fps_limiter_status,
     _graphics_status,
     _normalize_window_size_settings,
+    _process_trim_status,
     _ram_cleanup_status,
     _roblox_runtime_restart_required,
     _virtual_memory_status,
@@ -54,10 +57,17 @@ def register(app, ctx: ApiContext) -> None:
             body.get("graphics_auto_enabled", cfg_mgr.get("graphics_low_enabled", cfg_mgr.get("graphics_auto_enabled", False))),
         ))
         auto_priority_enabled = bool(body.get("auto_process_priority_enabled", cfg_mgr.get("auto_process_priority_enabled", False)))
+        volume_keys = {"roblox_volume_muted", "roblox_volume_level", "volume_muted", "volume_level"}
+        volume_touched = any(k in body for k in volume_keys)
         try:
             fps_limit = normalize_fps_limit(body.get("fps_limit", cfg_mgr.get("fps_limit", 240)))
             graphics_quality = normalize_graphics_quality(body.get("graphics_quality_level", cfg_mgr.get("graphics_quality_level", 1)))
             process_priority = normalize_process_priority(body.get("process_priority", cfg_mgr.get("process_priority", "low")))
+            volume_muted = None
+            volume_level = None
+            if volume_touched:
+                volume_muted = bool(body.get("roblox_volume_muted", body.get("volume_muted", cfg_mgr.get("roblox_volume_muted", False))))
+                volume_level = normalize_roblox_volume(body.get("roblox_volume_level", body.get("volume_level", cfg_mgr.get("roblox_volume_level", 10))))
         except ValueError as exc:
             raise HTTPException(400, str(exc))
         try:
@@ -66,6 +76,7 @@ def register(app, ctx: ApiContext) -> None:
                 fps_limit,
                 graphics_enabled,
                 graphics_quality_level=graphics_quality,
+                **({"volume_muted": volume_muted, "volume_level": volume_level} if volume_touched else {}),
             )
         except FileNotFoundError as exc:
             raise HTTPException(404, str(exc))
@@ -78,7 +89,7 @@ def register(app, ctx: ApiContext) -> None:
         priority_result = {"ok": True, "priority": process_priority, "applied": 0, "count": 0, "results": []}
         if auto_priority_enabled:
             priority_result = apply_process_priority_to_roblox(process_priority)
-        cfg_mgr.update({
+        cfg_update = {
             "fps_limiter_enabled": enabled,
             "fps_limit": stored_limit,
             "graphics_low_enabled": graphics_enabled,
@@ -86,7 +97,13 @@ def register(app, ctx: ApiContext) -> None:
             "graphics_quality_level": graphics_quality,
             "auto_process_priority_enabled": auto_priority_enabled,
             "process_priority": process_priority,
-        })
+        }
+        if volume_touched:
+            cfg_update["roblox_volume_muted"] = bool(volume_muted)
+            cfg_update["roblox_volume_level"] = int(volume_level)
+            payload["roblox_volume_muted"] = bool(volume_muted)
+            payload["roblox_volume_level"] = int(volume_level)
+        cfg_mgr.update(cfg_update)
         cfg_mgr.save()
         runtime_status = _roblox_runtime_restart_required(ctx)
         payload.update(runtime_status)
@@ -122,17 +139,36 @@ def register(app, ctx: ApiContext) -> None:
             raise HTTPException(400, "Expected object")
         enabled = bool(body.get("graphics_low_enabled", body.get("graphics_auto_enabled", body.get("enabled", False))))
         auto_priority_enabled = bool(body.get("auto_process_priority_enabled", cfg_mgr.get("auto_process_priority_enabled", False)))
+        volume_keys = {"roblox_volume_muted", "roblox_volume_level", "volume_muted", "volume_level"}
+        volume_touched = any(k in body for k in volume_keys)
         try:
             graphics_quality = normalize_graphics_quality(body.get("graphics_quality_level", cfg_mgr.get("graphics_quality_level", 1)))
             process_priority = normalize_process_priority(body.get("process_priority", cfg_mgr.get("process_priority", "low")))
+            volume_muted = None
+            volume_level = None
+            if volume_touched:
+                volume_muted = bool(body.get("roblox_volume_muted", body.get("volume_muted", cfg_mgr.get("roblox_volume_muted", False))))
+                volume_level = normalize_roblox_volume(body.get("roblox_volume_level", body.get("volume_level", cfg_mgr.get("roblox_volume_level", 10))))
         except ValueError as exc:
             raise HTTPException(400, str(exc))
         try:
             payload = apply_graphics_settings_file(
                 enabled,
-                readonly_after=bool(cfg_mgr.get("fps_limiter_enabled", False) or enabled),
+                readonly_after=None,
                 quality_level=graphics_quality,
+                **({"volume_muted": volume_muted, "volume_level": volume_level} if volume_touched else {}),
             )
+            # Enforce readonly when FPS is on, graphics is on, or volume is
+            # non-default — otherwise Roblox reverts the file on exit.
+            if volume_touched and volume_muted is not None and volume_level is not None:
+                from performance_settings import is_readonly as _is_ro
+                from performance_settings import set_readonly as _set_ro
+                try:
+                    want_ro = bool(cfg_mgr.get("fps_limiter_enabled", False) or enabled or volume_muted or int(volume_level) < 10)
+                    _set_ro(str(payload.get("path") or ""), want_ro)
+                    payload["read_only"] = _is_ro(str(payload.get("path") or ""))
+                except Exception:
+                    pass
         except FileNotFoundError as exc:
             raise HTTPException(404, str(exc))
         except ValueError as exc:
@@ -143,13 +179,17 @@ def register(app, ctx: ApiContext) -> None:
         priority_result = {"ok": True, "priority": process_priority, "applied": 0, "count": 0, "results": []}
         if auto_priority_enabled:
             priority_result = apply_process_priority_to_roblox(process_priority)
-        cfg_mgr.update({
+        cfg_update = {
             "graphics_low_enabled": enabled,
             "graphics_auto_enabled": enabled,
             "graphics_quality_level": graphics_quality,
             "auto_process_priority_enabled": auto_priority_enabled,
             "process_priority": process_priority,
-        })
+        }
+        if volume_touched:
+            cfg_update["roblox_volume_muted"] = bool(volume_muted)
+            cfg_update["roblox_volume_level"] = int(volume_level)
+        cfg_mgr.update(cfg_update)
         cfg_mgr.save()
         payload.update(_roblox_runtime_restart_required(ctx))
         payload["graphics_low_enabled"] = enabled
@@ -158,6 +198,9 @@ def register(app, ctx: ApiContext) -> None:
         payload["auto_process_priority_enabled"] = auto_priority_enabled
         payload["process_priority"] = process_priority
         payload["priority_result"] = priority_result
+        if volume_touched:
+            payload["roblox_volume_muted"] = bool(volume_muted)
+            payload["roblox_volume_level"] = int(volume_level)
         audit_event(
             "graphics_apply",
             graphics_low_enabled=enabled,
@@ -167,6 +210,46 @@ def register(app, ctx: ApiContext) -> None:
             path=payload.get("path", ""),
             read_only=payload.get("read_only", False),
             requires_restart=payload.get("requires_restart", False),
+        )
+        return payload
+
+
+    @app.get("/api/performance/volume")
+    def api_get_volume():
+        return _graphics_status(ctx)
+
+
+    @app.post("/api/performance/volume")
+    async def api_set_volume(request: Request):
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Expected object")
+        try:
+            volume_muted = bool(body.get("roblox_volume_muted", body.get("volume_muted", cfg_mgr.get("roblox_volume_muted", False))))
+            volume_level = normalize_roblox_volume(body.get("roblox_volume_level", body.get("volume_level", cfg_mgr.get("roblox_volume_level", 10))))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        try:
+            payload = apply_volume_settings_file(volume_muted, volume_level)
+        except FileNotFoundError as exc:
+            raise HTTPException(404, str(exc))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc))
+        except Exception as exc:
+            flog_kv("PERFORMANCE", "volume_apply_failed", "error", error=str(exc))
+            raise HTTPException(500, str(exc))
+        cfg_mgr.update({
+            "roblox_volume_muted": volume_muted,
+            "roblox_volume_level": int(volume_level),
+        })
+        cfg_mgr.save()
+        payload.update(_roblox_runtime_restart_required(ctx))
+        audit_event(
+            "volume_apply",
+            roblox_volume_muted=volume_muted,
+            roblox_volume_level=int(volume_level),
+            path=payload.get("path", ""),
+            read_only=payload.get("read_only", False),
         )
         return payload
 
@@ -518,6 +601,95 @@ def register(app, ctx: ApiContext) -> None:
         audit_event("ram_cleanup_manual", ok=True, freed_mb=result.get("freed_mb", 0.0), source=source)
         payload = _ram_cleanup_status(ctx)
         payload.update(result)  # live result wins over cached status
+        return payload
+
+    @app.get("/api/performance/process-trim")
+    def api_get_process_trim():
+        return _process_trim_status(ctx)
+
+    @app.post("/api/performance/process-trim")
+    async def api_set_process_trim(request: Request):
+        from services.process_trim import normalize_process_trim_settings
+
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Expected object")
+        settings = normalize_process_trim_settings({
+            "process_trim_enabled": body.get("enabled", body.get("process_trim_enabled", cfg_mgr.get("process_trim_enabled", False))),
+            "process_trim_threshold_mb": body.get("threshold_mb", body.get("process_trim_threshold_mb", cfg_mgr.get("process_trim_threshold_mb", 1200))),
+            "process_trim_cooldown_sec": body.get("cooldown_sec", body.get("process_trim_cooldown_sec", cfg_mgr.get("process_trim_cooldown_sec", 300))),
+            "process_trim_max_per_cycle": body.get("max_per_cycle", body.get("process_trim_max_per_cycle", cfg_mgr.get("process_trim_max_per_cycle", 1))),
+        })
+        cfg_mgr.update({
+            "process_trim_enabled": settings["enabled"],
+            "process_trim_threshold_mb": settings["threshold_mb"],
+            "process_trim_cooldown_sec": settings["cooldown_sec"],
+            "process_trim_max_per_cycle": settings["max_per_cycle"],
+        })
+        cfg_mgr.save()
+        if hasattr(farm, "apply_config_snapshot"):
+            try:
+                farm.apply_config_snapshot()
+            except Exception:
+                pass
+        payload = _process_trim_status(ctx)
+        audit_event("process_trim_apply", enabled=settings["enabled"],
+                    threshold_mb=settings["threshold_mb"], cooldown_sec=settings["cooldown_sec"],
+                    max_per_cycle=settings["max_per_cycle"])
+        return payload
+
+    @app.post("/api/performance/process-trim/trim-now")
+    async def api_process_trim_now(request: Request):
+        from services.process_trim import PROCESS_TRIM
+
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            body = {}
+        pid = 0
+        try:
+            pid = int(float(body.get("pid", 0) or 0))
+        except Exception:
+            pid = 0
+        username = str(body.get("username", body.get("account", "")) or "").strip()
+        if not pid and username and hasattr(farm, "_accounts"):
+            for acc in getattr(farm, "_accounts", []):
+                key = str(getattr(acc, "_config_username", "") or getattr(acc, "username", ""))
+                if key == username or str(getattr(acc, "display_name", "")) == username:
+                    try:
+                        pid = int(getattr(acc, "pid", 0) or 0)
+                    except Exception:
+                        pid = 0
+                    break
+        # ไม่ระบุ pid/username = trim อัตโนมัติ 1 รอบ (เฉพาะจอที่เข้าเกณฑ์)
+        # manual: ข้าม throttle 30s (แต่ยังเคารพ cooldown ราย PID + gap หลัง global clean)
+        if not pid:
+            try:
+                result = PROCESS_TRIM.apply(getattr(farm, "_accounts", []), cfg_mgr.snapshot(), bypass_throttle=True)
+            except Exception as exc:
+                flog_kv("PERFORMANCE", "process_trim_failed", "error", error=str(exc), source="manual")
+                raise HTTPException(500, str(exc))
+            flog_kv("PERFORMANCE", "process_trim_manual",
+                    trimmed=result.get("trimmed", 0), source="manual")
+            audit_event("process_trim_manual", ok=True, trimmed=result.get("trimmed", 0))
+            payload = _process_trim_status(ctx)
+            payload.update(result)
+            return payload
+        try:
+            result = PROCESS_TRIM.trim_now(pid)
+        except Exception as exc:
+            flog_kv("PERFORMANCE", "process_trim_failed", "error", error=str(exc), source="manual")
+            raise HTTPException(500, str(exc))
+        if not result.get("ok"):
+            audit_event("process_trim_manual", ok=False, msg=result.get("reason", ""))
+            return result
+        flog_kv("PERFORMANCE", "process_trim_manual",
+                freed_mb=result.get("freed_mb", 0.0), pid=pid, source="manual")
+        audit_event("process_trim_manual", ok=True, freed_mb=result.get("freed_mb", 0.0), pid=pid)
+        payload = _process_trim_status(ctx)
+        payload.update(result)
         return payload
 
     @app.get("/api/performance/virtual-memory")

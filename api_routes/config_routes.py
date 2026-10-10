@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from fastapi import HTTPException, Request
-from performance_settings import normalize_fps_limit, normalize_graphics_quality, normalize_process_priority
+from performance_settings import normalize_fps_limit, normalize_graphics_quality, normalize_process_priority, normalize_roblox_volume
 from roblox_hybrid import release_multi_roblox_guard
 from services.executor_relauncher import EXECUTOR_NAMES
 
@@ -64,6 +64,8 @@ def register(app, ctx: ApiContext) -> None:
             "machine_supervisor_cpu_high_percent", "machine_supervisor_memory_high_percent",
             "roblox_memory_guard_enabled", "roblox_memory_guard_mb", "roblox_memory_guard_hold_seconds",
             "ram_cleanup_enabled", "ram_cleanup_threshold_pct", "ram_cleanup_interval_min",
+            "process_trim_enabled", "process_trim_threshold_mb", "process_trim_cooldown_sec",
+            "process_trim_max_per_cycle",
             "virtual_memory_mode", "virtual_memory_size_gb",
             "popup_scan_interval_seconds", "popup_scan_max_parallel",
             "connection_error_hold_time",
@@ -75,6 +77,7 @@ def register(app, ctx: ApiContext) -> None:
             "recovery_storm_outage_backoff_seconds",
             "recovery_restore_window", "event_bus_workers", "event_bus_max_pending",
             "fps_limiter_enabled", "fps_limit", "graphics_auto_enabled", "graphics_low_enabled", "graphics_quality_level",
+            "roblox_volume_muted", "roblox_volume_level",
             "auto_process_priority_enabled", "process_priority",
             "cpu_limiter_enabled", "cpu_limiter_mode", "cpu_limiter_default_percent",
             "cpu_limiter_apply_all", "cpu_limiter_accounts",
@@ -161,6 +164,13 @@ def register(app, ctx: ApiContext) -> None:
         if "graphics_quality_level" in updates:
             try:
                 updates["graphics_quality_level"] = normalize_graphics_quality(updates["graphics_quality_level"])
+            except ValueError as exc:
+                raise HTTPException(400, str(exc))
+        if "roblox_volume_muted" in updates:
+            updates["roblox_volume_muted"] = bool(updates["roblox_volume_muted"])
+        if "roblox_volume_level" in updates:
+            try:
+                updates["roblox_volume_level"] = normalize_roblox_volume(updates["roblox_volume_level"])
             except ValueError as exc:
                 raise HTTPException(400, str(exc))
         if "auto_process_priority_enabled" in updates:
@@ -256,6 +266,20 @@ def register(app, ctx: ApiContext) -> None:
             except Exception:
                 _iv = 15
             updates["ram_cleanup_interval_min"] = max(5, _iv)
+        if "process_trim_enabled" in updates:
+            updates["process_trim_enabled"] = bool(updates["process_trim_enabled"])
+        if "process_trim_threshold_mb" in updates:
+            updates["process_trim_threshold_mb"] = _int_setting(
+                updates["process_trim_threshold_mb"], 1200, 256, 8192
+            )
+        if "process_trim_cooldown_sec" in updates:
+            updates["process_trim_cooldown_sec"] = _int_setting(
+                updates["process_trim_cooldown_sec"], 300, 60, 3600
+            )
+        if "process_trim_max_per_cycle" in updates:
+            updates["process_trim_max_per_cycle"] = _int_setting(
+                updates["process_trim_max_per_cycle"], 1, 1, 10
+            )
         if "virtual_memory_mode" in updates:
             mode = str(updates["virtual_memory_mode"] or "system_managed").strip().lower()
             updates["virtual_memory_mode"] = mode if mode in ("system_managed", "custom") else "system_managed"

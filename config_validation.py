@@ -31,11 +31,15 @@ _INT_RANGES: Dict[str, Tuple[int, int]] = {
     "watchdog_activity_timeout": (1, 86400),
     "watchdog_loading_grace": (1, 86400),
     "graphics_quality_level": (1, 10),
+    "roblox_volume_level": (0, 10),
     "roblox_window_width": (80, 1920),
     "roblox_window_height": (60, 1080),
     "roblox_window_arrange_columns": (1, 32),
     "roblox_window_arrange_rows": (1, 32),
     "roblox_window_arrange_gap": (0, 80),
+    "process_trim_threshold_mb": (256, 8192),
+    "process_trim_cooldown_sec": (60, 3600),
+    "process_trim_max_per_cycle": (1, 10),
     # ram_cleanup_interval_min: intentionally unbounded above (min 5 enforced
     # in services/ram_cleanup + API write paths) — user-adjustable freely.
     "virtual_memory_size_gb": (1, 64),

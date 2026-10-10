@@ -817,6 +817,29 @@ def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]
         return _ram_failed_line(src, err)
     if scope == "PERFORMANCE" and name in {"ram_cleanup_skipped_no_admin", "ram_cleanup_skipped"}:
         return _ram_skipped_line(fields.get("percent", ""), _ram_skip_reason(fields, name))
+    if scope == "PERFORMANCE" and name in {"process_trim_auto", "process_trim_manual"}:
+        src = _text(fields.get("source")) or ("auto" if "auto" in name else "manual")
+        # ป้ายแยกจาก global clean: _sanitize_ram_source() จะกลืน "trim/auto"
+        # เหลือแค่ "auto" ถ้าผ่าน _ram_cleanup_line ตรงๆ
+        freed_text = _text(fields.get("freed_mb", ""))
+        try:
+            freed_text = f"{float(str(fields.get('freed_mb', '')).replace(',', '')):.1f} MB"
+        except Exception:
+            if freed_text and "mb" not in freed_text.lower():
+                freed_text = f"{freed_text} MB"
+        detail = f"freed {freed_text}" if freed_text else "done"
+        pid_text = _text(fields.get("pid", ""))
+        if pid_text:
+            detail += f" (PID {pid_text})"
+        return _line(_ICON_RAM, f"{_paint(f'Trimmed Roblox ({src})', _COLOR_WHITE)} {_paint(f'— {detail}', _COLOR_GRAY)}")
+    if scope == "PERFORMANCE" and name in {"process_trim_auto_failed", "process_trim_failed"}:
+        src = _text(fields.get("source")) or "manual"
+        err = fields.get("error")
+        if err is None:
+            err = fields.get("msg", fields.get("reason", ""))
+        err_text = _text(err) or "unknown error"
+        short_err = err_text if len(err_text) <= 120 else err_text[:117] + "..."
+        return _line(_ICON_RAM, f"{_paint(f'Roblox trim failed ({src})', _COLOR_WHITE)} {_paint(f'— {short_err}', _COLOR_GRAY)}")
     if scope in {"CONFIG", "PERFORMANCE", "QUEUE", "GAME"} and "saved" in name.lower():
         return _config_line(name.replace("_", " "), fields)
     if scope == "RUNTIME" and name == "suspect_process_check":

@@ -449,6 +449,26 @@ body[data-game-mode="shared"] #game-pool-row{
   max-width: 40vw;
 }
 
+/* ── Popup Detector sub-fields (Check Every / Windows Per Scan): stacked with breathing room ── */
+#popup-disconnected-controls{
+  display: grid;
+  gap: 4px;
+  margin-top: 8px;
+}
+#popup-disconnected-controls[hidden]{
+  display: none;
+}
+#popup-disconnected-controls label{
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #8d9099;
+  letter-spacing: .02em;
+  line-height: 1.35;
+}
+#popup-disconnected-controls label:not(:first-child){
+  margin-top: 8px;
+}
+
 /* Layout-shift fix: hide number spinner so hover/focus never changes input width */
 .queue-row-input input[type=number]::-webkit-inner-spin-button,
 .queue-row-input input[type=number]::-webkit-outer-spin-button,

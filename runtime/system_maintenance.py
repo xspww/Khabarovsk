@@ -175,6 +175,7 @@ class SystemMaintenance(
         self._apply_auto_process_priority()
         self._apply_cpu_limiter()
         self._apply_ram_cleanup()
+        self._apply_process_trim()
         self._enforce_window_resize()
 
     def _run_auto_minimize(self, job: RuntimeScheduledJob) -> None:

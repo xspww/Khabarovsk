@@ -287,6 +287,64 @@ class MaintenancePerformanceMixin:
             except Exception:
                 pass
 
+    def _apply_process_trim(self):
+        """Auto per-process trim: เฉพาะจอ Roblox ที่บวม (เบา, ไม่ต้อง admin).
+
+        รันทุก performance cycle (~15s) แต่ข้างในมี throttle 30s +
+        cooldown ราย PID + เว้น 120s หลัง global clean เพื่อไม่ให้
+        page fault ซ้อนกัน. เงียบเมื่อไม่มีอะไรให้ trim กัน log flood.
+        """
+        if not bool(self._cfg.get("process_trim_enabled", False)):
+            return
+        try:
+            from services.process_trim import PROCESS_TRIM
+
+            result = PROCESS_TRIM.apply(self._accounts, self._cfg)
+            reason = str(result.get("reason") or "")
+            if reason in ("disabled", "throttled", "below_threshold", "global_clean_recent"):
+                return
+            trimmed = int(result.get("trimmed") or 0)
+            if trimmed > 0:
+                rows = result.get("rows") or []
+                first = rows[0] if rows else {}
+                flog_kv(
+                    "PERFORMANCE",
+                    "process_trim_auto",
+                    trimmed=trimmed,
+                    pid=first.get("pid", ""),
+                    account=first.get("display", first.get("account", "")),
+                    before_mb=first.get("before_mb", 0.0),
+                    after_mb=first.get("after_mb", 0.0),
+                    freed_mb=first.get("freed_mb", 0.0),
+                    source="auto",
+                )
+                return
+            if reason == "trim_failed":
+                # EmptyWorkingSet ล้มเหลวทุก PID ที่เลือก — เตือนแบบ throttle
+                # (กัน log flood ทุก 15s) ไม่เงียบหาย
+                now = time.time()
+                last_skip = float(getattr(self, "_last_trim_fail_log_at", 0.0) or 0.0)
+                if last_skip and (now - last_skip) < 300.0:
+                    return
+                self._last_trim_fail_log_at = now
+                flog_kv("PERFORMANCE", "process_trim_auto_failed", "warning",
+                         error="EmptyWorkingSet failed for selected PID(s)", source="auto")
+                return
+            if not result.get("ok"):
+                # windows_only / psutil_unavailable — เตือนแบบ throttle เช่นกัน
+                now = time.time()
+                last_skip = float(getattr(self, "_last_trim_fail_log_at", 0.0) or 0.0)
+                if last_skip and (now - last_skip) < 300.0:
+                    return
+                self._last_trim_fail_log_at = now
+                flog_kv("PERFORMANCE", "process_trim_auto_failed", "warning",
+                         error=str(result.get("reason", ""))[:200], source="auto")
+        except Exception as exc:
+            try:
+                flog_kv("PERFORMANCE", "process_trim_auto_failed", "warning", error=str(exc), source="auto")
+            except Exception:
+                pass
+
     def _enforce_auto_minimize(self):
         """Minimize each visible Roblox window after N seconds (configurable)."""
         if not bool(self._cfg.get("auto_minimize_enabled", False)):

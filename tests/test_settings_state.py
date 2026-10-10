@@ -6,6 +6,7 @@ from api_routes.settings_state import (
     _float_setting,
     _int_setting,
     _normalize_window_size_settings,
+    persist_config,
 )
 
 
@@ -52,6 +53,62 @@ class TestWindowSizeSettings(unittest.TestCase):
         ctx = _ctx({"roblox_window_resize_enabled": False})
         out = _normalize_window_size_settings(ctx, {"enabled": True})
         self.assertTrue(out["enabled"])
+
+
+class _FakeCfgMgr:
+    def __init__(self):
+        self.updated = []
+        self.saved = 0
+
+    def update(self, updates):
+        self.updated.append(dict(updates))
+
+    def save(self):
+        self.saved += 1
+
+
+class _FakeFarm:
+    def __init__(self, fail=False):
+        self.snapshots = 0
+        self.fail = fail
+
+    def apply_config_snapshot(self):
+        self.snapshots += 1
+        if self.fail:
+            raise RuntimeError("fan-out boom")
+
+
+class TestPersistConfig(unittest.TestCase):
+    def test_update_save_only_by_default(self):
+        cfg, farm = _FakeCfgMgr(), _FakeFarm()
+        ctx = SimpleNamespace(cfg_mgr=cfg, farm=farm)
+        persist_config(ctx, {"a": 1})
+        self.assertEqual(cfg.updated, [{"a": 1}])
+        self.assertEqual(cfg.saved, 1)
+        self.assertEqual(farm.snapshots, 0)
+
+    def test_guarded_snapshot_swallows(self):
+        cfg, farm = _FakeCfgMgr(), _FakeFarm(fail=True)
+        ctx = SimpleNamespace(cfg_mgr=cfg, farm=farm)
+        persist_config(ctx, {"a": 1}, apply_snapshot=True)
+        self.assertEqual(farm.snapshots, 1)
+
+    def test_strict_snapshot_propagates(self):
+        cfg, farm = _FakeCfgMgr(), _FakeFarm(fail=True)
+        ctx = SimpleNamespace(cfg_mgr=cfg, farm=farm)
+        with self.assertRaises(RuntimeError):
+            persist_config(ctx, {"a": 1}, apply_snapshot=True, strict_snapshot=True)
+        self.assertEqual(cfg.saved, 1)
+
+    def test_missing_farm_ok(self):
+        cfg = _FakeCfgMgr()
+        persist_config(SimpleNamespace(cfg_mgr=cfg, farm=None), {"a": 1}, apply_snapshot=True)
+        self.assertEqual(cfg.saved, 1)
+
+    def test_farm_without_method_ok(self):
+        cfg = _FakeCfgMgr()
+        persist_config(SimpleNamespace(cfg_mgr=cfg, farm=object()), {"a": 1}, apply_snapshot=True)
+        self.assertEqual(cfg.saved, 1)
 
 
 if __name__ == "__main__":

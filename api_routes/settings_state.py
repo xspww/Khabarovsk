@@ -29,6 +29,29 @@ def _float_setting(value, default: float, min_value: float, max_value: float) ->
     return max(min_value, min(parsed, max_value))
 
 
+def persist_config(ctx: ApiContext, updates: Dict[str, Any], *, apply_snapshot: bool = False, strict_snapshot: bool = False) -> None:
+    """Single write path for config: update + save, then fan out to the farm.
+
+    Route modules leverage this instead of repeating the triple. strict_snapshot
+    preserves the older bare call sites where a fan-out error propagates;
+    guarded (default) sites swallow it like the window/tuner routes do.
+    """
+    ctx.cfg_mgr.update(updates)
+    ctx.cfg_mgr.save()
+    if not apply_snapshot:
+        return
+    farm = getattr(ctx, "farm", None)
+    if not hasattr(farm, "apply_config_snapshot"):
+        return
+    if strict_snapshot:
+        farm.apply_config_snapshot()
+        return
+    try:
+        farm.apply_config_snapshot()
+    except Exception:
+        pass
+
+
 WINDOW_SIZE_PRESETS: Dict[str, Tuple[int, int]] = {
     "200x150": (200, 150),
     "240x180": (240, 180),
@@ -371,8 +394,7 @@ def _migrate_account_games(ctx: ApiContext, accounts_to_update: List[Account]) -
             continue
     if linked:
         try:
-            ctx.cfg_mgr.update({"games_migrated": True})
-            ctx.cfg_mgr.save()
+            persist_config(ctx, {"games_migrated": True})
         except Exception:
             pass
     return linked

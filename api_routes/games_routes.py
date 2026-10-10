@@ -16,7 +16,7 @@ from fastapi import HTTPException, Request
 from account_hybrid import ACCOUNT_STORE
 
 from .context import ApiContext
-from .settings_state import _apply_game_defaults
+from .settings_state import _apply_game_defaults, persist_config
 
 
 def _games_snapshot(ctx: ApiContext) -> List[Dict[str, Any]]:
@@ -42,8 +42,7 @@ def _save_games(ctx: ApiContext, games: List[Dict[str, Any]]) -> List[Dict[str, 
     except Exception:
         normalize_games = lambda value: list(value or [])  # noqa: E731
     clean = normalize_games(games)
-    ctx.cfg_mgr.update({"games": clean})
-    ctx.cfg_mgr.save()
+    persist_config(ctx, {"games": clean})
     return clean
 
 

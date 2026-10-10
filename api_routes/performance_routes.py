@@ -26,6 +26,7 @@ from .settings_state import (
     _roblox_runtime_restart_required,
     _virtual_memory_status,
     _window_size_status,
+    persist_config,
 )
 from .context import ApiContext
 
@@ -103,8 +104,7 @@ def register(app, ctx: ApiContext) -> None:
             cfg_update["roblox_volume_level"] = int(volume_level)
             payload["roblox_volume_muted"] = bool(volume_muted)
             payload["roblox_volume_level"] = int(volume_level)
-        cfg_mgr.update(cfg_update)
-        cfg_mgr.save()
+        persist_config(ctx, cfg_update)
         runtime_status = _roblox_runtime_restart_required(ctx)
         payload.update(runtime_status)
         payload.update({
@@ -189,8 +189,7 @@ def register(app, ctx: ApiContext) -> None:
         if volume_touched:
             cfg_update["roblox_volume_muted"] = bool(volume_muted)
             cfg_update["roblox_volume_level"] = int(volume_level)
-        cfg_mgr.update(cfg_update)
-        cfg_mgr.save()
+        persist_config(ctx, cfg_update)
         payload.update(_roblox_runtime_restart_required(ctx))
         payload["graphics_low_enabled"] = enabled
         payload["graphics_auto_enabled"] = enabled
@@ -238,11 +237,10 @@ def register(app, ctx: ApiContext) -> None:
         except Exception as exc:
             flog_kv("PERFORMANCE", "volume_apply_failed", "error", error=str(exc))
             raise HTTPException(500, str(exc))
-        cfg_mgr.update({
+        persist_config(ctx, {
             "roblox_volume_muted": volume_muted,
             "roblox_volume_level": int(volume_level),
         })
-        cfg_mgr.save()
         payload.update(_roblox_runtime_restart_required(ctx))
         audit_event(
             "volume_apply",
@@ -308,16 +306,13 @@ def register(app, ctx: ApiContext) -> None:
             raise HTTPException(400, str(exc))
         if settings["apply_all"]:
             settings["accounts"] = {}
-        cfg_mgr.update({
+        persist_config(ctx, {
             "cpu_limiter_enabled": settings["enabled"],
             "cpu_limiter_mode": settings["mode"],
             "cpu_limiter_default_percent": settings["default_limit_percent"],
             "cpu_limiter_apply_all": settings["apply_all"],
             "cpu_limiter_accounts": settings["accounts"],
-        })
-        cfg_mgr.save()
-        if hasattr(farm, "apply_config_snapshot"):
-            farm.apply_config_snapshot()
+        }, apply_snapshot=True, strict_snapshot=True)
         result = CPU_LIMITER.apply(getattr(farm, "_accounts", []), settings)
         audit_event(
             "cpu_limiter_apply",
@@ -394,7 +389,7 @@ def register(app, ctx: ApiContext) -> None:
                 hide_result = ProcessService.hide_roblox_windows(reason="api_window_size_apply_hide")
             except Exception:
                 hide_result = {}
-        cfg_mgr.update({
+        persist_config(ctx, {
             "roblox_window_unlock_size_enabled": settings["unlock_size_enabled"],
             "roblox_window_resize_enabled": settings["enabled"],
             "roblox_window_size_preset": settings["preset"],
@@ -409,10 +404,7 @@ def register(app, ctx: ApiContext) -> None:
             "roblox_window_hide_enabled": settings["hide_enabled"],
             "auto_minimize_enabled": settings.get("auto_minimize_enabled", False),
             "auto_minimize_seconds": settings.get("auto_minimize_seconds", 10),
-        })
-        cfg_mgr.save()
-        if hasattr(farm, "apply_config_snapshot"):
-            farm.apply_config_snapshot()
+        }, apply_snapshot=True, strict_snapshot=True)
         try:
             flog_kv("CONFIG", "updated", updated=["window_size", "auto_minimize"])
         except Exception:
@@ -482,13 +474,7 @@ def register(app, ctx: ApiContext) -> None:
             body = {}
         if not isinstance(body, dict):
             body = {}
-        cfg_mgr.update({"roblox_window_hide_enabled": True})
-        cfg_mgr.save()
-        if hasattr(farm, "apply_config_snapshot"):
-            try:
-                farm.apply_config_snapshot()
-            except Exception:
-                pass
+        persist_config(ctx, {"roblox_window_hide_enabled": True}, apply_snapshot=True)
         result = ProcessService.hide_roblox_windows(reason="api_window_hide")
         try:
             hidden = int(result.get("hidden") or 0)
@@ -506,13 +492,7 @@ def register(app, ctx: ApiContext) -> None:
             body = {}
         if not isinstance(body, dict):
             body = {}
-        cfg_mgr.update({"roblox_window_hide_enabled": False})
-        cfg_mgr.save()
-        if hasattr(farm, "apply_config_snapshot"):
-            try:
-                farm.apply_config_snapshot()
-            except Exception:
-                pass
+        persist_config(ctx, {"roblox_window_hide_enabled": False}, apply_snapshot=True)
         try:
             settings = _normalize_window_size_settings(ctx, body)
         except ValueError as exc:
@@ -550,17 +530,11 @@ def register(app, ctx: ApiContext) -> None:
             "ram_cleanup_threshold_pct": body.get("threshold_pct", body.get("ram_cleanup_threshold_pct", cfg_mgr.get("ram_cleanup_threshold_pct", 85.0))),
             "ram_cleanup_interval_min": body.get("interval_min", body.get("ram_cleanup_interval_min", cfg_mgr.get("ram_cleanup_interval_min", 15))),
         })
-        cfg_mgr.update({
+        persist_config(ctx, {
             "ram_cleanup_enabled": settings["enabled"],
             "ram_cleanup_threshold_pct": settings["threshold_pct"],
             "ram_cleanup_interval_min": settings["interval_min"],
-        })
-        cfg_mgr.save()
-        if hasattr(farm, "apply_config_snapshot"):
-            try:
-                farm.apply_config_snapshot()
-            except Exception:
-                pass
+        }, apply_snapshot=True)
         payload = _ram_cleanup_status(ctx)
         audit_event("ram_cleanup_apply", enabled=settings["enabled"],
                     threshold_pct=settings["threshold_pct"], interval_min=settings["interval_min"])
@@ -620,18 +594,12 @@ def register(app, ctx: ApiContext) -> None:
             "process_trim_cooldown_sec": body.get("cooldown_sec", body.get("process_trim_cooldown_sec", cfg_mgr.get("process_trim_cooldown_sec", 300))),
             "process_trim_max_per_cycle": body.get("max_per_cycle", body.get("process_trim_max_per_cycle", cfg_mgr.get("process_trim_max_per_cycle", 1))),
         })
-        cfg_mgr.update({
+        persist_config(ctx, {
             "process_trim_enabled": settings["enabled"],
             "process_trim_threshold_mb": settings["threshold_mb"],
             "process_trim_cooldown_sec": settings["cooldown_sec"],
             "process_trim_max_per_cycle": settings["max_per_cycle"],
-        })
-        cfg_mgr.save()
-        if hasattr(farm, "apply_config_snapshot"):
-            try:
-                farm.apply_config_snapshot()
-            except Exception:
-                pass
+        }, apply_snapshot=True)
         payload = _process_trim_status(ctx)
         audit_event("process_trim_apply", enabled=settings["enabled"],
                     threshold_mb=settings["threshold_mb"], cooldown_sec=settings["cooldown_sec"],
@@ -710,11 +678,10 @@ def register(app, ctx: ApiContext) -> None:
             })
         except ValueError as exc:
             raise HTTPException(400, str(exc))
-        cfg_mgr.update({
+        persist_config(ctx, {
             "virtual_memory_mode": settings["mode"],
             "virtual_memory_size_gb": settings["size_gb"],
         })
-        cfg_mgr.save()
         payload = _virtual_memory_status(ctx)
         payload["staged"] = settings
         payload["msg"] = "Saved — press Apply Virtual Memory to change Windows (requires reboot)"
@@ -742,9 +709,8 @@ def register(app, ctx: ApiContext) -> None:
             flog_kv("PERFORMANCE", "virtual_memory_apply_failed", "error", error=str(exc))
             raise HTTPException(500, str(exc))
         if result.get("ok"):
-            cfg_mgr.update({"virtual_memory_mode": result.get("mode", "system_managed"),
+            persist_config(ctx, {"virtual_memory_mode": result.get("mode", "system_managed"),
                             "virtual_memory_size_gb": result.get("size_gb") or max(1, min(64, size_gb))})
-            cfg_mgr.save()
             audit_event("virtual_memory_apply", mode=result.get("mode"), size_gb=result.get("size_gb"))
         payload = _virtual_memory_status(ctx)
         payload.update(result)

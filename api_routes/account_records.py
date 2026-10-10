@@ -1,4 +1,5 @@
 from __future__ import annotations
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 from core import account_launch_block_reason, banned_block_reason, cookie_identity_block_reason, cookie_invalid_block_reason, flog_kv
 from services.account_reload import load_accounts_from_store, mark_banned_cookie_record, mark_invalid_cookie_record, replace_farm_accounts
@@ -18,7 +19,7 @@ from services.ban_guard import (
     is_suspended_text,
 )
 from runtime.account_selection import runtime_account_allowlist
-from .settings_state import _apply_game_defaults
+from .settings_state import _apply_game_defaults, persist_config
 def account_data_records(store: Any, include_cookies: bool = False) -> List[Dict[str, Any]]:
     try:
         return store.read_records(include_cookies=include_cookies)
@@ -85,10 +86,12 @@ def clear_runtime_allowlist_after_reload(cfg_mgr: Any, farm: Any) -> Dict[str, A
     })
     if not current:
         return {"allowlist_cleared": False, "allowlist_cleared_count": 0}
-    cfg_mgr.update({"runtime_account_allowlist": []})
-    cfg_mgr.save()
-    if hasattr(farm, "apply_config_snapshot"):
-        farm.apply_config_snapshot()
+    persist_config(
+        SimpleNamespace(cfg_mgr=cfg_mgr, farm=farm),
+        {"runtime_account_allowlist": []},
+        apply_snapshot=True,
+        strict_snapshot=True,
+    )
     if hasattr(farm, "_push_event"):
         farm._push_event(
             "system",

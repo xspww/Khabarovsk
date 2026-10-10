@@ -12,6 +12,7 @@ from .settings_state import (
     _float_setting,
     _int_setting,
     _normalize_window_size_settings,
+    persist_config,
 )
 from runtime.account_selection import runtime_account_allowlist
 from .context import ApiContext
@@ -330,8 +331,7 @@ def register(app, ctx: ApiContext) -> None:
             updates["auto_create_private_server_free_only"] = bool(updates["auto_create_private_server_free_only"])
         if "block_same_server_enabled" in updates:
             updates["block_same_server_enabled"] = bool(updates["block_same_server_enabled"])
-        cfg_mgr.update(updates)
-        cfg_mgr.save()
+        persist_config(ctx, updates)
         applied_defaults = 0
         if "game_place_id" in updates or "game_private_server_url" in updates:
             applied_defaults = _apply_game_defaults(ctx, farm._accounts, persist=True)

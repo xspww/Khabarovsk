@@ -20,7 +20,10 @@
 .vchoice-version{margin-top:5px;font:600 12px var(--mono);color:#7f838c;word-break:break-all}
 .vplay{width:38px;height:38px;border-radius:50%;border:1px solid rgba(99,102,241,.4);background:rgba(99,102,241,.12);color:#818cf8;display:grid;place-items:center;cursor:pointer}
 .vplay:hover{background:rgba(99,102,241,.24);border-color:rgba(99,102,241,.7);color:#ffffff}
-.vplay svg{width:15px;height:15px;stroke:currentColor;fill:none}.executor-compatibility-panel{margin-top:12px}.executor-compatibility-panel .queue-card-body{display:grid;gap:0}.executor-compatibility-panel .executor-actions{display:flex;justify-content:flex-end;padding:16px 0}.executor-compatibility-panel .notice-error{border-color:rgba(239,68,68,.35);background:rgba(239,68,68,.1);color:#fca5a5}
+.vplay svg{width:15px;height:15px;stroke:currentColor;fill:none}
+.vfolder{width:38px;height:38px;border-radius:50%;border:1px solid #2e3038;background:#1a1b21;color:#8d9099;display:grid;place-items:center;cursor:pointer}
+.vfolder:hover{background:#20222a;border-color:#4a4c6e;color:#f2f3f5}
+.vfolder svg{width:15px;height:15px;stroke:currentColor;fill:none}.executor-compatibility-panel{margin-top:12px}.executor-compatibility-panel .queue-card-body{display:grid;gap:0}.executor-compatibility-panel .executor-actions{display:flex;justify-content:flex-end;padding:16px 0}.executor-compatibility-panel .notice-error{border-color:rgba(239,68,68,.35);background:rgba(239,68,68,.1);color:#fca5a5}
 .v-loading,.v-empty{color:#7f838c;font-size:13px;text-align:center;padding:18px 8px}
 .v-hint{margin-top:12px;color:#53565e;font-size:12px;text-align:center}
 

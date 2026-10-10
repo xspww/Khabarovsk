@@ -11,7 +11,12 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 TOKEN_VERSION = "lua1"
-DEFAULT_LUA_SESSION_TOKEN_TTL_SECONDS = 15 * 60
+# Farm sessions routinely run for hours in the same server without refetching
+# the helper. A 15-minute TTL blinded the farm to disconnect/error_code events
+# (the most important ones: they have no loopback GET fallback by design) as
+# soon as the embedded token expired. 24h covers real sessions; session/nonce
+# rotation still invalidates old tokens via the mismatch checks below.
+DEFAULT_LUA_SESSION_TOKEN_TTL_SECONDS = 24 * 60 * 60
 
 
 @dataclass(frozen=True)
@@ -118,6 +123,40 @@ def validate_lua_session_token(
         return reject("launch_nonce_mismatch", expires_at)
 
     return LuaSessionTokenValidation(True, "", actual_account, actual_session_id, actual_launch_nonce, expires_at)
+
+
+def token_session_binding_matches(
+    secret: str,
+    token: str,
+    *,
+    account: str,
+    session_id: str,
+    launch_nonce: str,
+) -> bool:
+    """Check HMAC signature + account/session/nonce equality, ignoring expiry.
+
+    Safety net for very long sessions that outlive even the 24h TTL: if the
+    token was genuinely issued by this instance for the farm's *current*
+    session, accepting it is safe — a session rotation (relaunch) changes the
+    expected session_id/launch_nonce and the binding check fails, so stale
+    tokens from previous launches are still rejected.
+    """
+    raw = _text(token)
+    parts = raw.split(".")
+    if len(parts) != 3 or parts[0] != TOKEN_VERSION:
+        return False
+    _, payload_b64, supplied_sig = parts
+    try:
+        if not hmac.compare_digest(supplied_sig, _sign(secret, payload_b64)):
+            return False
+        payload = json.loads(_unb64url(payload_b64).decode("utf-8"))
+    except Exception:
+        return False
+    return (
+        _text(payload.get("account")) == _text(account)
+        and _text(payload.get("session_id")) == _text(session_id)
+        and _text(payload.get("launch_nonce")) == _text(launch_nonce)
+    )
 
 
 class LuaEventReplayCache:

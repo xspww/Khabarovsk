@@ -17,6 +17,7 @@ from services.lua_session_tokens import (
     DEFAULT_LUA_SESSION_TOKEN_TTL_SECONDS,
     LuaEventReplayCache,
     issue_lua_session_token,
+    token_session_binding_matches,
     validate_lua_session_token,
 )
 
@@ -437,7 +438,27 @@ def _validate_lua_session_auth(ctx: ApiContext, farm: Any, body: Dict[str, Any],
         launch_nonce=scope["launch_nonce"],
     )
     if not validation.ok:
-        return validation.reason or "invalid_lua_session_token"
+        # Grace for very long sessions: the embedded token outlived its TTL
+        # but is still cryptographically bound to the farm's *current*
+        # session. Session rotation changes the expected session_id/nonce,
+        # so tokens from previous launches still fail here. Accept with a
+        # warning instead of blinding disconnect/error_code detection.
+        if (validation.reason or "") == "expired" and token_session_binding_matches(
+            str(ctx.instance_token or ""),
+            supplied_token,
+            account=scope["account"],
+            session_id=scope["session_id"],
+            launch_nonce=scope["launch_nonce"],
+        ):
+            flog_kv(
+                "LUA",
+                "rejoin_event_token_expired_grace",
+                "warning",
+                account=scope["account"],
+                lua_event=str(body.get("event") or ""),
+            )
+        else:
+            return validation.reason or "invalid_lua_session_token"
 
     body_session_id = _text(body.get("session_id"))
     body_launch_nonce = _text(body.get("launch_nonce"))

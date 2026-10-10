@@ -11,6 +11,38 @@ def _lua_has_server_job(payload: Dict[str, Any]) -> bool:
     place_id = str(payload.get("observed_place_id") or payload.get("place_id") or "").strip()
     job_id = str(payload.get("observed_job_id") or payload.get("job_id") or "").strip()
     return bool(place_id and place_id != "0" and job_id)
+
+
+def _lua_session_binding_matches(acc: Any, payload: Dict[str, Any]) -> bool:
+    """Check payload session_id/launch_nonce against the account's live session.
+
+    Executors without a PID API (no getprocessid/getpid/...) send pid="".
+    The per-launch session_id/launch_nonce pair is an equally strong binding
+    secret (random per launch, verified server-side): if it matches the
+    farm's current session, the event provably comes from our own helper
+    instance, not a spoofed cross-account signal.
+    """
+    try:
+        lock = getattr(acc, "_lock", None)
+        if lock is not None:
+            with lock:
+                current_sid = str(getattr(acc, "session_id", "") or "").strip()
+                current_nonce = str(getattr(acc, "launch_nonce", "") or "").strip()
+        else:
+            current_sid = str(getattr(acc, "session_id", "") or "").strip()
+            current_nonce = str(getattr(acc, "launch_nonce", "") or "").strip()
+    except Exception:
+        return False
+    payload_sid = str(payload.get("session_id") or "").strip()
+    payload_nonce = str(payload.get("launch_nonce") or "").strip()
+    return bool(
+        current_sid
+        and current_nonce
+        and payload_sid
+        and payload_nonce
+        and payload_sid == current_sid
+        and payload_nonce == current_nonce
+    )
 def handle_lua_rejoin_event(
     farm: Any,
     payload: Dict[str, Any],
@@ -112,28 +144,41 @@ def handle_lua_rejoin_event(
         except Exception as e:
             return farm._lua_event_handler_error(acc, event_name, e)
         event_payload.update(server_detection)
-        farm._push_event(
-            "lua",
-            f"Lua helper ignored missing PID - {acc.display_name}",
-            account=acc,
-            severity="warning",
-            reason="lua_pid_missing",
-            lua_event=event_name,
-            lua_pid="",
-            matched_pid=resolution.bound_pid or "",
-            identity_match=resolution.match_reason,
-            accepted=False,
-        )
-        return {
-            "ok": True,
-            "accepted": False,
-            "event": event_name,
-            "account": acc._config_username,
-            "signal": "",
-            "matched_pid": resolution.bound_pid,
-            "lua_pid": "",
-            "msg": "Lua event ignored because PID is required for the bound Cronus process",
-        }
+        if _lua_session_binding_matches(acc, payload):
+            # PID-less executor, but the per-launch session secrets match:
+            # provably our own helper instance. Accept the event (without
+            # granting PID-based process proof) instead of going blind.
+            event_payload["pid_proof"] = "session_bound_no_pid"
+            log(
+                "LUA",
+                "pid_missing_session_bound_accepted",
+                account=acc.display_name,
+                lua_event=event_name,
+                identity_match=resolution.match_reason,
+            )
+        else:
+            farm._push_event(
+                "lua",
+                f"Lua helper ignored missing PID - {acc.display_name}",
+                account=acc,
+                severity="warning",
+                reason="lua_pid_missing",
+                lua_event=event_name,
+                lua_pid="",
+                matched_pid=resolution.bound_pid or "",
+                identity_match=resolution.match_reason,
+                accepted=False,
+            )
+            return {
+                "ok": True,
+                "accepted": False,
+                "event": event_name,
+                "account": acc._config_username,
+                "signal": "",
+                "matched_pid": resolution.bound_pid,
+                "lua_pid": "",
+                "msg": "Lua event ignored because PID is required for the bound Cronus process",
+            }
     if identity.pid and resolution.bound_pid and not resolution.pid_match and requires_pid_guard:
         farm._push_event(
             "lua",

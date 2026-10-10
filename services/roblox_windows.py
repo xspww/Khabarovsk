@@ -91,6 +91,34 @@ def _placement_normal_rect(user32: Any, hwnd: int) -> Optional[Tuple[int, int, i
         return None
 
 
+_MIN_WINDOW_WIDTH = 60
+_MIN_WINDOW_HEIGHT = 45
+
+
+def _passes_window_size_filter(width: Any, height: Any) -> bool:
+    """Single owner for the tiny-window filter (helper/message windows out)."""
+    try:
+        width = max(0, int(width))
+        height = max(0, int(height))
+    except Exception:
+        return False
+    return width >= _MIN_WINDOW_WIDTH and height >= _MIN_WINDOW_HEIGHT and (width * height) > 0
+
+
+def _dedupe_largest_per_pid(windows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Single owner for largest-per-pid dedupe + stable (created, pid) order."""
+    by_pid: Dict[int, Dict[str, Any]] = {}
+    for item in windows:
+        try:
+            pid = int(item.get("pid") or 0)
+        except Exception:
+            continue
+        current = by_pid.get(pid)
+        if current is None or int(item.get("area") or 0) > int(current.get("area") or 0):
+            by_pid[pid] = item
+    return sorted(by_pid.values(), key=lambda item: (float(item.get("created") or 0.0), int(item.get("pid") or 0)))
+
+
 def _visible_roblox_windows(cls, include_minimized: bool = True) -> List[Dict[str, Any]]:
     windows: List[Dict[str, Any]] = []
     try:
@@ -150,7 +178,7 @@ def _visible_roblox_windows(cls, include_minimized: bool = True) -> List[Dict[st
                 width = max(0, right - left)
                 height = max(0, bottom - top)
             area = width * height
-            if width < 60 or height < 45 or area <= 0:
+            if not _passes_window_size_filter(width, height):
                 return True
             windows.append({
                 "pid": pid,
@@ -173,14 +201,11 @@ def _visible_roblox_windows(cls, include_minimized: bool = True) -> List[Dict[st
         flog_kv("WINDOW", "enumerate_roblox_windows_failed", "warning", error=str(exc))
         return []
 
-    by_pid: Dict[int, Dict[str, Any]] = {}
-    for item in windows:
-        if is_inspection_held(int(item.get("pid") or 0)):
-            continue
-        current = by_pid.get(int(item["pid"]))
-        if current is None or int(item.get("area") or 0) > int(current.get("area") or 0):
-            by_pid[int(item["pid"])] = item
-    return sorted(by_pid.values(), key=lambda item: (float(item.get("created") or 0.0), int(item.get("pid") or 0)))
+    eligible = [
+        item for item in windows
+        if not is_inspection_held(int(item.get("pid") or 0))
+    ]
+    return _dedupe_largest_per_pid(eligible)
 
 def minimize_roblox_windows(cls) -> Dict[str, Any]:
     return minimize_windows(cls._visible_roblox_windows(include_minimized=False))
@@ -299,7 +324,7 @@ def _hidden_roblox_windows(cls) -> List[Dict[str, Any]]:
                 width = max(0, right - left)
                 height = max(0, bottom - top)
             area = width * height
-            if width < 60 or height < 45 or area <= 0:
+            if not _passes_window_size_filter(width, height):
                 return True
             windows.append({
                 "pid": pid,
@@ -322,12 +347,7 @@ def _hidden_roblox_windows(cls) -> List[Dict[str, Any]]:
     except Exception as exc:
         flog_kv("WINDOW", "enumerate_hidden_roblox_windows_failed", "warning", error=str(exc))
         return []
-    by_pid: Dict[int, Dict[str, Any]] = {}
-    for item in windows:
-        current = by_pid.get(int(item.get("pid") or 0))
-        if current is None or int(item.get("area") or 0) > int(current.get("area") or 0):
-            by_pid[int(item.get("pid"))] = item
-    return sorted(by_pid.values(), key=lambda item: (float(item.get("created") or 0.0), int(item.get("pid") or 0)))
+    return _dedupe_largest_per_pid(windows)
 
 def hide_roblox_windows(cls, exclude_pids: Optional[List[int]] = None) -> Dict[str, Any]:
     from services.window_control import hide_windows
@@ -463,7 +483,7 @@ def _get_pid_window_rect(cls, pid: Optional[int]) -> Optional[Tuple[int, int, in
             width = max(0, int(rect.right - rect.left))
             height = max(0, int(rect.bottom - rect.top))
             area = width * height
-            if width >= 60 and height >= 45 and area > 0:
+            if _passes_window_size_filter(width, height):
                 rects.append((area, int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)))
             return True
 

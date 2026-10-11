@@ -53,6 +53,11 @@
 #view-developer .lua-copy-btn{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 10px;border-radius:6px;background:#15161b;border:1px solid #232529;color:#a5a8b0;font:700 10px var(--mono);text-transform:uppercase;letter-spacing:.06em;cursor:pointer}
 #view-developer .lua-copy-btn:hover{background:#1b1c22;border-color:#32343d;color:#fff}
 #view-developer .lua-copy-btn .btn-icon{width:12px!important;height:12px!important}
+#view-developer .lua-copy-btn.is-ok{border-color:rgba(34,197,94,.5);color:#4ade80}
+#view-developer .lua-snippet-row{display:flex;align-items:center;gap:8px;width:100%;margin-top:8px;padding:7px 10px;border-radius:6px;background:#101116;border:1px dashed #2a2d35;color:#8d9099;font:500 11px var(--mono);cursor:pointer;text-align:left}
+#view-developer .lua-snippet-row:hover{border-color:#3e4152;color:#d7dae0}
+#view-developer .lua-snippet-row code{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#d19a66}
+#view-developer .lua-snippet-tag{flex:none;font:800 9px var(--mono);letter-spacing:.08em;color:#53565e;text-transform:uppercase}
 
 /* Window grid picker (Grid section) */
 .wgrid-picker{display:inline-block;border:1px solid #1f2128;border-radius:8px;background:#101116;padding:8px}

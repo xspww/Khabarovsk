@@ -9,6 +9,7 @@
 <p align="center">
   <a href="https://github.com/xspww/Khabarovsk/releases"><img src="https://img.shields.io/github/v/release/xspww/Khabarovsk?label=release" alt="release" /></a>
   <a href="https://github.com/xspww/Khabarovsk/actions/workflows/release.yml"><img src="https://github.com/xspww/Khabarovsk/actions/workflows/release.yml/badge.svg" alt="build" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPLv3-blue" alt="license" /></a>
   <img src="https://img.shields.io/badge/platform-Windows-blue" alt="platform" />
   <img src="https://img.shields.io/badge/python-3.11+-blue" alt="python" />
 </p>
@@ -136,3 +137,9 @@ config และสถานะบัญชีเก็บไว้บนเค�
 - cookie ของบัญชีเข้ารหัสด้วย Windows DPAPI บนเครื่อง
 - ไม่ส่ง cookie ออกไปเซิร์ฟเวอร์ภายนอก และไม่ commit cookie ลง repository
 - เมื่อมีเวอร์ชันใหม่ โปรแกรมจะแสดงปุ่มให้เปิดหน้า Releases เพื่อดาวน์โหลดไฟล์ใหม่ โฟลเดอร์ data ด้านบนจะไม่ถูกแตะต้องระหว่างอัปเดต
+
+## สัญญาอนุญาต
+
+GPLv3 — ดู [LICENSE](LICENSE) และ [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)
+
+ซอร์สของไฟล์ release คือ tag บนหน้า Releases ที่ตรงกับ `APP_VERSION` ใน `version.py`

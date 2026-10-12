@@ -80,6 +80,8 @@ a = Analysis(
         ("assets", "assets"),
         ("ui", "ui"),
         ("lua", "lua"),
+        ("LICENSE", "."),
+        ("THIRD_PARTY_NOTICES.txt", "."),
         *_QTWEBVIEW2_LIB_DATAS,
         *_CERTIFI_DATAS,
         *_PLAYWRIGHT_DATAS,

@@ -9,6 +9,7 @@
 <p align="center">
   <a href="https://github.com/xspww/Khabarovsk/releases"><img src="https://img.shields.io/github/v/release/xspww/Khabarovsk?label=release" alt="release" /></a>
   <a href="https://github.com/xspww/Khabarovsk/actions/workflows/release.yml"><img src="https://github.com/xspww/Khabarovsk/actions/workflows/release.yml/badge.svg" alt="build" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPLv3-blue" alt="license" /></a>
   <img src="https://img.shields.io/badge/platform-Windows-blue" alt="platform" />
   <img src="https://img.shields.io/badge/python-3.11+-blue" alt="python" />
 </p>
@@ -136,3 +137,9 @@ Runtime configuration and account state are stored locally at:
 - Account cookies are encrypted with Windows DPAPI on the host.
 - Cookies are never transmitted to external servers and are never committed to the repository.
 - When a new version is available, the launcher provides a button that opens the Releases page. The local data directory is left untouched during updates.
+
+## License
+
+GPLv3 — see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
+
+Corresponding Source for release binaries is the tagged source on the Releases page (tag matching `APP_VERSION` in `version.py`).

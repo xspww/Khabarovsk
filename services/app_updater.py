@@ -18,8 +18,10 @@ Safety rules (deliberate, do not soften without a product decision):
 - The new exe is launched with retries and a long settle wait, because a
   PyInstaller onefile cold extract plus Defender scan can take a minute.
   The script only gives up after every attempt clearly fails.
-- The new exe's early console output is captured to newapp_boot_<v>.log so a
-  stillborn build leaves a traceback instead of a bare "API never answered".
+- The new exe is launched with its own visible console, so the post-update
+  session keeps a live terminal. Its fatal boot errors are persisted by the
+  app itself to cronus_rt1.log (plus a message box), so a stillborn build
+  still leaves a traceback instead of a bare "API never answered".
 - When every attempt fails, the previous build is restored AND relaunched so
   the user is never left with no app and a console that just disappears.
 """
@@ -506,10 +508,14 @@ try {
     $script:LastSeenPid = 0
     try {
       if ($attempt -gt 1) { Phase("Retrying app startup ($attempt of 5)") }
-      # Capture the new app's early console output (banner, tracebacks) to a
-      # file. A stillborn new version otherwise leaves zero evidence: its
-      # window closes and the updater can only report "API never answered".
-      # Redirecting implies no new window; the WebView GUI is unaffected.
+      # Launch the new app with its own visible console. A previous version
+      # redirected the child's stdout/stderr into the boot log permanently:
+      # the healthy new build then ran its whole session with no terminal
+      # output (farm worked, console stayed silent) until a manual restart.
+      # Stillborn diagnosis does not need that redirect: the app persists
+      # fatal boot errors to cronus_rt1.log itself, and the updater tails
+      # that file below when an attempt fails. $BootLog keeps only the
+      # per-attempt marker lines as an audit trail.
       try {
         if ($BootLog) {
           $bootDir = Split-Path -Parent $BootLog
@@ -517,19 +523,7 @@ try {
           Add-Content -LiteralPath $BootLog ("[attempt $attempt] launching $CurrentExe args: $($AppArgsArray -join ' ')")
         }
       } catch {}
-      $startParams = @{
-        FilePath = $CurrentExe
-        WorkingDirectory = $workDir
-        ArgumentList = $AppArgsArray
-        PassThru = $true
-      }
-      if ($BootLog) {
-        $startParams["RedirectStandardOutput"] = $BootLog
-        $startParams["RedirectStandardError"] = ($BootLog + ".err")
-      } else {
-        $startParams["WindowStyle"] = "Normal"
-      }
-      $p = Start-Process @startParams
+      $p = Start-Process -FilePath $CurrentExe -WorkingDirectory $workDir -WindowStyle Normal -ArgumentList $AppArgsArray -PassThru
       if ($null -eq $p) {
         Log("launch attempt ${attempt}: no process handle returned")
       } else {
@@ -588,22 +582,25 @@ try {
           Log("new version is ready")
           break
         }
-        # A stillborn build writes its traceback to the redirected boot log.
-        # Read it here: without this the user only ever sees "API never
-        # answered", which says nothing about the actual cause.
+        # A stillborn build persists its traceback to the app log (see the
+        # fatal_boot_error handler in main.py). Tail it here: without this
+        # the user only ever sees "API never answered", which says nothing
+        # about the actual cause. The path is derived from the stage layout
+        # (stage dir lives next to the logs dir), so no new parameter is needed.
         $bootTail = ""
         try {
-          if ($BootLog -and (Test-Path -LiteralPath "$BootLog.err")) {
-            $bootTail = ((Get-Content -LiteralPath "$BootLog.err" -Tail 6 -ErrorAction SilentlyContinue) -join " | ")
+          $appLogFile = Join-Path (Join-Path (Split-Path -Parent (Split-Path -Parent $StagedExe)) "logs") "cronus_rt1.log"
+          if ($appLogFile -and (Test-Path -LiteralPath $appLogFile)) {
+            $bootTail = ((Get-Content -LiteralPath $appLogFile -Tail 6 -ErrorAction SilentlyContinue) -join " | ")
           }
         } catch {}
         if ($targetPids.Count -gt 0) {
-          Log("launch attempt ${attempt}: API never answered; stopping target PIDs $(($targetPids) -join ',') (last seen: version='$script:LastSeenVersion' pid=$script:LastSeenPid port=$script:LastSeenPort; starter exit code=$starterExitCode; boot stderr: $bootTail; boot output: $BootLog)")
+          Log("launch attempt ${attempt}: API never answered; stopping target PIDs $(($targetPids) -join ',') (last seen: version='$script:LastSeenVersion' pid=$script:LastSeenPid port=$script:LastSeenPort; starter exit code=$starterExitCode; app log tail: $bootTail)")
           foreach ($targetPid in $targetPids) {
             try { Stop-Process -Id $targetPid -Force -ErrorAction SilentlyContinue } catch {}
           }
         } else {
-          Log("launch attempt ${attempt}: API never answered (last seen: version='$script:LastSeenVersion' pid=$script:LastSeenPid port=$script:LastSeenPort; starter exit code=$starterExitCode; boot stderr: $bootTail; boot output: $BootLog)")
+          Log("launch attempt ${attempt}: API never answered (last seen: version='$script:LastSeenVersion' pid=$script:LastSeenPid port=$script:LastSeenPort; starter exit code=$starterExitCode; app log tail: $bootTail)")
         }
         $launchTreePids = @(Get-LaunchTreePids -RootPid $p.Id)
         if ($launchTreePids.Count -gt 0) {
@@ -658,10 +655,10 @@ try {
   try {
     Remove-Item -LiteralPath $StagedExe -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath (Join-Path (Split-Path -Parent $StagedExe) "checksums.txt") -Force -ErrorAction SilentlyContinue
-    # NOTE: the boot log is intentionally kept. The healthy new version is
-    # still running with its stdout redirected into it, so the file is locked
-    # and cannot be deleted here. The versioned name (newapp_boot_<v>.log)
-    # keeps one small file per update as a boot audit trail.
+    # The new build owns its own console now, so the attempt-marker boot log
+    # is not locked by any running process and is removed with the stage.
+    if ($BootLog) { Remove-Item -LiteralPath $BootLog -Force -ErrorAction SilentlyContinue }
+    try { Remove-Item -LiteralPath ($BootLog + ".err") -Force -ErrorAction SilentlyContinue } catch {}
   } catch {}
   exit 0
 } catch {
@@ -813,6 +810,18 @@ class AppUpdater:
         try:
             stage = os.path.join(app_paths.APP_DATA_DIR, STAGE_DIRNAME)
             os.makedirs(stage, exist_ok=True)
+            # Attempt-marker boot logs from previous updates are not held
+            # open by any running build (the child keeps its own console),
+            # so prune them instead of accumulating one file per update.
+            try:
+                for _name in os.listdir(stage):
+                    if _name.startswith("newapp_boot_") and _name.endswith(".log"):
+                        try:
+                            os.remove(os.path.join(stage, _name))
+                        except Exception:
+                            pass
+            except Exception:
+                pass
             exe_name = f"{EXE_ASSET_PREFIX}{version}{EXE_ASSET_SUFFIX}"
             staged_exe = os.path.join(stage, exe_name)
             staged_sums = os.path.join(stage, CHECKSUMS_ASSET)

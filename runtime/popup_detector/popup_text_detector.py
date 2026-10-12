@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Iterable
 from services.captcha_guard import is_captcha_window_texts
+from services.verify_guard import is_locked_window_texts, is_recovery_window_texts
 
 
 CONNECTION_KEYWORDS = (
@@ -52,6 +53,8 @@ def detect_text_features(texts: Iterable[Any]) -> Dict[str, Any]:
     has_teleport = "teleport failed" in joined_lower or "teleport timeout" in joined_lower
     has_same_account = "same account launched" in joined_lower
     has_captcha = is_captcha_window_texts(normalized)
+    has_locked = is_locked_window_texts(normalized)
+    has_recovery = is_recovery_window_texts(normalized)
     return {
         "texts": normalized,
         "joined": joined_lower,
@@ -64,6 +67,8 @@ def detect_text_features(texts: Iterable[Any]) -> Dict[str, Any]:
         "has_teleport": has_teleport,
         "has_same_account": has_same_account,
         "has_captcha": has_captcha,
-        "matched": bool(error_code or has_disconnected or has_reconnect or has_connection or has_server_full or has_teleport or has_captcha),
+        "has_locked": has_locked,
+        "has_recovery": has_recovery,
+        "matched": bool(error_code or has_disconnected or has_reconnect or has_connection or has_server_full or has_teleport or has_captcha or has_locked or has_recovery),
         "detail": " | ".join(normalized[:4]) if normalized else "",
     }

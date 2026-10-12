@@ -635,10 +635,10 @@ def _update_counters(scope: str, name: str, fields: Dict[str, Any]) -> None:
         old = _text(fields.get("old")).upper()
         new = _text(fields.get("new")).upper()
         reason = _reason(fields)
-        if reason == "captcha_required":
+        if reason in {"captcha_required", "identity_locked", "account_recovery"}:
             if is_real_account:
                 _CAPTCHA_ACCOUNTS.add(account)
-        elif reason in {"manual_resume", "captcha_resume"} or new in {"QUEUED", "LAUNCHING", "VERIFY", "IN_GAME", "IDLE", "READY"}:
+        elif reason in {"manual_resume", "captcha_resume", "locked_resume", "recovery_resume", "verify_resume"} or new in {"QUEUED", "LAUNCHING", "VERIFY", "IN_GAME", "IDLE", "READY"}:
             _CAPTCHA_ACCOUNTS.discard(account)
             # Account is launchable again -> clear cookie/finished blocks too.
             if new in {"QUEUED", "LAUNCHING", "VERIFY", "IN_GAME", "READY"}:
@@ -656,14 +656,14 @@ def _update_counters(scope: str, name: str, fields: Dict[str, Any]) -> None:
             _ACTIVE_ACCOUNTS.discard(account)
         if new == "LAUNCHING":
             _QUEUE_SIZE = max(0, _QUEUE_SIZE - 1)
-        if reason == "captcha_required":
+        if reason in {"captcha_required", "identity_locked", "account_recovery"}:
             _ACTIVE_ACCOUNTS.discard(account)
     elif scope == "STATE" and name == "forced_reset":
         _ACTIVE_ACCOUNTS.discard(account)
         _CAPTCHA_ACCOUNTS.discard(account)
         _BLOCKED_ACCOUNTS.discard(account)
     elif scope == "CAPTCHA" or name == "captcha_dialog_hold" or (scope == "RECOVERY" and name == "captcha_hold"):
-        if "resume" in name or "clear" in name or _reason(fields) in {"manual_resume", "captcha_resume"}:
+        if "resume" in name or "clear" in name or _reason(fields) in {"manual_resume", "captcha_resume", "locked_resume", "recovery_resume", "verify_resume"}:
             _CAPTCHA_ACCOUNTS.discard(account)
         elif is_real_account:
             _CAPTCHA_ACCOUNTS.add(account)
@@ -729,7 +729,7 @@ def _format_state(name: str, fields: Dict[str, Any]) -> Optional[str]:
 def _format_recovery(name: str, fields: Dict[str, Any]) -> Optional[str]:
     account = _account(fields)
     reason = _reason(fields, "recovery")
-    if name == "captcha_hold" or reason == "captcha_required":
+    if name == "captcha_hold" or reason in {"captcha_required", "identity_locked", "account_recovery"}:
         return _captcha_line(account, _pid(fields))
     if name == "network_lost":
         return _disconnect_line(account, _disconnect_reason(fields, "network_lost"))

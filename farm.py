@@ -21,6 +21,7 @@ from services.process_service import ProcessManager, ProcessService
 from services.captcha_guard import (
     clear_account_captcha_hold,
 )
+from services.verify_guard import clear_account_locked_hold, clear_account_recovery_hold
 from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
 from runtime.farm_health import (
     build_farm_status,
@@ -695,15 +696,62 @@ class FarmController:
         return persisted, text
 
     def resume_captcha_account(self, username: str) -> Tuple[bool, str]:
+        return self._resume_blocked_account(username, clear_account_captcha_hold, "Captcha", "captcha", "captcha_resume")
+
+    def resume_locked_account(self, username: str) -> Tuple[bool, str]:
+        return self._resume_blocked_account(username, clear_account_locked_hold, "Locked", "verify", "locked_resume")
+
+    def resume_recovery_account(self, username: str) -> Tuple[bool, str]:
+        return self._resume_blocked_account(username, clear_account_recovery_hold, "Recovery", "verify", "recovery_resume")
+
+    def resume_verify_account(self, username: str) -> Tuple[bool, str]:
+        """Clear whichever verify hold is present (Locked / Recovery / Captcha)."""
         acc = self._find_account(username)
         if not acc:
             return False, "Account not found"
-        was_captcha = clear_account_captcha_hold(acc, runtime_writer=self._runtime_state)
+        try:
+            from services.verify_guard import is_account_locked, is_account_recovery
+            from services.captcha_guard import is_account_captcha_required
+
+            if is_account_locked(acc):
+                return self.resume_locked_account(username)
+            if is_account_recovery(acc):
+                return self.resume_recovery_account(username)
+            if is_account_captcha_required(acc):
+                return self.resume_captcha_account(username)
+        except Exception:
+            pass
+        # Fallback: try all clears so a stale mark never sticks.
+        was_any = False
+        try:
+            was_any = bool(clear_account_locked_hold(acc, runtime_writer=self._runtime_state)) or was_any
+        except Exception:
+            pass
+        try:
+            was_any = bool(clear_account_recovery_hold(acc, runtime_writer=self._runtime_state)) or was_any
+        except Exception:
+            pass
+        try:
+            was_any = bool(clear_account_captcha_hold(acc, runtime_writer=self._runtime_state)) or was_any
+        except Exception:
+            pass
+        if was_any:
+            return self._resume_blocked_account(username, lambda a, runtime_writer=None: False, "Verify", "verify", "verify_resume")
+        return False, f"No Locked/Recovery/Captcha hold for {username}"
+
+    def _resume_blocked_account(self, username: str, clear_fn: Any, kind_label: str, event_kind: str, resume_reason: str) -> Tuple[bool, str]:
+        acc = self._find_account(username)
+        if not acc:
+            return False, "Account not found"
+        try:
+            was_blocked = bool(clear_fn(acc, runtime_writer=self._runtime_state))
+        except Exception:
+            was_blocked = False
         try:
             decision = evaluate_account_auth_gate(acc)
         except Exception as e:
             flog_kv("FARM", "captcha_resume_auth_gate_error", "warning", account=acc.display_name, error=e)
-            return False, f"Captcha cleared for {username}, but auth gate unavailable. Retry later."
+            return False, f"{kind_label} cleared for {username}, but auth gate unavailable. Retry later."
         if decision.blocked:
             try:
                 mark_account_auth_quarantined(acc, decision, source="manual_resume", runtime_writer=self._runtime_state)
@@ -711,19 +759,19 @@ class FarmController:
                     self._recovery.fail_account(acc, decision.reason_key, decision.reason)
             except Exception as e:
                 flog_kv("FARM", "captcha_resume_quarantine_error", "warning", account=acc.display_name, error=e)
-                return False, f"Captcha cleared for {username}, but auth quarantine failed. Retry later."
+                return False, f"{kind_label} cleared for {username}, but auth quarantine failed. Retry later."
             self.cfg_mgr.save_accounts(self._accounts)
             self.cfg_mgr.save_runtime(self._accounts)
             self._bump_status_revision()
             self._push_event(
-                "captcha",
-                f"Captcha cleared: {acc.display_name} - still blocked: {decision.reason}",
+                event_kind,
+                f"{kind_label} cleared: {acc.display_name} - still blocked: {decision.reason}",
                 account=acc,
                 severity="warn",
                 reason=decision.reason_key,
-                was_captcha=was_captcha,
+                was_captcha=was_blocked,
             )
-            return False, f"Captcha cleared for {username}, but launch is still blocked: {decision.reason}"
+            return False, f"{kind_label} cleared for {username}, but launch is still blocked: {decision.reason}"
         if self._runtime_state:
             with acc._lock:
                 self._runtime_state.set_desired(acc, AccountState.IN_GAME, reason="manual_resume")
@@ -757,15 +805,15 @@ class FarmController:
         self.cfg_mgr.save_runtime(self._accounts)
         self._bump_status_revision()
         self._push_event(
-            "captcha",
-            f"Captcha cleared: {acc.display_name} - resume requested",
+            event_kind,
+            f"{kind_label} cleared: {acc.display_name} - resume requested",
             account=acc,
             severity="warn",
-            reason="captcha_resume",
-            was_captcha=was_captcha,
+            reason=resume_reason,
+            was_captcha=was_blocked,
         )
         if not self.running:
-            return True, f"Captcha cleared for {username}. Start Cronus when ready."
+            return True, f"{kind_label} cleared for {username}. Start Cronus when ready."
         if not self._recovery or not self._state_mgr:
             return False, "Recovery coordinator unavailable"
         if live_session:
@@ -773,8 +821,8 @@ class FarmController:
             if worker:
                 worker.wake()
             if lua_required:
-                return True, f"Captcha cleared for {username}. Waiting for Lua."
-            return True, f"Captcha cleared for {username}. Live session verified."
+                return True, f"{kind_label} cleared for {username}. Waiting for Lua."
+            return True, f"{kind_label} cleared for {username}. Live session verified."
         worker = self._workers.get(acc._config_username)
         if not worker or not worker.is_alive():
             worker = AccountWorker(
@@ -793,7 +841,7 @@ class FarmController:
             worker.wake()
         self._runtime_orchestrator.request_evaluate(acc, trigger="manual_resume")
         worker.wake()
-        return True, f"Captcha cleared for {username}. Resume requested."
+        return True, f"{kind_label} cleared for {username}. Resume requested."
 
     @staticmethod
     def _account_expects_private_server(acc: Account) -> bool:

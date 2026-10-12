@@ -44,12 +44,14 @@
       try {
         if ($("cronus-save") && !$("cronus-save").hidden) return;
         const active = document.activeElement?.id || "";
-        if (["cronus-start-on-boot", "cronus-start-farming-on-boot", "cronus-auto-update-on-boot"].includes(active)) return;
+        if (["cronus-start-on-boot", "cronus-start-farming-on-boot", "cronus-auto-update-on-boot", "cronus-privacy-blur", "cronus-privacy-random"].includes(active)) return;
       } catch (_) {}
       const config = await api("/api/config");
       if ($("cronus-start-on-boot")) $("cronus-start-on-boot").checked = !!config.start_on_boot;
       if ($("cronus-start-farming-on-boot")) $("cronus-start-farming-on-boot").checked = !!config.start_farming_on_boot;
       if ($("cronus-auto-update-on-boot")) $("cronus-auto-update-on-boot").checked = !!config.auto_update_on_boot;
+      if ($("cronus-privacy-blur")) $("cronus-privacy-blur").checked = !!config.privacy_blur_usernames;
+      if ($("cronus-privacy-random")) $("cronus-privacy-random").checked = !!config.privacy_randomize_usernames;
     } catch (error) { show(error.message, true); }
   }
   async function save(patch) {

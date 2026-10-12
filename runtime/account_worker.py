@@ -23,6 +23,16 @@ from services.captcha_guard import (
     is_captcha_text,
     set_account_captcha_hold,
 )
+from services.verify_guard import (
+    LOCKED_BLOCK_REASON,
+    LOCKED_REASON,
+    RECOVERY_BLOCK_REASON,
+    RECOVERY_REASON,
+    is_locked_text,
+    is_recovery_text,
+    set_account_locked_hold,
+    set_account_recovery_hold,
+)
 from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
 from runtime.recovery_support import RECOVERY_REASON_MESSAGES, _set_account_cookie_block, compute_backoff
 from runtime.supervisor_runtime import SupervisorRuntime
@@ -561,6 +571,31 @@ class AccountWorker(threading.Thread):
                 except Exception:
                     _is_banned_now = False
                 if _is_banned_now:
+                    # Bare "User is moderated" wording may be a lock, not a
+                    # ban. Resolve it with the account name before holding.
+                    try:
+                        from roblox_hybrid import moderated_only_detail as _mod_only_run
+                        from roblox_hybrid import resolve_moderated_dead_cookie as _resolve_mod_run
+
+                        _mod_hit_run = bool(_mod_only_run(detail))
+                    except Exception:
+                        _mod_hit_run = False
+                    if _mod_hit_run:
+                        try:
+                            _mv_run, _md_run, _mn_run, _mu_run = _resolve_mod_run(acc.cookie, acc.username)
+                        except Exception:
+                            _mv_run = None
+                            _md_run = ""
+                        if _mv_run == "locked":
+                            set_account_locked_hold(acc, _md_run or detail, source="cookie_validation", runtime_writer=self.state_mgr)
+                            flog_kv("LOCKED", "detected", "warning", account=acc.display_name, detail=detail)
+                            self.runtime_owner.handle_runtime_signal(
+                                acc,
+                                "fatal",
+                                LOCKED_REASON,
+                                payload={"reason_msg": LOCKED_BLOCK_REASON, "detail": detail},
+                            )
+                            return
                     _hold_ok = False
                     if _set_banned_hold is not None:
                         try:
@@ -586,6 +621,28 @@ class AccountWorker(threading.Thread):
                         "fatal",
                         "banned",
                         payload={"reason_msg": _BANNED_MSG_RUN, "detail": detail or _BANNED_MSG_RUN},
+                    )
+                    return
+
+                if is_locked_text(detail):
+                    set_account_locked_hold(acc, detail, source="cookie_validation", runtime_writer=self.state_mgr)
+                    flog_kv("LOCKED", "detected", "warning", account=acc.display_name, detail=detail)
+                    self.runtime_owner.handle_runtime_signal(
+                        acc,
+                        "fatal",
+                        LOCKED_REASON,
+                        payload={"reason_msg": LOCKED_BLOCK_REASON, "detail": detail},
+                    )
+                    return
+
+                if is_recovery_text(detail):
+                    set_account_recovery_hold(acc, detail, source="cookie_validation", runtime_writer=self.state_mgr)
+                    flog_kv("RECOVERY", "detected", "warning", account=acc.display_name, detail=detail)
+                    self.runtime_owner.handle_runtime_signal(
+                        acc,
+                        "fatal",
+                        RECOVERY_REASON,
+                        payload={"reason_msg": RECOVERY_BLOCK_REASON, "detail": detail},
                     )
                     return
 
@@ -648,9 +705,12 @@ class AccountWorker(threading.Thread):
                 from domain.account_model import is_account_finished as _is_finished
                 from services.ban_guard import is_account_banned as _is_banned_mid
                 from services.ban_guard import is_account_suspended as _is_suspended_mid
+                from domain.account_model import is_account_locked as _is_locked_mid
+                from domain.account_model import is_account_recovery as _is_recovery_mid
+                from services.captcha_guard import is_account_captcha_required as _is_captcha_mid
 
-                if _is_finished(acc) or _is_banned_mid(acc) or _is_suspended_mid(acc):
-                    # Marked Finished/Banned/Suspended mid-run: sit idle, no rejoin, no actions.
+                if _is_finished(acc) or _is_banned_mid(acc) or _is_suspended_mid(acc) or _is_locked_mid(acc) or _is_recovery_mid(acc) or _is_captcha_mid(acc):
+                    # Marked Finished/Banned/Suspended/Locked/Recovery/Captcha mid-run: sit idle, no rejoin, no actions.
                     self._wake.wait(timeout=2.0)
                     self._wake.clear()
                     continue

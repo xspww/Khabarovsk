@@ -86,8 +86,8 @@ def build_account_truth(
 
     if (
         bool(getattr(account, "cookie_mismatch", False))
-        or str(getattr(account, "last_crash_reason", "") or "") in {"captcha_required", "cookie_mismatch"}
-        or str(getattr(account, "recovery_status", "") or "") == "captcha_required"
+        or str(getattr(account, "last_crash_reason", "") or "") in {"captcha_required", "cookie_mismatch", "identity_locked", "account_recovery"}
+        or str(getattr(account, "recovery_status", "") or "") in {"captcha_required", "identity_locked", "account_recovery"}
     ):
         reasons.append("auth_or_captcha_quarantine")
         return RuntimeTruthSnapshot(account_id, TRUTH_QUARANTINED, 100.0, reasons, pid, live, windows, heartbeat_age, server_age, binding_status, public_state, runtime_state)

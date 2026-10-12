@@ -37,6 +37,7 @@ Cronus Launcher manages multiple Roblox accounts from a single desktop dashboard
 ## Features
 
 - **Multi-account management** — Add, organize, and launch multiple Roblox accounts from one dashboard.
+- **Manual Login** — Add Accounts offers popup-browser sign-in (Single or Multi with `user:pass` per line). 2FA, captcha, and passkey are completed by you; the cookie is captured automatically. Uses the installed Chrome/Edge, else downloads Chromium once.
 - **Automatic rejoin** — Detect disconnections and rejoin the configured server without manual intervention.
 - **Resource controls** — CPU limiter, RAM management, FPS limit, low-graphics mode, and window layout controls for multi-instance sessions.
 - **Executor support** — Track executor compatibility against the official Roblox version, with optional auto-relaunch flow.

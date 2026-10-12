@@ -4,11 +4,13 @@ import time
 from core import AccountState, flog, flog_kv
 from services.process_service import ProcessManager, ProcessService
 from services.captcha_guard import CAPTCHA_REASON
+from services.verify_guard import LOCKED_REASON, RECOVERY_REASON
 from runtime.lua_liveness_policy import LUA_WAITING_STATUS, lua_liveness_required, lua_wait_timeout_seconds
 from runtime.maintenance_captcha import (
     clear_captcha_suspicion,
     handle_watchdog_captcha,
 )
+from runtime.maintenance_verify import clear_verify_suspicion, handle_watchdog_verify
 from runtime.maintenance_lua_timeout import emit_lua_wait_timeout_recovery, handle_in_game_lua_wait_timeout
 from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
 from runtime.maintenance_watchdog_actions import (
@@ -411,6 +413,7 @@ class MaintenanceLivenessMixin:
 
             # Captcha runs on its own detector (window text only, no screenshots).
             # It shares the popup scan budget so there is no extra overhead.
+            # Locked/Recovery share the same budget via verify_detector.
             if popup_enabled and (
                 popup_periodic_allowed
                 or old_state in {"suspect_frozen", "frozen", "reconnecting", "teleporting"}
@@ -424,10 +427,20 @@ class MaintenanceLivenessMixin:
                 if cap.get("matched") and str(cap.get("reason_key") or "") == CAPTCHA_REASON:
                     handle_watchdog_captcha(self, acc, pid, dict(cap))
                     continue
+                try:
+                    from runtime.verify_detector import inspect_verify_window
+
+                    ver = inspect_verify_window(pid)
+                except Exception:
+                    ver = {"matched": False}
+                if ver.get("matched") and str(ver.get("reason_key") or "") in (LOCKED_REASON, RECOVERY_REASON):
+                    handle_watchdog_verify(self, acc, pid, dict(ver))
+                    continue
                 # Probed and no captcha present -> a previous captcha
                 # suspicion (auto-passing security page) is gone; reset it so a
                 # later transient page cannot confirm against stale evidence.
                 clear_captcha_suspicion(acc)
+                clear_verify_suspicion(acc)
 
             if state == "missing":
                 if worker:

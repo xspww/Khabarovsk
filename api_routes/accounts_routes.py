@@ -13,11 +13,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from fastapi import HTTPException, Request
 import net_tls
 from account_hybrid import ACCOUNT_STORE, audit_event
-from core import banned_block_reason, cookie_identity_block_reason, cookie_invalid_block_reason
+from core import banned_block_reason, cookie_identity_block_reason, cookie_invalid_block_reason, suspended_block_reason
 from roblox_hybrid import resolve_vip_access_code, validate_cookie_details
 from services.ban_guard import (
     BANNED_BLOCK_REASON,
     BANNED_REASON,
+    SUSPENDED_BLOCK_REASON,
     clear_account_banned_hold,
     is_banned_status_text,
     is_banned_text,
@@ -29,6 +30,18 @@ from services.captcha_guard import (
     CAPTCHA_REASON,
     is_captcha_status_text,
     set_account_captcha_hold,
+)
+from services.verify_guard import (
+    LOCKED_BLOCK_REASON,
+    LOCKED_REASON,
+    RECOVERY_BLOCK_REASON,
+    RECOVERY_REASON,
+    is_locked_status_text,
+    is_locked_text,
+    is_recovery_status_text,
+    is_recovery_text,
+    set_account_locked_hold,
+    set_account_recovery_hold,
 )
 from services.account_reload import emit_reload_cookie_events
 from services.roblox_launch_service import AccountLaunchService, parse_vip_link
@@ -484,14 +497,27 @@ def register(app, ctx: ApiContext) -> None:
         invalid_reason = cookie_invalid_block_reason(record.get("manual_status"), record.get("import_status"))
         if invalid_reason:
             blocked_reason = invalid_reason
+        suspended_reason = suspended_block_reason(
+            record.get("manual_status"), record.get("import_status"),
+            record.get("last_error", ""), record.get("last_crash_reason", ""),
+        )
+        if suspended_reason:
+            blocked_reason = SUSPENDED_BLOCK_REASON
         banned_reason = banned_block_reason(
             record.get("manual_status"), record.get("import_status"),
             record.get("last_error", ""), record.get("last_crash_reason", ""),
         )
-        if banned_reason:
+        if banned_reason and not suspended_reason:
             blocked_reason = banned_reason
+        moderation_reason = suspended_reason or banned_reason
+        if is_locked_status_text(record.get("manual_status"), record.get("import_status")):
+            if not moderation_reason:
+                blocked_reason = LOCKED_BLOCK_REASON
+        elif is_recovery_status_text(record.get("manual_status"), record.get("import_status")):
+            if not moderation_reason:
+                blocked_reason = RECOVERY_BLOCK_REASON
         if is_captcha_status_text(record.get("manual_status"), record.get("import_status")):
-            if not banned_reason:
+            if not moderation_reason and not is_locked_status_text(record.get("manual_status"), record.get("import_status")) and not is_recovery_status_text(record.get("manual_status"), record.get("import_status")):
                 blocked_reason = CAPTCHA_BLOCK_REASON
         if blocked_reason:
             result = {"ok": False, "fatal": True, "msg": blocked_reason, "blocked_reason": blocked_reason, "cookie_mismatch": bool(mismatch_reason)}
@@ -507,6 +533,28 @@ def register(app, ctx: ApiContext) -> None:
             idempotency_key=idem.key,
             body_hash=idem.body_hash,
         )
+        if not result.get("ok") and is_locked_text(result.get("msg"), result.get("detail")):
+            runtime = next((a for a in farm._accounts if a.username == username), None)
+            if runtime:
+                set_account_locked_hold(runtime, str(result.get("msg") or result.get("detail") or ""), source="manual_launch", runtime_writer=farm._runtime_state)
+                if farm._recovery:
+                    farm._recovery.fail_account(runtime, LOCKED_REASON, LOCKED_BLOCK_REASON)
+                farm._push_event("verify", f"Account Locked: {runtime.display_name}", account=runtime, severity="warn", reason=LOCKED_REASON)
+            result["fatal"] = True
+            result["locked_required"] = True
+            result["blocked_reason"] = LOCKED_BLOCK_REASON
+            result["msg"] = LOCKED_BLOCK_REASON
+        if not result.get("ok") and is_recovery_text(result.get("msg"), result.get("detail")):
+            runtime = next((a for a in farm._accounts if a.username == username), None)
+            if runtime:
+                set_account_recovery_hold(runtime, str(result.get("msg") or result.get("detail") or ""), source="manual_launch", runtime_writer=farm._runtime_state)
+                if farm._recovery:
+                    farm._recovery.fail_account(runtime, RECOVERY_REASON, RECOVERY_BLOCK_REASON)
+                farm._push_event("verify", f"Account Recovery: {runtime.display_name}", account=runtime, severity="warn", reason=RECOVERY_REASON)
+            result["fatal"] = True
+            result["recovery_required"] = True
+            result["blocked_reason"] = RECOVERY_BLOCK_REASON
+            result["msg"] = RECOVERY_BLOCK_REASON
         if not result.get("ok") and is_captcha_status_text(result.get("msg"), result.get("detail")):
             runtime = next((a for a in farm._accounts if a.username == username), None)
             if runtime:
@@ -597,16 +645,67 @@ def register(app, ctx: ApiContext) -> None:
         body = await request.json()
         cookie = body.get("cookie", "")
         username_hint = str(body.get("username") or "").strip()
+        password_hint = str(body.get("password") or "")
         if not cookie:
             raise HTTPException(400, "cookie required")
         ok, username, detail, meta = validate_cookie_details(cookie)
         meta = meta or {}
+        resolved_username = str(meta.get("username") or username or "")
+        resolved_user_id = str(meta.get("user_id") or "")
+        if (not resolved_username or not resolved_user_id) and not ok:
+            # Cookie-only paste: the token embeds its owner, so the preview
+            # can name the account (and resolve a 403) with no prefix typed.
+            try:
+                from roblox_hybrid import cookie_embedded_identity as _emb_identity_t
+
+                _emb_name_t, _emb_uid_t = _emb_identity_t(cookie)
+            except Exception:
+                _emb_name_t, _emb_uid_t = "", ""
+            if _emb_name_t and not resolved_username:
+                resolved_username = _emb_name_t
+            if _emb_uid_t and not resolved_user_id:
+                resolved_user_id = _emb_uid_t
+        check_outcome = ""
+        # A bare "User is moderated" (403) fits a verification lock as well
+        # as a ban. Resolve it BEFORE the banned label below so the preview
+        # shows Locked instead of Banned — same rule as the import path.
+        moderated_resolved = False
+        if not ok and not bool(is_suspended_text(detail)):
+            try:
+                from roblox_hybrid import moderated_only_detail as _mod_only_t
+                from roblox_hybrid import resolve_moderated_dead_cookie as _resolve_mod_t
+            except Exception:
+                _mod_only_t = lambda *a, **k: False  # type: ignore
+                _resolve_mod_t = lambda *a, **k: (None, "", "", "")  # type: ignore
+            try:
+                _mod_hit_t = bool(_mod_only_t(detail))
+            except Exception:
+                _mod_hit_t = False
+            if _mod_hit_t:
+                moderated_resolved = True
+                try:
+                    _mv_t, _md_t, _mn_t, _mu_t = _resolve_mod_t(
+                        cookie, username_hint or resolved_username
+                    )
+                except Exception:
+                    _mv_t, _md_t, _mn_t, _mu_t = None, "", "", ""
+                if _mv_t == "locked":
+                    return {
+                        "ok": False,
+                        "username": _mn_t or resolved_username or username_hint,
+                        "user_id": _mu_t or resolved_user_id,
+                        "banned": False,
+                        "suspended": False,
+                        "locked": True,
+                        "recovery": False,
+                        "captcha": False,
+                        "bad_password": False,
+                        "msg": _md_t,
+                    }
         suspended = bool(meta.get("is_suspended") or meta.get("suspended")) or bool(is_suspended_text(detail))
         banned = (bool(meta.get("is_banned") or meta.get("banned")) or bool(is_banned_text(detail))) and not suspended
         blocked = banned or suspended
-        resolved_username = str(meta.get("username") or username or "")
-        resolved_user_id = str(meta.get("user_id") or "")
-        if not ok and not blocked:
+        if not ok and not blocked and not moderated_resolved:
             # Cookie is dead, so it cannot confirm a ban on its own. Fall back
             # to the public API by username. When the pasted line carried no
             # "username:" prefix, recover the owner from the stored records so
@@ -630,12 +729,76 @@ def register(app, ctx: ApiContext) -> None:
                     "suspended": False,
                     "msg": "Account banned (Roblox isBanned=true)",
                 }
+            # Dead cookie + pasted password: ask Roblox what the account
+            # actually needs (real login attempt, password never stored).
+            if password_hint and (resolved_username or username_hint):
+                try:
+                    from services.credential_check import check_credentials as _check_creds
+
+                    _cc = _check_creds(resolved_username or username_hint, password_hint)
+                    check_outcome = str((_cc or {}).get("outcome") or "")
+                    _fresh = str((_cc or {}).get("fresh_cookie") or "")
+                    if check_outcome == "valid" and _fresh:
+                        try:
+                            _rok, _ruser, _rdetail, _rmeta = validate_cookie_details(_fresh)
+                            _rmeta = _rmeta or {}
+                        except Exception:
+                            _rok, _ruser, _rdetail, _rmeta = False, "", "", {}
+                        if _rok:
+                            return {
+                                "ok": True,
+                                "username": str(_rmeta.get("username") or _ruser or ""),
+                                "user_id": str(_rmeta.get("user_id") or ""),
+                                "banned": False,
+                                "suspended": False,
+                                "refreshed": True,
+                                "msg": "",
+                            }
+                    if check_outcome == "unknown" and str((_cc or {}).get("challenge_type") or ""):
+                        # Login gated by a challenge: re-ask the cookie a few
+                        # times, a moderation answer classifies the hold.
+                        try:
+                            from roblox_hybrid import reprobe_moderation_response as _reprobe_t
+                            from roblox_hybrid import resolve_moderated_dead_cookie as _resolve_mod_t2
+                        except Exception:
+                            _reprobe_t = lambda *a, **k: (0, "")  # type: ignore
+                            _resolve_mod_t2 = lambda *a, **k: (None, "", "", "")  # type: ignore
+                        try:
+                            _rs_t, _rb_t = _reprobe_t(cookie)
+                        except Exception:
+                            _rs_t, _rb_t = 0, ""
+                        if int(_rs_t or 0) == 403:
+                            try:
+                                _mv_t2, _md_t2, _mn_t2, _mu_t2 = _resolve_mod_t2(
+                                    cookie, resolved_username or username_hint
+                                )
+                            except Exception:
+                                _mv_t2, _md_t2, _mn_t2, _mu_t2 = None, "", "", ""
+                            if _mv_t2 == "locked":
+                                return {
+                                    "ok": False,
+                                    "username": _mn_t2 or resolved_username or username_hint,
+                                    "user_id": _mu_t2 or resolved_user_id,
+                                    "banned": False,
+                                    "suspended": False,
+                                    "locked": True,
+                                    "recovery": False,
+                                    "captcha": False,
+                                    "bad_password": False,
+                                    "msg": _md_t2,
+                                }
+                except Exception:
+                    check_outcome = ""
         return {
             "ok": ok,
             "username": resolved_username if (ok or blocked or resolved_username) else "",
             "user_id": resolved_user_id,
             "banned": banned,
             "suspended": suspended,
+            "locked": check_outcome == "locked",
+            "recovery": check_outcome == "recovery",
+            "captcha": check_outcome == "captcha",
+            "bad_password": check_outcome == "bad_credentials",
             "msg": detail if not ok else "",
         }
 
@@ -893,5 +1056,6 @@ def register(app, ctx: ApiContext) -> None:
         except Exception:
             pass
         return {"ok": True, "cleared": cleared, "missing": missing, "skipped": skipped, "msg": f"Cleared moderation marks: {len(cleared)}"}
+
     # Web UI routes
     # Cronus Launcher dashboard is served by system_routes.py.

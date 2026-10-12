@@ -494,6 +494,36 @@ def register(app, ctx: ApiContext) -> None:
         finally:
             farm.finish_command(key, command["command_id"], ok=ok, error=error, response=result)
 
+    def _resume_verify_endpoint(kind: str, resume_fn_name: str, log_name: str):
+        def _endpoint(username: str, request: Request):
+            key = f"account:{username}"
+            accepted, command = _begin_runtime_command(request, key, f"{kind}_resume", account=username, ttl=20.0)
+            if not accepted:
+                if command.get("msg") == "Account not found":
+                    raise HTTPException(404, "Account not found")
+                return _command_rejected_payload(command, f"Resume unavailable: {username}")
+            ok = False
+            error = ""
+            result = None
+            try:
+                resume_fn = getattr(farm, resume_fn_name)
+                ok, msg = resume_fn(username)
+                if msg == "Account not found":
+                    raise HTTPException(404, "Account not found")
+                result = {"ok": ok, "accepted": ok, "command_id": command["command_id"], "msg": msg}
+                return result
+            except Exception as e:
+                error = str(e)
+                flog_kv("API", f"{log_name}_resume_failed", "error", command_id=command["command_id"], account=username, error=e)
+                raise
+            finally:
+                farm.finish_command(key, command["command_id"], ok=ok, error=error, response=result)
+        return _endpoint
+
+    app.post("/api/account/{username}/locked/resume")(_resume_verify_endpoint("locked", "resume_locked_account", "locked"))
+    app.post("/api/account/{username}/recovery/resume")(_resume_verify_endpoint("recovery", "resume_recovery_account", "recovery"))
+    app.post("/api/account/{username}/verify/resume")(_resume_verify_endpoint("verify", "resume_verify_account", "verify"))
+
     @app.post("/api/accounts/captcha/resume")
     async def api_resume_captcha_bulk(request: Request):
         try:
@@ -543,6 +573,60 @@ def register(app, ctx: ApiContext) -> None:
         if missing:
             msg += f", missing {len(missing)}"
         flog_kv("API", "captcha_resume_bulk", resumed=len(resumed), skipped=len(skipped), missing=len(missing))
+        return {"ok": True, "resumed": resumed, "skipped": skipped, "missing": missing, "msg": msg}
+
+    @app.post("/api/accounts/verify/resume")
+    async def api_resume_verify_bulk(request: Request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        if not isinstance(body, dict):
+            raise HTTPException(400, "Expected object")
+        raw_names = body.get("usernames", [])
+        if isinstance(raw_names, str):
+            raw_names = [raw_names]
+        if not isinstance(raw_names, list):
+            raise HTTPException(400, "usernames must be a list")
+        names = [str(n or "").strip() for n in raw_names if str(n or "").strip()]
+        if not names:
+            raise HTTPException(400, "usernames required")
+        try:
+            from services.verify_guard import is_account_locked, is_account_recovery
+            from services.captcha_guard import is_account_captcha_required as _is_cap
+        except Exception:
+            is_account_locked = lambda _a: False  # type: ignore
+            is_account_recovery = lambda _a: False  # type: ignore
+            _is_cap = lambda _a: False  # type: ignore
+        resumed: list = []
+        skipped: list = []
+        missing: list = []
+        for username in names:
+            acc = farm._find_account(username) if hasattr(farm, "_find_account") else None
+            if acc is None:
+                missing.append(username)
+                continue
+            try:
+                needs = bool(is_account_locked(acc) or is_account_recovery(acc) or _is_cap(acc))
+            except Exception:
+                needs = False
+            if not needs:
+                skipped.append(username)
+                continue
+            try:
+                ok, _msg = farm.resume_verify_account(username)
+            except Exception:
+                ok = False
+            if ok:
+                resumed.append(username)
+            else:
+                skipped.append(username)
+        msg = f"Resumed verify: {len(resumed)}"
+        if skipped:
+            msg += f", skipped {len(skipped)} (not locked/recovery/captcha)"
+        if missing:
+            msg += f", missing {len(missing)}"
+        flog_kv("API", "verify_resume_bulk", resumed=len(resumed), skipped=len(skipped), missing=len(missing))
         return {"ok": True, "resumed": resumed, "skipped": skipped, "missing": missing, "msg": msg}
 
     @app.post("/api/account/{username}/captcha/focus")

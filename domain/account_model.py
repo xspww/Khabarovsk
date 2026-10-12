@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import threading
 import time
@@ -73,7 +73,7 @@ class Account:
     session_wait_started_at: float  = 0.0
     pid_missing_since: float        = 0.0
     cooldown_until: float           = 0.0
-    teleport_suppress_until: float  = 0.0  # Lua-reported teleport handoff — don't fault until arrival
+    teleport_suppress_until: float  = 0.0  # Lua-reported teleport handoff â€” don't fault until arrival
     rapid_relaunch_count: int       = 0
     last_network_lost_at: Optional[float] = None
     last_pid_change_at: float       = 0.0
@@ -154,7 +154,7 @@ class Account:
     last_state_change_at: float = field(default_factory=time.time)
     last_error: str = ""
 
-    # VipTracker instance — set externally by FarmController
+    # VipTracker instance â€” set externally by FarmController
     _vip_tracker: Any = field(default=None, repr=False, compare=False)
     runtime: AccountRuntime = field(default_factory=AccountRuntime, repr=False, compare=False)
 
@@ -263,7 +263,7 @@ class Account:
             h, r = divmod(s, 3600)
             m, s = divmod(r, 60)
             return f"{h:02d}:{m:02d}:{s:02d}"
-        return "—"
+        return "â€”"
 
     @property
     def is_vip(self) -> bool:
@@ -315,9 +315,9 @@ class Account:
         )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 #  EVENT BUS
-# ─────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 def cookie_identity_block_reason(
     username: str,
@@ -341,7 +341,7 @@ def cookie_invalid_block_reason(*values: object) -> str:
         lowered = text.lower()
         if not lowered:
             continue
-        # Banned is a separate state — never report it as cookie_invalid.
+        # Banned is a separate state â€” never report it as cookie_invalid.
         if lowered.strip() in {"banned"} or "account banned" in lowered:
             continue
         if lowered == "cookie_invalid":
@@ -411,6 +411,76 @@ def is_account_suspended(acc: Any) -> bool:
         return False
 
 
+def is_account_locked(acc: Any) -> bool:
+    try:
+        from services.verify_guard import is_account_locked as _is_locked
+
+        return bool(_is_locked(acc))
+    except Exception:
+        return False
+
+
+def is_account_recovery(acc: Any) -> bool:
+    try:
+        from services.verify_guard import is_account_recovery as _is_recovery
+
+        return bool(_is_recovery(acc))
+    except Exception:
+        return False
+
+
+def locked_block_reason(*values: object) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        lowered = text.lower()
+        if not lowered:
+            continue
+        if lowered.strip() in {"identity_locked", "locked"}:
+            try:
+                from services.verify_guard import LOCKED_BLOCK_REASON as _LOCKED_MSG
+            except Exception:
+                _LOCKED_MSG = "Account locked - face/ID verification required. Verify manually, then click Resume."
+            return _LOCKED_MSG
+        if "identity_locked" in lowered:
+            return text
+    try:
+        from services.verify_guard import is_locked_status_text as _is_locked_text
+
+        for value in values:
+            text = str(value or "").strip()
+            if text and _is_locked_text(text):
+                return text
+    except Exception:
+        pass
+    return ""
+
+
+def recovery_block_reason(*values: object) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        lowered = text.lower()
+        if not lowered:
+            continue
+        if lowered.strip() == "account_recovery":
+            try:
+                from services.verify_guard import RECOVERY_BLOCK_REASON as _RECOVERY_MSG
+            except Exception:
+                _RECOVERY_MSG = "Account recovery - passkey/2FA required. Complete recovery manually, then click Resume."
+            return _RECOVERY_MSG
+        if "account_recovery" in lowered:
+            return text
+    try:
+        from services.verify_guard import is_recovery_status_text as _is_recovery_text
+
+        for value in values:
+            text = str(value or "").strip()
+            if text and _is_recovery_text(text):
+                return text
+    except Exception:
+        pass
+    return ""
+
+
 FINISHED_STATUS = "Finished"
 SUSPENDED_BLOCK_REASON_FALLBACK = "Account suspended by Roblox. Unmark to allow rejoin."
 
@@ -464,6 +534,43 @@ def account_launch_block_reason(acc: Account) -> str:
     )
     if suspended:
         return suspended
+    # Identity lock (face/ID scan) and account recovery (passkey/2FA) outrank
+    # captcha: they need manual verification, not just a puzzle solve.
+    try:
+        from services.verify_guard import (
+            LOCKED_BLOCK_REASON,
+            RECOVERY_BLOCK_REASON,
+            is_account_locked,
+            is_account_recovery,
+        )
+
+        if is_account_locked(acc):
+            return LOCKED_BLOCK_REASON
+        if is_account_recovery(acc):
+            return RECOVERY_BLOCK_REASON
+    except Exception:
+        pass
+    try:
+        _locked = locked_block_reason(
+            getattr(acc, "manual_status", ""),
+            getattr(acc, "import_status", ""),
+            getattr(acc, "last_error", ""),
+            getattr(acc, "last_crash_reason", ""),
+            getattr(acc, "last_recovery_reason", ""),
+        )
+        if _locked:
+            return _locked
+        _rec = recovery_block_reason(
+            getattr(acc, "manual_status", ""),
+            getattr(acc, "import_status", ""),
+            getattr(acc, "last_error", ""),
+            getattr(acc, "last_crash_reason", ""),
+            getattr(acc, "last_recovery_reason", ""),
+        )
+        if _rec:
+            return _rec
+    except Exception:
+        pass
     try:
         from services.captcha_guard import CAPTCHA_BLOCK_REASON, is_account_captcha_required
 

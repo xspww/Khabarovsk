@@ -11,6 +11,16 @@ from services.captcha_guard import (
     is_account_captcha_required,
     set_account_captcha_hold,
 )
+from services.verify_guard import (
+    LOCKED_BLOCK_REASON,
+    LOCKED_REASON,
+    RECOVERY_BLOCK_REASON,
+    RECOVERY_REASON,
+    is_account_locked,
+    is_account_recovery,
+    set_account_locked_hold,
+    set_account_recovery_hold,
+)
 
 
 @dataclass(frozen=True)
@@ -75,6 +85,25 @@ def evaluate_account_auth_gate(account: Any) -> AuthGateDecision:
             )
     except Exception:
         pass
+    # Identity lock (face/ID) and account recovery (passkey/2FA) outrank
+    # captcha everywhere else (Status payload, launch block reason,
+    # dashboard). Check them first so a locked account never reports as
+    # Captcha — notably LOCKED_BLOCK_REASON itself used to match a captcha
+    # keyword, and lock screens share "prove you are human" wording.
+    if is_account_locked(account):
+        return AuthGateDecision(
+            blocked=True,
+            reason_key=LOCKED_REASON,
+            reason=LOCKED_BLOCK_REASON,
+            category="locked",
+        )
+    if is_account_recovery(account):
+        return AuthGateDecision(
+            blocked=True,
+            reason_key=RECOVERY_REASON,
+            reason=RECOVERY_BLOCK_REASON,
+            category="account_recovery",
+        )
     if is_account_captcha_required(account):
         return AuthGateDecision(
             blocked=True,
@@ -104,6 +133,20 @@ def evaluate_account_auth_gate(account: Any) -> AuthGateDecision:
             reason=CAPTCHA_BLOCK_REASON,
             category="captcha",
         )
+    if reason == LOCKED_BLOCK_REASON:
+        return AuthGateDecision(
+            blocked=True,
+            reason_key=LOCKED_REASON,
+            reason=LOCKED_BLOCK_REASON,
+            category="locked",
+        )
+    if reason == RECOVERY_BLOCK_REASON:
+        return AuthGateDecision(
+            blocked=True,
+            reason_key=RECOVERY_REASON,
+            reason=RECOVERY_BLOCK_REASON,
+            category="account_recovery",
+        )
     reason_key = "cookie_invalid" if cookie_invalid_block_reason(reason) else "cookie_mismatch"
     return AuthGateDecision(
         blocked=True,
@@ -129,6 +172,20 @@ def mark_account_auth_quarantined(
         set_account_captcha_hold(
             account,
             decision.reason or CAPTCHA_BLOCK_REASON,
+            source=source or "auth_gate",
+            runtime_writer=runtime_writer,
+        )
+    elif decision.reason_key in (LOCKED_REASON, "locked") or decision.category == "locked":
+        set_account_locked_hold(
+            account,
+            decision.reason or LOCKED_BLOCK_REASON,
+            source=source or "auth_gate",
+            runtime_writer=runtime_writer,
+        )
+    elif decision.reason_key == RECOVERY_REASON or decision.category == "account_recovery":
+        set_account_recovery_hold(
+            account,
+            decision.reason or RECOVERY_BLOCK_REASON,
             source=source or "auth_gate",
             runtime_writer=runtime_writer,
         )

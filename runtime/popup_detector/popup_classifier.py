@@ -122,6 +122,18 @@ def classify_popup_observation(
             visual_strength=visual_strength,
             **visual_meta,
         )
+    # Locked (face/ID) and Recovery (passkey/2FA) are owned by
+    # runtime/verify_detector.py — same rule: never a disconnect rejoin.
+    if (text_features.get("has_locked") or text_features.get("has_recovery")) and not code:
+        return PopupClassification(
+            matched=False,
+            confidence=score,
+            confidence_breakdown=dict(confidence.get("breakdown") or {}),
+            recovery_allowed=False,
+            evidence_source=evidence_source,
+            visual_strength=visual_strength,
+            **visual_meta,
+        )
     if visual_features.get("captcha_challenge"):
         return PopupClassification(
             matched=False,

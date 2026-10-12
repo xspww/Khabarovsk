@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import random
 import sys
@@ -19,6 +19,8 @@ RECOVERY_REASON_MESSAGES = {
     "cookie_missing": "Stopped - missing Roblox cookie",
     "banned": "Stopped - account banned (Roblox). Unmark to allow rejoin.",
     "captcha_required": "CAPTCHA required. Solve it manually, then click Resume or Reload Cookies.",
+    "identity_locked": "Account locked - face/ID verification required. Verify manually, then click Resume.",
+    "account_recovery": "Account recovery - passkey/2FA required. Complete recovery manually, then click Resume.",
     "max_fail": "Stopped - fail limit reached (FAILED state)",
     "recovery_budget_exceeded": "Stopped - recovery circuit breaker tripped. Reload cookies or restart the account after reviewing failures.",
     "relaunch_loop": "Stopped - rapid Roblox relaunch loop detected",

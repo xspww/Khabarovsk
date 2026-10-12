@@ -24,6 +24,10 @@ REASON_ALIASES = {
     "cookie_mismatch": "auth_failure",
     "captcha": "captcha_required",
     "captcha_required": "captcha_required",
+    "locked": "identity_locked",
+    "identity_locked": "identity_locked",
+    "recovery": "account_recovery",
+    "account_recovery": "account_recovery",
     "multi_roblox_guard_failed": "multi_roblox_guard_failed",
     "launch_verify_timeout": "watchdog_timeout",
     "process_memory_pressure": "watchdog_timeout",
@@ -40,6 +44,8 @@ RECOVERY_POLICIES = {
     "watchdog_timeout": {"bucket": "crash", "cap": 35.0, "fatal": False},
     "auth_failure": {"bucket": "session", "cap": 0.0, "fatal": True},
     "captcha_required": {"bucket": "session", "cap": 0.0, "fatal": True},
+    "identity_locked": {"bucket": "session", "cap": 0.0, "fatal": True},
+    "account_recovery": {"bucket": "session", "cap": 0.0, "fatal": True},
     "account_launched_elsewhere": {"bucket": "session", "cap": 0.0, "fatal": True},
     "session_conflict": {"bucket": "session", "cap": 20.0, "fatal": False},
     "multi_roblox_guard_failed": {"bucket": "session", "cap": 0.0, "fatal": True},
@@ -132,6 +138,8 @@ def is_game_unavailable_detail(text: str) -> bool:
     if "cookie" in lowered or ".roblosecurity" in lowered:
         return False
     if "captcha" in lowered or "banned" in lowered or "suspended" in lowered:
+        return False
+    if "identity_locked" in lowered or "account_recovery" in lowered or "account locked" in lowered or "passkey" in lowered:
         return False
     if "auth failure" in lowered or "auth-ticket" in lowered or "authentication" in lowered or "login" in lowered:
         return False

@@ -1,6 +1,7 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import atexit
+import base64
 import json
 import os
 import re
@@ -313,7 +314,7 @@ def fetch_moderation_status(cookie: str, timeout: float = 8.0) -> Tuple[Optional
     action for the signed-in account, including its type and end date.
 
     Returns (is_moderated_or_None, detail, payload). None means the status
-    could not be read — either the cookie is no longer valid (401, Roblox
+    could not be read â€” either the cookie is no longer valid (401, Roblox
     has already revoked it) or the request failed. A revoked cookie is NOT
     evidence of a ban, so callers must never treat None as banned.
     """
@@ -391,39 +392,67 @@ def fetch_user_ban_status(user_id: str, timeout: float = 8.0, trusted_id: bool =
     if not uid.isdigit():
         return None, ""
     url = f"{USERS_BASE}v1/users/{uid}"
-    try:
-        req = urllib.request.Request(url, headers=dict(PUBLIC_HEADERS))
-        with net_tls.urlopen(req, timeout=timeout) as resp:
-            try:
-                data = json.loads(resp.read().decode("utf-8", errors="replace"))
-            except Exception:
-                return None, "ban check parse failed"
-            if isinstance(data, dict) and bool(data.get("isBanned", False)):
-                return True, "Account banned (Roblox isBanned=true)"
-            return False, ""
-    except urllib.error.HTTPError as exc:
+
+    def _fetch_once() -> Tuple[str, Any]:
+        """Returns (kind, payload): kind is ok|http_error|transient."""
         try:
-            body = exc.read().decode("utf-8", errors="replace")
-        except Exception:
-            body = ""
-        lowered = f"{exc.code} {body}".lower()
-        if exc.code == 404:
-            if trusted_id:
-                return True, "Account not found (deleted/terminated)"
+            req = urllib.request.Request(url, headers=dict(PUBLIC_HEADERS))
+            with net_tls.urlopen(req, timeout=timeout) as resp:
+                try:
+                    data = json.loads(resp.read().decode("utf-8", errors="replace"))
+                except Exception:
+                    return "transient", "ban check parse failed"
+                if isinstance(data, dict) and bool(data.get("isBanned", False)):
+                    return "ok", (True, "Account banned (Roblox isBanned=true)")
+                return "ok", (False, "")
+        except urllib.error.HTTPError as exc:
+            try:
+                body = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                body = ""
+            return "http_error", (int(exc.code or 0), body)
+        except Exception as exc:
+            return "transient", f"ban check transient: {exc}"
+
+    kind, payload = _fetch_once()
+    if kind == "ok":
+        return payload
+    if kind == "transient":
+        return None, str(payload)
+    code, body = payload
+    lowered = f"{code} {body}".lower()
+    if code == 404:
+        if not trusted_id:
             return None, "ban check: no public profile for this id"
-        if exc.code == 429 or exc.code >= 500:
-            return None, f"ban check transient (HTTP {exc.code})"
-        if "banned" in lowered or "terminat" in lowered:
-            return True, f"Account banned ({body[:120].strip() or exc.code})"
-        return None, f"ban check HTTP {exc.code}"
-    except Exception as exc:
-        return None, f"ban check transient: {exc}"
+        # A numeric ID that just resolved via the username API 404ing once
+        # is usually replication lag / rate-limit, not a deletion. Retry
+        # once before concluding the account is gone so one flaky 404 can
+        # never falsely mark a healthy account as banned.
+        try:
+            time.sleep(2.0)
+        except Exception:
+            pass
+        kind2, payload2 = _fetch_once()
+        if kind2 == "ok":
+            return payload2
+        if kind2 == "transient":
+            return None, str(payload2)
+        code2, body2 = payload2
+        if code2 == 404:
+            return True, "Account not found (deleted/terminated)"
+        lowered = f"{code2} {body2}".lower()
+        code, body = code2, body2
+    if code == 429 or code >= 500:
+        return None, f"ban check transient (HTTP {code})"
+    if "banned" in lowered or "terminat" in lowered:
+        return True, f"Account banned ({body[:120].strip() or code})"
+    return None, f"ban check HTTP {code}"
 
 
 def fetch_user_id_by_username(username: str, timeout: float = 8.0) -> Tuple[str, str]:
     """Resolve a Roblox user_id from a username via public API (no cookie).
 
-    Returns (user_id_or_empty, detail). Empty user_id means unknown —
+    Returns (user_id_or_empty, detail). Empty user_id means unknown â€”
     either the user does not exist or the lookup failed transiently.
     """
     name = str(username or "").strip()
@@ -465,13 +494,64 @@ def fetch_ban_status_by_username(username: str, timeout: float = 8.0) -> Tuple[O
     """Check account-level ban by username (public API, no cookie needed).
 
     Returns (is_banned_or_None, user_id, detail). None = unknown (user not
-    found or transient failure) — caller must NOT mark banned on unknown.
+    found or transient failure) â€” caller must NOT mark banned on unknown.
     """
     uid, detail = fetch_user_id_by_username(username, timeout=timeout)
     if not uid:
         return None, "", detail
     banned, ban_detail = fetch_user_ban_status(uid, timeout=timeout)
     return banned, uid, ban_detail
+
+
+def cookie_embedded_identity(cookie: str) -> Tuple[str, str]:
+    """Read the (username, user_id) Roblox embeds inside the cookie token.
+
+    `.ROBLOSECURITY` payloads carry protobuf fields `uname` and `uid`, so a
+    cookie-only paste (no ``username:`` prefix) can still resolve its owner
+    without network. Returns ("", "") when absent or unparseable.
+
+    The identity is self-asserted by the token, so it is only ever used to
+    *name* an account for display and public-API checks — never to prove a
+    cookie is valid.
+    """
+    token = str(cookie or "").strip()
+    if not token:
+        return "", ""
+    # The token separator is "|_" (pipe-underscore): "...items.|_CAEQ...".
+    # A payload-only paste (no header) is used as-is.
+    payload = token.rsplit("|_", 1)[-1].strip() if "|_" in token else token
+    candidates = [payload]
+    if payload.startswith("_"):
+        # Tolerate a separator variant that leaves a stray leading "_".
+        candidates.append(payload[1:])
+    for candidate in candidates:
+        if len(candidate) < 32 or not re.fullmatch(r"[A-Za-z0-9+/=_-]+", candidate):
+            continue
+        try:
+            raw = base64.urlsafe_b64decode(candidate + "=" * (-len(candidate) % 4))
+        except Exception:
+            continue
+        try:
+            # `..` must span arbitrary tag/length bytes (0x0A is common), so
+            # [\s\S] is used instead of `.` which skips newlines.
+            name_match = re.search(rb"uname[\s\S]{2}([A-Za-z0-9_]{3,20})", raw)
+            username = name_match.group(1).decode("ascii") if name_match else ""
+        except Exception:
+            username = ""
+        try:
+            # `duid` (device id) also contains "uid" — require a non-letter
+            # before it so the device id is never mistaken for the user id.
+            uid_match = re.search(rb"(?<![A-Za-z])uid[\s\S]{2}(\d{4,15})", raw)
+            user_id = uid_match.group(1).decode("ascii") if uid_match else ""
+        except Exception:
+            user_id = ""
+        if username and not re.fullmatch(r"[A-Za-z0-9_]{3,20}", username):
+            username = ""
+        if user_id and not user_id.isdigit():
+            user_id = ""
+        if username or user_id:
+            return username, user_id
+    return "", ""
 
 
 def username_for_cookie_in_store(cookie: str) -> str:
@@ -501,16 +581,112 @@ def resolve_ban_for_dead_cookie(cookie: str, username_hint: str = "", timeout: f
     The dead cookie cannot prove anything, so fall back to the public API by
     username. Returns (is_banned_or_None, username, user_id). None = unknown.
     """
-    name = str(username_hint or "").strip() or username_for_cookie_in_store(cookie)
+    name = (
+        str(username_hint or "").strip()
+        or username_for_cookie_in_store(cookie)
+        or cookie_embedded_identity(cookie)[0]
+    )
     if not name:
         return None, "", ""
     banned, uid, detail = fetch_ban_status_by_username(name, timeout=timeout)
     return banned, name, uid
 
 
+def moderated_only_detail(detail: str) -> bool:
+    """True when a failure detail claims moderation but names no explicit ban.
+
+    A 403 "User is moderated" response is ambiguous on its own: it fits a
+    banned account just as well as a verification-locked one. Callers must
+    resolve it via resolve_moderated_dead_cookie instead of treating it as
+    a ban outright.
+    """
+    t = str(detail or "").lower()
+    if "moderat" not in t:
+        return False
+    if "suspend" in t:
+        return False
+    if "account banned" in t or "roblox ban" in t or "user is banned" in t:
+        return False
+    compact = t.replace(" ", "").replace("_", "").replace("-", "")
+    if "isbanned" in compact or "terminat" in t:
+        return False
+    return True
+
+
+def resolve_moderated_dead_cookie(
+    cookie: str, username_hint: str = "", timeout: float = 8.0
+) -> Tuple[Optional[str], str, str, str]:
+    """Disambiguate a dead cookie answered 403 "User is moderated".
+
+    Returns (verdict, detail, username, user_id) with verdict in
+    {"banned", "locked", None}. "locked" means the public profile proves
+    the account is alive and not banned, so the moderation response comes
+    from a non-ban hold (verification lock or similar). None = unknown.
+    """
+    name = (
+        str(username_hint or "").strip()
+        or username_for_cookie_in_store(cookie)
+        or cookie_embedded_identity(cookie)[0]
+    )
+    if not name:
+        return None, "", "", ""
+    try:
+        banned, uid, ban_detail = fetch_ban_status_by_username(name, timeout=timeout)
+    except Exception:
+        return None, "", name, ""
+    if banned is True:
+        return "banned", (ban_detail or "Account banned (Roblox isBanned=true)"), name, str(uid or "")
+    if banned is False:
+        try:
+            from services.verify_guard import LOCKED_BLOCK_REASON as _LM
+        except Exception:
+            _LM = "Account locked - face/ID verification required. Verify manually, then click Resume."
+        return "locked", _LM, name, str(uid or "")
+    return None, "", name, str(uid or "")
+
+
+def reprobe_moderation_response(cookie: str, attempts: int = 3, delay: float = 1.5, timeout: float = 8.0) -> Tuple[int, str]:
+    """Re-ask the authenticated endpoint a few times for a dead cookie.
+
+    Roblox sometimes answers the same dead token with plain 401 and
+    sometimes with 403 "User is moderated". Returns the first moderation
+    indicating (status, body), else (0, ""). Only used when another signal
+    (e.g. a gated password login) already suggests an account hold, so
+    healthy expired cookies never pay the extra calls.
+    """
+    token = str(cookie or "").strip()
+    if not token:
+        return 0, ""
+    tries = max(1, min(5, int(attempts or 3)))
+    try:
+        client = RobloxHTTP(token)
+    except Exception:
+        return 0, ""
+    for _ in range(tries):
+        try:
+            status, body, _headers = client.request(USERS_BASE + "v1/users/authenticated", method="GET", retry_csrf=False)
+        except Exception:
+            status, body = 0, ""
+        text = f"{status} {body or ''}"
+        if int(status or 0) == 403 and "moderat" in str(body or "").lower() and "suspend" not in str(body or "").lower():
+            return int(status), str(body or "")
+        try:
+            time.sleep(max(0.0, float(delay or 0.0)))
+        except Exception:
+            pass
+    return 0, ""
+
+
 def validate_cookie_details(cookie: str) -> Tuple[bool, str, str, Dict[str, Any]]:
     ok, data, detail = RobloxHTTP(cookie).authenticated_user()
     if not ok:
+        # Owner fallback: a dead cookie still names its account inside the
+        # token (uname/uid fields), so error paths can show *who* is blocked
+        # even when the line carried no username prefix.
+        try:
+            _emb_name, _emb_uid = cookie_embedded_identity(cookie)
+        except Exception:
+            _emb_name, _emb_uid = "", ""
         # 403 "User is moderated" means the cookie is still good enough for
         # the moderation endpoint even though authenticated/ fails. Probe it
         # before giving up so a 6-month suspension reads as Suspended, not Invalid.
@@ -534,17 +710,17 @@ def validate_cookie_details(cookie: str) -> Tuple[bool, str, str, Dict[str, Any]
             except Exception:
                 _uid = ""
             if _is_susp:
-                return False, "", _mod_detail, {
-                    "username": "",
-                    "user_id": _uid,
+                return False, _emb_name, _mod_detail, {
+                    "username": _emb_name,
+                    "user_id": _uid or _emb_uid,
                     "is_banned": True,
                     "banned": True,
                     "is_suspended": True,
                     "suspended": True,
                 }
-            return False, "", _mod_detail, {
-                "username": "",
-                "user_id": _uid,
+            return False, _emb_name, _mod_detail, {
+                "username": _emb_name,
+                "user_id": _uid or _emb_uid,
                 "is_banned": True,
                 "banned": True,
                 "is_suspended": False,
@@ -562,10 +738,12 @@ def validate_cookie_details(cookie: str) -> Tuple[bool, str, str, Dict[str, Any]
                         username_guess = str(data.get("name") or "") if isinstance(data, dict) else ""
                     except Exception:
                         username_guess = ""
-                    return False, username_guess, detail, {"username": username_guess, "user_id": "", "is_banned": True, "banned": True}
+                    if not username_guess:
+                        username_guess = _emb_name
+                    return False, username_guess, detail, {"username": username_guess, "user_id": _emb_uid, "is_banned": True, "banned": True}
             except Exception:
                 pass
-        return False, "", detail, {}
+        return False, _emb_name, detail, {"username": _emb_name, "user_id": _emb_uid}
     username = str(data.get("name") or data.get("displayName") or "")
     user_id = str(data.get("id") or "")
     # Cookie is valid. Check the live moderation action first: it is the only
@@ -603,7 +781,7 @@ def validate_cookie_details(cookie: str) -> Tuple[bool, str, str, Dict[str, Any]
             "is_suspended": False,
             "suspended": False,
         }
-    # No active intervention — fall back to the public profile, which still
+    # No active intervention â€” fall back to the public profile, which still
     # owns permanent terminations (those can outlive the cookie).
     if user_id:
         banned, ban_detail = fetch_user_ban_status(user_id)
@@ -644,14 +822,65 @@ def validate_record_cookie_identity(record: Dict[str, Any], cookie: str, update_
         _BANNED_MSG = "Account banned (Roblox). Unmark to allow rejoin."
         _BANNED_STATUS = "banned"
         _is_banned_text = lambda *a, **k: False  # type: ignore
+    try:
+        from services.verify_guard import (
+            LOCKED_BLOCK_REASON as _LOCKED_MSG,
+            LOCKED_REASON as _LOCKED_STATUS,
+            RECOVERY_BLOCK_REASON as _RECOVERY_MSG,
+            RECOVERY_REASON as _RECOVERY_STATUS,
+            is_locked_status_text as _is_locked_status,
+            is_locked_text as _is_locked_text,
+            is_recovery_status_text as _is_recovery_status,
+            is_recovery_text as _is_recovery_text,
+        )
+    except Exception:
+        _LOCKED_MSG = "Account locked - face/ID verification required. Verify manually, then click Resume."
+        _LOCKED_STATUS = "identity_locked"
+        _RECOVERY_MSG = "Account recovery - passkey/2FA required. Complete recovery manually, then click Resume."
+        _RECOVERY_STATUS = "account_recovery"
+        _is_locked_status = lambda *a, **k: False  # type: ignore
+        _is_locked_text = lambda *a, **k: False  # type: ignore
+        _is_recovery_status = lambda *a, **k: False  # type: ignore
+        _is_recovery_text = lambda *a, **k: False  # type: ignore
     is_banned = bool((meta or {}).get("is_banned") or (meta or {}).get("banned"))
     if not is_banned:
         try:
             is_banned = bool(_is_banned_text(detail))
         except Exception:
             is_banned = False
+    if is_banned and moderated_only_detail(detail):
+        # "User is moderated" alone fits a verification lock as well as a
+        # ban. Resolve it before labeling so a locked account never reads
+        # as banned.
+        try:
+            _mv, _md, _mn, _mu = resolve_moderated_dead_cookie(cookie, username)
+        except Exception:
+            _mv, _md, _mn, _mu = None, "", "", ""
+        if _mv == "locked":
+            is_banned = False
+            detail = _md or detail
+            meta = dict(meta or {})
+            meta["is_banned"] = False
+            meta["banned"] = False
+            meta["is_locked"] = True
+            meta["locked"] = True
+            if _mn:
+                meta["username"] = _mn
+            if _mu:
+                meta["user_id"] = _mu
+    # Locked / recovery outrank captcha but never outrank a ban.
+    is_locked = False
+    is_recovery = False
+    try:
+        is_locked = bool(_is_locked_text(detail))
+    except Exception:
+        is_locked = False
+    try:
+        is_recovery = bool(_is_recovery_text(detail)) and not is_locked
+    except Exception:
+        is_recovery = False
     if not is_banned:
-        # Cookie is dead so the ban API cannot confirm anything — but a
+        # Cookie is dead so the ban API cannot confirm anything â€” but a
         # previous Banned mark must survive Reload instead of flipping to
         # Invalid (a terminated cookie stays dead forever).
         try:
@@ -661,9 +890,49 @@ def validate_record_cookie_identity(record: Dict[str, Any], cookie: str, update_
                 str((record or {}).get("manual_status") or ""),
                 str((record or {}).get("import_status") or ""),
             ):
-                is_banned = True
+                # Re-verify via the public API first: a previous mark must
+                # survive, but one old false mark must never stick forever.
+                _recheck = None
+                try:
+                    _rb, _rn, _ru = resolve_ban_for_dead_cookie(cookie, username)
+                    _recheck = _rb
+                except Exception:
+                    _recheck = None
+                if _recheck is False:
+                    # Public API says the account is alive: drop the stale
+                    # mark instead of preserving it.
+                    record = dict(record or {})
+                    record["manual_status"] = ""
+                    record["import_status"] = ""
+                    if update_store and username:
+                        ACCOUNT_STORE.update_record(username, {"manual_status": "", "import_status": ""})
+                else:
+                    is_banned = True
+                    if not detail:
+                        detail = "cookie expired, ban mark kept"
+        except Exception:
+            pass
+    if not is_banned and not is_locked and not is_recovery:
+        # A previous Locked/Recovery mark survives a dead cookie: the cookie
+        # API cannot prove the verification is cleared, so keep the mark
+        # instead of demoting to Invalid.
+        try:
+            if _is_locked_status(
+                str((record or {}).get("manual_status") or ""),
+                str((record or {}).get("import_status") or ""),
+                str((record or {}).get("last_error") or ""),
+            ):
+                is_locked = True
                 if not detail:
-                    detail = "cookie expired, ban mark kept"
+                    detail = "cookie expired, locked mark kept"
+            elif _is_recovery_status(
+                str((record or {}).get("manual_status") or ""),
+                str((record or {}).get("import_status") or ""),
+                str((record or {}).get("last_error") or ""),
+            ):
+                is_recovery = True
+                if not detail:
+                    detail = "cookie expired, recovery mark kept"
         except Exception:
             pass
     if not ok:
@@ -685,6 +954,16 @@ def validate_record_cookie_identity(record: Dict[str, Any], cookie: str, update_
                         ),
                         "cookie_mismatch": False,
                     },
+                )
+            elif is_locked:
+                ACCOUNT_STORE.update_record(
+                    username,
+                    {"manual_status": _LOCKED_MSG, "import_status": _LOCKED_STATUS},
+                )
+            elif is_recovery:
+                ACCOUNT_STORE.update_record(
+                    username,
+                    {"manual_status": _RECOVERY_MSG, "import_status": _RECOVERY_STATUS},
                 )
             elif is_captcha_text(detail):
                 ACCOUNT_STORE.update_record(
@@ -710,6 +989,26 @@ def validate_record_cookie_identity(record: Dict[str, Any], cookie: str, update_
                     (meta or {}).get("user_id") or (record or {}).get("cookie_user_id") or ""
                 ),
             }
+        if is_locked:
+            return {
+                "ok": False,
+                "fatal": True,
+                "locked_required": True,
+                "msg": _LOCKED_MSG,
+                "detail": detail or _LOCKED_MSG,
+                "cookie_username": "",
+                "cookie_user_id": "",
+            }
+        if is_recovery:
+            return {
+                "ok": False,
+                "fatal": True,
+                "recovery_required": True,
+                "msg": _RECOVERY_MSG,
+                "detail": detail or _RECOVERY_MSG,
+                "cookie_username": "",
+                "cookie_user_id": "",
+            }
         if is_captcha_text(detail):
             return {
                 "ok": False,
@@ -730,8 +1029,11 @@ def validate_record_cookie_identity(record: Dict[str, Any], cookie: str, update_
         "import_status": "cookie_mismatch" if mismatch else "",
     }
     if not mismatch:
-        # Cookie is valid and not banned — clear a stale banned mark so an
+        # Cookie is valid and not banned â€” clear a stale banned mark so an
         # unbanned / replaced cookie rejoins again without manual unmark.
+        # Locked/Recovery marks are NOT cleared here: a valid cookie does not
+        # prove face-scan / passkey verification is done (cookie stays 200
+        # while the lock screen persists). They clear only on manual Resume.
         try:
             prev_manual = str((record or {}).get("manual_status") or "")
             prev_import = str((record or {}).get("import_status") or "")
@@ -739,6 +1041,13 @@ def validate_record_cookie_identity(record: Dict[str, Any], cookie: str, update_
 
             if _is_banned_status(prev_manual, prev_import):
                 updates["manual_status"] = ""
+            # Preserve a previous Locked/Recovery hold across a valid cookie.
+            try:
+                if _is_locked_status(prev_manual, prev_import) or _is_recovery_status(prev_manual, prev_import):
+                    updates["manual_status"] = prev_manual
+                    updates["import_status"] = prev_import
+            except Exception:
+                pass
         except Exception:
             pass
     if update_store and username:

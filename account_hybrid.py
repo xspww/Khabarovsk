@@ -234,20 +234,33 @@ def _merge_redacted_vip_links(new_value: Any, old_value: Any) -> Any:
 
 
 def parse_cookie_line(line: str) -> Tuple[str, str]:
+    username, _password, cookie = parse_credential_line(line)
+    return username, cookie
+
+
+def parse_credential_line(line: str) -> Tuple[str, str, str]:
+    """Split a ``user:pass:cookie`` (or cookie-only) line.
+
+    Returns (username, password, cookie). The password is only present on
+    pasted credential lines; it must be used transiently and never stored.
+    """
     text = str(line or "").strip()
     if not text:
-        return "", ""
+        return "", "", ""
     match = COOKIE_RE.search(text)
     if match:
         before = text[: match.start()].strip(": \t")
+        if before and ":" in before:
+            username, password = before.split(":", 1)
+            return username.strip(), password.strip(), match.group(1).strip()
         username = before.split(":", 1)[0].strip() if before else ""
-        return username, match.group(1).strip()
+        return username, "", match.group(1).strip()
     parts = text.split(":")
     if len(parts) >= 3 and parts[2].strip().startswith("_|WARNING:"):
-        return parts[0].strip(), ":".join(parts[2:]).strip()
+        return parts[0].strip(), parts[1].strip(), ":".join(parts[2:]).strip()
     if text.startswith("_|WARNING:"):
-        return "", text
-    return "", ""
+        return "", "", text
+    return "", "", ""
 
 
 def parse_userpass_line(line: str) -> Tuple[str, str]:
@@ -491,25 +504,38 @@ class AccountDataStore:
         records: List[Dict[str, Any]] = []
         errors: List[str] = []
         banned = 0
+        locked = 0
+        account_recovery = 0
+        captcha = 0
+        refreshed = 0
+        cred_check_blocked = False
         for line in lines:
-            username, cookie = parse_cookie_line(line)
+            username, password, cookie = parse_credential_line(line)
             if not cookie:
                 continue
             if not username:
-                # Cookie-only line (no "username:" prefix). Recover the owner
-                # from the stored records so identity and the ban-by-name
-                # check still work instead of skipping the line.
+                # Cookie-only line (no "username:" prefix). The token itself
+                # embeds its owner (uname/uid fields), so identity — and the
+                # ban-by-name check — still work instead of skipping the line.
                 try:
                     from roblox_hybrid import username_for_cookie_in_store as _owner_for_cookie
 
                     username = _owner_for_cookie(cookie)
                 except Exception:
                     username = ""
+                if not username:
+                    try:
+                        from roblox_hybrid import cookie_embedded_identity as _embedded_identity
+
+                        username = _embedded_identity(cookie)[0]
+                    except Exception:
+                        pass
             cookie_username = ""
             cookie_user_id = ""
             cookie_mismatch = False
             is_banned = False
             ban_detail = ""
+            _login_gated = False
             if validator:
                 try:
                     validation = validator(cookie)
@@ -523,6 +549,46 @@ class AccountDataStore:
                         is_banned = bool(meta.get("is_banned") or meta.get("banned")) or bool(_is_banned_text(detail))
                     except Exception:
                         is_banned = bool(meta.get("is_banned") or meta.get("banned"))
+                    if is_banned and not bool(meta.get("is_suspended") or meta.get("suspended")):
+                        # Bare "User is moderated" wording may be a lock, not
+                        # a ban. Resolve it before the banned branch below so
+                        # a locked account is not imported as Banned.
+                        try:
+                            from roblox_hybrid import moderated_only_detail as _mod_only_v
+                            from roblox_hybrid import resolve_moderated_dead_cookie as _resolve_mod_v
+                            from services.verify_guard import LOCKED_BLOCK_REASON as _LM_V
+                            from services.verify_guard import LOCKED_REASON as _LR_V
+                        except Exception:
+                            _mod_only_v = lambda *a, **k: False  # type: ignore
+                            _resolve_mod_v = lambda *a, **k: (None, "", "", "")  # type: ignore
+                            _LM_V = "Account locked - face/ID verification required. Verify manually, then click Resume."
+                            _LR_V = "identity_locked"
+                        try:
+                            _mod_hit_v = bool(_mod_only_v(detail))
+                        except Exception:
+                            _mod_hit_v = False
+                        if _mod_hit_v:
+                            try:
+                                _mv_v, _md_v, _mn_v, _mu_v = _resolve_mod_v(cookie, username)
+                            except Exception:
+                                _mv_v, _md_v, _mn_v, _mu_v = None, "", "", ""
+                            if _mv_v == "locked":
+                                _lock_user_v = str(username or _mn_v or validated or cookie_username or "").strip()
+                                if _lock_user_v:
+                                    records.append(
+                                        {
+                                            "username": _lock_user_v,
+                                            "cookie": cookie,
+                                            "cookie_username": cookie_username or _lock_user_v,
+                                            "cookie_user_id": str(_mu_v or cookie_user_id or ""),
+                                            "cookie_mismatch": False,
+                                            "manual_status": _LM_V,
+                                            "import_status": _LR_V,
+                                        }
+                                    )
+                                    locked += 1
+                                    errors.append(f"{_lock_user_v} locked (moderation) - imported with Locked mark")
+                                    continue
                     if is_banned:
                         ban_detail = str(detail or "")
                         if not username:
@@ -570,6 +636,222 @@ class AccountDataStore:
                         )
                         banned += 1
                         continue
+                    # Roblox challenge wording in the validation detail means
+                    # the account needs manual verification (face/ID scan,
+                    # passkey recovery, or captcha) — import it marked instead
+                    # of dropping it as a generic invalid cookie.
+                    try:
+                        from services.verify_guard import LOCKED_BLOCK_REASON as _LOCKED_MSG_I
+                        from services.verify_guard import LOCKED_REASON as _LOCKED_STATUS_I
+                        from services.verify_guard import RECOVERY_BLOCK_REASON as _REC_MSG_I
+                        from services.verify_guard import RECOVERY_REASON as _REC_STATUS_I
+                        from services.verify_guard import is_locked_text as _is_locked_text_i
+                        from services.verify_guard import is_recovery_text as _is_rec_text_i
+                        from services.captcha_guard import CAPTCHA_BLOCK_REASON as _CAP_MSG_I
+                        from services.captcha_guard import CAPTCHA_REASON as _CAP_STATUS_I
+                        from services.captcha_guard import is_captcha_text as _is_cap_text_i
+                    except Exception:
+                        _LOCKED_MSG_I = "Account locked - face/ID verification required. Verify manually, then click Resume."
+                        _LOCKED_STATUS_I = "identity_locked"
+                        _REC_MSG_I = "Account recovery - passkey/2FA required. Complete recovery manually, then click Resume."
+                        _REC_STATUS_I = "account_recovery"
+                        _CAP_MSG_I = "CAPTCHA required. Solve it manually, then click Resume or Reload Cookies."
+                        _CAP_STATUS_I = "captcha_required"
+                        _is_locked_text_i = lambda *a, **k: False  # type: ignore
+                        _is_rec_text_i = lambda *a, **k: False  # type: ignore
+                        _is_cap_text_i = lambda *a, **k: False  # type: ignore
+                    _verify_mark = None
+                    try:
+                        if _is_locked_text_i(detail):
+                            _verify_mark = (_LOCKED_MSG_I, _LOCKED_STATUS_I, "locked")
+                        elif _is_rec_text_i(detail):
+                            _verify_mark = (_REC_MSG_I, _REC_STATUS_I, "recovery")
+                        elif _is_cap_text_i(detail):
+                            _verify_mark = (_CAP_MSG_I, _CAP_STATUS_I, "captcha")
+                    except Exception:
+                        _verify_mark = None
+                    if _verify_mark is not None:
+                        _v_msg, _v_status, _v_word = _verify_mark
+                        _v_user = str(username or cookie_username or validated or "").strip()
+                        if not _v_user:
+                            errors.append(f"{_v_word} cookie missing username")
+                            continue
+                        records.append(
+                            {
+                                "username": _v_user,
+                                "cookie": cookie,
+                                "cookie_username": cookie_username or _v_user,
+                                "cookie_user_id": cookie_user_id,
+                                "cookie_mismatch": False,
+                                "manual_status": _v_msg,
+                                "import_status": _v_status,
+                            }
+                        )
+                        errors.append(f"{_v_user} {_v_word} — imported with {_v_word.capitalize()} mark")
+                        continue
+                    if not ok and not is_banned and username and password and not cred_check_blocked:
+                        # Dead cookie but the pasted line carries a password:
+                        # ask Roblox what the account actually needs. The
+                        # password is used for this one login attempt only and
+                        # is never stored, logged, or included in any message.
+                        try:
+                            from services.credential_check import (
+                                BAD_CREDENTIALS as _CC_BAD,
+                                BANNED as _CC_BANNED,
+                                CAPTCHA as _CC_CAPTCHA,
+                                LOCKED as _CC_LOCKED,
+                                RECOVERY as _CC_RECOVERY,
+                                TRANSIENT as _CC_TRANSIENT,
+                                UNKNOWN as _CC_UNKNOWN,
+                                VALID as _CC_VALID,
+                                paced_check_credentials as _paced_check,
+                            )
+
+                            _cc = _paced_check(username, password)
+                        except Exception:
+                            _cc = None
+                        _outcome = str((_cc or {}).get("outcome") or _CC_UNKNOWN)
+                        try:
+                            from core import flog_kv as _flog_cc
+
+                            _flog_cc("ACCOUNT_DATA", "credential_check", account=username, outcome=_outcome)
+                        except Exception:
+                            pass
+                        if _outcome == _CC_TRANSIENT:
+                            # Rate-limited / network error: stop password
+                            # checks for the rest of this batch.
+                            cred_check_blocked = True
+                        elif _outcome == _CC_VALID:
+                            _fresh = str((_cc or {}).get("fresh_cookie") or "")
+                            if _fresh:
+                                try:
+                                    _re = validator(_fresh)
+                                    _rok = bool(_re[0])
+                                    _rvalidated = str(_re[1] or "")
+                                    _rdetail = str(_re[2] or "")
+                                    _rmeta = _re[3] if len(_re) >= 4 and isinstance(_re[3], dict) else {}
+                                except Exception:
+                                    _rok, _rvalidated, _rdetail, _rmeta = False, "", "", {}
+                                if _rok:
+                                    cookie = _fresh
+                                    ok, validated, detail = _rok, _rvalidated, _rdetail
+                                    meta = _rmeta
+                                    cookie_user_id = str(meta.get("user_id") or "")
+                                    cookie_username = str(meta.get("username") or validated or "")
+                                    refreshed += 1
+                                    errors.append(f"{username} ok - cookie refreshed via login")
+                        elif _outcome == _CC_BANNED:
+                            try:
+                                from services.ban_guard import BANNED_BLOCK_REASON as _B_MSG_CC
+                                from services.ban_guard import BANNED_IMPORT_STATUS as _B_STATUS_CC
+                            except Exception:
+                                _B_MSG_CC = "Account banned (Roblox). Unmark to allow rejoin."
+                                _B_STATUS_CC = "banned"
+                            records.append(
+                                {
+                                    "username": username,
+                                    "cookie": cookie,
+                                    "cookie_username": username,
+                                    "cookie_user_id": cookie_user_id,
+                                    "cookie_mismatch": False,
+                                    "manual_status": _B_MSG_CC,
+                                    "import_status": _B_STATUS_CC,
+                                }
+                            )
+                            banned += 1
+                            errors.append(f"{username} banned (login) - imported with Banned mark")
+                            continue
+                        elif _outcome in (_CC_LOCKED, _CC_RECOVERY, _CC_CAPTCHA):
+                            try:
+                                from services.verify_guard import LOCKED_BLOCK_REASON as _L_MSG_CC
+                                from services.verify_guard import LOCKED_REASON as _L_STATUS_CC
+                                from services.verify_guard import RECOVERY_BLOCK_REASON as _R_MSG_CC
+                                from services.verify_guard import RECOVERY_REASON as _R_STATUS_CC
+                                from services.captcha_guard import CAPTCHA_BLOCK_REASON as _C_MSG_CC
+                                from services.captcha_guard import CAPTCHA_REASON as _C_STATUS_CC
+                            except Exception:
+                                _L_MSG_CC = "Account locked - face/ID verification required. Verify manually, then click Resume."
+                                _L_STATUS_CC = "identity_locked"
+                                _R_MSG_CC = "Account recovery - passkey/2FA required. Complete recovery manually, then click Resume."
+                                _R_STATUS_CC = "account_recovery"
+                                _C_MSG_CC = "CAPTCHA required. Solve it manually, then click Resume or Reload Cookies."
+                                _C_STATUS_CC = "captcha_required"
+                            if _outcome == _CC_LOCKED:
+                                _v_msg, _v_status, _v_word = _L_MSG_CC, _L_STATUS_CC, "locked"
+                                locked += 1
+                            elif _outcome == _CC_RECOVERY:
+                                _v_msg, _v_status, _v_word = _R_MSG_CC, _R_STATUS_CC, "recovery"
+                                account_recovery += 1
+                            else:
+                                _v_msg, _v_status, _v_word = _C_MSG_CC, _C_STATUS_CC, "captcha"
+                                captcha += 1
+                            records.append(
+                                {
+                                    "username": username,
+                                    "cookie": cookie,
+                                    "cookie_username": username,
+                                    "cookie_user_id": cookie_user_id,
+                                    "cookie_mismatch": False,
+                                    "manual_status": _v_msg,
+                                    "import_status": _v_status,
+                                }
+                            )
+                            errors.append(f"{username} {_v_word} (login) - imported with {_v_word.capitalize()} mark")
+                            continue
+                        elif _outcome == _CC_BAD:
+                            records.append(
+                                {
+                                    "username": username,
+                                    "cookie": cookie,
+                                    "cookie_username": username,
+                                    "cookie_user_id": cookie_user_id,
+                                    "cookie_mismatch": False,
+                                    "manual_status": "Invalid Cookie: incorrect username or password",
+                                    "import_status": "cookie_invalid",
+                                }
+                            )
+                            errors.append(f"{username} wrong password - fix the password and reimport")
+                            continue
+                        if _outcome == _CC_UNKNOWN and str((_cc or {}).get("challenge_type") or "") and (username or cookie):
+                            # Login was gated by a Roblox challenge, so its
+                            # verdict is hidden. The same dead cookie flaps
+                            # between plain 401 and 403-moderated: re-ask a
+                            # few times and classify a moderation hit.
+                            try:
+                                from roblox_hybrid import reprobe_moderation_response as _reprobe
+                                from roblox_hybrid import resolve_moderated_dead_cookie as _resolve_re
+                            except Exception:
+                                _reprobe = lambda *a, **k: (0, "")  # type: ignore
+                                _resolve_re = lambda *a, **k: (None, "", "", "")  # type: ignore
+                            try:
+                                _rs, _rb = _reprobe(cookie)
+                            except Exception:
+                                _rs, _rb = 0, ""
+                            if int(_rs or 0) == 403:
+                                try:
+                                    _mv_re, _md_re, _mn_re, _mu_re = _resolve_re(cookie, username)
+                                except Exception:
+                                    _mv_re, _md_re, _mn_re, _mu_re = None, "", "", ""
+                                if _mv_re == "locked":
+                                    records.append(
+                                        {
+                                            "username": str(username or _mn_re or "").strip() or username,
+                                            "cookie": cookie,
+                                            "cookie_username": str(username or _mn_re or ""),
+                                            "cookie_user_id": str(_mu_re or cookie_user_id or ""),
+                                            "cookie_mismatch": False,
+                                            "manual_status": _md_re,
+                                            "import_status": "identity_locked",
+                                        }
+                                    )
+                                    locked += 1
+                                    errors.append(f"{username} locked (moderation) - imported with Locked mark")
+                                    continue
+                            # Login gated + no moderation verdict: a security
+                            # lock kills the cookie the same way expiry does
+                            # (401 either way), so the status stays Invalid —
+                            # but hint at the likely cause below.
+                            _login_gated = True
                     if ok:
                         if not username:
                             username = str(validated or "")
@@ -577,6 +859,47 @@ class AccountDataStore:
                             cookie_mismatch = True
                             errors.append(f"cookie belongs to {cookie_username}, not {username}")
                     else:
+                        # A dead cookie answered 403 "User is moderated" fits
+                        # a verification lock as well as a ban. Resolve it
+                        # before the ban check below so a locked account is
+                        # imported as Locked instead of Banned.
+                        try:
+                            from roblox_hybrid import moderated_only_detail as _mod_only_i
+                            from roblox_hybrid import resolve_moderated_dead_cookie as _resolve_mod_i
+                        except Exception:
+                            _mod_only_i = lambda *a, **k: False  # type: ignore
+                            _resolve_mod_i = lambda *a, **k: (None, "", "", "")  # type: ignore
+                        try:
+                            _mod_hit_i = bool(_mod_only_i(detail)) and bool(username or cookie)
+                        except Exception:
+                            _mod_hit_i = False
+                        if _mod_hit_i:
+                            try:
+                                _mv_i, _md_i, _mn_i, _mu_i = _resolve_mod_i(cookie, username)
+                            except Exception:
+                                _mv_i, _md_i, _mn_i, _mu_i = None, "", "", ""
+                            if _mv_i == "locked":
+                                try:
+                                    from services.verify_guard import LOCKED_BLOCK_REASON as _LM_I
+                                    from services.verify_guard import LOCKED_REASON as _LR_I
+                                except Exception:
+                                    _LM_I = "Account locked - face/ID verification required. Verify manually, then click Resume."
+                                    _LR_I = "identity_locked"
+                                _lock_user = str(username or _mn_i or "").strip()
+                                if _lock_user:
+                                    records.append(
+                                        {
+                                            "username": _lock_user,
+                                            "cookie": cookie,
+                                            "cookie_username": _lock_user,
+                                            "cookie_user_id": str(_mu_i or cookie_user_id or ""),
+                                            "cookie_mismatch": False,
+                                            "manual_status": _LM_I,
+                                            "import_status": _LR_I,
+                                        }
+                                    )
+                                    errors.append(f"{_lock_user} locked (moderation) - imported with Locked mark")
+                                    continue
                         # Cookie is dead — identity cannot come from the cookie.
                         # Fall back to the public API by username so banned
                         # accounts are still tracked instead of being skipped.
@@ -638,11 +961,23 @@ class AccountDataStore:
                                     "import_status": "cookie_invalid",
                                 }
                             )
-                            errors.append(
+                            _invalid_msg = (
                                 f"{username} imported, but the cookie is not valid — paste a fresh cookie for this account"
                             )
+                            if _login_gated:
+                                _invalid_msg += (
+                                    " (login was gated by a Roblox challenge — if the account shows a "
+                                    "lock / verify-you-are-human screen, unlock it in the browser first)"
+                                )
+                            errors.append(_invalid_msg)
                             continue
-                        errors.append(detail)
+                        _tail_msg = str(detail or "")
+                        if _login_gated:
+                            _tail_msg += (
+                                " (login was gated by a Roblox challenge — if the account shows a "
+                                "lock / verify-you-are-human screen, unlock it in the browser first)"
+                            )
+                        errors.append(_tail_msg)
                         continue
                 except Exception as exc:
                     errors.append(str(exc))
@@ -664,6 +999,14 @@ class AccountDataStore:
         result: Dict[str, Any] = {"ok": True, "imported": changed, "errors": errors, "count": len(merged)}
         if banned:
             result["banned"] = banned
+        if locked:
+            result["locked"] = locked
+        if account_recovery:
+            result["recovery"] = account_recovery
+        if captcha:
+            result["captcha"] = captcha
+        if refreshed:
+            result["refreshed"] = refreshed
         return result
 
     @staticmethod

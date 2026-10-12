@@ -55,6 +55,23 @@ def _qtwebview2_lib_datas():
 _QTWEBVIEW2_LIB_DATAS = _qtwebview2_lib_datas()
 _CERTIFI_DATAS = collect_data_files("certifi")
 
+
+def _playwright_datas():
+    """Bundle the Playwright driver so Manual Login works in the exe.
+
+    The popup browser drives the machine's Chrome/Edge (no download), but
+    the playwright pip package (python code + node driver binary) must be
+    inside the bundle. Guarded: builds without playwright installed simply
+    ship no Manual Login browser support (the UI shows an install hint).
+    """
+    try:
+        return collect_data_files("playwright")
+    except Exception:
+        return []
+
+
+_PLAYWRIGHT_DATAS = _playwright_datas()
+
 a = Analysis(
     ["main.py"],
     pathex=["."],
@@ -65,9 +82,11 @@ a = Analysis(
         ("lua", "lua"),
         *_QTWEBVIEW2_LIB_DATAS,
         *_CERTIFI_DATAS,
+        *_PLAYWRIGHT_DATAS,
     ],
     hiddenimports=[
         "PIL",
+        "playwright.sync_api",
         "uvicorn.loops.auto",
         "uvicorn.protocols.http.auto",
         "uvicorn.protocols.websockets.auto",

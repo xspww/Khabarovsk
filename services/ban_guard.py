@@ -160,7 +160,12 @@ def persist_account_banned_status(account: Any, active: bool = True) -> None:
                 }
             )
         else:
-            updates = {"manual_status": "", "import_status": ""}
+            # Write back the surgically-cleared in-memory values so a
+            # co-existing hold is preserved in the store.
+            updates = {
+                "manual_status": str(getattr(account, "manual_status", "") or ""),
+                "import_status": str(getattr(account, "import_status", "") or ""),
+            }
         ACCOUNT_STORE.update_record(username, updates)
     except Exception:
         pass
@@ -297,5 +302,6 @@ def clear_account_banned_hold(account: Any, runtime_writer: Any = None) -> bool:
             _clear()
     else:
         _clear()
-    persist_account_banned_status(account, active=False)
+    if was_moderated:
+        persist_account_banned_status(account, active=False)
     return was_moderated

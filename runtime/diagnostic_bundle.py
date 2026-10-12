@@ -58,6 +58,8 @@ ACCOUNT_KEYS = (
     "launchable",
     "blocked_reason",
     "captcha_required",
+    "locked_required",
+    "recovery_required",
     "cookie_username",
     "cookie_user_id",
     "cookie_mismatch",

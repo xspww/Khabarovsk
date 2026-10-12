@@ -13,9 +13,12 @@ CAPTCHA_KEYWORDS = (
     "challenge-required",
     "challenge required",
     "security challenge",
-    "verification required",
-    "prove you",
     "robot check",
+    "prove you are not a bot",
+    "prove you're not a bot",
+    "prove you are not bot",
+    "i am not a robot",
+    "i'm not a robot",
 )
 
 # Only strong, captcha-specific markers belong here. Roblox's auto-passing
@@ -59,6 +62,21 @@ def is_captcha_text(*values: Any, headers: Mapping[str, Any] | None = None) -> b
     combined = f"{text} {header_text}".strip()
     if not combined:
         return False
+    # Locked (face/ID) and Recovery (passkey/2FA) outrank captcha: their
+    # screens share generic "verify/prove you" wording, so an account-level
+    # hold must never read as a captcha puzzle.
+    try:
+        from services.verify_guard import is_locked_text as _is_locked
+        from services.verify_guard import is_recovery_text as _is_recovery
+
+        if _is_locked(combined) or _is_recovery(combined):
+            # A pure challenge header (rblx-challenge-type: captcha/arkose)
+            # still names a real captcha even on a hold screen.
+            if "rblx-challenge-type" in combined and "captcha" in combined:
+                return True
+            return False
+    except Exception:
+        pass
     if "rblx-challenge-type" in combined and "captcha" in combined:
         return True
     return any(keyword in combined for keyword in CAPTCHA_KEYWORDS)
@@ -141,17 +159,19 @@ def persist_account_captcha_status(account: Any, active: bool = True) -> None:
                 break
         if not username:
             return
-        updates = (
-            {
+        if active:
+            updates = {
                 "manual_status": CAPTCHA_BLOCK_REASON,
                 "import_status": CAPTCHA_REASON,
             }
-            if active
-            else {
-                "manual_status": "",
-                "import_status": "",
+        else:
+            # Write back the surgically-cleared in-memory values instead of
+            # blank: a co-existing Locked/Recovery hold must survive a
+            # captcha resume instead of being wiped from the store.
+            updates = {
+                "manual_status": str(getattr(account, "manual_status", "") or ""),
+                "import_status": str(getattr(account, "import_status", "") or ""),
             }
-        )
         ACCOUNT_STORE.update_record(username, updates)
     except Exception:
         pass
@@ -194,6 +214,7 @@ def set_account_captcha_hold(account: Any, detail: str = "", source: str = "", r
         account.session_valid = False
         account.session_wait_started_at = 0.0
         account.manual_status = reason
+        account.import_status = CAPTCHA_REASON
         account.last_error = detail or reason
         account.last_crash_reason = CAPTCHA_REASON
         account.last_recovery_reason = CAPTCHA_REASON
@@ -254,5 +275,6 @@ def clear_account_captcha_hold(account: Any, runtime_writer: Any = None) -> bool
             _clear()
     else:
         _clear()
-    persist_account_captcha_status(account, active=False)
+    if was_captcha:
+        persist_account_captcha_status(account, active=False)
     return was_captcha

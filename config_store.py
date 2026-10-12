@@ -176,6 +176,8 @@ DEFAULTS: Dict[str, Any] = {
     "start_on_boot":          False,
     "start_farming_on_boot":  False,
     "auto_update_on_boot":    False,
+    "privacy_blur_usernames":      False,
+    "privacy_randomize_usernames": False,
     "accounts":                 [],
     "runtime_state":            {},
 }

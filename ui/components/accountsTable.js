@@ -53,7 +53,9 @@ export function renderAccountRows({
   rowStatusLabel: r,
   avatarHtml: u,
   esc: d,
-  gameHtmlFor: g
+  gameHtmlFor: g,
+  privacyBlur = false,
+  displayNameFor = null
 }) {
   if (!t.length) {
     return '<tr><td colspan="5" style="height:100px;text-align:center;color:var(--muted)">No accounts match the current filter</td></tr>';
@@ -112,10 +114,22 @@ export function renderAccountRows({
     const gameCell = g ? g(t, l) : '<span class="game-empty">—</span>';
 
     const isSelected=e instanceof Set?e.has(t.username):t.username===e;const selClass=isSelected?"selected":"";
+    const realName = String(t.username ?? "");
+    let shownName = realName;
+    let isFake = false;
+    try {
+      if (typeof displayNameFor === "function") {
+        const v = displayNameFor(realName);
+        if (typeof v === "string" && v) { shownName = v; isFake = v.toLowerCase() !== realName.toLowerCase(); }
+      }
+    } catch (_) {}
+    const hideReal = !!privacyBlur || isFake;
+    const nameCls = "user-name" + (privacyBlur ? " is-blurred" : "") + (isFake ? " is-fake" : "");
+    const nameTitle = hideReal ? "Hidden for privacy" : realName;
     return `<tr class="${selClass}${isEditing ? " editing-desc" : ""}" data-user="${d(t.username)}">
       <td class="num">${i + 1}</td>
       <td><span class="status ${d(h)}">${d(v)}</span></td>
-      <td><div class="user-simple"><span class="user-name" title="${d(t.username)}">${d(t.username)}</span></div></td>
+      <td><div class="user-simple"><span class="${nameCls}" title="${d(nameTitle)}">${d(shownName)}</span></div></td>
       <td class="game-cell">${gameCell}</td>
       <td class="desc-cell">${descCell}</td>
     </tr>`;

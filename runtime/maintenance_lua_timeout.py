@@ -27,6 +27,13 @@ def emit_lua_wait_timeout_recovery(
     # age/state/log_event — only the captcha-probe + signal sequence is shared.
     if detect_and_hold_captcha(owner, acc, pid, captcha_probe):
         return True
+    try:
+        from runtime.maintenance_verify import detect_and_hold_verify
+
+        if detect_and_hold_verify(owner, acc, pid, captcha_probe):
+            return True
+    except Exception:
+        pass
     flog_kv(
         "MAINT",
         log_event,
@@ -62,7 +69,13 @@ def handle_in_game_lua_wait_timeout(owner: Any, acc: Any, cfg: Dict[str, Any], n
     with acc._lock:
         if acc.state != AccountState.IN_GAME or acc.desired_state != AccountState.IN_GAME:
             return False
-        if acc.recovery_inflight or str(acc.recovery_status or "") == CAPTCHA_REASON:
+        try:
+            from services.verify_guard import LOCKED_REASON as _LOCKED_R, RECOVERY_REASON as _REC_R
+
+            _verify_reasons = {_LOCKED_R, _REC_R}
+        except Exception:
+            _verify_reasons = set()
+        if acc.recovery_inflight or str(acc.recovery_status or "") in ({CAPTCHA_REASON} | _verify_reasons):
             return False
         if account_lua_online(acc, now=now, timeout=lua_timeout):
             return False

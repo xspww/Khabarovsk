@@ -10,6 +10,16 @@ from services.network_monitor import NET_ONLINE
 from services.process_service import ProcessManager
 from services.resource_monitor import get_rt_monitor
 from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_LABEL, is_account_captcha_required
+from services.verify_guard import (
+    LOCKED_BLOCK_REASON,
+    LOCKED_LABEL,
+    LOCKED_REASON,
+    RECOVERY_BLOCK_REASON,
+    RECOVERY_LABEL,
+    RECOVERY_REASON,
+    is_account_locked,
+    is_account_recovery,
+)
 from services.ban_guard import (
     BANNED_BLOCK_REASON,
     BANNED_LABEL,
@@ -267,13 +277,21 @@ class RuntimeViewModelBuilder:
             # The payload reports the two separately so the dashboard can label
             # a suspension instead of calling it a permanent ban.
             permanent_ban_required = banned_required and not suspended_required
-            captcha_required = is_account_captcha_required(acc)
+            locked_required = is_account_locked(acc)
+            recovery_required = is_account_recovery(acc)
+            captcha_required = is_account_captcha_required(acc) and not locked_required and not recovery_required
             if suspended_required:
                 state_label = SUSPENDED_LABEL
                 state_color = "#f97316"
             elif banned_required:
                 state_label = BANNED_LABEL
                 state_color = "#ef4444"
+            elif locked_required:
+                state_label = LOCKED_LABEL
+                state_color = "#fcd34d"
+            elif recovery_required:
+                state_label = RECOVERY_LABEL
+                state_color = "#fcd34d"
             elif captcha_required:
                 state_label = CAPTCHA_LABEL
                 state_color = "#f0c76f"
@@ -282,6 +300,10 @@ class RuntimeViewModelBuilder:
                 blocked_reason = SUSPENDED_BLOCK_REASON
             elif banned_required:
                 blocked_reason = BANNED_BLOCK_REASON
+            elif locked_required:
+                blocked_reason = LOCKED_BLOCK_REASON
+            elif recovery_required:
+                blocked_reason = RECOVERY_BLOCK_REASON
             elif captcha_required:
                 blocked_reason = CAPTCHA_BLOCK_REASON
             if not blocked_reason and acc.last_crash_reason == "cookie_mismatch":
@@ -321,6 +343,10 @@ class RuntimeViewModelBuilder:
                 "launchable": launchable,
                 "blocked_reason": blocked_reason,
                 "captcha_required": bool(captcha_required),
+                "locked_required": bool(locked_required),
+                "recovery_required": bool(recovery_required),
+                "locked": bool(locked_required),
+                "account_recovery": bool(recovery_required),
                 "banned": bool(permanent_ban_required),
                 "suspended": bool(suspended_required),
                 "import_status": getattr(acc, "import_status", ""),

@@ -469,6 +469,33 @@ body[data-game-mode="shared"] #game-pool-row{
   margin-top: 8px;
 }
 
+/* ── Executor path: input + Browse need breathing room (was stacked with no gap) ── */
+.executor-path-controls{
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.executor-path-controls .input{
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.executor-path-controls .btn{
+  flex: 0 0 auto;
+  height: 33px;
+  white-space: nowrap;
+}
+.queue-row-stack .executor-path-controls{
+  margin-top: 6px;
+}
+@media (max-width: 520px){
+  .executor-path-controls{
+    flex-wrap: wrap;
+  }
+  .executor-path-controls .btn{
+    width: 100%;
+  }
+}
+
 /* Layout-shift fix: hide number spinner so hover/focus never changes input width */
 .queue-row-input input[type=number]::-webkit-inner-spin-button,
 .queue-row-input input[type=number]::-webkit-outer-spin-button,

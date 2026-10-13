@@ -8,18 +8,34 @@ from typing import Any, Dict, List, Optional
 
 from core import flog_kv
 from services.browser_tracker import tracker_matches
-from services.process_backend import ProcessManager as _ProcessBackend
 from services.process_account_runtime import (
     account_browser_tracker_id as _account_browser_tracker_id,
+)
+from services.process_account_runtime import (
     account_key as _account_key,
+)
+from services.process_account_runtime import (
     account_name as _account_name,
+)
+from services.process_account_runtime import (
     mark_account_process_proof as _mark_account_process_proof,
+)
+from services.process_account_runtime import (
     process_log_fields as _process_log_fields,
+)
+from services.process_account_runtime import (
     quarantine_process_match as _quarantine_process_match,
+)
+from services.process_account_runtime import (
     runtime_generation_matches as _runtime_generation_matches,
+)
+from services.process_account_runtime import (
     set_adopt_diagnostics as _set_adopt_diagnostics,
+)
+from services.process_account_runtime import (
     set_process_diagnostics as _set_process_diagnostics,
 )
+from services.process_backend import ProcessManager as _ProcessBackend
 from services.process_proof_policy import (
     PROOF_UNTRUSTED,
     allows_destructive_process_action,
@@ -637,7 +653,7 @@ class ProcessService:
         increment_generation: bool = True,
         expected_runtime_generation: Optional[int] = None,
     ) -> Dict[str, Any]:
-        with getattr(account, "_lock"):
+        with account._lock:
             pid = getattr(account, "pid", None)
             identity = str(getattr(account, "bound_process_identity", "") or "")
         if not _runtime_generation_matches(account, expected_runtime_generation, reason or "safe_kill_bound_process"):

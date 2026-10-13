@@ -17,7 +17,7 @@ _STATIC_SCRIPTS = (
 
 
 def _load_html_ui() -> str:
-    with open(resource_path("ui", "index.html"), "r", encoding="utf-8") as f:
+    with open(resource_path("ui", "index.html"), encoding="utf-8") as f:
         html = f.read()
     if "</body>" in html:
         return html.replace("</body>", _STATIC_SCRIPTS + "</body>", 1)

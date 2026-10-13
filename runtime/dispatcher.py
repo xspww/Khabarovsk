@@ -2,19 +2,19 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Dict, Tuple, Optional
+from typing import Any, Dict, Optional, Tuple
 
-from core import AccountState, flog, flog_kv, Account, EventBus, SmartQueue, StateManager
+from core import Account, AccountState, EventBus, SmartQueue, StateManager, flog, flog_kv
 from domain.session_identity import build_launch_intent
-from services.process_service import ProcessManager, ProcessService
+from runtime.account_worker import AccountWorker
 from runtime.launch_controller import LaunchController
+from runtime.maintenance_performance import _window_arrange_settings_from_config, _window_resize_target_from_config
 from runtime.recovery_engine import RecoveryEngine
 from runtime.runtime_state_manager import RuntimeStateManager
-from runtime.maintenance_performance import _window_arrange_settings_from_config, _window_resize_target_from_config
-from runtime.supervisor_runtime import SupervisorRuntime
 from runtime.runtime_store import RuntimeStore
+from runtime.supervisor_runtime import SupervisorRuntime
 from services.network_monitor import NetworkMonitor
-from runtime.account_worker import AccountWorker
+from services.process_service import ProcessManager, ProcessService
 
 
 class Dispatcher(threading.Thread):
@@ -198,7 +198,7 @@ class Dispatcher(threading.Thread):
         }
         try:
             if acc.pid:
-                from services.roblox_hybrid import parse_launch_destination_from_cmdline
+                from domain.roblox_private_servers import parse_launch_destination_from_cmdline
 
                 parsed = parse_launch_destination_from_cmdline(ProcessManager.get_pid_cmdline(acc.pid))
                 if parsed:

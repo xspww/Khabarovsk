@@ -4,8 +4,17 @@ from typing import Any, Dict, List, Optional
 
 from core import Account, AccountState, flog_kv
 from services.auth_gate import (
+    AuthGateDecision,
     evaluate_account_auth_gate,
     mark_account_auth_quarantined,
+)
+from services.ban_guard import (
+    BANNED_BLOCK_REASON,
+    BANNED_REASON,
+    SUSPENDED_BLOCK_REASON,
+    SUSPENDED_REASON,
+    is_account_banned,
+    is_account_suspended,
 )
 from services.captcha_guard import (
     CAPTCHA_BLOCK_REASON,
@@ -23,15 +32,6 @@ from services.verify_guard import (
     set_account_locked_hold,
     set_account_recovery_hold,
 )
-from services.ban_guard import (
-    BANNED_BLOCK_REASON,
-    BANNED_REASON,
-    SUSPENDED_BLOCK_REASON,
-    SUSPENDED_REASON,
-    is_account_banned,
-    is_account_suspended,
-)
-from services.auth_gate import AuthGateDecision
 
 
 class AccountReconciliationError(ValueError):

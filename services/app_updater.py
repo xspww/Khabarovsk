@@ -28,8 +28,8 @@ Safety rules (deliberate, do not soften without a product decision):
 
 from __future__ import annotations
 
-import hashlib
 import ctypes
+import hashlib
 import os
 import re
 import subprocess
@@ -38,8 +38,8 @@ import tempfile
 import threading
 import time
 import urllib.request
-from urllib.parse import urlparse
 from typing import Any, Callable, Dict, List, Optional
+from urllib.parse import urlparse
 
 import app_paths
 import net_tls
@@ -132,7 +132,7 @@ def pick_signature_asset(snapshot: Dict[str, Any], version: str) -> str:
     for item in _release_assets(snapshot):
         if str(item.get("name") or "").lower() == wanted:
             url = str(item.get("browser_download_url") or item.get("url") or "")
-            return url if url else ""
+            return url or ""
     return ""
 
 
@@ -839,7 +839,7 @@ class AppUpdater:
             self._set_job(state="verifying", progress="verifying", msg="Verifying checksum")
             _download(sums_url, staged_sums, expected_size=sums_size, max_size=MAX_CHECKSUMS_SIZE_BYTES)
             _download(signature_url, staged_signature, expected_size=signature_size, max_size=MAX_SIGNATURE_SIZE_BYTES)
-            with open(staged_sums, "r", encoding="utf-8", errors="replace") as handle:
+            with open(staged_sums, encoding="utf-8", errors="replace") as handle:
                 expected = parse_checksums(handle.read(), exe_name)
             if not expected:
                 raise RuntimeError("checksum entry missing for " + exe_name)

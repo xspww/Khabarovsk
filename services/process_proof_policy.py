@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from typing import Any, Dict, Optional
-from services.browser_tracker import tracker_matches
 
+from services.browser_tracker import tracker_matches
 
 PROOF_UNTRUSTED = "untrusted"
 PROOF_WEAK = "weak"
@@ -110,15 +110,15 @@ def classify_process_proof(
 
 
 __all__ = [
-    "PROOF_UNTRUSTED",
-    "PROOF_WEAK",
     "PROOF_MEDIUM",
     "PROOF_STRONG",
+    "PROOF_UNTRUSTED",
+    "PROOF_WEAK",
     "allows_destructive_process_action",
     "classify_process_proof",
+    "is_at_least_process_proof",
     "normalize_process_proof_level",
     "process_proof_allowed_for_state",
     "required_process_proof_for_state",
-    "is_at_least_process_proof",
     "score_resource_signals",
 ]

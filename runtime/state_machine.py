@@ -2,13 +2,13 @@ from __future__ import annotations
 
 import threading
 import time
-from core_logging import flog_kv
-from domain.account_model import Account
-from domain.states import AccountState, LIFECYCLE_ALLOWED_TRANSITIONS, LIFECYCLE_STATE, runtime_state_for_public
-from runtime.event_bus import EventBus, EventName
-from runtime.runtime_state_manager import RuntimeStateManager
 from typing import Dict, Optional, Set
 
+from core_logging import flog_kv
+from domain.account_model import Account
+from domain.states import LIFECYCLE_ALLOWED_TRANSITIONS, LIFECYCLE_STATE, AccountState, runtime_state_for_public
+from runtime.event_bus import EventBus, EventName
+from runtime.runtime_state_manager import RuntimeStateManager
 
 ALLOWED_STATE_TRANSITIONS: Dict[AccountState, Set[AccountState]] = {
     AccountState.IDLE: {

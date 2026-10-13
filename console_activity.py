@@ -5,7 +5,8 @@ import re
 import sys
 import threading
 import time
-from typing import Optional, Any, Dict
+from typing import Any, Dict, Optional
+
 from desktop import console_output
 
 _LOCK = threading.Lock()
@@ -131,7 +132,7 @@ def _text(value: Any, default: str = "") -> str:
     if value is None:
         return default
     text = str(value).strip()
-    return text if text else default
+    return text or default
 
 
 def _normalize_icon(value: Any, default: str = _ICON_OK) -> str:

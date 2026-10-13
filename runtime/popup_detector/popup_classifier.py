@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import time
+from dataclasses import dataclass, field
 from typing import Any, Dict, Iterable
+
 from runtime.popup_detector.popup_confidence import popup_confidence_score
 from runtime.popup_detector.popup_text_detector import detect_text_features
 from runtime.recovery_context import (

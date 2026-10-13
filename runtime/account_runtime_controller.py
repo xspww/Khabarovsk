@@ -5,6 +5,7 @@ from typing import Any, Callable, Dict, Optional
 
 from domain.states import RuntimeSignal
 from runtime.runtime_state_manager import RuntimeStateManager
+
 Logger = Callable[..., None]
 
 

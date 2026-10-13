@@ -2,25 +2,41 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, List, Optional
 
-from core import AccountState, EventName, flog, flog_kv, Account, EventBus, SmartQueue, StateManager
-from services.process_service import ProcessManager, ProcessService
-from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
-from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_captcha_status_text, set_account_captcha_hold
-from runtime.runtime_state_manager import RuntimeStateManager
-from runtime.runtime_orchestrator import RuntimeOrchestrator
-from runtime.runtime_scheduler import RuntimeScheduler, RuntimeScheduledJob
+from core import Account, AccountState, EventBus, EventName, SmartQueue, StateManager, flog, flog_kv
+from runtime.lua_liveness_policy import lua_liveness_required, mark_waiting_for_lua
 from runtime.recovery_context import RecoveryAttemptContext
 from runtime.recovery_evaluator import RecoveryEvaluator
 from runtime.recovery_owner import RecoveryOwnerRegistry
-from runtime.recovery_storm import RecoveryStormController
-from runtime.recovery_policy import RecoveryDedupeTracker, SessionConflictTracker, RecoveryGate, adaptive_recovery_delay, build_recovery_log_payload, canonical_reason, canonical_recovery_reason as _canonical_recovery_reason, display_recovery_reason as _display_recovery_reason, is_game_unavailable_detail as _is_game_unavailable_detail, kill_local_duplicate_for_session_conflict, policy_for
+from runtime.recovery_policy import (
+    RecoveryDedupeTracker,
+    RecoveryGate,
+    SessionConflictTracker,
+    adaptive_recovery_delay,
+    build_recovery_log_payload,
+    canonical_reason,
+    kill_local_duplicate_for_session_conflict,
+    policy_for,
+)
+from runtime.recovery_policy import canonical_recovery_reason as _canonical_recovery_reason
+from runtime.recovery_policy import display_recovery_reason as _display_recovery_reason
+from runtime.recovery_policy import is_game_unavailable_detail as _is_game_unavailable_detail
 from runtime.recovery_signal_router import RecoverySignalRouter
+from runtime.recovery_storm import RecoveryStormController
 from runtime.recovery_support import RECOVERY_REASON_MESSAGES, compute_backoff
-from runtime.lua_liveness_policy import lua_liveness_required, mark_waiting_for_lua
+from runtime.runtime_orchestrator import RuntimeOrchestrator
+from runtime.runtime_scheduler import RuntimeScheduledJob, RuntimeScheduler
+from runtime.runtime_state_manager import RuntimeStateManager
+from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
+from services.captcha_guard import (
+    CAPTCHA_BLOCK_REASON,
+    CAPTCHA_REASON,
+    is_captcha_status_text,
+    set_account_captcha_hold,
+)
 from services.network_monitor import NetworkMonitor
-
+from services.process_service import ProcessManager, ProcessService
 
 ACTIVE_SLOT_STATES = {
     AccountState.QUEUED,
@@ -1219,7 +1235,6 @@ class RecoveryCoordinator:
             acc.session_checked = True
             acc.session_valid = True
             pid = acc.pid
-            identity = acc.bound_process_identity
             runtime_generation = acc.runtime_generation
         ctx = self._begin_recovery(
             acc,

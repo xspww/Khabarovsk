@@ -5,7 +5,6 @@ from typing import Any, Dict, Optional
 
 from core import AccountState
 
-
 LUA_WAITING_STATUS = "waiting_for_lua"
 LUA_WAITING_REASON = "lua_required"
 

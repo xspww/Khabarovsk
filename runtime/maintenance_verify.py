@@ -4,6 +4,7 @@ import time
 from typing import Any, Dict
 
 from core import flog_kv
+from services.process_service import ProcessService
 from services.verify_guard import (
     LOCKED_BLOCK_REASON,
     LOCKED_REASON,
@@ -14,7 +15,6 @@ from services.verify_guard import (
     set_account_locked_hold,
     set_account_recovery_hold,
 )
-from services.process_service import ProcessService
 
 VERIFY_CONFIRM_SECONDS = 15.0
 

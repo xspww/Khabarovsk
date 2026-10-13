@@ -8,7 +8,6 @@ from core import Account, flog_kv
 from runtime.recovery_context import SESSION_CONFLICT
 from services.roblox_log_evidence import collect_recent_log_evidence
 
-
 RECOVERY_REASON_MESSAGES = {
     "pid_dead": "Disconnected - Roblox process disappeared (crashed or closed)",
     "not_responding": "Disconnected - Roblox is not responding",
@@ -57,7 +56,7 @@ def _enrich_visual_disconnect_payload_with_log(payload: Dict[str, Any]) -> Dict[
     collector = collect_recent_log_evidence
     farm_module = sys.modules.get("farm")
     if farm_module is not None and hasattr(farm_module, "collect_recent_log_evidence"):
-        collector = getattr(farm_module, "collect_recent_log_evidence")
+        collector = farm_module.collect_recent_log_evidence
     evidence = collector(since_seconds=180.0, max_files=8, max_lines=1200)
     code = str(evidence.get("error_code") or "").strip()
     if not evidence.get("matched") or not code:

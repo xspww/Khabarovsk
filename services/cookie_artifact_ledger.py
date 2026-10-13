@@ -6,8 +6,8 @@ import os
 import threading
 import time
 from typing import Any, Dict, List, Optional
-from app_paths import APP_DATA_DIR
 
+from app_paths import APP_DATA_DIR
 
 COOKIE_ARTIFACT_LEDGER_FILE = os.path.join(APP_DATA_DIR, "cronus_cookie_artifacts.json")
 COOKIE_ARTIFACT_LEDGER_SCHEMA = "cronus.cookie_artifacts.v1"
@@ -43,7 +43,7 @@ class CookieArtifactLedger:
         if not os.path.exists(self.path):
             return []
         try:
-            with open(self.path, "r", encoding="utf-8") as handle:
+            with open(self.path, encoding="utf-8") as handle:
                 payload = json.load(handle)
         except Exception as exc:
             _flog(f"[COOKIE_LEDGER] load error: {exc}", "warning")
@@ -159,7 +159,7 @@ class CookieArtifactLedger:
                     continue
 
                 try:
-                    with open(path, "r", encoding="utf-8") as handle:
+                    with open(path, encoding="utf-8") as handle:
                         payload = json.load(handle)
                 except Exception as exc:
                     _flog(f"[COOKIE_LEDGER] scrub read error ({path}): {exc}", "warning")

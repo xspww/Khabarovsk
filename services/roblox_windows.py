@@ -15,6 +15,7 @@ from services.window_control import (
     restore_window_styles,
 )
 
+
 def classify_disconnect_dialog_texts(cls, texts: List[str]) -> Dict[str, Any]:
     return classify_texts(texts)
 

@@ -26,7 +26,7 @@ def register(app, ctx: ApiContext) -> None:
 
     # Wire the manager once: every captured cookie refreshes the farm view.
     try:
-        MANUAL_LOGIN_MANAGER._on_imported = _refresh_farm_accounts  # noqa: SLF001
+        MANUAL_LOGIN_MANAGER._on_imported = _refresh_farm_accounts
     except Exception:
         pass
 

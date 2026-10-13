@@ -4,17 +4,22 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 import net_tls
 from core import (
+    Account,
     AccountState,
+    EventBus,
+    StateManager,
     cookie_identity_block_reason,
     flog,
     flog_kv,
 )
-from services.process_service import ProcessManager, ProcessService
 from runtime.account_worker_disconnects import handle_disconnect_checks
+from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
+from runtime.recovery_support import RECOVERY_REASON_MESSAGES, _set_account_cookie_block, compute_backoff
+from runtime.supervisor_runtime import SupervisorRuntime
 from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
 from services.captcha_guard import (
     CAPTCHA_BLOCK_REASON,
@@ -23,6 +28,7 @@ from services.captcha_guard import (
     is_captcha_text,
     set_account_captcha_hold,
 )
+from services.process_service import ProcessManager, ProcessService
 from services.verify_guard import (
     LOCKED_BLOCK_REASON,
     LOCKED_REASON,
@@ -33,12 +39,9 @@ from services.verify_guard import (
     set_account_locked_hold,
     set_account_recovery_hold,
 )
-from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
-from runtime.recovery_support import RECOVERY_REASON_MESSAGES, _set_account_cookie_block, compute_backoff
-from runtime.supervisor_runtime import SupervisorRuntime
-from core import StateManager
-from core import EventBus
-from core import Account
+
+if TYPE_CHECKING:
+    from runtime.recovery_engine import RecoveryEngine
 
 
 class AccountWorker(threading.Thread):
@@ -369,7 +372,6 @@ class AccountWorker(threading.Thread):
 
         if status == "hold":
             now = time.time()
-            reason = str(assessment.get("reason") or "")
             presence = assessment.get("presence") or {
                 "pids": [],
                 "visible_windows": 0,
@@ -559,7 +561,11 @@ class AccountWorker(threading.Thread):
                 try:
                     from services.ban_guard import (
                         BANNED_BLOCK_REASON as _BANNED_MSG_RUN,
+                    )
+                    from services.ban_guard import (
                         is_banned_text as _is_banned_text_run,
+                    )
+                    from services.ban_guard import (
                         set_account_banned_hold as _set_banned_hold,
                     )
                 except Exception:
@@ -673,9 +679,7 @@ class AccountWorker(threading.Thread):
 
         initial_bound = False
         if acc.state != AccountState.IN_GAME:
-            if self._rebind_live_game_process("initial_probe"):
-                initial_bound = True
-            elif self._safe_adopt_visible_process("initial_probe_visible_adopt"):
+            if self._rebind_live_game_process("initial_probe") or self._safe_adopt_visible_process("initial_probe_visible_adopt"):
                 initial_bound = True
 
         if initial_bound:
@@ -703,10 +707,10 @@ class AccountWorker(threading.Thread):
         while not self._stop_event.is_set():
             try:
                 from domain.account_model import is_account_finished as _is_finished
-                from services.ban_guard import is_account_banned as _is_banned_mid
-                from services.ban_guard import is_account_suspended as _is_suspended_mid
                 from domain.account_model import is_account_locked as _is_locked_mid
                 from domain.account_model import is_account_recovery as _is_recovery_mid
+                from services.ban_guard import is_account_banned as _is_banned_mid
+                from services.ban_guard import is_account_suspended as _is_suspended_mid
                 from services.captcha_guard import is_account_captcha_required as _is_captcha_mid
 
                 if _is_finished(acc) or _is_banned_mid(acc) or _is_suspended_mid(acc) or _is_locked_mid(acc) or _is_recovery_mid(acc) or _is_captcha_mid(acc):

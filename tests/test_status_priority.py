@@ -18,6 +18,16 @@ from types import SimpleNamespace
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+from core import account_launch_block_reason
+from services.auth_gate import evaluate_account_auth_gate
+from services.ban_guard import (
+    BANNED_BLOCK_REASON,
+    BANNED_IMPORT_STATUS,
+    SUSPENDED_BLOCK_REASON,
+    SUSPENDED_IMPORT_STATUS,
+    is_account_banned,
+    is_account_suspended,
+)
 from services.captcha_guard import (
     CAPTCHA_BLOCK_REASON,
     CAPTCHA_REASON,
@@ -33,16 +43,6 @@ from services.verify_guard import (
     is_account_locked,
     is_account_recovery,
 )
-from services.ban_guard import (
-    BANNED_BLOCK_REASON,
-    BANNED_IMPORT_STATUS,
-    SUSPENDED_BLOCK_REASON,
-    SUSPENDED_IMPORT_STATUS,
-    is_account_banned,
-    is_account_suspended,
-)
-from services.auth_gate import evaluate_account_auth_gate
-from core import account_launch_block_reason
 
 
 def make_account(**over):
@@ -246,7 +246,6 @@ class HoldIsolationTests(unittest.TestCase):
 
     def test_clear_captcha_keeps_locked_hold(self):
         import services.captcha_guard as captcha_guard
-        from services.verify_guard import clear_account_locked_hold
 
         acc = hold(manual_status=LOCKED_BLOCK_REASON, import_status=LOCKED_REASON,
                    last_crash_reason=LOCKED_REASON, last_recovery_reason=LOCKED_REASON)
@@ -311,7 +310,7 @@ def _preview_handler():
 
     app = FakeApp()
     farm = SimpleNamespace(_accounts=[])
-    cfg_mgr = SimpleNamespace(snapshot=lambda: {}, get=lambda *a, **k: None)
+    cfg_mgr = SimpleNamespace(snapshot=dict, get=lambda *a, **k: None)
     routes.register(app, SimpleNamespace(cfg_mgr=cfg_mgr, farm=farm))
     return app.routes["POST /api/test-cookie"]
 

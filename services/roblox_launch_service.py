@@ -4,10 +4,11 @@ import random
 import re
 import time
 import urllib.parse
-from typing import Any, Dict, Tuple, Optional
+from typing import Any, Dict, Optional, Tuple
 
-from core import ServerType, account_launch_block_reason, flog, flog_kv, Account
+from core import Account, ServerType, account_launch_block_reason, flog, flog_kv
 from services.browser_tracker import tracker_label
+
 
 def parse_vip_link(vip_url: str) -> Tuple[str, str]:
     # Canonical parser lives in domain.roblox_private_servers (single owner).
@@ -344,8 +345,6 @@ def launch(cls, acc: Account) -> Tuple[bool, str, str]:
 
     if str(getattr(acc, "cookie", "") or "").strip():
         try:
-            from services.roblox_hybrid import HybridLauncher
-
             from domain.games import (
                 effective_auto_flags,
                 effective_global_vip,
@@ -353,6 +352,7 @@ def launch(cls, acc: Account) -> Tuple[bool, str, str]:
                 game_for_account,
                 normalize_game_mode,
             )
+            from services.roblox_hybrid import HybridLauncher
 
             game = None
             try:

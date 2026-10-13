@@ -9,15 +9,29 @@ from domain.states import AccountState, RuntimeState, is_valid_runtime_transitio
 from runtime.runtime_invariants import invariant_snapshot
 from runtime.runtime_state_observability import (
     account_name as _account_name,
+)
+from runtime.runtime_state_observability import (
     caller as _caller,
+)
+from runtime.runtime_state_observability import (
     emit_invariant_violations as _emit_invariant_violations,
+)
+from runtime.runtime_state_observability import (
     runtime_log_fields as _runtime_log_fields,
+)
+from runtime.runtime_state_observability import (
     snapshot_account_runtime as _snapshot_account_runtime,
+)
+from runtime.runtime_state_observability import (
     transition_invariant_blockers as _transition_invariant_blockers,
 )
 from runtime.runtime_transactions import (
     begin_rejoin_transaction as _begin_rejoin_transaction,
+)
+from runtime.runtime_transactions import (
     finish_rejoin_transaction as _finish_rejoin_transaction,
+)
+from runtime.runtime_transactions import (
     update_rejoin_transaction as _update_rejoin_transaction,
 )
 from services.process_proof_policy import (
@@ -27,7 +41,6 @@ from services.process_proof_policy import (
     process_proof_allowed_for_state,
     required_process_proof_for_state,
 )
-
 
 Logger = Callable[..., None]
 

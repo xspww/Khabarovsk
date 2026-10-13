@@ -3,10 +3,11 @@ from __future__ import annotations
 import threading
 import time
 import urllib.request
-from core import flog, EventBus
 from typing import Optional
 
 import net_tls
+from core import EventBus, flog
+
 NET_ONLINE   = "ONLINE"
 NET_DEGRADED = "DEGRADED"
 NET_OFFLINE  = "OFFLINE"
@@ -118,4 +119,4 @@ class NetworkMonitor:
             first_run = False
             self._stop.wait(timeout=self._interval)
 
-__all__ = ["NET_ONLINE", "NET_DEGRADED", "NET_OFFLINE", "NetworkState", "NetworkMonitor"]
+__all__ = ["NET_DEGRADED", "NET_OFFLINE", "NET_ONLINE", "NetworkMonitor", "NetworkState"]

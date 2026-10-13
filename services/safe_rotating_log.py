@@ -5,7 +5,8 @@ import os
 import threading
 import time
 from logging.handlers import RotatingFileHandler
-from typing import Any, Optional, Dict
+from typing import Any, Dict, Optional
+
 
 class ProcessSafeRotatingFileHandler(RotatingFileHandler):
     """RotatingFileHandler variant that tolerates Windows locks from sibling processes."""

@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-from .auth import install_api_token_middleware
-from .context import ApiContext
-from .runtime_routes import register as register_runtime_routes
-from .performance_routes import register as register_performance_routes
-from .config_routes import register as register_config_routes
 from .accounts_routes import register as register_accounts_routes
-from .manual_login_routes import register as register_manual_login_routes
-from .games_routes import register as register_games_routes
+from .auth import install_api_token_middleware
+from .config_routes import register as register_config_routes
+from .context import ApiContext
 from .discord_routes import register as register_discord_routes
-from .system_routes import register as register_system_routes
+from .games_routes import register as register_games_routes
 from .lua_routes import register as register_lua_routes
+from .manual_login_routes import register as register_manual_login_routes
+from .performance_routes import register as register_performance_routes
+from .runtime_routes import register as register_runtime_routes
+from .system_routes import register as register_system_routes
 
 
 def register_api_routes(app, ctx: ApiContext) -> None:

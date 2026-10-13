@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 from typing import Any, Dict, List, Optional
+
 from core import flog_kv
 from runtime.runtime_state_manager import RuntimeStateManager
 from services.browser_tracker import tracker_matches
@@ -12,7 +13,6 @@ from services.process_proof_policy import (
     PROOF_UNTRUSTED,
     normalize_process_proof_level,
 )
-
 
 _RUNTIME_STATE = RuntimeStateManager(logger=flog_kv)
 

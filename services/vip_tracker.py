@@ -3,15 +3,17 @@ from __future__ import annotations
 import random
 import threading
 import time
-from typing import List, Optional, Dict
+from typing import Dict, List, Optional
+
 from core import flog
+
 
 class VipTracker:
     BLACKLIST_DURATION = 600
 
     def __init__(self, links: List[str]):
         self._links     = list(links)
-        self._scores:   Dict[str, float]  = {l: 1.0 for l in links}
+        self._scores:   Dict[str, float]  = dict.fromkeys(links, 1.0)
         self._blacklist: Dict[str, float] = {}
         self._lock      = threading.Lock()
 

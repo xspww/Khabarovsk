@@ -5,7 +5,6 @@ import re
 import stat
 from typing import Any, Dict, Optional
 
-
 DEFAULT_ROBLOX_SETTINGS_PATH = os.path.join(
     os.path.expandvars(r"%LOCALAPPDATA%"),
     "Roblox",
@@ -245,7 +244,7 @@ def read_fps_settings(path: Optional[str] = None) -> Dict[str, Any]:
         return payload
     payload["read_only"] = is_readonly(target)
     try:
-        with open(target, "r", encoding="utf-8", errors="replace") as f:
+        with open(target, encoding="utf-8", errors="replace") as f:
             text = f.read()
     except OSError as exc:
         payload["msg"] = str(exc)
@@ -297,7 +296,6 @@ def apply_graphics_settings_file(
             "Roblox settings file not found. Open Roblox once so it can create GlobalBasicSettings_13.xml."
     )
     original_readonly = is_readonly(target)
-    success = False
     quality = normalize_graphics_quality(quality_level)
     volume_touched = volume_muted is not None or volume_level is not None
     resolved_volume_muted: Optional[bool] = None
@@ -311,7 +309,7 @@ def apply_graphics_settings_file(
         if original_readonly:
             set_readonly(target, False)
         try:
-            with open(target, "r", encoding="utf-8", errors="replace") as f:
+            with open(target, encoding="utf-8", errors="replace") as f:
                 text = f.read()
             if bool(graphics_low_enabled):
                 text, changed_total = _apply_named_settings(text, _graphics_low_values(quality))
@@ -328,7 +326,6 @@ def apply_graphics_settings_file(
                 text = next_text
             with open(target, "w", encoding="utf-8", newline="") as f:
                 f.write(text)
-            success = True
         finally:
             if readonly_after is not None:
                 set_readonly(target, bool(readonly_after))
@@ -376,7 +373,7 @@ def apply_volume_settings_file(
     if original_readonly:
         set_readonly(target, False)
     try:
-        with open(target, "r", encoding="utf-8", errors="replace") as f:
+        with open(target, encoding="utf-8", errors="replace") as f:
             text = f.read()
         next_text, changed = _VOLUME_RE.subn(
             rf"\g<1>{volume_level_to_file_value(level, muted)}\g<3>", text, count=1
@@ -433,7 +430,7 @@ def apply_performance_settings_file(
         # Always write: enabling sets the cap, disabling resets to uncap (0)
         # so OFF truly works instead of leaving a stale value like 15.
         # Readonly is re-applied below only if FPS or graphics is still on.
-        with open(target, "r", encoding="utf-8", errors="replace") as f:
+        with open(target, encoding="utf-8", errors="replace") as f:
             text = f.read()
         if fps_enabled:
             next_text, changed = _FRAMERATE_RE.subn(rf"\g<1>{fps}\g<3>", text, count=1)

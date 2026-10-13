@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from typing import Tuple, Any
-from services.network_monitor import NET_ONLINE
+from typing import Any, Tuple
+
 from core import AccountState
+from services.network_monitor import NET_ONLINE
 
 
 def recovery_step_for_account(acc: Any, display_state: AccountState, network_state: str = NET_ONLINE) -> Tuple[str, int, float]:

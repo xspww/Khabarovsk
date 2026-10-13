@@ -227,7 +227,7 @@ class TestLuaTemplateCeiling(unittest.TestCase):
             os.path.join("lua", "internal", "account_status_client.lua"): "CronusAccount",
         }
         for rel, marker in markers.items():
-            with open(os.path.join(root, rel), "r", encoding="utf-8") as handle:
+            with open(os.path.join(root, rel), encoding="utf-8") as handle:
                 src = handle.read()
             # Executor loadstring ceiling is ~14 KiB on the RENDERED helper.
             # Rendering substitutes token + session + requeue payload (~1.2KB
@@ -240,7 +240,7 @@ class TestLuaTemplateCeiling(unittest.TestCase):
         root = self._repo_root()
         for rel in (os.path.join("lua", "internal", "rejoin_monitor.lua"),
                     os.path.join("lua", "internal", "account_status_client.lua")):
-            with open(os.path.join(root, rel), "r", encoding="utf-8") as handle:
+            with open(os.path.join(root, rel), encoding="utf-8") as handle:
                 src = handle.read()
             self.assertIn("PrivateServerId", src, rel)
             self.assertIn("VIPServerId", src, rel)

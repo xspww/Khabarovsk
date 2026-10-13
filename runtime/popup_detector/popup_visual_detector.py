@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 from collections import deque
 from typing import Any, Dict, List, Tuple
+
 STRUCTURAL_ANALYSIS_SIZE = (160, 120)
 MODAL_ANALYSIS_SIZE = (320, 240)
 

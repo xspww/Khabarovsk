@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import time
 import uuid
+from dataclasses import dataclass, field
 from typing import Any, Dict, Tuple
-
 
 NETWORK_DISCONNECT = "NETWORK_DISCONNECT"
 SESSION_CONFLICT = "SESSION_CONFLICT"
@@ -159,7 +158,7 @@ class RecoveryAttemptContext:
         signal: str,
         reason: str,
         payload: Dict[str, Any] | None = None,
-    ) -> "RecoveryAttemptContext":
+    ) -> RecoveryAttemptContext:
         payload = dict(payload or {})
         popup_code = str(payload.get("popup_code") or payload.get("error_code") or "")
         category = normalize_disconnect_category(

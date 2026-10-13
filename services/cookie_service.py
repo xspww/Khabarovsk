@@ -14,6 +14,7 @@ from app_paths import USER_DATA_ROOT
 from core import flog
 from services.cookie_artifact_ledger import CookieArtifactLedger
 
+
 class IsolationManager:
     BASE_DIR = os.path.join(USER_DATA_ROOT, "instances")
     STORE_PACKAGE_FOLDERS = (
@@ -61,7 +62,7 @@ class IsolationManager:
     def _encrypt_webview2_cookie(cls, cookie: str, local_state_path: str) -> bytes:
         from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-        with open(local_state_path, "r", encoding="utf-8") as f:
+        with open(local_state_path, encoding="utf-8") as f:
             local_state = json.load(f)
 
         enc_key_b64 = (

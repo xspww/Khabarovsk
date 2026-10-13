@@ -11,15 +11,16 @@ import webbrowser
 from typing import Any, Optional, Tuple
 
 from app_paths import APP_NAME, APP_ROOT_DIR, IS_COMPILED
-from desktop import console_output
-from desktop.constants import DEFAULT_PORT
 from console_activity import format_console_line
 from core import LOG_FILE, flog, flog_kv
+from desktop import console_output
 from desktop.backend_host import BackendHost
-from desktop.webview_window import DesktopWindow
 from desktop.console_icon import set_console_window_icon as _set_console_window_icon
+from desktop.constants import DEFAULT_PORT
 from desktop.instance_guard import (
     INSTANCE_TOKEN as _INSTANCE_TOKEN,
+)
+from desktop.instance_guard import (
     _acquire_instance_socket,
     _acquire_single_instance_mutex,
     _clear_instance_state,
@@ -27,8 +28,9 @@ from desktop.instance_guard import (
     _stop_previous_instance,
     _stop_same_app_processes,
     _write_instance_state,
-    clear_instance_state,
+    clear_instance_state as clear_instance_state,
 )
+from desktop.webview_window import DesktopWindow
 
 BASE_DIR = APP_ROOT_DIR
 HOST = "127.0.0.1"
@@ -334,8 +336,8 @@ def _run_autostart_chain() -> None:
         return
     if bool(cfg.get("start_on_boot", False)):
         try:
-            from services import startup_manager
             import app_paths
+            from services import startup_manager
 
             res = startup_manager.heal_shortcut(str(app_paths.EXECUTABLE_PATH or ""))
             flog_kv("BOOT", "startup_healed", changed=bool(res.get("changed")), msg=str(res.get("msg") or ""))
@@ -420,7 +422,7 @@ def _maybe_prompt_startup_update() -> bool:
         def _check() -> None:
             try:
                 _box["snap"] = check_app_update()
-            except Exception as exc:  # noqa: BLE001 - reported below
+            except Exception as exc:
                 _box["error"] = exc
 
         _checker = threading.Thread(target=_check, daemon=True, name="CronusStartupUpdateCheck")

@@ -7,9 +7,11 @@ import threading
 import time
 from ctypes import wintypes
 from typing import Any, Dict, List, Optional
+
 from runtime.popup_detector.popup_classifier import PopupClassification, classify_popup_observation
 from runtime.recovery_context import VISUAL_DISCONNECT
 from services.captcha_guard import CAPTCHA_REASON
+
 
 def _detect_visual_features_lazy(screenshot):
     # Lazy import to avoid loading heavy PIL/visual pipeline when disabled

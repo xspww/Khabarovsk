@@ -3,8 +3,8 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
-from services.process_proof_policy import PROOF_STRONG, is_at_least_process_proof
 
+from services.process_proof_policy import PROOF_STRONG, is_at_least_process_proof
 
 TRUTH_CONFIRMED = "confirmed"
 TRUTH_SUSPECT = "suspect"

@@ -13,9 +13,9 @@ from runtime.popup_detector.popup_sampler import (
 )
 
 __all__ = [
+    "DEFAULT_POPUP_OBSERVER",
     "PopupClassification",
     "PopupObserver",
-    "DEFAULT_POPUP_OBSERVER",
     "classify_popup_observation",
     "classify_texts",
     "clear_expired_inspection_holds",

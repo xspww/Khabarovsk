@@ -4,7 +4,12 @@ import time
 from typing import Any, Dict
 
 from core import flog_kv
-from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, is_account_captcha_required, set_account_captcha_hold
+from services.captcha_guard import (
+    CAPTCHA_BLOCK_REASON,
+    CAPTCHA_REASON,
+    is_account_captcha_required,
+    set_account_captcha_hold,
+)
 from services.process_service import ProcessService
 
 # Roblox shows an auto-passing "Security Verification" page that looks like a

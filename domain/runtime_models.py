@@ -3,8 +3,9 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
-from .states import AccountState, RuntimeState
+
 from .runtime_lifecycle import lifecycle_for_runtime_state
+from .states import AccountState, RuntimeState
 
 
 @dataclass

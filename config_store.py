@@ -5,11 +5,14 @@ import os
 import shutil
 import threading
 import time
-from typing import Any, Dict, List
+from typing import TYPE_CHECKING, Any, Dict, List
 
 from app_paths import APP_DATA_DIR
 from config_validation import CONFIG_SCHEMA_VERSION, validate_config_payload
 from domain.states import RuntimeState
+
+if TYPE_CHECKING:
+    from domain.account_model import Account
 
 
 def _flog(message: str, level: str = "info") -> None:
@@ -264,7 +267,7 @@ class ConfigManager:
         backup_path = f"{path}.bak"
         try:
             with self._io_lock:
-                with open(path, "r", encoding="utf-8") as f:
+                with open(path, encoding="utf-8") as f:
                     body = f.read().strip()
                 if not body:
                     return fallback
@@ -274,7 +277,7 @@ class ConfigManager:
             if os.path.exists(backup_path):
                 try:
                     with self._io_lock:
-                        with open(backup_path, "r", encoding="utf-8") as f:
+                        with open(backup_path, encoding="utf-8") as f:
                             body = f.read().strip()
                         if body:
                             recovered = json.loads(body)
@@ -308,7 +311,7 @@ class ConfigManager:
                     os.remove(tmp_path)
             except Exception:
                 pass
-    def get_accounts(self) -> List["Account"]:
+    def get_accounts(self) -> List[Account]:
         from core import Account
 
         raw = self._read_text_json(ACCOUNTS_TEXT_FILE, None)

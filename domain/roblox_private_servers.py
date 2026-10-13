@@ -7,7 +7,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Tuple, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import net_tls
 
@@ -18,9 +18,9 @@ APIS_BASE = "https://apis.roblox.com/"
 
 PRIVATE_GAME_RE = re.compile(
     r"Roblox\.GameLauncher\.joinPrivateGame\(\s*(\d+)\s*,\s*'([^']+)'\s*,\s*'([^']+)'\s*\)",
-    flags=re.I,
+    flags=re.IGNORECASE,
 )
-GUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", flags=re.I)
+GUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", flags=re.IGNORECASE)
 
 
 def _safe_hash(value: str) -> str:
@@ -662,11 +662,11 @@ def ensure_owned_private_server(
 def parse_launch_destination_from_cmdline(cmdline: str) -> Dict[str, Any]:
     text = str(cmdline or "")
     launcher = ""
-    match = re.search(r"placelauncherurl:([^+\s]+)", text, flags=re.I)
+    match = re.search(r"placelauncherurl:([^+\s]+)", text, flags=re.IGNORECASE)
     if match:
         launcher = urllib.parse.unquote(match.group(1))
     else:
-        match = re.search(r"\-j\s+\"([^\"]+)\"", text, flags=re.I)
+        match = re.search(r"\-j\s+\"([^\"]+)\"", text, flags=re.IGNORECASE)
         if match:
             launcher = match.group(1)
     if not launcher:

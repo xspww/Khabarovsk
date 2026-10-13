@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Any, Dict, List, Mapping, Iterable, Optional
+from typing import Any, Dict, Iterable, List, Mapping, Optional
 
-SECRET_KEY_RE = re.compile(r"(cookie|password|token|secret|roblosecurity|private.*link|accesscode|linkcode|nonce)", re.I)
-COOKIE_RE = re.compile(r"(_\|WARNING:[^\s'\"<>]+|\.ROBLOSECURITY[^\s'\"<>]*)", re.I)
-LINK_CODE_RE = re.compile(r"((?:privateServerLinkCode|linkCode|accessCode)=)[^&\s]+", re.I)
-CRONUS_TOKEN_RE = re.compile(r"(X-Cronus-Token\s*[:=]\s*)[^\s'\"<>]+", re.I)
+SECRET_KEY_RE = re.compile(r"(cookie|password|token|secret|roblosecurity|private.*link|accesscode|linkcode|nonce)", re.IGNORECASE)
+COOKIE_RE = re.compile(r"(_\|WARNING:[^\s'\"<>]+|\.ROBLOSECURITY[^\s'\"<>]*)", re.IGNORECASE)
+LINK_CODE_RE = re.compile(r"((?:privateServerLinkCode|linkCode|accessCode)=)[^&\s]+", re.IGNORECASE)
+CRONUS_TOKEN_RE = re.compile(r"(X-Cronus-Token\s*[:=]\s*)[^\s'\"<>]+", re.IGNORECASE)
 LUA_SESSION_TOKEN_RE = re.compile(r"\blua1\.[A-Za-z0-9_-]+(?:\.[A-Za-z0-9_-]+)+\b")
-LAUNCH_NONCE_RE = re.compile(r"((?:launch[_-]?nonce)\s*[:=]\s*)[^\s'\"<>]+", re.I)
+LAUNCH_NONCE_RE = re.compile(r"((?:launch[_-]?nonce)\s*[:=]\s*)[^\s'\"<>]+", re.IGNORECASE)
 
 SAFE_CONFIG_KEYS = (
     "auto_rejoin",

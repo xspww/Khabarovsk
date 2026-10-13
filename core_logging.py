@@ -54,9 +54,9 @@ if not _structured_logger.handlers:
     _json_fh.setFormatter(logging.Formatter("%(message)s"))
     _structured_logger.addHandler(_json_fh)
 
-_SENSITIVE_KEYS = re.compile(r"(cookie|password|token|secret|roblosecurity|privateServerLinkCode|linkCode)", re.I)
-_COOKIE_RE = re.compile(r"_\|WARNING:.*?(?=\s|$)", re.I)
-_LINK_CODE_RE = re.compile(r"((?:privateServerLinkCode|linkCode)=)[^&\s]+", re.I)
+_SENSITIVE_KEYS = re.compile(r"(cookie|password|token|secret|roblosecurity|privateServerLinkCode|linkCode)", re.IGNORECASE)
+_COOKIE_RE = re.compile(r"_\|WARNING:.*?(?=\s|$)", re.IGNORECASE)
+_LINK_CODE_RE = re.compile(r"((?:privateServerLinkCode|linkCode)=)[^&\s]+", re.IGNORECASE)
 
 
 def _redact_value(key: str, value: Any) -> Any:

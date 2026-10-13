@@ -240,7 +240,7 @@ class RuntimeStore:
                         int(event.get("runtime_generation", 0) or 0),
                         int(event.get("recovery_generation", 0) or 0),
                         int(event.get("command_generation", 0) or 0),
-                        event.get("pid", None),
+                        event.get("pid"),
                         str(event.get("runtime_state", "") or ""),
                         str(event.get("public_state", "") or ""),
                         self._json(event),

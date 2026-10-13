@@ -1,0 +1,46 @@
+# Ruff config — signal-only ruleset.
+# Excluded on purpose: BLE/S (defensive except style is intentional here,
+# verified), UP006/UP035/UP045 (mass annotation churn — separate pass).
+target-version = "py311"
+line-length = 120
+
+[lint]
+select = [
+  "E4", "E7", "E9",
+  "F",
+  "I",
+  "UP",
+  "B",
+  "SIM",
+  "TRY",
+  "PIE",
+  "RUF",
+  "FURB",
+  "C",
+  "ASYNC",
+  "PLW",
+]
+ignore = [
+  "UP006",
+  "UP035",
+  "UP045",
+  "BLE",
+  "S",
+  # Style-churn rules: valid taste, wrong time (100+ hits each, no bugs).
+  "C901",
+  "SIM102",
+  "SIM103",
+  "SIM105",
+  "SIM108",
+  "TRY003",
+  "TRY300",
+  "TRY301",
+  "PLW0603",
+  "E731",
+  "B904",
+  # Unsafe autofix (may change runtime behavior).
+  "RUF046",
+]
+
+[lint.per-file-ignores]
+"tests/*" = ["E402"]

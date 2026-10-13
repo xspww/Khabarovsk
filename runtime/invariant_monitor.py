@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import time
 from typing import Any, Callable, Dict, Iterable, Optional, Tuple
-from runtime.runtime_invariants import check_runtime_invariants, invariant_snapshot
 
+from runtime.runtime_invariants import check_runtime_invariants, invariant_snapshot
 
 RecordEvent = Callable[..., None]
 PidValidator = Callable[[Any, int], bool]

@@ -10,6 +10,7 @@ import time
 from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
+
 TOKEN_VERSION = "lua1"
 # Farm sessions routinely run for hours in the same server without refetching
 # the helper. A 15-minute TTL blinded the farm to disconnect/error_code events

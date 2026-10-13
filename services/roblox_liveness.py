@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import time
 from typing import Any, Dict, Optional
+
+from core import Account, flog_kv
 from runtime.runtime_state_manager import RuntimeStateManager
-from core import flog_kv, Account
-from services.roblox_log_evidence import CachedLogEvidenceCollector, collect_recent_log_evidence
 from services.process_proof_policy import score_resource_signals
+from services.roblox_log_evidence import CachedLogEvidenceCollector, collect_recent_log_evidence
 
 _RUNTIME_STATE = RuntimeStateManager(logger=flog_kv)
 _POPUP_LOG_EVIDENCE_WINDOW_SECONDS = 120.0

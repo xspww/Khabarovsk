@@ -1,10 +1,10 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Iterable
+from typing import Any, Dict, Iterable, List
+
 from services.captcha_guard import is_captcha_window_texts
 from services.verify_guard import is_locked_window_texts, is_recovery_window_texts
-
 
 CONNECTION_KEYWORDS = (
     "connection error",

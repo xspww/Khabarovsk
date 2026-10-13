@@ -9,9 +9,9 @@ import re
 import secrets
 import time
 from ctypes import wintypes
-from typing import Any, Dict, List, Optional, Tuple, Iterable
-from app_paths import APP_DATA_DIR, LOG_DIR, move_app_data_file
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from app_paths import APP_DATA_DIR, LOG_DIR, move_app_data_file
 
 ACCOUNT_DATA_FILE = os.path.join(APP_DATA_DIR, "AccountData.json")
 move_app_data_file("account_tools_audit.jsonl", os.path.join("logs", "account_tools_audit.jsonl"))
@@ -22,7 +22,7 @@ COOKIE_RE = re.compile(
     r"(_\|WARNING:-DO-NOT-SHARE-THIS\.[^\s'\"<>]+|_\|WARNING:[^\s'\"<>]+)",
     re.IGNORECASE,
 )
-LINK_CODE_RE = re.compile(r"((?:privateServerLinkCode|linkCode|accessCode)=)[^&\s]+", re.I)
+LINK_CODE_RE = re.compile(r"((?:privateServerLinkCode|linkCode|accessCode)=)[^&\s]+", re.IGNORECASE)
 
 CRONUS_ENTROPY = b"Cronus Hybrid AccountData v1"
 
@@ -641,15 +641,15 @@ class AccountDataStore:
                     # passkey recovery, or captcha) — import it marked instead
                     # of dropping it as a generic invalid cookie.
                     try:
+                        from services.captcha_guard import CAPTCHA_BLOCK_REASON as _CAP_MSG_I
+                        from services.captcha_guard import CAPTCHA_REASON as _CAP_STATUS_I
+                        from services.captcha_guard import is_captcha_text as _is_cap_text_i
                         from services.verify_guard import LOCKED_BLOCK_REASON as _LOCKED_MSG_I
                         from services.verify_guard import LOCKED_REASON as _LOCKED_STATUS_I
                         from services.verify_guard import RECOVERY_BLOCK_REASON as _REC_MSG_I
                         from services.verify_guard import RECOVERY_REASON as _REC_STATUS_I
                         from services.verify_guard import is_locked_text as _is_locked_text_i
                         from services.verify_guard import is_recovery_text as _is_rec_text_i
-                        from services.captcha_guard import CAPTCHA_BLOCK_REASON as _CAP_MSG_I
-                        from services.captcha_guard import CAPTCHA_REASON as _CAP_STATUS_I
-                        from services.captcha_guard import is_captcha_text as _is_cap_text_i
                     except Exception:
                         _LOCKED_MSG_I = "Account locked - face/ID verification required. Verify manually, then click Resume."
                         _LOCKED_STATUS_I = "identity_locked"
@@ -697,13 +697,29 @@ class AccountDataStore:
                         try:
                             from services.credential_check import (
                                 BAD_CREDENTIALS as _CC_BAD,
+                            )
+                            from services.credential_check import (
                                 BANNED as _CC_BANNED,
+                            )
+                            from services.credential_check import (
                                 CAPTCHA as _CC_CAPTCHA,
+                            )
+                            from services.credential_check import (
                                 LOCKED as _CC_LOCKED,
+                            )
+                            from services.credential_check import (
                                 RECOVERY as _CC_RECOVERY,
+                            )
+                            from services.credential_check import (
                                 TRANSIENT as _CC_TRANSIENT,
+                            )
+                            from services.credential_check import (
                                 UNKNOWN as _CC_UNKNOWN,
+                            )
+                            from services.credential_check import (
                                 VALID as _CC_VALID,
+                            )
+                            from services.credential_check import (
                                 paced_check_credentials as _paced_check,
                             )
 
@@ -763,12 +779,12 @@ class AccountDataStore:
                             continue
                         elif _outcome in (_CC_LOCKED, _CC_RECOVERY, _CC_CAPTCHA):
                             try:
+                                from services.captcha_guard import CAPTCHA_BLOCK_REASON as _C_MSG_CC
+                                from services.captcha_guard import CAPTCHA_REASON as _C_STATUS_CC
                                 from services.verify_guard import LOCKED_BLOCK_REASON as _L_MSG_CC
                                 from services.verify_guard import LOCKED_REASON as _L_STATUS_CC
                                 from services.verify_guard import RECOVERY_BLOCK_REASON as _R_MSG_CC
                                 from services.verify_guard import RECOVERY_REASON as _R_STATUS_CC
-                                from services.captcha_guard import CAPTCHA_BLOCK_REASON as _C_MSG_CC
-                                from services.captcha_guard import CAPTCHA_REASON as _C_STATUS_CC
                             except Exception:
                                 _L_MSG_CC = "Account locked - face/ID verification required. Verify manually, then click Resume."
                                 _L_STATUS_CC = "identity_locked"
@@ -1014,7 +1030,7 @@ class AccountDataStore:
         if not os.path.exists(PENDING_IMPORT_FILE):
             return []
         try:
-            with open(PENDING_IMPORT_FILE, "r", encoding="utf-8") as f:
+            with open(PENDING_IMPORT_FILE, encoding="utf-8") as f:
                 data = json.load(f)
             return data if isinstance(data, list) else []
         except Exception:

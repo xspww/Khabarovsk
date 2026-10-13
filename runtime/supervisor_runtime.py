@@ -3,7 +3,6 @@ from __future__ import annotations
 import time
 from typing import Any, Dict, Optional
 
-
 SUPERVISOR_TREE = {
     "GlobalSupervisor": ("SchedulerSupervisor", "RuntimeSupervisor", "TelemetrySupervisor", "AccountSupervisor"),
     "AccountSupervisor": ("ProcessSupervisor", "JoinSupervisor", "RecoverySupervisor", "WatchdogSupervisor", "HeartbeatSupervisor"),
@@ -53,7 +52,7 @@ class SupervisorRuntime:
             "runtime_generation": snapshot.get("runtime_generation", 0),
             "recovery_generation": snapshot.get("recovery_generation", 0),
             "command_generation": snapshot.get("command_generation", 0),
-            "pid": snapshot.get("pid", None),
+            "pid": snapshot.get("pid"),
             "runtime_state": snapshot.get("runtime_state", ""),
             "public_state": snapshot.get("public_state", ""),
             "payload": dict(payload or {}),

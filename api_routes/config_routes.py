@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import os
-from fastapi import HTTPException, Request
-from performance_settings import normalize_fps_limit, normalize_graphics_quality, normalize_process_priority, normalize_roblox_volume
-from services.roblox_hybrid import release_multi_roblox_guard
-from services.executor_relauncher import EXECUTOR_NAMES
 
+from fastapi import HTTPException, Request
+
+from performance_settings import (
+    normalize_fps_limit,
+    normalize_graphics_quality,
+    normalize_process_priority,
+    normalize_roblox_volume,
+)
+from runtime.account_selection import runtime_account_allowlist
+from services.executor_relauncher import EXECUTOR_NAMES
+from services.roblox_hybrid import release_multi_roblox_guard
+
+from .context import ApiContext
 from .settings_state import (
     _apply_game_defaults,
     _cpu_limiter_settings_from_config,
@@ -14,8 +23,6 @@ from .settings_state import (
     _normalize_window_size_settings,
     persist_config,
 )
-from runtime.account_selection import runtime_account_allowlist
-from .context import ApiContext
 
 
 def register(app, ctx: ApiContext) -> None:
@@ -312,7 +319,7 @@ def register(app, ctx: ApiContext) -> None:
             updates["ui_col_widths"] = clean_widths
         if "games" in updates:
             try:
-                from domain.games import ensure_games_migrated, normalize_games
+                from domain.games import normalize_games
 
                 snap = cfg_mgr.snapshot()
                 snap["games"] = updates["games"]

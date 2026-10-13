@@ -7,9 +7,9 @@ import sys
 from typing import Any, Callable, Optional
 
 from app_paths import APP_DATA_DIR, APP_NAME, APP_ROOT_DIR, CACHE_DIR, resource_path
-from version import app_display_version
 from core import flog_kv
 from desktop.console_icon import APP_ICON_FILE
+from version import app_display_version
 
 # Evergreen WebView2 bootstrapper (~2MB downloader, Microsoft official).
 # Installed silently on first launch when missing so every machine gets the
@@ -300,7 +300,7 @@ class DesktopWindow:
         if not _webview2_preflight():
             return False
         try:
-            from PySide6.QtCore import QPoint, QSize, QTimer, Qt, QCoreApplication
+            from PySide6.QtCore import QCoreApplication, QPoint, QSize, Qt, QTimer
             from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
             from PySide6.QtWidgets import (
                 QApplication,

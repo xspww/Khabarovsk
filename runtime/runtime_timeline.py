@@ -4,6 +4,7 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 
+
 class RuntimeTimeline:
     """Thin structured runtime event writer over RuntimeStore and in-memory log."""
 

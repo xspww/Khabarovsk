@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from core import flog_kv, Account
+from core import Account, flog_kv
 from performance_settings import (
     DEFAULT_ROBLOX_SETTINGS_PATH,
     normalize_fps_limit,
@@ -10,7 +10,9 @@ from performance_settings import (
 )
 from services.cpu_limiter import CPU_LIMITER, normalize_cpu_limiter_settings
 from services.process_service import ProcessManager
+
 from .context import ApiContext
+
 
 def _int_setting(value, default: int, min_value: int, max_value: int) -> int:
     try:

@@ -7,7 +7,7 @@ import threading
 import time
 from importlib import metadata as importlib_metadata
 from importlib import util as importlib_util
-from typing import List, Optional, Tuple, Dict
+from typing import Dict, List, Optional, Tuple
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
@@ -75,7 +75,7 @@ def _startup_import_available(name: str) -> bool:
 def _startup_requirement_rows(requirements_file: str = REQUIREMENTS_FILE) -> List[Tuple[str, str, str]]:
     rows: List[Tuple[str, str, str]] = []
     try:
-        with open(requirements_file, "r", encoding="utf-8") as handle:
+        with open(requirements_file, encoding="utf-8") as handle:
             lines = handle.readlines()
     except OSError:
         return rows
@@ -170,35 +170,34 @@ if __name__ == "__main__":
 try:
     from fastapi import FastAPI
     from fastapi.staticfiles import StaticFiles
-    import uvicorn
 except ImportError:
     print("pip install -r requirements.txt")
     sys.exit(1)
 
-from services.account_hybrid import ACCOUNT_STORE
 from api_routes import ApiContext, register_api_routes
-from core import Account, ConfigManager, LOG_FILE, flog, flog_kv
+from core import LOG_FILE, Account, ConfigManager, flog, flog_kv
+from desktop.ui_dashboard import get_html_ui
 from desktop_host import (
     INSTANCE_TOKEN,
     SHUTDOWN_REQUESTED,
     clear_instance_state,
     run_desktop,
 )
-from runtime.farm import FarmController
-from services.process_service import ProcessManager
-from services.app_version_check import cleanup_legacy_update_stage
-from services.roblox_install_manager import RobloxInstallManager
-from services.executor_compatibility import ExecutorCompatibilityService
-from services.executor_relauncher import ExecutorRelaunchService
-from services.app_updater import AppUpdater
-from services.discord_presence import DISCORD_PRESENCE
-
 from performance_settings import (
     apply_graphics_settings_file,
     apply_performance_settings_file,
     apply_process_priority_to_roblox,
 )
-from desktop.ui_dashboard import get_html_ui
+from runtime.farm import FarmController
+from services.account_hybrid import ACCOUNT_STORE
+from services.app_updater import AppUpdater
+from services.app_version_check import cleanup_legacy_update_stage
+from services.discord_presence import DISCORD_PRESENCE
+from services.executor_compatibility import ExecutorCompatibilityService
+from services.executor_relauncher import ExecutorRelaunchService
+from services.process_service import ProcessManager
+from services.roblox_install_manager import RobloxInstallManager
+
 cfg_mgr = ConfigManager()
 try:
     accounts = [Account.from_dict(item) for item in ACCOUNT_STORE.to_cronus_accounts()]
@@ -377,7 +376,7 @@ def _executor_auto_update_worker(latest: str, resume: bool) -> None:
             flog_kv("EXECUTOR", "auto_update_wait_executor", state=str(fresh.get("state") or "unknown"), version=normalized)
     finally:
         with _EXECUTOR_UPDATE_LOCK:
-            if _EXECUTOR_UPDATE_IN_PROGRESS == str(normalized or "").strip().lower():
+            if str(normalized or "").strip().lower() == _EXECUTOR_UPDATE_IN_PROGRESS:
                 _EXECUTOR_UPDATE_IN_PROGRESS = ""
 
 
@@ -400,7 +399,7 @@ def _executor_base_transition(event: str, payload: dict) -> None:
     if auto_update and needs_update and event not in {"api_error", "disabled"}:
         normalized = str(payload.get("latest_version") or "").strip()
         with _EXECUTOR_UPDATE_LOCK:
-            if _EXECUTOR_UPDATE_IN_PROGRESS == latest and ROBLOX_INSTALLER.is_job_active():
+            if latest == _EXECUTOR_UPDATE_IN_PROGRESS and ROBLOX_INSTALLER.is_job_active():
                 return
             if _EXECUTOR_UPDATE_IN_PROGRESS:
                 return

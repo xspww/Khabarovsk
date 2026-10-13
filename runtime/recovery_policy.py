@@ -1,16 +1,16 @@
 from __future__ import annotations
 
-import time
 import threading
+import time
 from typing import Any, Callable, Dict, List, Tuple
+
 from runtime.recovery_context import (
-    RecoveryAttemptContext,
     SESSION_CONFLICT,
+    RecoveryAttemptContext,
     normalize_disconnect_category,
     priority_for_signal,
     reason_for_category,
 )
-
 
 REASON_ALIASES = {
     "pid_dead": "process_crash",

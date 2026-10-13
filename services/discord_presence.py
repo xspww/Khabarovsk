@@ -139,7 +139,7 @@ class _DiscordIpc:
             for i in range(10):
                 pipe_name = rf"\\.\pipe\discord-ipc-{i}"
                 try:
-                    pipe = open(pipe_name, "r+b", buffering=0)  # noqa: PTH123
+                    pipe = open(pipe_name, "r+b", buffering=0)
                     self._pipe_file = pipe
                     self._send(_OP_HANDSHAKE, handshake)
                     self._recv(timeout=timeout)

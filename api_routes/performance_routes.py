@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import HTTPException, Request
-from services.account_hybrid import audit_event
+
 from core import flog_kv
 from performance_settings import (
     apply_volume_settings_file,
@@ -12,9 +12,11 @@ from performance_settings import (
     normalize_roblox_volume,
     roblox_settings_status,
 )
+from services.account_hybrid import audit_event
 from services.cpu_limiter import CPU_LIMITER
 from services.process_service import ProcessService
 
+from .context import ApiContext
 from .settings_state import (
     _cpu_limiter_settings_from_config,
     _cpu_limiter_status,
@@ -28,7 +30,6 @@ from .settings_state import (
     _window_size_status,
     persist_config,
 )
-from .context import ApiContext
 
 
 def register(app, ctx: ApiContext) -> None:

@@ -3,59 +3,73 @@ from __future__ import annotations
 import os
 import threading
 import time
-from typing import Any, Dict, Optional, Tuple, List
+from typing import Any, Dict, List, Optional, Tuple
 
-from services.account_hybrid import ACCOUNT_STORE, audit_event
 from core import (
+    APP_DATA_DIR,
     Account,
     AccountState,
-    APP_DATA_DIR,
+    ConfigManager,
     EventBus,
     EventName,
+    SmartQueue,
     StateManager,
     flog,
     flog_kv,
 )
-from services.network_monitor import NET_OFFLINE, NET_ONLINE, NetworkMonitor
-from services.process_service import ProcessManager, ProcessService
+from runtime.account_worker import AccountWorker
+from runtime.command_rate_limit import FORCE_REJOIN_INTERVAL_SECONDS, PerAccountRateLimiter
+from runtime.command_tracker import RuntimeCommandTracker
+from runtime.dispatcher import Dispatcher
+from runtime.farm_health import (
+    build_farm_status,
+)
+from runtime.farm_health import (
+    get_account as get_farm_account,
+)
+from runtime.farm_health import (
+    get_detailed_farm_health as get_detailed_farm_health_payload,
+)
+from runtime.farm_health import (
+    get_public_farm_health as get_public_farm_health_payload,
+)
+from runtime.farm_health import (
+    get_runtime_diagnostics as get_runtime_diagnostics_payload,
+)
+from runtime.farm_health import (
+    get_runtime_events as get_runtime_events_payload,
+)
+from runtime.farm_health import (
+    get_runtime_health as get_runtime_health_payload,
+)
+from runtime.farm_health import (
+    get_runtime_telemetry as get_runtime_telemetry_payload,
+)
+from runtime.farm_initial_sync import initial_state_sync
+from runtime.farm_lifecycle import FarmLifecycleService
+from runtime.lua_event_guard import lua_event_handler_error_response, validate_lua_event_payload
+from runtime.lua_identity import resolve_lua_account
+from runtime.lua_liveness_policy import lua_liveness_required, mark_waiting_for_lua
+from runtime.lua_rejoin_events import handle_lua_rejoin_event as _handle_lua_rejoin_event
+from runtime.lua_server_detection import LuaServerDetection, detect_lua_server
+from runtime.machine_supervisor import MachineSupervisor
+from runtime.recovery_engine import RecoveryEngine
+from runtime.recovery_support import _clear_account_cookie_block
+from runtime.recovery_view import recovery_step_for_account
+from runtime.runtime_orchestrator import RuntimeOrchestrator
+from runtime.runtime_state_manager import RuntimeStateManager
+from runtime.runtime_store import RuntimeStore
+from runtime.runtime_timeline import RuntimeTimeline
+from runtime.supervisor_runtime import SupervisorRuntime
+from runtime.system_maintenance import SystemMaintenance
+from services.account_hybrid import ACCOUNT_STORE, audit_event
+from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
 from services.captcha_guard import (
     clear_account_captcha_hold,
 )
+from services.network_monitor import NET_OFFLINE, NET_ONLINE, NetworkMonitor
+from services.process_service import ProcessManager, ProcessService
 from services.verify_guard import clear_account_locked_hold, clear_account_recovery_hold
-from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
-from runtime.farm_health import (
-    build_farm_status,
-    get_account as get_farm_account,
-    get_detailed_farm_health as get_detailed_farm_health_payload,
-    get_public_farm_health as get_public_farm_health_payload,
-    get_runtime_diagnostics as get_runtime_diagnostics_payload,
-    get_runtime_events as get_runtime_events_payload,
-    get_runtime_health as get_runtime_health_payload,
-    get_runtime_telemetry as get_runtime_telemetry_payload,
-)
-from runtime.command_tracker import RuntimeCommandTracker
-from runtime.runtime_store import RuntimeStore
-from runtime.runtime_state_manager import RuntimeStateManager
-from runtime.runtime_timeline import RuntimeTimeline
-from runtime.runtime_orchestrator import RuntimeOrchestrator
-from runtime.machine_supervisor import MachineSupervisor
-from runtime.lua_liveness_policy import lua_liveness_required, mark_waiting_for_lua
-from runtime.farm_lifecycle import FarmLifecycleService
-from runtime.lua_server_detection import LuaServerDetection, detect_lua_server
-from runtime.recovery_view import recovery_step_for_account
-from runtime.supervisor_runtime import SupervisorRuntime
-from runtime.recovery_support import _clear_account_cookie_block
-from runtime.account_worker import AccountWorker
-from runtime.command_rate_limit import FORCE_REJOIN_INTERVAL_SECONDS, PerAccountRateLimiter
-from runtime.farm_initial_sync import initial_state_sync
-from runtime.lua_rejoin_events import handle_lua_rejoin_event as _handle_lua_rejoin_event
-from runtime.lua_identity import resolve_lua_account
-from runtime.lua_event_guard import lua_event_handler_error_response, validate_lua_event_payload
-from runtime.system_maintenance import SystemMaintenance
-from core import SmartQueue
-from runtime.recovery_engine import RecoveryEngine
-from runtime.dispatcher import Dispatcher
-from core import ConfigManager
 
 
 class FarmController:
@@ -645,8 +659,6 @@ class FarmController:
             return False, "Account not found"
         with acc._lock:
             pid = acc.pid
-            identity = acc.bound_process_identity
-            runtime_generation = acc.runtime_generation
         if not pid:
             return False, "No active PID"
         result = self._runtime_orchestrator.request_kill_account_pid(
@@ -710,8 +722,8 @@ class FarmController:
         if not acc:
             return False, "Account not found"
         try:
-            from services.verify_guard import is_account_locked, is_account_recovery
             from services.captcha_guard import is_account_captcha_required
+            from services.verify_guard import is_account_locked, is_account_recovery
 
             if is_account_locked(acc):
                 return self.resume_locked_account(username)
@@ -908,7 +920,7 @@ class FarmController:
                 or (detection.is_vip and previous_log_key != log_key)
             )
             if should_log:
-                setattr(acc, "_last_server_detection_log_key", log_key)
+                acc._last_server_detection_log_key = log_key
 
         if should_log:
             private_label = detection.private_server_id[:8] if detection.private_server_id else ""

@@ -1,25 +1,21 @@
 from __future__ import annotations
 
-import time
 import threading
+import time
 from typing import Any, Dict, List
-from services.account_hybrid import redact_secret
+
 from core import AccountState, account_launch_block_reason, flog_kv
-from version import app_display_version
-from services.network_monitor import NET_ONLINE
-from services.process_service import ProcessManager
-from services.resource_monitor import get_rt_monitor
-from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_LABEL, is_account_captcha_required
-from services.verify_guard import (
-    LOCKED_BLOCK_REASON,
-    LOCKED_LABEL,
-    LOCKED_REASON,
-    RECOVERY_BLOCK_REASON,
-    RECOVERY_LABEL,
-    RECOVERY_REASON,
-    is_account_locked,
-    is_account_recovery,
+from runtime.account_selection import runtime_account_filter_reason
+from runtime.account_worker import AccountWorker
+from runtime.lua_liveness_policy import (
+    LUA_WAITING_STATUS,
+    account_lua_online,
+    lua_liveness_required,
+    lua_wait_timeout_seconds,
 )
+from runtime.runtime_health import account_health_flags, build_runtime_health
+from runtime.runtime_truth import TRUTH_SUSPECT, build_account_truth
+from services.account_hybrid import redact_secret
 from services.ban_guard import (
     BANNED_BLOCK_REASON,
     BANNED_LABEL,
@@ -28,12 +24,19 @@ from services.ban_guard import (
     is_account_banned,
     is_account_suspended,
 )
-from runtime.account_worker import AccountWorker
-from runtime.account_selection import runtime_account_filter_reason
-from runtime.runtime_health import account_health_flags, build_runtime_health
-from runtime.runtime_truth import TRUTH_SUSPECT, build_account_truth
-from runtime.lua_liveness_policy import LUA_WAITING_STATUS, account_lua_online, lua_liveness_required, lua_wait_timeout_seconds
-
+from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_LABEL, is_account_captcha_required
+from services.network_monitor import NET_ONLINE
+from services.process_service import ProcessManager
+from services.resource_monitor import get_rt_monitor
+from services.verify_guard import (
+    LOCKED_BLOCK_REASON,
+    LOCKED_LABEL,
+    RECOVERY_BLOCK_REASON,
+    RECOVERY_LABEL,
+    is_account_locked,
+    is_account_recovery,
+)
+from version import app_display_version
 
 IMPORTANT_RUNTIME_EVENTS = {
     "lua",
@@ -83,11 +86,11 @@ class RuntimeViewModelBuilder:
             lock = getattr(self._farm, "_dashboard_process_cache_lock", None)
             if lock is None:
                 lock = threading.Lock()
-                setattr(self._farm, "_dashboard_process_cache_lock", lock)
+                self._farm._dashboard_process_cache_lock = lock
             cache = getattr(self._farm, "_dashboard_process_cache", None)
             if cache is None:
                 cache = {}
-                setattr(self._farm, "_dashboard_process_cache", cache)
+                self._farm._dashboard_process_cache = cache
             with lock:
                 cached = cache.get(key)
                 if cached and now - float(cached[0] or 0.0) < ttl:
@@ -123,7 +126,7 @@ class RuntimeViewModelBuilder:
         state_cache = getattr(self._farm, "_last_runtime_truth_state", None)
         if state_cache is None:
             state_cache = {}
-            setattr(self._farm, "_last_runtime_truth_state", state_cache)
+            self._farm._last_runtime_truth_state = state_cache
         previous = state_cache.get(key)
         state_cache[key] = truth.truth_state
         if truth.truth_state != TRUTH_SUSPECT:

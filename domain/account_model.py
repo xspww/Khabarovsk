@@ -5,10 +5,10 @@ import time
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
-from domain.states import LIFECYCLE_STATE, AccountState, runtime_state_for_public
+
 from domain.runtime_lifecycle import lifecycle_for_public
 from domain.runtime_models import AccountRuntime
-
+from domain.states import LIFECYCLE_STATE, AccountState, runtime_state_for_public
 
 STATE_META: Dict[AccountState, Dict[str, str]] = {
     AccountState.IDLE:         {"label": "Idle",         "color": "#6b7280"},
@@ -294,7 +294,7 @@ class Account:
         }
 
     @staticmethod
-    def from_dict(d: dict) -> "Account":
+    def from_dict(d: dict) -> Account:
         return Account(
             username  = str(d.get("username", "")),
             user_id   = str(d.get("user_id", d.get("userId", ""))),
@@ -512,7 +512,8 @@ def account_launch_block_reason(acc: Account) -> str:
             getattr(acc, "last_error", ""),
         ) or SUSPENDED_BLOCK_REASON_FALLBACK
     try:
-        from services.ban_guard import BANNED_BLOCK_REASON, is_account_banned as _is_banned
+        from services.ban_guard import BANNED_BLOCK_REASON
+        from services.ban_guard import is_account_banned as _is_banned
 
         if _is_banned(acc):
             return BANNED_BLOCK_REASON

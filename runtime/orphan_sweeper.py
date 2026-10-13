@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import time
 from typing import Any, Callable, Dict, Iterable, Optional
-from services.process_service import ProcessManager, ProcessService
 
+from services.process_service import ProcessManager, ProcessService
 
 RecordEvent = Callable[..., None]
 

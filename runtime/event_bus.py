@@ -3,7 +3,8 @@ from __future__ import annotations
 import queue
 import threading
 import time
-from typing import Dict, Set, Any, Callable, List, Tuple
+from typing import Any, Callable, Dict, List, Set, Tuple
+
 from core_logging import flog_kv
 
 

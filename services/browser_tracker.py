@@ -3,7 +3,6 @@ from __future__ import annotations
 import re
 from typing import Any
 
-
 _TRACKER_PATTERNS = (
     re.compile(r"browsertrackerid:([A-Za-z0-9_-]+)", re.IGNORECASE),
     re.compile(r"browserTrackerId=([A-Za-z0-9_-]+)", re.IGNORECASE),

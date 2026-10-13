@@ -6,7 +6,6 @@ from typing import Any, Callable, Dict, List, Optional
 from domain.states import AccountState, RuntimeState, runtime_state_for_public
 from services.process_proof_policy import PROOF_STRONG, is_at_least_process_proof
 
-
 PidValidator = Callable[[Any, int], bool]
 
 

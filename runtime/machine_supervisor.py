@@ -3,9 +3,9 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Iterable, Optional
-from core import flog_kv
+from typing import Any, Callable, Dict, Iterable, List, Optional
 
+from core import flog_kv
 
 ResourceProbe = Callable[[], Dict[str, float]]
 GuardProbe = Callable[[], Dict[str, Any]]

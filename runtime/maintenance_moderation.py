@@ -123,8 +123,8 @@ class MaintenanceModerationMixin:
         if not cookie:
             return False
         try:
+            from services.ban_guard import is_banned_text, is_suspended_text
             from services.roblox_hybrid import validate_cookie_details
-            from services.ban_guard import is_suspended_text, is_banned_text
         except Exception as exc:
             flog_kv("MODERATION", "unavailable", "warning", account=getattr(acc, "display_name", "?"), error=str(exc))
             return False
@@ -147,7 +147,7 @@ class MaintenanceModerationMixin:
         if ok:
             self._moderation_state()[key] = now
             try:
-                from services.ban_guard import is_account_banned, is_account_suspended, clear_account_banned_hold
+                from services.ban_guard import clear_account_banned_hold, is_account_banned, is_account_suspended
 
                 if is_account_banned(acc) or is_account_suspended(acc):
                     writer = getattr(self, "_runtime_state", None) or getattr(self, "_state_mgr", None)

@@ -1,12 +1,16 @@
 """Lua rejoin event handling for FarmController."""
 from __future__ import annotations
+
 import time
 from typing import Any, Dict
+
 from core import AccountState, flog_kv
 from domain.states import RuntimeSignal
 from runtime.lua_event_guard import validate_lua_event_payload
 from runtime.lua_identity import lua_event_requires_pid_guard, resolve_lua_account
 from services.process_service import ProcessService
+
+
 def _lua_has_server_job(payload: Dict[str, Any]) -> bool:
     place_id = str(payload.get("observed_place_id") or payload.get("place_id") or "").strip()
     job_id = str(payload.get("observed_job_id") or payload.get("job_id") or "").strip()

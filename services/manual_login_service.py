@@ -50,7 +50,7 @@ LOGIN_SUCCESS_PATHS = (
     "/v2/login",
     "/v2/signup",
 )
-TWO_STEP_RE = re.compile(r"/users/\d+/two-step-verification/login", re.I)
+TWO_STEP_RE = re.compile(r"/users/\d+/two-step-verification/login", re.IGNORECASE)
 
 PLAYWRIGHT_INSTALL_HINT = (
     "Manual Login needs a login browser. Install Google Chrome or Edge, or run: "
@@ -494,11 +494,23 @@ class ManualLoginManager:
         try:
             from services.credential_check import (
                 BAD_CREDENTIALS as _CC_BAD,
+            )
+            from services.credential_check import (
                 BANNED as _CC_BANNED,
+            )
+            from services.credential_check import (
                 CAPTCHA as _CC_CAPTCHA,
+            )
+            from services.credential_check import (
                 LOCKED as _CC_LOCKED,
+            )
+            from services.credential_check import (
                 RECOVERY as _CC_RECOVERY,
+            )
+            from services.credential_check import (
                 TRANSIENT as _CC_TRANSIENT,
+            )
+            from services.credential_check import (
                 VALID as _CC_VALID,
             )
         except Exception:

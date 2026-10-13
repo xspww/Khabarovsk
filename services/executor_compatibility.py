@@ -8,7 +8,6 @@ from typing import Any, Callable, Dict, Iterable, Optional
 
 import net_tls
 
-
 WEAO_BASE = "https://weao.xyz/api"
 WEAO_USER_AGENT = "WEAO-3PService"
 # Official Roblox source for the latest WindowsPlayer version.
@@ -26,7 +25,7 @@ class ExecutorCompatibilityService:
         self.cfg_mgr = cfg_mgr
         self.on_transition = on_transition or (lambda _event, _payload: None)
         self.logger = logger or (lambda *_args, **_kwargs: None)
-        self.get_installed_versions = get_installed_versions or (lambda: [])
+        self.get_installed_versions = get_installed_versions or (list)
         self._lock = threading.RLock()
         self._status: Dict[str, Any] = {"state": "disabled", "executors": [], "latest_version": "", "error": ""}
         self._last_signature = ""

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import time
 from collections import Counter
-from typing import Any, Dict, List, Iterable, Optional
+from typing import Any, Dict, Iterable, List, Optional
+
 RUNTIME_HEALTH_EVENT_WINDOW_SECONDS = 600.0
 FARM_HEALTH_STUCK_STATE_SECONDS = 180.0
 CONTROL_PLANE_RESTART_THRESHOLD_SECONDS = 180.0

@@ -4,7 +4,6 @@ import os
 import shutil
 import sys
 
-
 APP_NAME = "Cronus Launcher"
 APP_FOLDER_NAME = "Cronus Launcher"
 APP_ROOT_DIR = os.path.dirname(os.path.abspath(__file__))

@@ -8,11 +8,11 @@ import secrets
 import socket
 import time
 import urllib.request
-from typing import Any, Dict, Optional, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
 from app_paths import APP_DATA_DIR, APP_ROOT_DIR, IS_COMPILED, path_targets_current_exe
 from core import flog_kv
 from desktop.constants import APP_USER_AGENT, DEFAULT_PORT, INSTANCE_LOCK_PORT, LOOPBACK_HOST, PORT_SCAN_COUNT
-
 
 BASE_DIR = APP_ROOT_DIR
 HOST = LOOPBACK_HOST
@@ -134,7 +134,7 @@ def _read_instance_state() -> Dict[str, Any]:
     try:
         if not os.path.exists(_INSTANCE_STATE_FILE):
             return {}
-        with open(_INSTANCE_STATE_FILE, "r", encoding="utf-8") as f:
+        with open(_INSTANCE_STATE_FILE, encoding="utf-8") as f:
             data = json.load(f)
         return data if isinstance(data, dict) else {}
     except Exception:

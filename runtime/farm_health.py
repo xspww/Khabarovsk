@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app_paths import APP_DATA_DIR
-from services.account_hybrid import redact_secret
 from core import account_launch_block_reason, flog_kv
 from runtime.account_selection import runtime_account_filter_reason
 from runtime.diagnostic_bundle import build_runtime_diagnostic_bundle
@@ -18,7 +17,7 @@ from runtime.runtime_health import (
 )
 from runtime.runtime_view_model import RuntimeViewModelBuilder
 from runtime.telemetry_view import build_runtime_telemetry
-
+from services.account_hybrid import redact_secret
 
 WATCHDOG_STATUS_CACHE = "watchdog_task_last.json"
 

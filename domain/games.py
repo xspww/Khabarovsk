@@ -30,7 +30,6 @@ switching back to ``"per_account"`` restores them).
 
 from __future__ import annotations
 
-import time
 from typing import Any, Dict, List, Mapping, Optional
 
 DEFAULT_GAME_ID = "game-1"

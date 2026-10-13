@@ -2,18 +2,22 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Callable, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 
-from core import flog, Account, StateManager
+from core import Account, StateManager, flog
 from runtime.invariant_monitor import RuntimeInvariantMonitor
-from runtime.orphan_sweeper import RuntimeOrphanSweeper
-from runtime.runtime_scheduler import RuntimeScheduler, RuntimeScheduledJob
-from services.process_service import ProcessManager
 from runtime.maintenance_liveness import MaintenanceLivenessMixin
 from runtime.maintenance_moderation import MaintenanceModerationMixin
 from runtime.maintenance_performance import MaintenancePerformanceMixin
 from runtime.maintenance_queue import MaintenanceQueueMixin
+from runtime.orphan_sweeper import RuntimeOrphanSweeper
+from runtime.runtime_scheduler import RuntimeScheduledJob, RuntimeScheduler
 from runtime.supervisor_runtime import SupervisorRuntime
+from services.process_service import ProcessManager
+
+if TYPE_CHECKING:
+    from runtime.account_worker import AccountWorker
+    from runtime.recovery_engine import RecoveryEngine
 
 
 class SystemMaintenance(

@@ -6,21 +6,20 @@ import secrets
 import subprocess
 import threading
 import time
-from typing import Any, Dict, List
+from typing import List
 
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from services.account_hybrid import audit_event
 from core import flog_kv
-from services.roblox_hybrid import release_multi_roblox_guard
-from services.app_version_check import check_app_update
 from services import startup_manager
+from services.account_hybrid import audit_event
+from services.app_version_check import check_app_update
+from services.roblox_hybrid import release_multi_roblox_guard
 
 from .auth import require_api_token
-from .idempotency import begin_idempotent_request, begin_idempotent_request_sync, finish_idempotent_request
-from .settings_state import _int_setting
 from .context import ApiContext
+from .idempotency import begin_idempotent_request_sync, finish_idempotent_request
 
 _COOKIE_RE = re.compile(r'(_\|WARNING:[^\s\'"<>]+|\.ROBLOSECURITY[^\s\'"<>]*)', re.IGNORECASE)
 _KV_SECRET_RE = re.compile(r"(?i)\b(cookie|roblosecurity|password)=([^\s]+)")
@@ -43,7 +42,7 @@ def register(app, ctx: ApiContext) -> None:
         if not os.path.exists(log_file):
             return []
         try:
-            with open(log_file, "r", encoding="utf-8", errors="replace") as f:
+            with open(log_file, encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()[-limit:]
         except Exception as e:
             flog_kv("API", "log_tail_failed", "warning", error=e)

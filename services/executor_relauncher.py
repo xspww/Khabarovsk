@@ -6,7 +6,6 @@ import threading
 import time
 from typing import Any, Dict
 
-
 EXECUTOR_NAMES = ("Volt", "Potassium", "Real", "Madium")
 
 

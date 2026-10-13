@@ -9,11 +9,12 @@ from fastapi.responses import StreamingResponse
 
 from core import flog_kv
 from desktop import console_output
-from runtime.start_readiness import decide_start
 from runtime.popup_detector.popup_sampler import PopupWindowSampler
+from runtime.start_readiness import decide_start
+
 from .auth import require_api_token
-from .settings_state import _apply_game_defaults
 from .context import ApiContext
+from .settings_state import _apply_game_defaults
 
 
 def register(app, ctx: ApiContext) -> None:
@@ -592,8 +593,8 @@ def register(app, ctx: ApiContext) -> None:
         if not names:
             raise HTTPException(400, "usernames required")
         try:
-            from services.verify_guard import is_account_locked, is_account_recovery
             from services.captcha_guard import is_account_captcha_required as _is_cap
+            from services.verify_guard import is_account_locked, is_account_recovery
         except Exception:
             is_account_locked = lambda _a: False  # type: ignore
             is_account_recovery = lambda _a: False  # type: ignore

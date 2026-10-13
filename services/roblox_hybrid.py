@@ -12,23 +12,20 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
-from typing import Any, Dict, List, Tuple, Optional
+from datetime import UTC, datetime
+from typing import Any, Dict, List, Optional, Tuple
+
 import net_tls
 from app_paths import EXECUTABLE_PATH, IS_COMPILED
-from services.account_hybrid import ACCOUNT_STORE, decrypt_cookie
-from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, captcha_detail, is_captcha_text
 from domain.roblox_private_servers import (
     _safe_hash,
     build_owned_private_server_link,
     build_place_launcher_url,
     build_roblox_player_uri,
-    ensure_owned_private_server as _ensure_owned_private_server,
     fetch_private_server_metadata,
     game_name_for_universe,
     list_my_private_servers,
     list_private_servers_for_place,
-    parse_launch_destination_from_cmdline,
     parse_vip_components,
     parse_vip_link,
     private_servers_enabled_for_universe,
@@ -37,6 +34,11 @@ from domain.roblox_private_servers import (
     universe_id_for_place,
     vip_unavailable_permanently,
 )
+from domain.roblox_private_servers import (
+    ensure_owned_private_server as _ensure_owned_private_server,
+)
+from services.account_hybrid import ACCOUNT_STORE, decrypt_cookie
+from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, captcha_detail, is_captcha_text
 
 USER_AGENT = "CronusLauncherHybrid/1.0"
 # Public (no-cookie) Roblox lookups get empty/filtered responses with a
@@ -364,8 +366,8 @@ def _describe_moderation(data: Dict[str, Any]) -> str:
     end_raw = str(data.get("endDate") or "").strip()
     if end_raw:
         try:
-            end = datetime.strptime(end_raw, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
-            days = max(0, (end - datetime.now(timezone.utc)).days)
+            end = datetime.strptime(end_raw, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=UTC)
+            days = max(0, (end - datetime.now(UTC)).days)
             until = f" until {end:%Y-%m-%d} (~{days}d)"
         except Exception:
             until = ""
@@ -667,7 +669,6 @@ def reprobe_moderation_response(cookie: str, attempts: int = 3, delay: float = 1
             status, body, _headers = client.request(USERS_BASE + "v1/users/authenticated", method="GET", retry_csrf=False)
         except Exception:
             status, body = 0, ""
-        text = f"{status} {body or ''}"
         if int(status or 0) == 403 and "moderat" in str(body or "").lower() and "suspend" not in str(body or "").lower():
             return int(status), str(body or "")
         try:
@@ -753,6 +754,8 @@ def validate_cookie_details(cookie: str) -> Tuple[bool, str, str, Dict[str, Any]
         try:
             from services.ban_guard import (
                 BANNED_BLOCK_REASON as _BANNED_MSG,
+            )
+            from services.ban_guard import (
                 is_suspended_text as _is_suspended,
             )
         except Exception:
@@ -815,7 +818,11 @@ def validate_record_cookie_identity(record: Dict[str, Any], cookie: str, update_
     try:
         from services.ban_guard import (
             BANNED_BLOCK_REASON as _BANNED_MSG,
+        )
+        from services.ban_guard import (
             BANNED_IMPORT_STATUS as _BANNED_STATUS,
+        )
+        from services.ban_guard import (
             is_banned_text as _is_banned_text,
         )
     except Exception:
@@ -825,12 +832,26 @@ def validate_record_cookie_identity(record: Dict[str, Any], cookie: str, update_
     try:
         from services.verify_guard import (
             LOCKED_BLOCK_REASON as _LOCKED_MSG,
+        )
+        from services.verify_guard import (
             LOCKED_REASON as _LOCKED_STATUS,
+        )
+        from services.verify_guard import (
             RECOVERY_BLOCK_REASON as _RECOVERY_MSG,
+        )
+        from services.verify_guard import (
             RECOVERY_REASON as _RECOVERY_STATUS,
+        )
+        from services.verify_guard import (
             is_locked_status_text as _is_locked_status,
+        )
+        from services.verify_guard import (
             is_locked_text as _is_locked_text,
+        )
+        from services.verify_guard import (
             is_recovery_status_text as _is_recovery_status,
+        )
+        from services.verify_guard import (
             is_recovery_text as _is_recovery_text,
         )
     except Exception:
@@ -1262,7 +1283,7 @@ class HybridLauncher:
             r"browserTrackerId%3D(\d+)",
             r"\-b\s+(\d+)",
         ):
-            match = re.search(pattern, text, flags=re.I)
+            match = re.search(pattern, text, flags=re.IGNORECASE)
             if match:
                 return match.group(1)
         return ""

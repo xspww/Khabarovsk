@@ -10,11 +10,13 @@ import urllib.parse
 import urllib.request
 import webbrowser
 from typing import Any, Dict, List, Optional, Tuple
+
 from fastapi import HTTPException, Request
+
 import net_tls
-from services.account_hybrid import ACCOUNT_STORE, audit_event
 from core import banned_block_reason, cookie_identity_block_reason, cookie_invalid_block_reason, suspended_block_reason
-from services.roblox_hybrid import resolve_vip_access_code, validate_cookie_details
+from services.account_hybrid import ACCOUNT_STORE, audit_event
+from services.account_reload import emit_reload_cookie_events
 from services.ban_guard import (
     BANNED_BLOCK_REASON,
     BANNED_REASON,
@@ -31,6 +33,8 @@ from services.captcha_guard import (
     is_captcha_status_text,
     set_account_captcha_hold,
 )
+from services.roblox_hybrid import resolve_vip_access_code, validate_cookie_details
+from services.roblox_launch_service import AccountLaunchService, parse_vip_link
 from services.verify_guard import (
     LOCKED_BLOCK_REASON,
     LOCKED_REASON,
@@ -43,13 +47,11 @@ from services.verify_guard import (
     set_account_locked_hold,
     set_account_recovery_hold,
 )
-from services.account_reload import emit_reload_cookie_events
-from services.roblox_launch_service import AccountLaunchService, parse_vip_link
 
 from . import account_records
+from .context import ApiContext
 from .idempotency import begin_idempotent_request, begin_idempotent_request_sync, finish_idempotent_request
 from .settings_state import _normalize_window_size_settings
-from .context import ApiContext
 
 APP_USER_AGENT = "CronusLauncher/RT"
 
@@ -187,11 +189,11 @@ def register(app, ctx: ApiContext) -> None:
                 )
                 with net_tls.urlopen(req, timeout=8.0) as resp:
                     page = resp.read().decode("utf-8", errors="replace")
-                title_match = re.search(r"<title>(.*?)</title>", page, flags=re.I | re.S)
+                title_match = re.search(r"<title>(.*?)</title>", page, flags=re.IGNORECASE | re.DOTALL)
                 if title_match:
                     title = html_lib.unescape(re.sub(r"\s+", " ", title_match.group(1))).strip()
-                    name = re.sub(r"\s*\|\s*Roblox\s*$", "", title, flags=re.I).strip()
-                image_match = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', page, flags=re.I)
+                    name = re.sub(r"\s*\|\s*Roblox\s*$", "", title, flags=re.IGNORECASE).strip()
+                image_match = re.search(r'<meta\s+property=["\']og:image["\']\s+content=["\']([^"\']+)["\']', page, flags=re.IGNORECASE)
                 if image_match and not image_url:
                     image_url = html_lib.unescape(image_match.group(1)).strip()
             except Exception as exc:

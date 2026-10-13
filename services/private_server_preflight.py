@@ -144,8 +144,8 @@ def _run(cfg, accounts, games, game_mode, cfg_mgr, outcome):
         pass
 
     try:
-        from services.roblox_hybrid import RobloxHTTP, validate_record_cookie_identity
         from domain.roblox_private_servers import ensure_owned_private_server
+        from services.roblox_hybrid import RobloxHTTP, validate_record_cookie_identity
     except Exception as exc:
         for place, slot in needed.items():
             outcome["failures"].append({
@@ -169,7 +169,6 @@ def _run(cfg, accounts, games, game_mode, cfg_mgr, outcome):
         usernames = [str(a.username or "") for a in slot["accounts"]]
         owner_record = None
         owner_cookie = ""
-        owner_uid = ""
         for acc in slot["accounts"]:
             try:
                 cookie = str(getattr(acc, "cookie", "") or "").strip()

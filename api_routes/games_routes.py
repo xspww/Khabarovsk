@@ -40,7 +40,7 @@ def _save_games(ctx: ApiContext, games: List[Dict[str, Any]]) -> List[Dict[str, 
     try:
         from domain.games import normalize_games
     except Exception:
-        normalize_games = lambda value: list(value or [])  # noqa: E731
+        normalize_games = lambda value: list(value or [])
     clean = normalize_games(games)
     persist_config(ctx, {"games": clean})
     return clean

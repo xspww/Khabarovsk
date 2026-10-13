@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from typing import Any, Dict
+
 from core import AccountState, flog_kv
-from services.captcha_guard import CAPTCHA_REASON
-from services.process_service import ProcessManager
 from runtime.lua_liveness_policy import account_lua_online, lua_liveness_required, lua_wait_timeout_seconds
 from runtime.maintenance_captcha import detect_and_hold_captcha
-from typing import Any, Dict
+from services.captcha_guard import CAPTCHA_REASON
+from services.process_service import ProcessManager
 
 
 def emit_lua_wait_timeout_recovery(
@@ -70,7 +71,8 @@ def handle_in_game_lua_wait_timeout(owner: Any, acc: Any, cfg: Dict[str, Any], n
         if acc.state != AccountState.IN_GAME or acc.desired_state != AccountState.IN_GAME:
             return False
         try:
-            from services.verify_guard import LOCKED_REASON as _LOCKED_R, RECOVERY_REASON as _REC_R
+            from services.verify_guard import LOCKED_REASON as _LOCKED_R
+            from services.verify_guard import RECOVERY_REASON as _REC_R
 
             _verify_reasons = {_LOCKED_R, _REC_R}
         except Exception:

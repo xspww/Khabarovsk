@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Iterable
+from typing import Any, Dict, Iterable, List
+
 
 def _num(value: Any, default: float = 0.0) -> float:
     try:

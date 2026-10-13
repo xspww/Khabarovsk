@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 import re
 import secrets
@@ -23,6 +22,7 @@ from services.lua_session_tokens import (
 
 from .auth import api_token_valid, require_api_token
 from .context import ApiContext
+
 _SCRIPT_PATH = resource_path("lua", "internal", "rejoin_monitor.lua")
 _ACCOUNT_MODULE_PATH = resource_path("lua", "internal", "account_status_client.lua")
 _EXECUTOR_LOADER_PATH = resource_path("lua", "run_in_executor.lua")
@@ -83,17 +83,17 @@ def _lua_literal(value: Any) -> str:
 
 
 def _load_script_template() -> str:
-    with open(_SCRIPT_PATH, "r", encoding="utf-8") as handle:
+    with open(_SCRIPT_PATH, encoding="utf-8") as handle:
         return handle.read()
 
 
 def _load_account_module_template() -> str:
-    with open(_ACCOUNT_MODULE_PATH, "r", encoding="utf-8") as handle:
+    with open(_ACCOUNT_MODULE_PATH, encoding="utf-8") as handle:
         return handle.read()
 
 
 def _load_executor_loader() -> str:
-    with open(_EXECUTOR_LOADER_PATH, "r", encoding="utf-8") as handle:
+    with open(_EXECUTOR_LOADER_PATH, encoding="utf-8") as handle:
         return handle.read()
 
 
@@ -136,7 +136,7 @@ def _render_requeue_source(account: str, port: int, shutdown_delay: float, token
             'warnCronus("TPR begin")',
             "local source=nil",
             "if Request then",
-            f'local response=Request({{Method="GET",Url=url,Headers={{["User-Agent"]="CronusRejoinTeleport/1.0"}}}})',
+            'local response=Request({Method="GET",Url=url,Headers={["User-Agent"]="CronusRejoinTeleport/1.0"}})',
             "source=response and(response.Body or response.body or response.Data or response.data)",
             "elseif game.HttpGet then",
             "source=game:HttpGet(url)",

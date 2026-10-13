@@ -3,7 +3,6 @@
 Pure stdlib unittest — no farm, locks, or network needed. Covers the
 canonicalization/dedupe seam that every recovery caller now leverages.
 """
-import time
 import unittest
 
 from runtime.recovery_context import RecoveryAttemptContext

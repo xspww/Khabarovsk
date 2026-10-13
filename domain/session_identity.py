@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-import time
-import uuid
 import hashlib
 import re
+import time
 import urllib.parse
+import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
+
 from services.browser_tracker import tracker_label
 
 

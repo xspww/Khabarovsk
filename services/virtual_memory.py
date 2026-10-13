@@ -17,11 +17,11 @@ Failures -> ok=False with msg (toast warning, never crash) per Q10.
 """
 from __future__ import annotations
 
+import base64
 import ctypes
 import json
-import subprocess
-import base64
 import os
+import subprocess
 import time
 from ctypes import wintypes
 from typing import Any, Dict, Tuple

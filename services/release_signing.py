@@ -20,7 +20,6 @@ from typing import Any, Dict
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
-from cryptography.hazmat.primitives.asymmetric.utils import Prehashed
 
 RELEASE_PUBLIC_KEY_PEM = b"""-----BEGIN PUBLIC KEY-----
 MIIBojANBgkqhkiG9w0BAQEFAAOCAY8AMIIBigKCAYEAqD/2EGTNP3hNk8r7tCI6

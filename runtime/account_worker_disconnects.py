@@ -1,8 +1,12 @@
 from __future__ import annotations
+
 import time
-from core import flog, Account
-from services.process_service import ProcessManager, ProcessService
 from typing import Any
+
+from core import Account, flog
+from services.process_service import ProcessManager, ProcessService
+
+
 def handle_disconnect_checks(worker: Any, account: Account, runtime_seconds: float) -> bool:
     acc = account
     nr_timeout = worker.cfg.get("not_responding_timeout", 30)

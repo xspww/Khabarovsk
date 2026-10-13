@@ -82,6 +82,9 @@ def register(app, ctx: ApiContext) -> None:
             "multi_roblox_enabled", "rt_rotation_enabled",
             "runtime_account_allowlist",
             "start_on_boot", "start_farming_on_boot", "auto_update_on_boot",
+            "privacy_blur_usernames", "privacy_randomize_usernames",
+            "discord_presence_enabled", "discord_client_id",
+            "discord_show_accounts", "discord_show_game",
             "ui_col_widths",
         }
         updates = {k: v for k, v in body.items() if k in allowed}
@@ -100,6 +103,17 @@ def register(app, ctx: ApiContext) -> None:
         for _boot_key in ("start_on_boot", "start_farming_on_boot", "auto_update_on_boot"):
             if _boot_key in updates:
                 updates[_boot_key] = bool(updates[_boot_key])
+        for _privacy_key in ("privacy_blur_usernames", "privacy_randomize_usernames"):
+            if _privacy_key in updates:
+                updates[_privacy_key] = bool(updates[_privacy_key])
+        for _discord_bool_key in ("discord_presence_enabled", "discord_show_accounts", "discord_show_game"):
+            if _discord_bool_key in updates:
+                updates[_discord_bool_key] = bool(updates[_discord_bool_key])
+        if "discord_client_id" in updates:
+            _cid = str(updates["discord_client_id"] or "").strip()
+            if _cid and (not _cid.isdigit() or not (15 <= len(_cid) <= 22)):
+                raise HTTPException(400, "Invalid Discord Client ID (15-22 digits)")
+            updates["discord_client_id"] = _cid
         if "executor_relaunch_enabled" in updates:
             updates["executor_relaunch_enabled"] = bool(updates["executor_relaunch_enabled"])
             if updates["executor_relaunch_enabled"]:

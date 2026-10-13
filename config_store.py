@@ -178,6 +178,10 @@ DEFAULTS: Dict[str, Any] = {
     "auto_update_on_boot":    False,
     "privacy_blur_usernames":      False,
     "privacy_randomize_usernames": False,
+    "discord_presence_enabled":      False,
+    "discord_client_id":             "",
+    "discord_show_accounts":         True,
+    "discord_show_game":             True,
     "accounts":                 [],
     "runtime_state":            {},
 }

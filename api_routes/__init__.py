@@ -8,6 +8,7 @@ from .config_routes import register as register_config_routes
 from .accounts_routes import register as register_accounts_routes
 from .manual_login_routes import register as register_manual_login_routes
 from .games_routes import register as register_games_routes
+from .discord_routes import register as register_discord_routes
 from .system_routes import register as register_system_routes
 from .lua_routes import register as register_lua_routes
 
@@ -21,5 +22,6 @@ def register_api_routes(app, ctx: ApiContext) -> None:
     register_manual_login_routes(app, ctx)
     register_games_routes(app, ctx)
     register_lua_routes(app, ctx)
+    register_discord_routes(app, ctx)
     register_system_routes(app, ctx)
 

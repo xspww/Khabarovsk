@@ -191,6 +191,7 @@ from services.roblox_install_manager import RobloxInstallManager
 from services.executor_compatibility import ExecutorCompatibilityService
 from services.executor_relauncher import ExecutorRelaunchService
 from services.app_updater import AppUpdater
+from services.discord_presence import DISCORD_PRESENCE
 
 from performance_settings import (
     apply_graphics_settings_file,
@@ -518,6 +519,14 @@ if __name__ == "__main__":
         sys.argv = [sys.argv[0], *sys.argv[idx + 1:]]
         raise SystemExit(multi_roblox_guard.main())
     EXECUTOR_TRACKER.start()
+    try:
+        DISCORD_PRESENCE.configure(
+            cfg_getter=lambda key, default=None: cfg_mgr.get(key, default),
+            status_getter=lambda: farm.get_status(),
+        )
+        DISCORD_PRESENCE.start()
+    except Exception:
+        pass
     try:
         run_desktop(app, farm)
         # Normal return (duplicate instance / update park / fallback):

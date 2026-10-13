@@ -28,6 +28,8 @@ from desktop.instance_guard import (
     _stop_previous_instance,
     _stop_same_app_processes,
     _write_instance_state,
+)
+from desktop.instance_guard import (
     clear_instance_state as clear_instance_state,
 )
 from desktop.webview_window import DesktopWindow

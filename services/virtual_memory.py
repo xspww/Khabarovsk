@@ -91,7 +91,7 @@ def _run_ps_json(script: str, timeout: int = 30) -> Dict[str, Any]:
         proc = subprocess.run(
             ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
              "-ExecutionPolicy", "Bypass", "-Command", script],
-            capture_output=True, text=True, timeout=timeout)
+            capture_output=True, text=True, timeout=timeout, check=False)
     except Exception as exc:
         return {"ok": False, "msg": f"powershell unavailable: {exc}"}
     out = (proc.stdout or "").strip()
@@ -230,7 +230,7 @@ if ($pf) {
   New-CimInstance -ClassName Win32_PageFileSetting -Property @{ Name = 'C:\pagefile.sys'; InitialSize = $sizeMb; MaximumSize = $sizeMb } | Out-Null
 }
 @{ ok = $true; sizeMb = $sizeMb } | ConvertTo-Json -Compress
-""" % (size_mb,)
+""".replace("%d", str(int(size_mb)))
 
 
 def _encoded_command(script: str) -> list:
@@ -302,7 +302,7 @@ def apply(mode: str, size_gb: int) -> Dict[str, Any]:
     cmd = _encoded_command(script)
     try:
         if is_admin():
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
             out = (proc.stdout or "").strip()
             if proc.returncode != 0:
                 return {"ok": False,

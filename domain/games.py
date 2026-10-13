@@ -88,13 +88,10 @@ def normalize_games(raw: Any) -> List[Dict[str, Any]]:
         return []
     games: List[Dict[str, Any]] = []
     seen = set()
-    for index, item in enumerate(raw):
+    for item in raw:
         if not isinstance(item, dict):
             continue
-        try:
-            game = normalize_game(item, len(games))
-        except ValueError:
-            raise
+        game = normalize_game(item, len(games))
         if not (game["id"] or game["name"] or game["place_id"] or game["private_server_url"]):
             continue
         key = game["id"].lower()

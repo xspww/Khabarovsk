@@ -481,7 +481,7 @@ def kill_all_roblox_clients(
             except Exception:
                 continue
         if victims:
-            gone, alive = psutil.wait_procs(victims, timeout=max(0.5, wait_seconds))
+            _gone, alive = psutil.wait_procs(victims, timeout=max(0.5, wait_seconds))
             for proc in alive:
                 try:
                     proc.kill()
@@ -530,7 +530,7 @@ def cleanup_extra_launch_processes(
                 continue
 
         if victims:
-            gone, alive = psutil.wait_procs(victims, timeout=max(0.5, wait_seconds))
+            _gone, alive = psutil.wait_procs(victims, timeout=max(0.5, wait_seconds))
             for proc in alive:
                 try:
                     proc.kill()

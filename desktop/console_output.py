@@ -99,14 +99,14 @@ def reattach_console_if_redirected() -> bool:
             return False
         try:
             codepage = int(kernel32.GetConsoleOutputCP() or 0)
-            encoding = "cp%d" % codepage if codepage > 0 else "utf-8"
+            encoding = f"cp{codepage}" if codepage > 0 else "utf-8"
         except Exception:
             encoding = "utf-8"
         # Match the console codepage (not UTF-8) so non-ASCII output keeps
         # the same encode-error fallback path as a normal launch.
         for stream_name in ("stdout", "stderr"):
             try:
-                setattr(sys, stream_name, open("CONOUT$", "w", encoding=encoding))
+                setattr(sys, stream_name, open("CONOUT$", "w", encoding=encoding))  # noqa: SIM115 - console redirect lives for process lifetime
             except Exception:
                 pass
         return True

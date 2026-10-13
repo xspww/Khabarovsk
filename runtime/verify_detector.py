@@ -101,7 +101,7 @@ def probe_cookie_verify(
     try:
         if validator is None:
             from services.roblox_hybrid import validate_cookie_details as validator  # lazy: heavy deps
-        ok, _username, detail, _meta = validator(token)
+        _ok, _username, detail, _meta = validator(token)
     except Exception as exc:
         return {"matched": False, "reason_key": "", "detail": f"cookie probe failed: {exc}", "evidence_source": "verify_cookie_api"}
     detail_text = str(detail or "")

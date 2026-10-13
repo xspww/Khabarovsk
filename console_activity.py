@@ -926,7 +926,7 @@ def _format_text(message: str) -> Optional[str]:
     msg = message.strip()
     if not msg or _KV_LINE_RE.match(msg):
         return None
-    if msg.startswith("[EVENT]") or msg.startswith("[RECOVERY] hold"):
+    if msg.startswith(("[EVENT]", "[RECOVERY] hold")):
         return None
 
     match = re.match(r"^\[WORKER\]\s+(.+?)\s+disconnect dialog detected - will recover in\s+([0-9.]+)s\b", msg)

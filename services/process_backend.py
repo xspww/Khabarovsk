@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Any, Dict, Tuple
+from typing import Any, ClassVar, Dict, Tuple
 
 from services import roblox_launch_service as _launch_service
 from services import roblox_liveness as _liveness
@@ -32,8 +32,8 @@ class ProcessManager:
     # Replaced wholesale on every launch attempt; per-account game
     # resolution reads from it so concurrent launches for different
     # games never race on GLOBAL_VIP_LINK.
-    GAMES_SNAPSHOT = []
-    CONNECTION_ERROR_KEYWORDS = (
+    GAMES_SNAPSHOT: ClassVar[list] = []
+    CONNECTION_ERROR_KEYWORDS: ClassVar[tuple] = (
         "connection error",
         "lost connection",
         "disconnected",
@@ -45,18 +45,18 @@ class ProcessManager:
         "please check your internet connection",
         "lost connection to the game server",
     )
-    REJOINABLE_DISCONNECT_CODES = {"277"}
-    CONDITIONAL_REJOIN_DISCONNECT_CODES = {"273"}
-    FATAL_DISCONNECT_CODES = {
+    REJOINABLE_DISCONNECT_CODES: ClassVar[set] = {"277"}
+    CONDITIONAL_REJOIN_DISCONNECT_CODES: ClassVar[set] = {"273"}
+    FATAL_DISCONNECT_CODES: ClassVar[Dict[str, str]] = {
         "267": "security_kick",
         "268": "unexpected_client_behavior",
     }
-    _process_cache: Dict[int, Any] = {}
+    _process_cache: ClassVar[Dict[int, Any]] = {}
     _cache_lock = threading.Lock()
-    _nr_cache: Dict[int, Tuple[float, bool]] = {}
+    _nr_cache: ClassVar[Dict[int, Tuple[float, bool]]] = {}
     _nr_cache_ttl = 2.0
     _ownership_lock = threading.Lock()
-    _pid_owner: Dict[int, str] = {}
+    _pid_owner: ClassVar[Dict[int, str]] = {}
     HIGH_CONFIDENCE = 75.0
     MEDIUM_CONFIDENCE = 45.0
 

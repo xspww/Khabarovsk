@@ -97,7 +97,7 @@ def _disconnect_payload(**overrides):
         "user_id": "111",
         "session_id": "sess-abc",
         "launch_nonce": "nonce-xyz",
-        "event_id": "sess-abc:nonce-xyz:disconnect:%d:1:123456" % int(time.time()),
+        "event_id": f"sess-abc:nonce-xyz:disconnect:{int(time.time())}:1:123456",
         "ts": str(int(time.time())),
         "place_id": "123",
         "job_id": "job-1",
@@ -271,7 +271,7 @@ class TestLuaSessionAuthGrace(unittest.TestCase):
             "user_id": "111",
             "session_id": self.acc.session_id,
             "launch_nonce": self.acc.launch_nonce,
-            "event_id": "grace-test:%d:%d" % (int(time.time()), self._counter),
+            "event_id": f"grace-test:{int(time.time())}:{self._counter}",
             "ts": str(int(time.time())),
         }
         base.update(overrides)

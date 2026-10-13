@@ -241,7 +241,7 @@ class TestManualLoginManager(unittest.TestCase):
         self.assertEqual(status["failed"], 1)
         # Wrong password never opened a popup.
         self.assertEqual(calls, ["good"])
-        bad_entry = [e for e in status["entries"] if e["username"] == "wrong"][0]
+        bad_entry = next(e for e in status["entries"] if e["username"] == "wrong")
         self.assertEqual(bad_entry["status"], "failed")
         self.assertIn("incorrect username or password", bad_entry["detail"])
 
@@ -341,7 +341,7 @@ class TestManualLoginManager(unittest.TestCase):
         self.assertEqual(status["done"], 1)
         self.assertEqual(status["failed"], 1)
         self.assertEqual(calls, ["good"])
-        bad_entry = [e for e in status["entries"] if e["username"] == "gone"][0]
+        bad_entry = next(e for e in status["entries"] if e["username"] == "gone")
         self.assertEqual(bad_entry["status"], "failed")
         self.assertIn("แบน", bad_entry["detail"])
 

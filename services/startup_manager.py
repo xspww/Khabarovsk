@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Windows Startup shortcut manager for Cronus Launcher.
 
 Uses the per-user Startup folder (no admin, no registry) via the built-in
@@ -11,6 +9,8 @@ Toggle is the source of truth: the UI calls ensure/remove, and every boot
 (plus every successful update, which arrives with --autostart) heals a
 stale target caused by versioned exe filenames.
 """
+
+from __future__ import annotations
 
 import os
 import subprocess
@@ -38,7 +38,7 @@ def _run_ps(script: str, timeout: float = 30.0) -> Dict[str, Any]:
         proc = subprocess.run(
             ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
              "-ExecutionPolicy", "Bypass", "-Command", script],
-            capture_output=True, text=True, timeout=timeout, close_fds=True,
+            capture_output=True, text=True, timeout=timeout, close_fds=True, check=False,
         )
     except Exception as exc:
         return {"ok": False, "msg": f"powershell failed: {exc}", "stdout": "", "stderr": ""}

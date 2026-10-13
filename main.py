@@ -28,7 +28,7 @@ _REQUIREMENT_IMPORT_NAMES: Dict[str, str] = {
 
 
 def _startup_console_write(message: str = "") -> None:
-    console_output.write_line(message, {"✓": "OK", "×": "XX"})
+    console_output.write_line(message, {"✓": "OK", "×": "XX"})  # noqa: RUF001 - intentional console glyphs
 
 
 def _startup_enable_virtual_terminal() -> bool:
@@ -53,7 +53,7 @@ def _startup_tick_line(package: str, version: str) -> str:
 
 
 def _startup_fail_line(package: str, reason: str) -> str:
-    return f"{_startup_paint('×', _COLOR_RED)} {package} {reason}".rstrip()
+    return f"{_startup_paint('×', _COLOR_RED)} {package} {reason}".rstrip()  # noqa: RUF001 - intentional console glyph
 
 
 def _startup_distribution_version(name: str) -> Optional[str]:
@@ -81,7 +81,7 @@ def _startup_requirement_rows(requirements_file: str = REQUIREMENTS_FILE) -> Lis
         return rows
     for raw in lines:
         line = raw.strip()
-        if not line or line.startswith("#") or line.startswith("-"):
+        if not line or line.startswith(("#", "-")):
             continue
         match = re.match(r"^([A-Za-z0-9_.-]+)(?:\[[^\]]+\])?\s*(>=\s*([^;#\s]+))?", line)
         if not match:
@@ -521,7 +521,7 @@ if __name__ == "__main__":
     try:
         DISCORD_PRESENCE.configure(
             cfg_getter=lambda key, default=None: cfg_mgr.get(key, default),
-            status_getter=lambda: farm.get_status(),
+            status_getter=farm.get_status,
         )
         DISCORD_PRESENCE.start()
     except Exception:

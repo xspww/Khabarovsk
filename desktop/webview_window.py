@@ -121,6 +121,7 @@ def _install_webview2_runtime(setup_path: str) -> bool:
             timeout=_WEBVIEW2_INSTALL_TIMEOUT_SECONDS,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
+            check=False,
         )
         ok = int(getattr(proc, "returncode", 1) or 1) == 0
         flog_kv("MAIN", "desktop_webview_install_done", ok=ok)

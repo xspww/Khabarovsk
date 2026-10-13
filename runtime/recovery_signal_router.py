@@ -60,7 +60,7 @@ class RecoverySignalRouter:
             reason_key = "session_conflict"
             payload.setdefault("reason_key", reason_key)
             payload.setdefault("disconnect_category", SESSION_CONFLICT)
-        captcha_resume_reason = str(reason_key or "").strip().lower() in {"captcha_resume"}
+        captcha_resume_reason = str(reason_key or "").strip().lower() == "captcha_resume"
         captcha_detection_allowed = signal_name != RuntimeSignal.LAUNCH_SUCCESS.value
         captcha_detected = captcha_detection_allowed and (not captcha_resume_reason) and is_captcha_status_text(
             signal_name,
@@ -175,7 +175,7 @@ class RecoverySignalRouter:
         expected_launch_nonce: str,
         expected_transaction_id: str,
     ) -> bool:
-        captcha_resume_reason = str(reason_key or "").strip().lower() in {"captcha_resume"}
+        captcha_resume_reason = str(reason_key or "").strip().lower() == "captcha_resume"
         if signal_name != RuntimeSignal.LAUNCH_SUCCESS.value and (not captcha_resume_reason) and is_captcha_status_text(
             signal_name,
             reason_key,

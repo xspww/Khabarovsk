@@ -8,7 +8,7 @@ state lookup costs one import and one hop.
 
 from __future__ import annotations
 
-from enum import Enum, auto
+from enum import Enum, StrEnum, auto
 from typing import Dict, Optional, Set
 
 
@@ -25,7 +25,7 @@ class AccountState(Enum):
     COOLDOWN     = auto()
 
 
-class RuntimeState(str, Enum):
+class RuntimeState(StrEnum):
     STOPPED    = "STOPPED"
     STARTING   = "STARTING"
     JOINING    = "JOINING"
@@ -106,7 +106,7 @@ def public_state_for_runtime(runtime_state: RuntimeState, fallback: Optional[Acc
     return fallback or RUNTIME_TO_DEFAULT_PUBLIC_STATE.get(runtime_state, AccountState.IDLE)
 
 
-class RuntimeSignal(str, Enum):
+class RuntimeSignal(StrEnum):
     LAUNCH_REQUESTED = "launch_requested"
     LAUNCH_BOUND = "launch_bound"
     IN_GAME_VERIFIED = "in_game_verified"

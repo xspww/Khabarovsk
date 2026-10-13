@@ -590,7 +590,7 @@ def resolve_ban_for_dead_cookie(cookie: str, username_hint: str = "", timeout: f
     )
     if not name:
         return None, "", ""
-    banned, uid, detail = fetch_ban_status_by_username(name, timeout=timeout)
+    banned, uid, _detail = fetch_ban_status_by_username(name, timeout=timeout)
     return banned, name, uid
 
 

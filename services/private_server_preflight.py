@@ -266,12 +266,12 @@ def _run(cfg, accounts, games, game_mode, cfg_mgr, outcome):
             updates: Dict[str, Any] = {}
             if games_patch and games:
                 fresh = []
-                for item in games:
-                    item = dict(item)
-                    link = games_patch.get(str(item.get("id") or ""))
-                    if link and not str(item.get("private_server_url") or "").strip():
-                        item["private_server_url"] = link
-                    fresh.append(item)
+                for entry in games:
+                    row = dict(entry)
+                    link = games_patch.get(str(row.get("id") or ""))
+                    if link and not str(row.get("private_server_url") or "").strip():
+                        row["private_server_url"] = link
+                    fresh.append(row)
                 updates["games"] = fresh
             if legacy_patch:
                 updates["game_private_server_url"] = legacy_patch

@@ -203,7 +203,7 @@ def _terminate_instance_tree(pid: int) -> bool:
             except Exception:
                 pass
         proc.terminate()
-        gone, alive = psutil.wait_procs([proc] + children, timeout=4.0)
+        _gone, alive = psutil.wait_procs([proc, *children], timeout=4.0)
         for item in alive:
             try:
                 item.kill()

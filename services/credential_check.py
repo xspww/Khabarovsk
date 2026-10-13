@@ -120,7 +120,7 @@ def challenge_type_of(headers: Dict[str, str]) -> str:
 
 def has_challenge_headers(headers: Dict[str, str]) -> bool:
     try:
-        for key in dict(headers or {}).keys():
+        for key in dict(headers or {}):
             if str(key or "").strip().lower().startswith("rblx-challenge-"):
                 return True
     except Exception:
@@ -150,7 +150,7 @@ def _log_unknown_login(username: str, status: int, challenge_type: str, body_hea
 
 def _header_names(headers: Dict[str, str]) -> str:
     try:
-        return ",".join(sorted(str(k or "").strip().lower() for k in dict(headers or {}).keys() if str(k or "").strip()))
+        return ",".join(sorted(str(k or "").strip().lower() for k in dict(headers or {}) if str(k or "").strip()))
     except Exception:
         return ""
 

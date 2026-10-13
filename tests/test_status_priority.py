@@ -15,6 +15,7 @@ import os
 import sys
 import unittest
 from types import SimpleNamespace
+from typing import ClassVar
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -65,15 +66,15 @@ def make_account(**over):
 
 
 def hold(**over):
-    base = dict(
-        manual_status="",
-        import_status="",
-        last_error="",
-        last_crash_reason="",
-        last_recovery_reason="",
-        last_state_reason="",
-        recovery_status="",
-    )
+    base = {
+        "manual_status": "",
+        "import_status": "",
+        "last_error": "",
+        "last_crash_reason": "",
+        "last_recovery_reason": "",
+        "last_state_reason": "",
+        "recovery_status": "",
+    }
     base.update(over)
     return make_account(**base)
 
@@ -211,7 +212,7 @@ class RecordsApiTests(unittest.TestCase):
                 return dict(record)
 
         class FakeFarm:
-            _accounts = []
+            _accounts: ClassVar[list] = []
 
         rows = account_data_api_records(FakeStore(), FakeFarm())
         return {row["username"]: row for row in rows}
@@ -420,7 +421,7 @@ class EmbeddedIdentityTests(unittest.TestCase):
         # `duid` also contains "uid" — the device id must never win.
         from services.roblox_hybrid import cookie_embedded_identity
 
-        name, uid = cookie_embedded_identity(_synthetic_cookie())
+        _name, uid = cookie_embedded_identity(_synthetic_cookie())
         self.assertEqual(uid, "4373927375")
         self.assertNotEqual(uid, "14153082429918207610")
 

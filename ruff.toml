@@ -44,3 +44,10 @@ ignore = [
 
 [lint.per-file-ignores]
 "tests/*" = ["E402"]
+# main.py bootstraps sys.path + platform guard before local imports by design.
+"main.py" = ["E402"]
+# Localhost desktop server: route handlers only do trivial local ops
+# (os.path checks, small file reads, fire-and-forget Popen). No executor needed.
+"api_routes/accounts_routes.py" = ["ASYNC"]
+"api_routes/config_routes.py" = ["ASYNC"]
+"api_routes/system_routes.py" = ["ASYNC"]

@@ -292,7 +292,7 @@ class AccountDataStore:
         if not data:
             return []
         stripped = data.lstrip()
-        if stripped.startswith(b"{") or stripped.startswith(b"["):
+        if stripped.startswith((b"{", b"[")):
             raw = cls._json_from_bytes(data)
         else:
             try:
@@ -304,7 +304,7 @@ class AccountDataStore:
         else:
             accounts = raw
         if not isinstance(accounts, list):
-            raise ValueError("AccountData must contain an account array")
+            raise ValueError("AccountData must contain an account array")  # noqa: TRY004 - public contract raises ValueError
         return [cls.normalize_record(item) for item in accounts if isinstance(item, dict)]
 
     def read_records(self, include_cookies: bool = False) -> List[Dict[str, Any]]:

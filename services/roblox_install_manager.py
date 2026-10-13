@@ -451,9 +451,7 @@ class RobloxInstallManager:
                     allowed_parents.add(str(Path(value).absolute()).lower())
         return name_ok and (
             parent in allowed_parents
-            or parent.endswith("\\appdata\\local")
-            or parent.endswith("\\program files")
-            or parent.endswith("\\program files (x86)")
+            or parent.endswith(("\\appdata\\local", "\\program files", "\\program files (x86)"))
         )
 
     def _remove_roblox_tree(self, root: Path) -> None:
@@ -586,16 +584,13 @@ class RobloxInstallManager:
     def _delete_registry_tree(self, hive: Any, key_path: str) -> None:
         import winreg
 
-        try:
-            with winreg.OpenKey(hive, key_path, 0, winreg.KEY_READ | winreg.KEY_WRITE) as key:
-                while True:
-                    try:
-                        child = winreg.EnumKey(key, 0)
-                    except OSError:
-                        break
-                    self._delete_registry_tree(hive, f"{key_path}\\{child}")
-        except FileNotFoundError:
-            raise
+        with winreg.OpenKey(hive, key_path, 0, winreg.KEY_READ | winreg.KEY_WRITE) as key:
+            while True:
+                try:
+                    child = winreg.EnumKey(key, 0)
+                except OSError:
+                    break
+                self._delete_registry_tree(hive, f"{key_path}\\{child}")
         winreg.DeleteKey(hive, key_path)
 
     def fetch_latest_version(self) -> str:
@@ -751,6 +746,8 @@ class RobloxInstallManager:
 
     def _download_file(self, url: str, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
-        with net_tls.urlopen(urllib.request.Request(url, headers={"User-Agent": "CronusLauncher/RT"}), timeout=90) as response:
-            with open(path, "wb") as fh:
-                shutil.copyfileobj(response, fh)
+        with (
+            net_tls.urlopen(urllib.request.Request(url, headers={"User-Agent": "CronusLauncher/RT"}), timeout=90) as response,
+            open(path, "wb") as fh,
+        ):
+            shutil.copyfileobj(response, fh)

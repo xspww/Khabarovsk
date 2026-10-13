@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Notify-only app update check (opencode-style).
 
 The old self-updater (download + exe swap via a visible batch script) is
@@ -7,6 +5,8 @@ gone on purpose: spawning console/curl windows looked like malware.
 This module only *checks* GitHub Releases and reports. Failures are
 silent, exactly like opencode's upgrade(): never annoy the user.
 """
+
+from __future__ import annotations
 
 import json
 import os
@@ -204,7 +204,7 @@ def check_app_update() -> Dict[str, Any]:
     try:
         payloads = _api_get_json(releases_api_list(100))
         if not isinstance(payloads, list):
-            raise RuntimeError("bad response from GitHub releases list")
+            raise RuntimeError("bad response from GitHub releases list")  # noqa: TRY004 - external service failure, not a type error
         best = _pick_newest_stable(payloads, current)
         if best:
             tag = str(best.get("tag_name") or "").strip()

@@ -20,13 +20,13 @@ class VipTracker:
     def pick(self) -> Optional[str]:
         with self._lock:
             now = time.time()
-            available = [l for l in self._links if self._blacklist.get(l, 0) < now]
+            available = [lnk for lnk in self._links if self._blacklist.get(lnk, 0) < now]
             if not available:
                 if self._blacklist:
                     available = [min(self._blacklist, key=self._blacklist.get)]
                 else:
                     return None
-            weights = [max(0.1, self._scores.get(l, 1.0)) for l in available]
+            weights = [max(0.1, self._scores.get(lnk, 1.0)) for lnk in available]
             chosen = random.choices(available, weights=weights, k=1)[0]
             flog(f"[VIP_TRACKER] picked configured VIP link (score={self._scores.get(chosen,1):.1f})")
             return chosen
@@ -46,12 +46,12 @@ class VipTracker:
             now = time.time()
             return [
                 {
-                    "link":              l,
-                    "score":             round(self._scores.get(l, 1.0), 2),
-                    "blacklisted":       self._blacklist.get(l, 0) > now,
-                    "blacklist_remaining": max(0, int(self._blacklist.get(l, 0) - now)),
+                    "link":              lnk,
+                    "score":             round(self._scores.get(lnk, 1.0), 2),
+                    "blacklisted":       self._blacklist.get(lnk, 0) > now,
+                    "blacklist_remaining": max(0, int(self._blacklist.get(lnk, 0) - now)),
                 }
-                for l in self._links
+                for lnk in self._links
             ]
 
 

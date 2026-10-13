@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 """Discord Rich Presence for Cronus Manager.
 
 Stdlib-only Discord IPC client (Windows named pipe ``\\\\.\\pipe\\discord-ipc-N``).
@@ -10,6 +8,8 @@ Activity shape:
   details: "Farming X/Y accounts" (or "Idle" when farm stopped)
   state:   "Place <id>" when show_game is on, else Cronus version / uptime
 """
+
+from __future__ import annotations
 
 import json
 import os
@@ -139,7 +139,7 @@ class _DiscordIpc:
             for i in range(10):
                 pipe_name = rf"\\.\pipe\discord-ipc-{i}"
                 try:
-                    pipe = open(pipe_name, "r+b", buffering=0)
+                    pipe = open(pipe_name, "r+b", buffering=0)  # noqa: SIM115 - pipe ownership moves to self._pipe_file
                     self._pipe_file = pipe
                     self._send(_OP_HANDSHAKE, handshake)
                     self._recv(timeout=timeout)

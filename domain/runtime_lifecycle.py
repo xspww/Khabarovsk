@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from enum import Enum
+from enum import StrEnum
 from typing import Dict, Set
 
 from .states import AccountState, RuntimeState
 
 
-class RuntimeLifecycleState(str, Enum):
+class RuntimeLifecycleState(StrEnum):
     IDLE = "IDLE"
     QUEUED = "QUEUED"
     STARTING = "STARTING"

@@ -5,13 +5,13 @@ import os
 import threading
 import time
 from logging.handlers import RotatingFileHandler
-from typing import Any, Dict, Optional
+from typing import Any, ClassVar, Dict, Optional
 
 
 class ProcessSafeRotatingFileHandler(RotatingFileHandler):
     """RotatingFileHandler variant that tolerates Windows locks from sibling processes."""
 
-    _process_locks: Dict[str, threading.Lock] = {}
+    _process_locks: ClassVar[Dict[str, threading.Lock]] = {}
     _process_locks_guard = threading.Lock()
 
     def __init__(self, filename: str, *args: Any, lock_timeout: float = 1.0, **kwargs: Any):
@@ -25,7 +25,7 @@ class ProcessSafeRotatingFileHandler(RotatingFileHandler):
     def _acquire_interprocess_lock(self) -> Optional[Any]:
         lock_stream = None
         try:
-            lock_stream = open(self._lock_filename, "a+b")
+            lock_stream = open(self._lock_filename, "a+b")  # noqa: SIM115 - ownership transfers to caller / manual close
             if lock_stream.seek(0, os.SEEK_END) == 0:
                 lock_stream.write(b"\0")
                 lock_stream.flush()

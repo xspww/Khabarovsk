@@ -6,20 +6,20 @@ from runtime.start_readiness import blocked_summary, decide_start
 
 
 def _acc(username, **overrides):
-    base = dict(
-        username=username,
-        _config_username=username,
-        cookie_mismatch=False,
-        cookie_username=username,
-        manual_status="",
-        import_status="",
-        last_error="",
-        last_crash_reason="",
-        last_recovery_reason="",
-        game_id="",
-        place_id="",
-        vip_links=[],
-    )
+    base = {
+        "username": username,
+        "_config_username": username,
+        "cookie_mismatch": False,
+        "cookie_username": username,
+        "manual_status": "",
+        "import_status": "",
+        "last_error": "",
+        "last_crash_reason": "",
+        "last_recovery_reason": "",
+        "game_id": "",
+        "place_id": "",
+        "vip_links": [],
+    }
     base.update(overrides)
     return SimpleNamespace(**base)
 

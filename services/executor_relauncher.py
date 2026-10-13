@@ -176,7 +176,7 @@ class ExecutorRelaunchService:
         selected = str(self._cfg("executor_selected", "") or "").strip()
         if selected not in EXECUTOR_NAMES:
             return False, "Selected Executor is not supported"
-        path, fallback = self.resolve_launch_path()
+        path, _fallback = self.resolve_launch_path()
         if not path:
             return False, "Browse the selected Executor .exe first"
         if not os.path.isfile(path) or not path.lower().endswith(".exe"):

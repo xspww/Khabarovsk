@@ -498,7 +498,7 @@ def _small_disconnect_panel_features(screenshot: Any) -> Dict[str, Any]:
         col = max(col_spans, key=lambda item: item[2] * item[3], default=None)
         if not col:
             return {"matched": False, "score": 0.0, "source": "small_panel", "reason": "no_panel_columns"}
-        panel_left, panel_right, col_density, panel_cols = col
+        panel_left, panel_right, col_density, _panel_cols = col
         panel_width = panel_right - panel_left + 1
 
         text_rows = 0

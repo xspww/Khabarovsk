@@ -14,7 +14,7 @@ LOCKED_KEYWORDS = (
     "verify it is you",
     "verify you are",
     "verify you're",
-    "verify you’re",
+    "verify you’re",  # noqa: RUF001 - intentional typographic apostrophe in match text
     "identity verification",
     "age verification",
     "id verification",

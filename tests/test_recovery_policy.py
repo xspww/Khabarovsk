@@ -19,14 +19,14 @@ from runtime.recovery_policy import (
 
 
 def _ctx(**overrides):
-    base = dict(
-        account_id="acc1",
-        runtime_generation=7,
-        pid=123,
-        trigger="fault",
-        category="PROCESS_CRASH",
-        priority=100,
-    )
+    base = {
+        "account_id": "acc1",
+        "runtime_generation": 7,
+        "pid": 123,
+        "trigger": "fault",
+        "category": "PROCESS_CRASH",
+        "priority": 100,
+    }
     base.update(overrides)
     return RecoveryAttemptContext(**base)
 

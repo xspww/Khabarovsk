@@ -3,7 +3,7 @@
 import threading
 import time
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Dict, List, Optional
 
 from domain.runtime_lifecycle import lifecycle_for_public
@@ -23,7 +23,7 @@ STATE_META: Dict[AccountState, Dict[str, str]] = {
     AccountState.COOLDOWN:     {"label": "Cooldown",     "color": "#6b7280"},
 }
 
-class ServerType(str, Enum):
+class ServerType(StrEnum):
     VIP     = "VIP"
     PUBLIC  = "PUBLIC"
     UNKNOWN = "UNKNOWN"
@@ -342,7 +342,7 @@ def cookie_invalid_block_reason(*values: object) -> str:
         if not lowered:
             continue
         # Banned is a separate state â€” never report it as cookie_invalid.
-        if lowered.strip() in {"banned"} or "account banned" in lowered:
+        if lowered.strip() == "banned" or "account banned" in lowered:
             continue
         if lowered == "cookie_invalid":
             return "Invalid Cookie. Reimport the correct .ROBLOSECURITY for this account."

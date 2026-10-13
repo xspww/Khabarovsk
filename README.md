@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://github.com/xspww/Khabarovsk/releases"><img alt="release" src="https://img.shields.io/github/v/release/xspww/Khabarovsk?style=flat-square&label=release" /></a>
-  <a href="https://github.com/xspww/Khabarovsk/actions/workflows/release.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/xspww/Khabarovsk/release.yml?style=flat-square&branch=main" /></a>
+  <a href="https://github.com/xspww/Khabarovsk/actions/workflows/ci.yml"><img alt="build" src="https://img.shields.io/github/actions/workflow/status/xspww/Khabarovsk/ci.yml?style=flat-square&branch=main&label=build" /></a>
   <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-GPLv3-blue?style=flat-square" /></a>
   <img alt="platform" src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square" />
   <img alt="python" src="https://img.shields.io/badge/python-3.11+-blue?style=flat-square" />

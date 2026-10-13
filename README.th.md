@@ -1,110 +1,142 @@
 <p align="center">
-  <img src="assets/cronus_icon.png" width="120" alt="โลโก้ Cronus Launcher" />
+  <a href="https://github.com/xspww/Khabarovsk">
+    <img src="assets/cronus_icon.png" width="120" alt="โลโก้ Cronus Launcher" />
+  </a>
 </p>
 
-<h1 align="center">Cronus Launcher</h1>
-
-<p align="center">ตัวจัดการ Roblox หลายบัญชี พร้อมรีจอยอัตโนมัติ ควบคุมทรัพยากรเครื่อง และรองรับ executor</p>
+<p align="center">ลอนเชอร์ Roblox หลายบัญชีแบบโอเพนซอร์ส</p>
 
 <p align="center">
-  <a href="https://github.com/xspww/Khabarovsk/releases"><img src="https://img.shields.io/github/v/release/xspww/Khabarovsk?label=release" alt="release" /></a>
-  <a href="https://github.com/xspww/Khabarovsk/actions/workflows/release.yml"><img src="https://github.com/xspww/Khabarovsk/actions/workflows/release.yml/badge.svg" alt="build" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPLv3-blue" alt="license" /></a>
-  <img src="https://img.shields.io/badge/platform-Windows-blue" alt="platform" />
-  <img src="https://img.shields.io/badge/python-3.11+-blue" alt="python" />
-</p>
-
-<p align="center">
-  <a href="README.md">English</a> | ไทย
+  <a href="https://github.com/xspww/Khabarovsk/releases"><img alt="release" src="https://img.shields.io/github/v/release/xspww/Khabarovsk?style=flat-square&label=release" /></a>
+  <a href="https://github.com/xspww/Khabarovsk/actions/workflows/release.yml"><img alt="Build status" src="https://img.shields.io/github/actions/workflow/status/xspww/Khabarovsk/release.yml?style=flat-square&branch=main" /></a>
+  <a href="LICENSE"><img alt="license" src="https://img.shields.io/badge/license-GPLv3-blue?style=flat-square" /></a>
+  <img alt="platform" src="https://img.shields.io/badge/platform-Windows-blue?style=flat-square" />
+  <img alt="python" src="https://img.shields.io/badge/python-3.11+-blue?style=flat-square" />
 </p>
 
 <p align="center">
-  <a href="#ภาพรวม">ภาพรวม</a> •
-  <a href="#ฟีเจอร์">ฟีเจอร์</a> •
-  <a href="#สิ่งที่ต้องมี">สิ่งที่ต้องมี</a> •
-  <a href="#การติดตั้ง">การติดตั้ง</a> •
-  <a href="#เริ่มต้นใช้งานจากซอร์ส">เริ่มใช้</a> •
-  <a href="#สร้างไฟล์-exe-จากซอร์ส">สร้าง exe</a> •
-  <a href="#สคริปต์-lua-ในเกม">สคริปต์ Lua</a> •
-  <a href="#ข้อมูลและความเป็นส่วนตัว">ความเป็นส่วนตัว</a>
+  <a href="README.md">English</a> |
+  ไทย
 </p>
 
-<img width="1024" height="768" alt="sadc" src="https://github.com/user-attachments/assets/baf120ff-95ba-4d66-91b3-099c9648a08b" />
+<p align="center">
+  <a href="https://github.com/xspww/Khabarovsk/releases"><img src="https://github.com/user-attachments/assets/baf120ff-95ba-4d66-91b3-099c9648a08b" alt="แดชบอร์ด Cronus Launcher" width="1024" /></a>
+</p>
 
-## ภาพรวม
+---
 
-Cronus Launcher จัดการบัญชี Roblox หลายบัญชีจากแดชบอร์ดเดียว ตรวจสอบสถานะการเล่นเกม รีจอยอัตโนมัติเมื่อหลุด และคุมโหลด CPU หน่วยความจำ และกราฟิกเวลาเปิดหลายจอในเครื่องเดียว
+### การติดตั้ง
 
-## ฟีเจอร์
+```powershell
+# แบบแนะนำ — ไฟล์ .exe พร้อมใช้ ไม่ต้องลง Python
+# 1. เปิด https://github.com/xspww/Khabarovsk/releases
+# 2. โหลด CronusLauncher-<version>.exe แล้วเปิดได้เลย
 
-- **จัดการหลายบัญชี** — เพิ่ม จัดการ และเปิดบัญชี Roblox หลายบัญชีจากแดชบอร์ดเดียว
-- **ล็อกอินแบบ Manual** — ปุ่ม Add Accounts มีให้ล็อกอินผ่าน popup เบราว์เซอร์ (แบบ Single หรือ Multi วาง `user:pass` ทีละบรรทัด) 2FA/captcha/passkey กดเองใน popup แล้วโปรแกรมดึง cookie ให้อัตโนมัติ ใช้ Chrome/Edge ที่ลงไว้แล้ว ถ้าไม่มีจะโหลด Chromium ให้ครั้งเดียว
-- **รีจอยอัตโนมัติ** — ตรวจจับการหลุดและกลับเข้าเซิร์ฟเวอร์ที่ตั้งไว้โดยไม่ต้องกดเอง
-- **ควบคุมทรัพยากร** — จำกัด CPU จัดการ RAM จำกัด FPS โหมดกราฟิกต่ำ และจัดเลย์เอาต์หน้าต่างสำหรับการเปิดหลายจอ
-- **รองรับ executor** — ตรวจสอบความเข้ากันได้ของ executor เทียบกับเวอร์ชัน Roblox ทางการ พร้อมเปิดใหม่ให้เอง
-- **จัดการเวอร์ชัน Roblox** — ตรวจสอบเวอร์ชันไคลเอนต์ทางการ ติดตั้งหรืออัปเดตตัวเกม และลบเวอร์ชันเก่าออก
-- **ปลอดภัยในเครื่อง** — เข้ารหัส cookie และข้อมูลบัญชีด้วย Windows DPAPI ไม่ส่งออกไปเซิร์ฟเวอร์ภายนอก
+# ตรวจไฟล์ที่โหลดมา
+(Get-FileHash CronusLauncher-<version>.exe -Algorithm SHA256).Hash
+```
 
-## สิ่งที่ต้องมี
+> [!TIP]
+> เทียบค่าที่ได้กับค่า SHA256 บนหน้า release โหลดจากหน้า Releases ด้านบนเท่านั้น
+
+#### รุ่นพกพา
+
+| ไฟล์ | คำอธิบาย |
+| ---- | ----------- |
+| `CronusLauncher-<version>.exe` | ลอนเชอร์ตัวเดียว ชื่อไฟล์คงเดิม อัปเดตแบบแทนที่ไฟล์ได้ |
+| `CronusLauncher-<version>-portable.zip` | `CronusLauncher.exe` + `Api.lua` (สคริปต์ loader สำหรับ executor) |
+
+#### อัปเดตและลายเซ็น
+
+ไฟล์ทุกชิ้นใน release เซ็นด้วยคีย์ของโปรเจกต์ พอมีอัปเดตแอปจะตรวจลายเซ็นกับค่า SHA256 ก่อนติดตั้งให้ ไม่ต้องตั้งค่า certificate เอง
+
+- ตัวอัปเดตในแอปใช้ได้กับไฟล์ release บน Windows ที่ต่อเน็ตอยู่เท่านั้น รันจากซอร์สจะอัปเดตแบบนี้ไม่ได้
+- ไฟล์ `.exe` ไม่ได้เซ็นด้วยใบรับรอง publisher เชิงพาณิชย์ พอเปิดครั้งแรก SmartScreen ก็เลยอาจเตือน
+- ถ้าเก็บ `.exe` ไว้ในโฟลเดอร์ที่ต้องใช้สิทธิ์แอดมินอย่าง `Program Files` ตัวอัปเดตจะขอสิทธิ์ก่อนเขียนไฟล์ ถ้าไม่มีสิทธิ์ย้ายไฟล์ไปไว้ในโฟลเดอร์ที่เขียนได้แทน
+
+### เริ่มใช้จากซอร์ส
+
+```powershell
+# โคลน
+git clone https://github.com/xspww/Khabarovsk.git
+cd Khabarovsk
+
+# ลงของที่ต้องใช้
+python -m pip install -r requirements.txt
+
+# รัน (แบบใดแบบหนึ่ง)
+.\Run.cmd
+python main.py
+```
+
+พอรันแล้ว local service จะขึ้นที่ `127.0.0.1` แล้วเปิดแดชบอร์ดให้เอง
+
+> [!TIP]
+> ต้องใช้ Windows 10/11 64-bit กับ Python 3.11 ขึ้นไป และลง Roblox Player ไว้ก่อน ไฟล์ `.exe` ตัว release ไม่ต้องลง Python
+
+### แดชบอร์ด
+
+ภาพด้านบนคือหน้าแรก กราฟทรัพยากรสด ช่องค้นหาบัญชี กับตารางที่กรองได้
+
+- **CPU / RAM / VIRTUAL** — กราฟสดพร้อมจำนวนเธรด ค่า `ใช้ไป / ทั้งหมด GB` และการใช้ page file
+- **Search accounts... + Set game** — พิมพ์ชื่อเพื่อกรอง แล้วปัก Place ID ให้บัญชีที่เลือก
+- **All / Online / Queued + Reset columns** — ปุ่มกรองด่วนกับปุ่มล้างค่าคอลัมน์ในคลิกเดียว
+- **ตารางบัญชี** — `# / STATUS / USERNAME / GAME / DESCRIPTION` ถ้าไม่ตรงเงื่อนไขจะขึ้น `No accounts match the current filter`
+- **ป้ายสถานะ (มุมซ้ายล่าง)** — `Online / Queued / Finished / Captcha / Banned / Suspended / Locked / Invalid` พร้อมตัวจับเวลา `Running: 0s`
+- **ปุ่มด้านบน** — `START`, `Close Roblox`, `Add Accounts`, `Reload Cookies`
+
+### เปิดเกมหลายบัญชี
+
+คุมคิวกับเปิดหลายบัญชีจากที่เดียว พอเน็ตหลุดหรือโดนเตะก็พากลับเข้าเซิร์ฟเวอร์เดิมให้เอง
+
+- **Add Accounts** — ล็อกอินผ่านป๊อปอัพเบราว์เซอร์ มีแบบ `Single` กับ `Multi` (วาง `user:pass` บรรทัดละคู่) ส่วน 2FA กับ captcha กับ passkey กดเองในป๊อปอัพได้เลย แล้วโปรแกรมดึง cookie ให้อัตโนมัติ ถ้ามี Chrome หรือ Edge อยู่แล้วก็ใช้ได้เลย ถ้าไม่มีจะโหลด Chromium ให้ครั้งเดียว
+- **Queue / Game** — จัดคิวบัญชี ปักเกมกับเซิร์ฟเวอร์ปลายทาง แล้วกด `START` พร้อมกัน
+- **รีจอยอัตโนมัติ** — พอหลุดหรือโดนเตะก็กลับเข้าเกมที่ตั้งไว้ให้ ไม่ต้องกดเอง
+- **Close Roblox / Reload Cookies** — ปิดทุกจอในคลิกเดียว หรือรีเฟรชเซสชันที่เก็บไว้
+
+### ประสิทธิภาพ
+
+เปิดหลายจอในเครื่องเดียวแล้วต้องคุมโหลดให้อยู่ ทั้ง CPU เมม กราฟิก และการจัดหน้าต่าง
+
+- **Graphic** — ล็อก FPS กับโหมดกราฟิกต่ำ
+- **RAM** — คุมเมมสำหรับเซสชันหลายจอ
+- **Windows** — จัดเลย์เอาต์หน้าต่างให้อัตโนมัติ
+- **CPU** — ตัวจำกัด CPU กับการตั้ง priority ให้ไคลเอนต์ Roblox
+
+### เครื่องมือ
+
+ของช่วยเรื่องสคริปต์ executor กับเวอร์ชันไคลเอนต์
+
+- **Lua Manager** — สคริปต์ loader ในเกมช่วยให้ส่ง telemetry กับรีจอยได้ไวขึ้น เอาไฟล์นี้ไปรันใน executor
+  ```text
+  lua/run_in_executor.lua
+  ```
+  ไฟล์ zip แบบพกพาแถมไฟล์เดียวกันมาในชื่อ `Api.lua` วางไว้ข้าง `.exe`
+- **Exploits Manager** — ตามดูว่า executor ที่เลือกใช้ได้กับ Roblox เวอร์ชันทางการไหม ถ้าเปิด auto-relaunch ไว้ พอกลับมาใช้ได้ก็ปิด Roblox กับ executor แล้วเปิดใหม่ ตรวจ loader แล้วพากลับเข้าเกมให้
+- **Cronus Manager** — เช็กเวอร์ชันไคลเอนต์ทางการ ติดตั้งหรืออัปเดตตัวเกมให้ เปิด auto-update ไว้ก็อัปเดตเอง แล้วลบเวอร์ชันเก่าทิ้งให้ด้วย
+
+### โฟลเดอร์ข้อมูล
+
+config กับสถานะบัญชีเก็บไว้ในเครื่องเท่านั้น
+
+```text
+%LOCALAPPDATA%\Cronus Launcher\data
+```
+
+1. cookie บัญชีเข้ารหัสด้วย Windows DPAPI บนเครื่อง
+2. ไม่ส่ง cookie ออกไปเซิร์ฟเวอร์ภายนอก และไม่คอมมิตลง repo
+3. อัปเดตแล้วโฟลเดอร์นี้อยู่ครบเหมือนเดิม ลอนเชอร์แค่เปิดหน้า Releases หรือแทนที่ไฟล์ `.exe` ให้
+
+### สิ่งที่ต้องมี
 
 | องค์ประกอบ | ความต้องการ |
 | --------- | ----------- |
 | ระบบปฏิบัติการ | Windows 10 หรือ Windows 11 รุ่น 64-bit |
-| รันไทม์ (ตัว release) | ไม่ต้องลงเพิ่ม — ไฟล์ `.exe` จากหน้า Releases พร้อมใช้งาน |
-| รันไทม์ (รันจากซอร์ส) | Python 3.11 ขึ้นไป |
-| ตัวเกม | ติดตั้ง Roblox Player ไว้บนเครื่องแล้ว |
+| รันไทม์ (ตัว release) | ไม่ต้องลงเพิ่ม ไฟล์ `.exe` จากหน้า Releases พร้อมใช้ |
+| รันไทม์ (รันจากซอร์ส) | Python 3.11 ขึ้นไป (`pip install -r requirements.txt`) |
+| ตัวเกม | ลง Roblox Player ไว้บนเครื่องแล้ว |
 
-## การติดตั้ง
-
-วิธีแนะนำสำหรับผู้ใช้ทั่วไป ไม่ต้องลง Python
-
-1. เปิด[หน้า Releases](https://github.com/xspww/Khabarovsk/releases)
-2. ดาวน์โหลด `CronusLauncher-<version>.exe` แล้วรันได้ทันที
-3. ตัว portable `CronusLauncher-<version>-portable.zip` ประกอบด้วย `CronusLauncher.exe` และ `Api.lua` ไฟล์ exe ใช้ชื่อคงเดิมเพื่อให้อัปเดตแบบแทนที่ไฟล์ได้ ส่วน `Api.lua` คือสคริปต์ loader สำหรับรันใน executor
-
-### ตรวจสอบไฟล์ดาวน์โหลด
-
-```powershell
-(Get-FileHash CronusLauncher-<version>.exe -Algorithm SHA256).Hash
-```
-
-นำค่าที่ได้ไปเทียบกับค่า SHA256 ที่ระบุไว้ในหน้า release
-
-### การอัปเดตและลายเซ็น
-
-- ตัวอัปเดตในแอปใช้ได้กับไฟล์ exe จาก Releases บน Windows เท่านั้น และต้องเชื่อมต่ออินเทอร์เน็ต ไม่รองรับการรันจากซอร์ส
-- ไฟล์ release ทุกชิ้นเซ็นด้วยคีย์ release ของโปรเจกต์ โปรแกรมตรวจสอบลายเซ็นและ SHA256 ก่อนติดตั้งอัปเดต ผู้ใช้ไม่ต้องตั้งค่า certificate เอง
-- ไฟล์ exe ไม่ได้เซ็นด้วยใบรับรอง publisher เชิงพาณิชย์ของ Windows SmartScreen ก็เลยอาจเตือนเมื่อรันครั้งแรก ให้ดาวน์โหลดจากหน้า Releases ที่ลิงก์ไว้ด้านบนเท่านั้น
-- หากเก็บไฟล์ exe ไว้ในโฟลเดอร์ที่ต้องใช้สิทธิ์ผู้ดูแลระบบ เช่น `Program Files` ตัวอัปเดตจะขอสิทธิ์ administrator ก่อนเขียนไฟล์ ถ้าไม่มีสิทธิ์ให้ย้ายไฟล์ exe ไปไว้ในโฟลเดอร์ที่เขียนได้
-
-## เริ่มต้นใช้งานจากซอร์ส
-
-1. Clone repository:
-
-```powershell
-git clone https://github.com/xspww/Khabarovsk.git
-cd Khabarovsk
-```
-
-2. ติดตั้ง dependencies:
-
-```powershell
-python -m pip install -r requirements.txt
-```
-
-3. เปิด launcher ด้วยวิธีใดวิธีหนึ่ง:
-
-```powershell
-.\Run.cmd
-```
-
-```powershell
-python main.py
-```
-
-เมื่อรันแล้ว local service จะรันที่ `127.0.0.1` พร้อมเปิดหน้าต่างแดชบอร์ดให้อัตโนมัติ
-
-## สร้างไฟล์ exe จากซอร์ส
+### สร้างจากซอร์ส
 
 ```powershell
 python -m pip install -r requirements.txt pyinstaller
@@ -112,34 +144,24 @@ python -c "from PIL import Image; Image.open('assets/cronus_icon.png').save('ass
 pyinstaller cronus_launcher.spec
 ```
 
-ผลลัพธ์อยู่ที่ `dist/CronusLauncher.exe`
+ไฟล์ออกที่ `dist/CronusLauncher.exe`
 
-ฝั่ง Releases ก็ build ด้วยวิธีเดียวกันผ่าน GitHub Actions ทุกครั้งที่ดัน tag `v*` ชื่อ tag ต้องตรงกับ `APP_VERSION` ใน `version.py`
+ฝั่ง Releases ก็บิลด์แบบเดียวกันผ่าน GitHub Actions ทุกครั้งที่ดันแท็ก `v*` ชื่อแท็กต้องตรงกับ `APP_VERSION` ใน `version.py`
 
-## สคริปต์ Lua ในเกม
+### เอกสารอ้างอิง
 
-รันในตัวเกมแล้ว สคริปต์ loader จะช่วยส่ง telemetry และรีจอยได้เร็วขึ้น ให้นำไฟล์นี้ไปรันใน executor ของ Roblox:
+ถ้าจะไล่การเช็กเวอร์ชัน เส้น API ในเครื่อง กับโครง service เริ่มที่ `main.py`, `api_routes/`, `services/` และ `ui/` ได้เลย
 
-```text
-lua/run_in_executor.lua
-```
+### ร่วมพัฒนา
 
-ไฟล์ portable มีไฟล์เดียวกันนี้ในชื่อ `Api.lua` วางไว้ข้างไฟล์ exe
+ถ้าอยากช่วยทำ เปิด issue หรือ pull request มาที่ `main` ได้ อย่าใส่ cookie บัญชี ข้อมูลในเครื่อง กับไฟล์เซ็น release ลงคอมมิต
 
-## ข้อมูลและความเป็นส่วนตัว
-
-config และสถานะบัญชีเก็บไว้บนเครื่องที่:
-
-```text
-%LOCALAPPDATA%\Cronus Launcher\data
-```
-
-- cookie ของบัญชีเข้ารหัสด้วย Windows DPAPI บนเครื่อง
-- ไม่ส่ง cookie ออกไปเซิร์ฟเวอร์ภายนอก และไม่ commit cookie ลง repository
-- เมื่อมีเวอร์ชันใหม่ โปรแกรมจะแสดงปุ่มให้เปิดหน้า Releases เพื่อดาวน์โหลดไฟล์ใหม่ โฟลเดอร์ data ด้านบนจะไม่ถูกแตะต้องระหว่างอัปเดต
-
-## สัญญาอนุญาต
+### สัญญาอนุญาต
 
 GPLv3 — ดู [LICENSE](LICENSE) และ [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)
 
-ซอร์สของไฟล์ release คือ tag บนหน้า Releases ที่ตรงกับ `APP_VERSION` ใน `version.py`
+ซอร์สของไฟล์ release คือแท็กบนหน้า [Releases](https://github.com/xspww/Khabarovsk/releases) ที่ตรงกับ `APP_VERSION` ใน `version.py`
+
+---
+
+**ชวนคุย** [Releases](https://github.com/xspww/Khabarovsk/releases) | [Issues](https://github.com/xspww/Khabarovsk/issues) | [Actions](https://github.com/xspww/Khabarovsk/actions)

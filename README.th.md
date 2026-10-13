@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xspww/Khabarovsk/releases"><img src="https://github.com/user-attachments/assets/baf120ff-95ba-4d66-91b3-099c9648a08b" alt="แดชบอร์ด Cronus Launcher" width="1024" /></a>
+  <a href="https://github.com/xspww/Khabarovsk/releases"><img src="https://github.com/user-attachments/assets/9cb0ac21-2dc0-40af-bfd6-30cf0476e266" alt="แดชบอร์ด Cronus Launcher" width="1024" /></a>
 </p>
 
 ---

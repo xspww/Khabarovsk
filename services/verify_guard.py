@@ -254,7 +254,7 @@ def is_account_locked(account: Any) -> bool:
 
 def persist_account_locked_status(account: Any, active: bool = True) -> None:
     try:
-        from account_hybrid import ACCOUNT_STORE
+        from services.account_hybrid import ACCOUNT_STORE
 
         username = ""
         for attr in ("_config_username", "username"):
@@ -442,7 +442,7 @@ def is_account_recovery(account: Any) -> bool:
 
 def persist_account_recovery_status(account: Any, active: bool = True) -> None:
     try:
-        from account_hybrid import ACCOUNT_STORE
+        from services.account_hybrid import ACCOUNT_STORE
 
         username = ""
         for attr in ("_config_username", "username"):

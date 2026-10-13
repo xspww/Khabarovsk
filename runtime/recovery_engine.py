@@ -277,7 +277,7 @@ class RecoveryCoordinator:
                     wait_seconds=4.0,
                     reason="multi_roblox_guard_self_heal",
                 )
-            from roblox_hybrid import ensure_multi_roblox_guard, release_multi_roblox_guard
+            from services.roblox_hybrid import ensure_multi_roblox_guard, release_multi_roblox_guard
 
             release_multi_roblox_guard()
             time.sleep(1.0)

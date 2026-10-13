@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import threading
 from typing import Any, Dict, List
-from account_hybrid import redact_secret
+from services.account_hybrid import redact_secret
 from core import AccountState, account_launch_block_reason, flog_kv
 from version import app_display_version
 from services.network_monitor import NET_ONLINE
@@ -165,7 +165,7 @@ class RuntimeViewModelBuilder:
         mon = get_rt_monitor() if include_diagnostics else None
         accounts_data = []
         try:
-            from roblox_hybrid import multi_roblox_guard_status
+            from services.roblox_hybrid import multi_roblox_guard_status
 
             multi_guard = multi_roblox_guard_status()
         except Exception as exc:

@@ -11,9 +11,9 @@ from typing import Any, Dict, List
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse
 
-from account_hybrid import audit_event
+from services.account_hybrid import audit_event
 from core import flog_kv
-from roblox_hybrid import release_multi_roblox_guard
+from services.roblox_hybrid import release_multi_roblox_guard
 from services.app_version_check import check_app_update
 from services import startup_manager
 

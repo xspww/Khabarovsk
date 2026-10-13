@@ -149,7 +149,7 @@ def is_account_captcha_required(account: Any) -> bool:
 
 def persist_account_captcha_status(account: Any, active: bool = True) -> None:
     try:
-        from account_hybrid import ACCOUNT_STORE
+        from services.account_hybrid import ACCOUNT_STORE
 
         username = ""
         for attr in ("_config_username", "username"):

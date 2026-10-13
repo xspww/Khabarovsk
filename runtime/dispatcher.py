@@ -198,7 +198,7 @@ class Dispatcher(threading.Thread):
         }
         try:
             if acc.pid:
-                from roblox_hybrid import parse_launch_destination_from_cmdline
+                from services.roblox_hybrid import parse_launch_destination_from_cmdline
 
                 parsed = parse_launch_destination_from_cmdline(ProcessManager.get_pid_cmdline(acc.pid))
                 if parsed:

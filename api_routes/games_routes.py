@@ -13,7 +13,7 @@ from typing import Any, Dict, List
 
 from fastapi import HTTPException, Request
 
-from account_hybrid import ACCOUNT_STORE
+from services.account_hybrid import ACCOUNT_STORE
 
 from .context import ApiContext
 from .settings_state import _apply_game_defaults, persist_config

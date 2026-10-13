@@ -309,7 +309,7 @@ def check_credentials(
     if _is_banned(body_text) or _looks_like_deleted(body_text):
         confirmed = False
         try:
-            from roblox_hybrid import fetch_ban_status_by_username as _ban_by_name
+            from services.roblox_hybrid import fetch_ban_status_by_username as _ban_by_name
 
             _b, _uid, _detail = _ban_by_name(name, timeout=timeout)
             confirmed = _b is True

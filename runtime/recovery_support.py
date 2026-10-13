@@ -96,7 +96,7 @@ def _persist_cookie_identity_status(
     cookie_mismatch: bool = True,
 ):
     try:
-        from account_hybrid import ACCOUNT_STORE
+        from services.account_hybrid import ACCOUNT_STORE
 
         ACCOUNT_STORE.update_record(
             acc.username,

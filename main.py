@@ -175,7 +175,7 @@ except ImportError:
     print("pip install -r requirements.txt")
     sys.exit(1)
 
-from account_hybrid import ACCOUNT_STORE
+from services.account_hybrid import ACCOUNT_STORE
 from api_routes import ApiContext, register_api_routes
 from core import Account, ConfigManager, LOG_FILE, flog, flog_kv
 from desktop_host import (
@@ -184,7 +184,7 @@ from desktop_host import (
     clear_instance_state,
     run_desktop,
 )
-from farm import FarmController
+from runtime.farm import FarmController
 from services.process_service import ProcessManager
 from services.app_version_check import cleanup_legacy_update_stage
 from services.roblox_install_manager import RobloxInstallManager
@@ -198,7 +198,7 @@ from performance_settings import (
     apply_performance_settings_file,
     apply_process_priority_to_roblox,
 )
-from ui_dashboard import get_html_ui
+from desktop.ui_dashboard import get_html_ui
 cfg_mgr = ConfigManager()
 try:
     accounts = [Account.from_dict(item) for item in ACCOUNT_STORE.to_cronus_accounts()]

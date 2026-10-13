@@ -123,7 +123,7 @@ class MaintenanceModerationMixin:
         if not cookie:
             return False
         try:
-            from roblox_hybrid import validate_cookie_details
+            from services.roblox_hybrid import validate_cookie_details
             from services.ban_guard import is_suspended_text, is_banned_text
         except Exception as exc:
             flog_kv("MODERATION", "unavailable", "warning", account=getattr(acc, "display_name", "?"), error=str(exc))
@@ -153,7 +153,7 @@ class MaintenanceModerationMixin:
                     writer = getattr(self, "_runtime_state", None) or getattr(self, "_state_mgr", None)
                     clear_account_banned_hold(acc, runtime_writer=writer)
                     try:
-                        from account_hybrid import audit_event
+                        from services.account_hybrid import audit_event
 
                         audit_event("moderation_cleared", username=getattr(acc, "_config_username", "") or getattr(acc, "username", ""), ok=True, source=source)
                     except Exception:
@@ -183,7 +183,7 @@ class MaintenanceModerationMixin:
             self._moderation_state()[key] = now
             return False
         try:
-            from roblox_hybrid import resolve_ban_for_dead_cookie as _resolve_dead
+            from services.roblox_hybrid import resolve_ban_for_dead_cookie as _resolve_dead
 
             username_hint = str(getattr(acc, "username", "") or getattr(acc, "_config_username", "") or "")
             _b, _name, _uid = _resolve_dead(cookie, username_hint)
@@ -228,7 +228,7 @@ class MaintenanceModerationMixin:
             flog_kv("MODERATION", "hold_failed", "warning", account=getattr(acc, "display_name", "?"), error=str(exc))
             return False
         try:
-            from account_hybrid import audit_event
+            from services.account_hybrid import audit_event
 
             audit_event(f"moderation_{label}", username=getattr(acc, "_config_username", "") or getattr(acc, "username", ""), ok=False, reason=detail or block_msg, source=source)
         except Exception:

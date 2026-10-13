@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from fastapi import HTTPException, Request
-from account_hybrid import audit_event
+from services.account_hybrid import audit_event
 from core import flog_kv
 from performance_settings import (
     apply_volume_settings_file,

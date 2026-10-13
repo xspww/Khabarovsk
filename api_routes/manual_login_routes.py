@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from fastapi import HTTPException, Request
 
-from account_hybrid import ACCOUNT_STORE
+from services.account_hybrid import ACCOUNT_STORE
 from services.manual_login_service import (
     MANUAL_LOGIN_MANAGER,
     parse_userpass_entries,

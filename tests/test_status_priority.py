@@ -340,7 +340,7 @@ class PreviewApiTests(unittest.TestCase):
 
     def test_moderated_with_username_previews_locked(self):
         import api_routes.accounts_routes as routes
-        import roblox_hybrid
+        import services.roblox_hybrid as roblox_hybrid
 
         routes.validate_cookie_details = lambda cookie: (
             False, "", 'HTTP 403 {"errors":[{"code":0,"message":"User is moderated"}]}',
@@ -364,7 +364,7 @@ class PreviewApiTests(unittest.TestCase):
 
     def test_confirmed_ban_still_previews_banned(self):
         import api_routes.accounts_routes as routes
-        import roblox_hybrid
+        import services.roblox_hybrid as roblox_hybrid
 
         routes.validate_cookie_details = lambda cookie: (
             False, "", 'HTTP 403 {"errors":[{"code":0,"message":"User is moderated"}]}',
@@ -410,7 +410,7 @@ class EmbeddedIdentityTests(unittest.TestCase):
     """
 
     def test_reads_name_and_uid(self):
-        from roblox_hybrid import cookie_embedded_identity
+        from services.roblox_hybrid import cookie_embedded_identity
 
         self.assertEqual(
             cookie_embedded_identity(_synthetic_cookie()),
@@ -419,21 +419,21 @@ class EmbeddedIdentityTests(unittest.TestCase):
 
     def test_ignores_device_id(self):
         # `duid` also contains "uid" — the device id must never win.
-        from roblox_hybrid import cookie_embedded_identity
+        from services.roblox_hybrid import cookie_embedded_identity
 
         name, uid = cookie_embedded_identity(_synthetic_cookie())
         self.assertEqual(uid, "4373927375")
         self.assertNotEqual(uid, "14153082429918207610")
 
     def test_rejects_garbage(self):
-        from roblox_hybrid import cookie_embedded_identity
+        from services.roblox_hybrid import cookie_embedded_identity
 
         self.assertEqual(cookie_embedded_identity(""), ("", ""))
         self.assertEqual(cookie_embedded_identity("not-a-cookie"), ("", ""))
         self.assertEqual(cookie_embedded_identity("_|WARNING:x.|_QUJD"), ("", ""))
 
     def test_resolve_uses_embedded_name_without_hint(self):
-        import roblox_hybrid
+        import services.roblox_hybrid as roblox_hybrid
 
         original_store = roblox_hybrid.username_for_cookie_in_store
         original_ban = roblox_hybrid.fetch_ban_status_by_username
@@ -454,7 +454,7 @@ class EmbeddedIdentityTests(unittest.TestCase):
 
     def test_preview_cookie_only_moderated_shows_locked(self):
         import api_routes.accounts_routes as routes
-        import roblox_hybrid
+        import services.roblox_hybrid as roblox_hybrid
 
         seen = {}
         routes.validate_cookie_details = lambda cookie: (
@@ -479,8 +479,8 @@ class EmbeddedIdentityTests(unittest.TestCase):
         self.assertEqual(result.get("username"), "x1MiuytAi0")
 
     def test_import_cookie_only_moderated_marks_locked(self):
-        import roblox_hybrid
-        from account_hybrid import AccountDataStore
+        import services.roblox_hybrid as roblox_hybrid
+        from services.account_hybrid import AccountDataStore
 
         original_resolve = roblox_hybrid.resolve_moderated_dead_cookie
         roblox_hybrid.resolve_moderated_dead_cookie = lambda *a, **k: (

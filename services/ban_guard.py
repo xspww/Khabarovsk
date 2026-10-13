@@ -136,7 +136,7 @@ def is_account_permanently_banned(account: Any) -> bool:
 
 def persist_account_banned_status(account: Any, active: bool = True) -> None:
     try:
-        from account_hybrid import ACCOUNT_STORE
+        from services.account_hybrid import ACCOUNT_STORE
 
         username = ""
         for attr in ("_config_username", "username"):

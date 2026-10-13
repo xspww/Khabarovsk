@@ -1,0 +1,1641 @@
+﻿from __future__ import annotations
+
+import atexit
+import base64
+import json
+import os
+import re
+import secrets
+import subprocess
+import sys
+import threading
+import time
+import urllib.error
+import urllib.request
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Tuple, Optional
+import net_tls
+from app_paths import EXECUTABLE_PATH, IS_COMPILED
+from services.account_hybrid import ACCOUNT_STORE, decrypt_cookie
+from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, captcha_detail, is_captcha_text
+from domain.roblox_private_servers import (
+    _safe_hash,
+    build_owned_private_server_link,
+    build_place_launcher_url,
+    build_roblox_player_uri,
+    ensure_owned_private_server as _ensure_owned_private_server,
+    fetch_private_server_metadata,
+    game_name_for_universe,
+    list_my_private_servers,
+    list_private_servers_for_place,
+    parse_launch_destination_from_cmdline,
+    parse_vip_components,
+    parse_vip_link,
+    private_servers_enabled_for_universe,
+    remembered_vip_unavailable,
+    resolve_vip_access_code,
+    universe_id_for_place,
+    vip_unavailable_permanently,
+)
+
+USER_AGENT = "CronusLauncherHybrid/1.0"
+# Public (no-cookie) Roblox lookups get empty/filtered responses with a
+# non-browser UA, so these use browser-like headers instead.
+PUBLIC_HEADERS = {
+    "User-Agent": "Mozilla/5.0",
+    "Accept": "application/json",
+    "Referer": "https://www.roblox.com/",
+}
+_MULTI_ROBLOX_LOCK = threading.RLock()
+_MULTI_ROBLOX_HANDLES: List[Tuple[str, int]] = []
+_MULTI_ROBLOX_HELPER: Optional[subprocess.Popen] = None
+_MULTI_ROBLOX_STATE = "stopped"
+_MULTI_ROBLOX_DETAIL = ""
+_MULTI_ROBLOX_LAST_FAILURE = ""
+_MULTI_ROBLOX_STARTED_AT = 0.0
+_MULTI_ROBLOX_HANDLE_NAMES: List[str] = []
+_MULTI_ROBLOX_GUARD_MODE = "mutex"
+ROBLOX_HOME = "https://www.roblox.com/"
+AUTH_BASE = "https://auth.roblox.com/"
+USERS_BASE = "https://users.roblox.com/"
+USERMODERATION_BASE = "https://usermoderation.roblox.com/"
+# The not-approved endpoint rejects non-browser callers, so it needs a full UA.
+MODERATION_HEADERS = {
+    "Content-Type": "application/json",
+    "Accept": "application/json",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:127.0) Gecko/20100101 Firefox/127.0",
+    "Referer": "https://www.roblox.com/",
+}
+
+_SELECTED_ROBLOX_VERSION = ""
+
+
+def set_selected_roblox_version(version: str = "") -> None:
+    """Pin launches to a specific installed official Roblox version ('' = OS default)."""
+    global _SELECTED_ROBLOX_VERSION
+    _SELECTED_ROBLOX_VERSION = str(version or "").strip()
+
+
+def _roblox_version_exe(version: str) -> str:
+    name = str(version or "").strip()
+    if not name:
+        return ""
+    roots = []
+    for env_name in ("LOCALAPPDATA", "ProgramFiles(x86)", "ProgramFiles"):
+        value = os.environ.get(env_name, "").strip()
+        if value:
+            roots.append(os.path.join(value, "Roblox"))
+    target_l = name.lower()
+    for root in roots:
+        versions_dir = os.path.join(root, "Versions")
+        if not os.path.isdir(versions_dir):
+            continue
+        try:
+            entries = os.listdir(versions_dir)
+        except OSError:
+            continue
+        for entry in entries:
+            if entry.lower() != target_l:
+                continue
+            exe = os.path.join(versions_dir, entry, "RobloxPlayerBeta.exe")
+            if os.path.isfile(exe):
+                return exe
+    return ""
+
+
+def open_roblox_uri(uri: str) -> None:
+    """Open a Roblox URI, pinned to the selected version when one is set."""
+    exe = _roblox_version_exe(_SELECTED_ROBLOX_VERSION)
+    if exe:
+        try:
+            subprocess.Popen([exe, uri], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+        except Exception:
+            pass
+    try:
+        os.startfile(uri)  # type: ignore[attr-defined]
+    except Exception:
+        subprocess.Popen(
+            f'start "" "{uri}"',
+            shell=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+
+
+class RobloxHTTP:
+    def __init__(self, cookie: str = ""):
+        self.cookie = str(cookie or "").strip()
+        self.csrf_token = ""
+
+    def _headers(self, extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+        headers = {
+            "User-Agent": USER_AGENT,
+            "Accept": "application/json, text/plain, */*",
+            "Referer": ROBLOX_HOME,
+        }
+        if self.cookie:
+            headers["Cookie"] = f".ROBLOSECURITY={self.cookie}"
+        if self.csrf_token:
+            headers["X-CSRF-TOKEN"] = self.csrf_token
+        if extra:
+            headers.update(extra)
+        return headers
+
+    def request(
+        self,
+        url: str,
+        method: str = "GET",
+        data: Optional[Any] = None,
+        headers: Optional[Dict[str, str]] = None,
+        timeout: float = 12.0,
+        retry_csrf: bool = True,
+    ) -> Tuple[int, str, Dict[str, str]]:
+        body = None
+        req_headers = self._headers(headers)
+        if data is not None:
+            if isinstance(data, (dict, list)):
+                body = json.dumps(data).encode("utf-8")
+                req_headers.setdefault("Content-Type", "application/json")
+            elif isinstance(data, bytes):
+                body = data
+            else:
+                body = str(data).encode("utf-8")
+                req_headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
+        req = urllib.request.Request(url, data=body, method=method.upper(), headers=req_headers)
+        try:
+            with net_tls.urlopen(req, timeout=timeout) as resp:
+                return resp.status, resp.read().decode("utf-8", errors="replace"), dict(resp.headers.items())
+        except urllib.error.HTTPError as exc:
+            response_headers = dict(exc.headers.items())
+            token = response_headers.get("x-csrf-token") or response_headers.get("X-CSRF-TOKEN")
+            if token and retry_csrf and method.upper() not in {"GET", "HEAD"}:
+                self.csrf_token = token
+                return self.request(url, method, data, headers, timeout, retry_csrf=False)
+            try:
+                body_text = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                body_text = str(exc)
+            return exc.code, body_text, response_headers
+
+    def get_csrf(self) -> Tuple[bool, str]:
+        status, body, headers = self.request(
+            AUTH_BASE + "v1/authentication-ticket/",
+            method="POST",
+            headers={"Content-Type": "application/json"},
+            retry_csrf=False,
+        )
+        token = headers.get("x-csrf-token") or headers.get("X-CSRF-TOKEN")
+        if token:
+            self.csrf_token = token
+            return True, token
+        challenge_detail = captcha_detail(status, body, headers)
+        if challenge_detail:
+            return False, challenge_detail
+        return False, f"csrf failed ({status}) {body[:180]}"
+
+    def get_auth_ticket(self) -> Tuple[bool, str]:
+        if not self.csrf_token:
+            ok, detail = self.get_csrf()
+            if not ok:
+                return False, detail
+        status, body, headers = self.request(
+            AUTH_BASE + "v1/authentication-ticket/",
+            method="POST",
+            headers={"Content-Type": "application/json", "X-CSRF-TOKEN": self.csrf_token},
+            retry_csrf=True,
+        )
+        ticket = headers.get("rbx-authentication-ticket") or headers.get("Rbx-Authentication-Ticket")
+        if ticket:
+            return True, ticket
+        challenge_detail = captcha_detail(status, body, headers)
+        if challenge_detail:
+            return False, challenge_detail
+        return False, f"auth ticket failed ({status}) {body[:180]}"
+
+    def authenticated_user(self) -> Tuple[bool, Dict[str, Any], str]:
+        status, body, headers = self.request(USERS_BASE + "v1/users/authenticated", method="GET")
+        if status == 200:
+            try:
+                data = json.loads(body)
+            except Exception:
+                data = {}
+            return True, data, "ok"
+        challenge_detail = captcha_detail(status, body, headers)
+        if challenge_detail:
+            return False, {}, challenge_detail
+        return False, {}, f"cookie validation failed ({status}) {body[:180]}"
+
+    def csrf_post(self, url: str, data: Optional[Any] = None, method: str = "POST") -> Tuple[bool, Dict[str, Any], str, Dict[str, str]]:
+        if not self.csrf_token:
+            ok, detail = self.get_csrf()
+            if not ok:
+                return False, {}, detail, {}
+        status, body, headers = self.request(url, method=method, data=data, retry_csrf=True)
+        parsed: Dict[str, Any] = {}
+        try:
+            parsed = json.loads(body) if body else {}
+        except Exception:
+            parsed = {"raw": body}
+        if 200 <= status < 300:
+            return True, parsed, "ok", headers
+        challenge_detail = captcha_detail(status, body, headers)
+        if challenge_detail:
+            return False, parsed, challenge_detail, headers
+        detail = ""
+        try:
+            detail = parsed.get("errors", [{}])[0].get("message", "")
+        except Exception:
+            detail = ""
+        return False, parsed, detail or f"HTTP {status}: {body[:220]}", headers
+
+
+def ensure_owned_private_server(
+    client: RobloxHTTP,
+    owner_user_id: str,
+    place_id: str,
+    free_only: bool = True,
+    known_servers: Optional[List[Dict[str, Any]]] = None,
+) -> Dict[str, Any]:
+    return _ensure_owned_private_server(
+        client,
+        owner_user_id,
+        place_id,
+        free_only=free_only,
+        known_servers=known_servers,
+        universe_lookup=universe_id_for_place,
+        list_my_private_servers_fn=list_my_private_servers,
+        list_private_servers_for_place_fn=list_private_servers_for_place,
+        fetch_private_server_metadata_fn=fetch_private_server_metadata,
+        private_servers_enabled_for_universe_fn=private_servers_enabled_for_universe,
+        game_name_for_universe_fn=game_name_for_universe,
+    )
+
+
+def _merge_owned_private_server(records: List[Dict[str, Any]], server: Dict[str, Any]) -> List[Dict[str, Any]]:
+    merged: List[Dict[str, Any]] = []
+    incoming_id = str(server.get("private_server_id") or "").strip()
+    incoming_key = (
+        str(server.get("owner_user_id") or ""),
+        str(server.get("place_id") or ""),
+        str(server.get("universe_id") or ""),
+    )
+    replaced = False
+    for old in records or []:
+        old_id = str(old.get("private_server_id") or "").strip()
+        old_key = (
+            str(old.get("owner_user_id") or ""),
+            str(old.get("place_id") or ""),
+            str(old.get("universe_id") or ""),
+        )
+        if (incoming_id and old_id == incoming_id) or (incoming_key[0] and old_key == incoming_key):
+            combined = dict(old)
+            combined.update(dict(server))
+            if str(server.get("status") or "").lower() == "error":
+                for key in ("private_server_id", "link", "join_code", "access_code", "source", "name"):
+                    if combined.get(key) in (None, "") and old.get(key) not in (None, ""):
+                        combined[key] = old.get(key)
+            merged.append(combined)
+            replaced = True
+        else:
+            merged.append(dict(old))
+    if not replaced:
+        merged.append(dict(server))
+    return merged
+
+
+def fetch_moderation_status(cookie: str, timeout: float = 8.0) -> Tuple[Optional[bool], str, Dict[str, Any]]:
+    """Read Roblox account moderation (suspension / ban) for a live cookie.
+
+    The public profile's isBanned only reports permanent terminations. A
+    temporary suspension leaves isBanned=false, so it is invisible there.
+    This endpoint is the only place Roblox exposes the active moderation
+    action for the signed-in account, including its type and end date.
+
+    Returns (is_moderated_or_None, detail, payload). None means the status
+    could not be read â€” either the cookie is no longer valid (401, Roblox
+    has already revoked it) or the request failed. A revoked cookie is NOT
+    evidence of a ban, so callers must never treat None as banned.
+    """
+    token = str(cookie or "").strip()
+    if not token:
+        return None, "", {}
+    url = f"{USERMODERATION_BASE}v1/not-approved"
+    req = urllib.request.Request(
+        url,
+        headers={**MODERATION_HEADERS, "Cookie": f".ROBLOSECURITY={token};"},
+    )
+    try:
+        with net_tls.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            # Cookie revoked/expired. Says nothing about moderation state.
+            return None, "moderation status unavailable (cookie not valid)", {}
+        if exc.code == 429 or exc.code >= 500:
+            return None, f"moderation status transient (HTTP {exc.code})", {}
+        return None, f"moderation status HTTP {exc.code}", {}
+    except Exception as exc:
+        return None, f"moderation status transient: {exc}", {}
+    try:
+        data = json.loads(raw) if raw.strip() else {}
+    except Exception:
+        return None, "moderation status parse failed", {}
+    if not isinstance(data, dict):
+        return None, "moderation status parse failed", {}
+    # An active intervention is the only marker; an empty object means clean.
+    if data.get("interventionId") in (None, ""):
+        return False, "", {}
+    return True, _describe_moderation(data), data
+
+
+def _describe_moderation(data: Dict[str, Any]) -> str:
+    """Summarize a not-approved payload into a short human reason."""
+    kind = ""
+    try:
+        utterances = data.get("badUtterances")
+        if isinstance(utterances, list) and utterances:
+            first = utterances[0]
+            if isinstance(first, dict):
+                kind = str(first.get("utteranceText") or "").strip()
+    except Exception:
+        kind = ""
+    end_raw = str(data.get("endDate") or "").strip()
+    if end_raw:
+        try:
+            end = datetime.strptime(end_raw, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc)
+            days = max(0, (end - datetime.now(timezone.utc)).days)
+            until = f" until {end:%Y-%m-%d} (~{days}d)"
+        except Exception:
+            until = ""
+    else:
+        until = " (no end date)"
+    if kind:
+        return f"Account suspended by Roblox: {kind}{until}"
+    return f"Account suspended by Roblox{until}"
+
+
+def fetch_user_ban_status(user_id: str, timeout: float = 8.0, trusted_id: bool = True) -> Tuple[Optional[bool], str]:
+    """Check Roblox account-level ban via public profile (isBanned).
+
+    Returns (is_banned_or_None, detail). None = unknown/transient, caller
+    must NOT mark banned on unknown to avoid false positives.
+
+    trusted_id marks the user_id as coming from a real identity source
+    (an authenticated cookie or a username lookup). Only then does a 404
+    mean the account is gone. Roblox does not hand out every user_id, so a
+    404 on an unverified id just means "no public profile" and must stay
+    unknown instead of banning a healthy account.
+    """
+    uid = str(user_id or "").strip()
+    if not uid.isdigit():
+        return None, ""
+    url = f"{USERS_BASE}v1/users/{uid}"
+
+    def _fetch_once() -> Tuple[str, Any]:
+        """Returns (kind, payload): kind is ok|http_error|transient."""
+        try:
+            req = urllib.request.Request(url, headers=dict(PUBLIC_HEADERS))
+            with net_tls.urlopen(req, timeout=timeout) as resp:
+                try:
+                    data = json.loads(resp.read().decode("utf-8", errors="replace"))
+                except Exception:
+                    return "transient", "ban check parse failed"
+                if isinstance(data, dict) and bool(data.get("isBanned", False)):
+                    return "ok", (True, "Account banned (Roblox isBanned=true)")
+                return "ok", (False, "")
+        except urllib.error.HTTPError as exc:
+            try:
+                body = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                body = ""
+            return "http_error", (int(exc.code or 0), body)
+        except Exception as exc:
+            return "transient", f"ban check transient: {exc}"
+
+    kind, payload = _fetch_once()
+    if kind == "ok":
+        return payload
+    if kind == "transient":
+        return None, str(payload)
+    code, body = payload
+    lowered = f"{code} {body}".lower()
+    if code == 404:
+        if not trusted_id:
+            return None, "ban check: no public profile for this id"
+        # A numeric ID that just resolved via the username API 404ing once
+        # is usually replication lag / rate-limit, not a deletion. Retry
+        # once before concluding the account is gone so one flaky 404 can
+        # never falsely mark a healthy account as banned.
+        try:
+            time.sleep(2.0)
+        except Exception:
+            pass
+        kind2, payload2 = _fetch_once()
+        if kind2 == "ok":
+            return payload2
+        if kind2 == "transient":
+            return None, str(payload2)
+        code2, body2 = payload2
+        if code2 == 404:
+            return True, "Account not found (deleted/terminated)"
+        lowered = f"{code2} {body2}".lower()
+        code, body = code2, body2
+    if code == 429 or code >= 500:
+        return None, f"ban check transient (HTTP {code})"
+    if "banned" in lowered or "terminat" in lowered:
+        return True, f"Account banned ({body[:120].strip() or code})"
+    return None, f"ban check HTTP {code}"
+
+
+def fetch_user_id_by_username(username: str, timeout: float = 8.0) -> Tuple[str, str]:
+    """Resolve a Roblox user_id from a username via public API (no cookie).
+
+    Returns (user_id_or_empty, detail). Empty user_id means unknown â€”
+    either the user does not exist or the lookup failed transiently.
+    """
+    name = str(username or "").strip()
+    if not name:
+        return "", "empty username"
+    body = json.dumps({"usernames": [name], "excludeBannedUsers": False}).encode("utf-8")
+    req = urllib.request.Request(
+        USERS_BASE + "v1/usernames/users",
+        data=body,
+        method="POST",
+        headers={**PUBLIC_HEADERS, "Content-Type": "application/json"},
+    )
+    try:
+        with net_tls.urlopen(req, timeout=timeout) as resp:
+            try:
+                data = json.loads(resp.read().decode("utf-8", errors="replace"))
+            except Exception:
+                return "", "username lookup parse failed"
+    except urllib.error.HTTPError as exc:
+        if exc.code == 429 or exc.code >= 500:
+            return "", f"username lookup transient (HTTP {exc.code})"
+        return "", f"username lookup HTTP {exc.code}"
+    except Exception as exc:
+        return "", f"username lookup transient: {exc}"
+    items = data.get("data") if isinstance(data, dict) else []
+    if isinstance(items, list):
+        lowered = name.lower()
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("requestedUsername") or "").lower() == lowered or str(item.get("name") or "").lower() == lowered:
+                uid = str(item.get("id") or "").strip()
+                if uid:
+                    return uid, ""
+    return "", "user not found"
+
+
+def fetch_ban_status_by_username(username: str, timeout: float = 8.0) -> Tuple[Optional[bool], str, str]:
+    """Check account-level ban by username (public API, no cookie needed).
+
+    Returns (is_banned_or_None, user_id, detail). None = unknown (user not
+    found or transient failure) â€” caller must NOT mark banned on unknown.
+    """
+    uid, detail = fetch_user_id_by_username(username, timeout=timeout)
+    if not uid:
+        return None, "", detail
+    banned, ban_detail = fetch_user_ban_status(uid, timeout=timeout)
+    return banned, uid, ban_detail
+
+
+def cookie_embedded_identity(cookie: str) -> Tuple[str, str]:
+    """Read the (username, user_id) Roblox embeds inside the cookie token.
+
+    `.ROBLOSECURITY` payloads carry protobuf fields `uname` and `uid`, so a
+    cookie-only paste (no ``username:`` prefix) can still resolve its owner
+    without network. Returns ("", "") when absent or unparseable.
+
+    The identity is self-asserted by the token, so it is only ever used to
+    *name* an account for display and public-API checks — never to prove a
+    cookie is valid.
+    """
+    token = str(cookie or "").strip()
+    if not token:
+        return "", ""
+    # The token separator is "|_" (pipe-underscore): "...items.|_CAEQ...".
+    # A payload-only paste (no header) is used as-is.
+    payload = token.rsplit("|_", 1)[-1].strip() if "|_" in token else token
+    candidates = [payload]
+    if payload.startswith("_"):
+        # Tolerate a separator variant that leaves a stray leading "_".
+        candidates.append(payload[1:])
+    for candidate in candidates:
+        if len(candidate) < 32 or not re.fullmatch(r"[A-Za-z0-9+/=_-]+", candidate):
+            continue
+        try:
+            raw = base64.urlsafe_b64decode(candidate + "=" * (-len(candidate) % 4))
+        except Exception:
+            continue
+        try:
+            # `..` must span arbitrary tag/length bytes (0x0A is common), so
+            # [\s\S] is used instead of `.` which skips newlines.
+            name_match = re.search(rb"uname[\s\S]{2}([A-Za-z0-9_]{3,20})", raw)
+            username = name_match.group(1).decode("ascii") if name_match else ""
+        except Exception:
+            username = ""
+        try:
+            # `duid` (device id) also contains "uid" — require a non-letter
+            # before it so the device id is never mistaken for the user id.
+            uid_match = re.search(rb"(?<![A-Za-z])uid[\s\S]{2}(\d{4,15})", raw)
+            user_id = uid_match.group(1).decode("ascii") if uid_match else ""
+        except Exception:
+            user_id = ""
+        if username and not re.fullmatch(r"[A-Za-z0-9_]{3,20}", username):
+            username = ""
+        if user_id and not user_id.isdigit():
+            user_id = ""
+        if username or user_id:
+            return username, user_id
+    return "", ""
+
+
+def username_for_cookie_in_store(cookie: str) -> str:
+    """Find the stored username that owns this cookie.
+
+    Lets a cookie-only paste resolve an identity even when the line carries
+    no "username:" prefix, so the ban check by name can still run.
+    """
+    token = str(cookie or "").strip()
+    if not token:
+        return ""
+    try:
+        for record in ACCOUNT_STORE.read_records(include_cookies=True):
+            if str((record or {}).get("cookie") or "").strip() != token:
+                continue
+            name = str((record or {}).get("username") or "").strip()
+            if name:
+                return name
+    except Exception:
+        pass
+    return ""
+
+
+def resolve_ban_for_dead_cookie(cookie: str, username_hint: str = "", timeout: float = 8.0) -> Tuple[Optional[bool], str, str]:
+    """Check ban for a cookie that can no longer authenticate.
+
+    The dead cookie cannot prove anything, so fall back to the public API by
+    username. Returns (is_banned_or_None, username, user_id). None = unknown.
+    """
+    name = (
+        str(username_hint or "").strip()
+        or username_for_cookie_in_store(cookie)
+        or cookie_embedded_identity(cookie)[0]
+    )
+    if not name:
+        return None, "", ""
+    banned, uid, detail = fetch_ban_status_by_username(name, timeout=timeout)
+    return banned, name, uid
+
+
+def moderated_only_detail(detail: str) -> bool:
+    """True when a failure detail claims moderation but names no explicit ban.
+
+    A 403 "User is moderated" response is ambiguous on its own: it fits a
+    banned account just as well as a verification-locked one. Callers must
+    resolve it via resolve_moderated_dead_cookie instead of treating it as
+    a ban outright.
+    """
+    t = str(detail or "").lower()
+    if "moderat" not in t:
+        return False
+    if "suspend" in t:
+        return False
+    if "account banned" in t or "roblox ban" in t or "user is banned" in t:
+        return False
+    compact = t.replace(" ", "").replace("_", "").replace("-", "")
+    if "isbanned" in compact or "terminat" in t:
+        return False
+    return True
+
+
+def resolve_moderated_dead_cookie(
+    cookie: str, username_hint: str = "", timeout: float = 8.0
+) -> Tuple[Optional[str], str, str, str]:
+    """Disambiguate a dead cookie answered 403 "User is moderated".
+
+    Returns (verdict, detail, username, user_id) with verdict in
+    {"banned", "locked", None}. "locked" means the public profile proves
+    the account is alive and not banned, so the moderation response comes
+    from a non-ban hold (verification lock or similar). None = unknown.
+    """
+    name = (
+        str(username_hint or "").strip()
+        or username_for_cookie_in_store(cookie)
+        or cookie_embedded_identity(cookie)[0]
+    )
+    if not name:
+        return None, "", "", ""
+    try:
+        banned, uid, ban_detail = fetch_ban_status_by_username(name, timeout=timeout)
+    except Exception:
+        return None, "", name, ""
+    if banned is True:
+        return "banned", (ban_detail or "Account banned (Roblox isBanned=true)"), name, str(uid or "")
+    if banned is False:
+        try:
+            from services.verify_guard import LOCKED_BLOCK_REASON as _LM
+        except Exception:
+            _LM = "Account locked - face/ID verification required. Verify manually, then click Resume."
+        return "locked", _LM, name, str(uid or "")
+    return None, "", name, str(uid or "")
+
+
+def reprobe_moderation_response(cookie: str, attempts: int = 3, delay: float = 1.5, timeout: float = 8.0) -> Tuple[int, str]:
+    """Re-ask the authenticated endpoint a few times for a dead cookie.
+
+    Roblox sometimes answers the same dead token with plain 401 and
+    sometimes with 403 "User is moderated". Returns the first moderation
+    indicating (status, body), else (0, ""). Only used when another signal
+    (e.g. a gated password login) already suggests an account hold, so
+    healthy expired cookies never pay the extra calls.
+    """
+    token = str(cookie or "").strip()
+    if not token:
+        return 0, ""
+    tries = max(1, min(5, int(attempts or 3)))
+    try:
+        client = RobloxHTTP(token)
+    except Exception:
+        return 0, ""
+    for _ in range(tries):
+        try:
+            status, body, _headers = client.request(USERS_BASE + "v1/users/authenticated", method="GET", retry_csrf=False)
+        except Exception:
+            status, body = 0, ""
+        text = f"{status} {body or ''}"
+        if int(status or 0) == 403 and "moderat" in str(body or "").lower() and "suspend" not in str(body or "").lower():
+            return int(status), str(body or "")
+        try:
+            time.sleep(max(0.0, float(delay or 0.0)))
+        except Exception:
+            pass
+    return 0, ""
+
+
+def validate_cookie_details(cookie: str) -> Tuple[bool, str, str, Dict[str, Any]]:
+    ok, data, detail = RobloxHTTP(cookie).authenticated_user()
+    if not ok:
+        # Owner fallback: a dead cookie still names its account inside the
+        # token (uname/uid fields), so error paths can show *who* is blocked
+        # even when the line carried no username prefix.
+        try:
+            _emb_name, _emb_uid = cookie_embedded_identity(cookie)
+        except Exception:
+            _emb_name, _emb_uid = "", ""
+        # 403 "User is moderated" means the cookie is still good enough for
+        # the moderation endpoint even though authenticated/ fails. Probe it
+        # before giving up so a 6-month suspension reads as Suspended, not Invalid.
+        try:
+            _mod_banned, _mod_detail, _mod_payload = fetch_moderation_status(cookie)
+        except Exception:
+            _mod_banned, _mod_detail, _mod_payload = None, "", {}
+        if _mod_banned is True and _mod_detail:
+            try:
+                from services.ban_guard import is_suspended_text as _is_susp_mod
+            except Exception:
+                _is_susp_mod = lambda *a, **k: False  # type: ignore
+            _is_susp = False
+            try:
+                _is_susp = bool(_is_susp_mod(_mod_detail))
+            except Exception:
+                _is_susp = False
+            _uid = ""
+            try:
+                _uid = str((_mod_payload or {}).get("punishedUserId") or "")
+            except Exception:
+                _uid = ""
+            if _is_susp:
+                return False, _emb_name, _mod_detail, {
+                    "username": _emb_name,
+                    "user_id": _uid or _emb_uid,
+                    "is_banned": True,
+                    "banned": True,
+                    "is_suspended": True,
+                    "suspended": True,
+                }
+            return False, _emb_name, _mod_detail, {
+                "username": _emb_name,
+                "user_id": _uid or _emb_uid,
+                "is_banned": True,
+                "banned": True,
+                "is_suspended": False,
+                "suspended": False,
+            }
+        try:
+            from services.ban_guard import is_banned_text as _is_banned_text
+        except Exception:
+            _is_banned_text = None  # type: ignore
+        if _is_banned_text is not None:
+            try:
+                if _is_banned_text(detail):
+                    username_guess = ""
+                    try:
+                        username_guess = str(data.get("name") or "") if isinstance(data, dict) else ""
+                    except Exception:
+                        username_guess = ""
+                    if not username_guess:
+                        username_guess = _emb_name
+                    return False, username_guess, detail, {"username": username_guess, "user_id": _emb_uid, "is_banned": True, "banned": True}
+            except Exception:
+                pass
+        return False, _emb_name, detail, {"username": _emb_name, "user_id": _emb_uid}
+    username = str(data.get("name") or data.get("displayName") or "")
+    user_id = str(data.get("id") or "")
+    # Cookie is valid. Check the live moderation action first: it is the only
+    # signal that sees a temporary suspension, which isBanned reports as false.
+    moderation_banned, moderation_detail, _payload = fetch_moderation_status(cookie)
+    if moderation_banned is True:
+        try:
+            from services.ban_guard import (
+                BANNED_BLOCK_REASON as _BANNED_MSG,
+                is_suspended_text as _is_suspended,
+            )
+        except Exception:
+            _BANNED_MSG = "Account banned (Roblox). Unmark to allow rejoin."
+            _is_suspended = lambda *a, **k: False  # type: ignore
+        # A suspension blocks the account just as hard as a ban, but it is not
+        # permanent, so it is tracked under its own mark and label.
+        if _is_suspended(moderation_detail):
+            try:
+                from services.ban_guard import SUSPENDED_BLOCK_REASON as _SUSP_MSG
+            except Exception:
+                _SUSP_MSG = "Account suspended by Roblox. Unmark to allow rejoin."
+            return False, username, moderation_detail or _SUSP_MSG, {
+                "username": username,
+                "user_id": user_id,
+                "is_banned": True,
+                "banned": True,
+                "is_suspended": True,
+                "suspended": True,
+            }
+        return False, username, moderation_detail or _BANNED_MSG, {
+            "username": username,
+            "user_id": user_id,
+            "is_banned": True,
+            "banned": True,
+            "is_suspended": False,
+            "suspended": False,
+        }
+    # No active intervention â€” fall back to the public profile, which still
+    # owns permanent terminations (those can outlive the cookie).
+    if user_id:
+        banned, ban_detail = fetch_user_ban_status(user_id)
+        if banned is True:
+            try:
+                from services.ban_guard import BANNED_BLOCK_REASON as _BANNED_MSG
+            except Exception:
+                _BANNED_MSG = "Account banned (Roblox). Unmark to allow rejoin."
+            return False, username, ban_detail or _BANNED_MSG, {
+                "username": username,
+                "user_id": user_id,
+                "is_banned": True,
+                "banned": True,
+            }
+        if banned is None:
+            # Transient (rate-limit/network): don't false-positive as banned.
+            return True, username, "ok", {
+                "username": username,
+                "user_id": user_id,
+                "is_banned": False,
+                "banned": False,
+                "ban_check": "unknown",
+                "ban_detail": ban_detail,
+            }
+    return True, username, "ok", {"username": username, "user_id": user_id, "is_banned": False, "banned": False}
+
+
+def validate_record_cookie_identity(record: Dict[str, Any], cookie: str, update_store: bool = True) -> Dict[str, Any]:
+    username = str((record or {}).get("username") or "").strip()
+    ok, cookie_username, detail, meta = validate_cookie_details(cookie)
+    try:
+        from services.ban_guard import (
+            BANNED_BLOCK_REASON as _BANNED_MSG,
+            BANNED_IMPORT_STATUS as _BANNED_STATUS,
+            is_banned_text as _is_banned_text,
+        )
+    except Exception:
+        _BANNED_MSG = "Account banned (Roblox). Unmark to allow rejoin."
+        _BANNED_STATUS = "banned"
+        _is_banned_text = lambda *a, **k: False  # type: ignore
+    try:
+        from services.verify_guard import (
+            LOCKED_BLOCK_REASON as _LOCKED_MSG,
+            LOCKED_REASON as _LOCKED_STATUS,
+            RECOVERY_BLOCK_REASON as _RECOVERY_MSG,
+            RECOVERY_REASON as _RECOVERY_STATUS,
+            is_locked_status_text as _is_locked_status,
+            is_locked_text as _is_locked_text,
+            is_recovery_status_text as _is_recovery_status,
+            is_recovery_text as _is_recovery_text,
+        )
+    except Exception:
+        _LOCKED_MSG = "Account locked - face/ID verification required. Verify manually, then click Resume."
+        _LOCKED_STATUS = "identity_locked"
+        _RECOVERY_MSG = "Account recovery - passkey/2FA required. Complete recovery manually, then click Resume."
+        _RECOVERY_STATUS = "account_recovery"
+        _is_locked_status = lambda *a, **k: False  # type: ignore
+        _is_locked_text = lambda *a, **k: False  # type: ignore
+        _is_recovery_status = lambda *a, **k: False  # type: ignore
+        _is_recovery_text = lambda *a, **k: False  # type: ignore
+    is_banned = bool((meta or {}).get("is_banned") or (meta or {}).get("banned"))
+    if not is_banned:
+        try:
+            is_banned = bool(_is_banned_text(detail))
+        except Exception:
+            is_banned = False
+    if is_banned and moderated_only_detail(detail):
+        # "User is moderated" alone fits a verification lock as well as a
+        # ban. Resolve it before labeling so a locked account never reads
+        # as banned.
+        try:
+            _mv, _md, _mn, _mu = resolve_moderated_dead_cookie(cookie, username)
+        except Exception:
+            _mv, _md, _mn, _mu = None, "", "", ""
+        if _mv == "locked":
+            is_banned = False
+            detail = _md or detail
+            meta = dict(meta or {})
+            meta["is_banned"] = False
+            meta["banned"] = False
+            meta["is_locked"] = True
+            meta["locked"] = True
+            if _mn:
+                meta["username"] = _mn
+            if _mu:
+                meta["user_id"] = _mu
+    # Locked / recovery outrank captcha but never outrank a ban.
+    is_locked = False
+    is_recovery = False
+    try:
+        is_locked = bool(_is_locked_text(detail))
+    except Exception:
+        is_locked = False
+    try:
+        is_recovery = bool(_is_recovery_text(detail)) and not is_locked
+    except Exception:
+        is_recovery = False
+    if not is_banned:
+        # Cookie is dead so the ban API cannot confirm anything â€” but a
+        # previous Banned mark must survive Reload instead of flipping to
+        # Invalid (a terminated cookie stays dead forever).
+        try:
+            from services.ban_guard import is_banned_status_text as _is_banned_status2
+
+            if _is_banned_status2(
+                str((record or {}).get("manual_status") or ""),
+                str((record or {}).get("import_status") or ""),
+            ):
+                # Re-verify via the public API first: a previous mark must
+                # survive, but one old false mark must never stick forever.
+                _recheck = None
+                try:
+                    _rb, _rn, _ru = resolve_ban_for_dead_cookie(cookie, username)
+                    _recheck = _rb
+                except Exception:
+                    _recheck = None
+                if _recheck is False:
+                    # Public API says the account is alive: drop the stale
+                    # mark instead of preserving it.
+                    record = dict(record or {})
+                    record["manual_status"] = ""
+                    record["import_status"] = ""
+                    if update_store and username:
+                        ACCOUNT_STORE.update_record(username, {"manual_status": "", "import_status": ""})
+                else:
+                    is_banned = True
+                    if not detail:
+                        detail = "cookie expired, ban mark kept"
+        except Exception:
+            pass
+    if not is_banned and not is_locked and not is_recovery:
+        # A previous Locked/Recovery mark survives a dead cookie: the cookie
+        # API cannot prove the verification is cleared, so keep the mark
+        # instead of demoting to Invalid.
+        try:
+            if _is_locked_status(
+                str((record or {}).get("manual_status") or ""),
+                str((record or {}).get("import_status") or ""),
+                str((record or {}).get("last_error") or ""),
+            ):
+                is_locked = True
+                if not detail:
+                    detail = "cookie expired, locked mark kept"
+            elif _is_recovery_status(
+                str((record or {}).get("manual_status") or ""),
+                str((record or {}).get("import_status") or ""),
+                str((record or {}).get("last_error") or ""),
+            ):
+                is_recovery = True
+                if not detail:
+                    detail = "cookie expired, recovery mark kept"
+        except Exception:
+            pass
+    if not ok:
+        if update_store and username:
+            if is_banned:
+                ACCOUNT_STORE.update_record(
+                    username,
+                    {
+                        "manual_status": _BANNED_MSG,
+                        "import_status": _BANNED_STATUS,
+                        "cookie_username": str(
+                            cookie_username
+                            or (meta or {}).get("username")
+                            or (record or {}).get("cookie_username")
+                            or ""
+                        ),
+                        "cookie_user_id": str(
+                            (meta or {}).get("user_id") or (record or {}).get("cookie_user_id") or ""
+                        ),
+                        "cookie_mismatch": False,
+                    },
+                )
+            elif is_locked:
+                ACCOUNT_STORE.update_record(
+                    username,
+                    {"manual_status": _LOCKED_MSG, "import_status": _LOCKED_STATUS},
+                )
+            elif is_recovery:
+                ACCOUNT_STORE.update_record(
+                    username,
+                    {"manual_status": _RECOVERY_MSG, "import_status": _RECOVERY_STATUS},
+                )
+            elif is_captcha_text(detail):
+                ACCOUNT_STORE.update_record(
+                    username,
+                    {"manual_status": CAPTCHA_BLOCK_REASON, "import_status": CAPTCHA_REASON},
+                )
+            else:
+                ACCOUNT_STORE.update_record(username, {"cookie_mismatch": True, "import_status": "cookie_invalid"})
+        if is_banned:
+            return {
+                "ok": False,
+                "fatal": True,
+                "banned": True,
+                "msg": _BANNED_MSG,
+                "detail": detail or _BANNED_MSG,
+                "cookie_username": str(
+                    cookie_username
+                    or (meta or {}).get("username")
+                    or (record or {}).get("cookie_username")
+                    or ""
+                ),
+                "cookie_user_id": str(
+                    (meta or {}).get("user_id") or (record or {}).get("cookie_user_id") or ""
+                ),
+            }
+        if is_locked:
+            return {
+                "ok": False,
+                "fatal": True,
+                "locked_required": True,
+                "msg": _LOCKED_MSG,
+                "detail": detail or _LOCKED_MSG,
+                "cookie_username": "",
+                "cookie_user_id": "",
+            }
+        if is_recovery:
+            return {
+                "ok": False,
+                "fatal": True,
+                "recovery_required": True,
+                "msg": _RECOVERY_MSG,
+                "detail": detail or _RECOVERY_MSG,
+                "cookie_username": "",
+                "cookie_user_id": "",
+            }
+        if is_captcha_text(detail):
+            return {
+                "ok": False,
+                "fatal": True,
+                "captcha_required": True,
+                "msg": CAPTCHA_BLOCK_REASON,
+                "detail": detail,
+                "cookie_username": "",
+                "cookie_user_id": "",
+            }
+        return {"ok": False, "msg": detail, "cookie_username": "", "cookie_user_id": ""}
+    cookie_user_id = str(meta.get("user_id") or "")
+    mismatch = bool(username and cookie_username and username.lower() != cookie_username.lower())
+    updates = {
+        "cookie_username": cookie_username,
+        "cookie_user_id": cookie_user_id,
+        "cookie_mismatch": mismatch,
+        "import_status": "cookie_mismatch" if mismatch else "",
+    }
+    if not mismatch:
+        # Cookie is valid and not banned â€” clear a stale banned mark so an
+        # unbanned / replaced cookie rejoins again without manual unmark.
+        # Locked/Recovery marks are NOT cleared here: a valid cookie does not
+        # prove face-scan / passkey verification is done (cookie stays 200
+        # while the lock screen persists). They clear only on manual Resume.
+        try:
+            prev_manual = str((record or {}).get("manual_status") or "")
+            prev_import = str((record or {}).get("import_status") or "")
+            from services.ban_guard import is_banned_status_text as _is_banned_status
+
+            if _is_banned_status(prev_manual, prev_import):
+                updates["manual_status"] = ""
+            # Preserve a previous Locked/Recovery hold across a valid cookie.
+            try:
+                if _is_locked_status(prev_manual, prev_import) or _is_recovery_status(prev_manual, prev_import):
+                    updates["manual_status"] = prev_manual
+                    updates["import_status"] = prev_import
+            except Exception:
+                pass
+        except Exception:
+            pass
+    if update_store and username:
+        ACCOUNT_STORE.update_record(username, updates)
+    if mismatch:
+        return {
+            "ok": False,
+            "msg": f"Cookie belongs to {cookie_username}, not {username}. Reimport the correct .ROBLOSECURITY for this account.",
+            "cookie_username": cookie_username,
+            "cookie_user_id": cookie_user_id,
+            "cookie_mismatch": True,
+        }
+    return {"ok": True, "msg": "ok", "cookie_username": cookie_username, "cookie_user_id": cookie_user_id, "cookie_mismatch": False}
+
+
+def _multi_roblox_log(event: str, severity: str = "info", **fields: Any) -> None:
+    try:
+        from core import flog_kv
+
+        flog_kv("MULTI_ROBLOX", event, severity, **fields)
+    except Exception:
+        pass
+
+
+def _read_guard_ready_line(proc: subprocess.Popen, timeout: float) -> Tuple[str, str]:
+    box: Dict[str, str] = {}
+
+    def _reader() -> None:
+        try:
+            if proc.stdout is None:
+                box["line"] = ""
+                return
+            box["line"] = str(proc.stdout.readline() or "").strip()
+        except Exception as exc:
+            box["error"] = str(exc)
+
+    thread = threading.Thread(target=_reader, daemon=True, name="MultiRobloxGuardReadyReader")
+    thread.start()
+    thread.join(max(0.5, float(timeout or 5.0)))
+    if thread.is_alive():
+        return "", "ready timeout"
+    return box.get("line", ""), box.get("error", "")
+
+
+def _parse_multi_roblox_ready_line(ready_line: str) -> Tuple[str, List[str], bool, bool]:
+    detail = str(ready_line or "").replace("multi_roblox_guard_ready", "", 1).strip()
+    handle_part = detail.split(" pid=", 1)[0].strip()
+    handle_names = [name for name in handle_part.split(",") if name]
+    has_mutex = any("ROBLOX_singletonMutex" in name for name in handle_names)
+    has_event = any("ROBLOX_singletonEvent" in name for name in handle_names)
+    return detail, handle_names, has_mutex, has_event
+
+
+def _terminate_multi_roblox_helper_locked(reason: str = "release") -> None:
+    global _MULTI_ROBLOX_HELPER
+    proc = _MULTI_ROBLOX_HELPER
+    _MULTI_ROBLOX_HELPER = None
+    if not proc:
+        return
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=3.0)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=3.0)
+    except Exception as exc:
+        _multi_roblox_log("guard_stop_error", "warning", pid=getattr(proc, "pid", ""), reason=reason, error=str(exc))
+
+
+def record_multi_roblox_guard_failure(detail: str) -> None:
+    global _MULTI_ROBLOX_STATE, _MULTI_ROBLOX_LAST_FAILURE, _MULTI_ROBLOX_DETAIL
+    message = str(detail or "Multi Roblox guard failed").strip()
+    with _MULTI_ROBLOX_LOCK:
+        _MULTI_ROBLOX_STATE = "failed"
+        _MULTI_ROBLOX_LAST_FAILURE = message
+        _MULTI_ROBLOX_DETAIL = message
+    _multi_roblox_log("guard_failed", "error", detail=message)
+
+
+def multi_roblox_guard_status() -> Dict[str, Any]:
+    global _MULTI_ROBLOX_STATE, _MULTI_ROBLOX_LAST_FAILURE, _MULTI_ROBLOX_DETAIL
+    with _MULTI_ROBLOX_LOCK:
+        proc = _MULTI_ROBLOX_HELPER
+        pid = int(getattr(proc, "pid", 0) or 0) if proc else 0
+        state = _MULTI_ROBLOX_STATE
+        detail = _MULTI_ROBLOX_DETAIL
+        if proc:
+            rc = proc.poll()
+            if rc is not None:
+                if state not in {"stopped", "failed"}:
+                    state = "failed"
+                    detail = f"guard helper exited rc={rc}"
+                    _MULTI_ROBLOX_STATE = state
+                    _MULTI_ROBLOX_DETAIL = detail
+                    _MULTI_ROBLOX_LAST_FAILURE = detail
+                pid = 0
+        return {
+            "state": state,
+            "pid": pid,
+            "detail": detail,
+            "last_failure": _MULTI_ROBLOX_LAST_FAILURE,
+            "started_at": _MULTI_ROBLOX_STARTED_AT,
+            "handle_names": list(_MULTI_ROBLOX_HANDLE_NAMES),
+        }
+
+
+def ensure_multi_roblox_guard(timeout: float = 6.0) -> Tuple[bool, str]:
+    global _MULTI_ROBLOX_HELPER, _MULTI_ROBLOX_STATE, _MULTI_ROBLOX_DETAIL
+    global _MULTI_ROBLOX_LAST_FAILURE, _MULTI_ROBLOX_STARTED_AT, _MULTI_ROBLOX_HANDLE_NAMES
+    with _MULTI_ROBLOX_LOCK:
+        if _MULTI_ROBLOX_HELPER and _MULTI_ROBLOX_HELPER.poll() is None and _MULTI_ROBLOX_STATE == "ready":
+            return True, _MULTI_ROBLOX_DETAIL
+        if _MULTI_ROBLOX_HELPER and _MULTI_ROBLOX_HELPER.poll() is None:
+            _terminate_multi_roblox_helper_locked("restart_not_ready")
+        elif _MULTI_ROBLOX_HELPER and _MULTI_ROBLOX_HELPER.poll() is not None:
+            rc = _MULTI_ROBLOX_HELPER.poll()
+            _MULTI_ROBLOX_LAST_FAILURE = f"guard helper exited rc={rc}"
+            _MULTI_ROBLOX_HELPER = None
+
+        if IS_COMPILED:
+            guard_path = EXECUTABLE_PATH or sys.executable or "CronusLauncher.exe"
+            cmd = [guard_path, "--multi-roblox-guard", _MULTI_ROBLOX_GUARD_MODE, "--parent-pid", str(os.getpid())]
+        else:
+            guard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "multi_roblox_guard.py")
+            cmd = [
+                sys.executable or "python",
+                guard_path,
+                _MULTI_ROBLOX_GUARD_MODE,
+                "--parent-pid",
+                str(os.getpid()),
+            ]
+        try:
+            _MULTI_ROBLOX_STATE = "starting"
+            _MULTI_ROBLOX_DETAIL = "starting guard helper"
+            _MULTI_ROBLOX_HANDLE_NAMES = []
+            _MULTI_ROBLOX_HELPER = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                stdin=subprocess.DEVNULL,
+                text=True,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            _MULTI_ROBLOX_STARTED_AT = time.time()
+            _multi_roblox_log("guard_started", pid=_MULTI_ROBLOX_HELPER.pid, cmd=os.path.basename(guard_path))
+            ready_line, read_error = _read_guard_ready_line(_MULTI_ROBLOX_HELPER, timeout)
+            if read_error:
+                raise RuntimeError(read_error)
+            if _MULTI_ROBLOX_HELPER.poll() is not None:
+                raise RuntimeError(f"guard helper exited before ready rc={_MULTI_ROBLOX_HELPER.poll()} {ready_line}".strip())
+            if not ready_line.startswith("multi_roblox_guard_ready"):
+                raise RuntimeError(ready_line or "guard helper did not report ready")
+            detail, handle_names, has_mutex, has_event = _parse_multi_roblox_ready_line(ready_line)
+            if not has_mutex:
+                raise RuntimeError(f"guard helper missing Roblox singleton mutex: {ready_line}")
+            if has_event:
+                detail = f"{detail} unexpected_event_handle=present".strip()
+                _multi_roblox_log(
+                    "guard_event_handle_present",
+                    "warning",
+                    pid=_MULTI_ROBLOX_HELPER.pid,
+                    detail=detail,
+                )
+            _MULTI_ROBLOX_HANDLE_NAMES = handle_names
+            _MULTI_ROBLOX_STATE = "ready"
+            _MULTI_ROBLOX_DETAIL = detail
+            _MULTI_ROBLOX_LAST_FAILURE = ""
+            _multi_roblox_log("guard_ready", pid=_MULTI_ROBLOX_HELPER.pid, detail=detail)
+            return True, detail
+        except Exception as exc:
+            failure = str(exc)
+            _MULTI_ROBLOX_LAST_FAILURE = failure
+            _MULTI_ROBLOX_DETAIL = failure
+            _MULTI_ROBLOX_STATE = "failed"
+            _terminate_multi_roblox_helper_locked("startup_failed")
+            _multi_roblox_log("guard_failed", "error", detail=failure)
+            return False, failure
+
+
+def release_multi_roblox_guard() -> None:
+    global _MULTI_ROBLOX_HANDLES, _MULTI_ROBLOX_STATE, _MULTI_ROBLOX_DETAIL, _MULTI_ROBLOX_HANDLE_NAMES
+    with _MULTI_ROBLOX_LOCK:
+        helper_pid = int(getattr(_MULTI_ROBLOX_HELPER, "pid", 0) or 0) if _MULTI_ROBLOX_HELPER else 0
+        _terminate_multi_roblox_helper_locked("release")
+        try:
+            if _MULTI_ROBLOX_HANDLES:
+                from multi_roblox_guard import close_handles
+
+                close_handles(_MULTI_ROBLOX_HANDLES)
+        finally:
+            _MULTI_ROBLOX_HANDLES = []
+            _MULTI_ROBLOX_HANDLE_NAMES = []
+            _MULTI_ROBLOX_STATE = "stopped"
+            _MULTI_ROBLOX_DETAIL = ""
+        if helper_pid:
+            _multi_roblox_log("guard_stopped", pid=helper_pid)
+
+
+atexit.register(release_multi_roblox_guard)
+
+
+class HybridLauncher:
+    @staticmethod
+    def _tracker_from_cmdline(cmdline: str) -> str:
+        text = str(cmdline or "")
+        for pattern in (
+            r"browsertrackerid[:=](\d+)",
+            r"browserTrackerId=(\d+)",
+            r"browsertrackerid%3a(\d+)",
+            r"browserTrackerId%3D(\d+)",
+            r"\-b\s+(\d+)",
+        ):
+            match = re.search(pattern, text, flags=re.I)
+            if match:
+                return match.group(1)
+        return ""
+
+    @classmethod
+    def duplicate_pids_for_tracker(cls, browser_tracker_id: str) -> List[int]:
+        browser_tracker_id = str(browser_tracker_id or "").strip()
+        if not browser_tracker_id:
+            return []
+        try:
+            from services.process_service import ProcessManager
+        except Exception:
+            return []
+        pids: List[int] = []
+        for item in ProcessManager.list_live_game_processes():
+            if cls._tracker_from_cmdline(str(item.get("cmdline") or "")) == browser_tracker_id:
+                pid = int(item.get("pid") or 0)
+                if pid:
+                    pids.append(pid)
+        return pids
+
+    @classmethod
+    def kill_duplicate_instances(cls, browser_tracker_id: str) -> Dict[str, Any]:
+        try:
+            from services.process_service import ProcessManager
+        except Exception as exc:
+            return {"ok": False, "killed": [], "msg": str(exc)}
+        killed: List[int] = []
+        for pid in cls.duplicate_pids_for_tracker(browser_tracker_id):
+            try:
+                if ProcessManager.kill_pid(pid):
+                    killed.append(pid)
+            except Exception:
+                continue
+        return {"ok": True, "killed": killed, "count": len(killed)}
+
+    @classmethod
+    def launch_record(cls, record: Dict[str, Any], target: Optional[Dict[str, Any]] = None, multi_roblox: bool = True) -> Dict[str, Any]:
+        data = dict(record or {})
+        target = dict(target or {})
+        username = str(data.get("username") or "").strip()
+        if username:
+            try:
+                for stored in ACCOUNT_STORE.read_records(include_cookies=False):
+                    if str(stored.get("username") or "").strip().lower() != username.lower():
+                        continue
+                    for key in ("owned_private_servers", "place_id", "job_id", "browser_tracker_id", "global_vip_link"):
+                        if not data.get(key) and stored.get(key):
+                            data[key] = stored.get(key)
+                    stored_links = stored.get("vip_links") if isinstance(stored.get("vip_links"), list) else []
+                    data_links = data.get("vip_links") if isinstance(data.get("vip_links"), list) else []
+                    merged_links = []
+                    for link in list(data_links or []) + list(stored_links or []):
+                        text = str(link or "").strip()
+                        if text and text not in merged_links:
+                            merged_links.append(text)
+                    if merged_links:
+                        data["vip_links"] = merged_links
+                    break
+            except Exception:
+                pass
+        cookie = data.get("cookie") or ""
+        if not cookie and data.get("encrypted_cookie"):
+            cookie = decrypt_cookie(str(data.get("encrypted_cookie") or ""))
+        if not cookie:
+            return {"ok": False, "msg": "No .ROBLOSECURITY cookie for account"}
+        identity = validate_record_cookie_identity(data, cookie, update_store=True)
+        if not identity.get("ok"):
+            return {"ok": False, "fatal": True, "msg": identity.get("msg", "cookie identity mismatch"), **identity}
+        browser_tracker_id = str(target.get("browser_tracker_id") or data.get("browser_tracker_id") or "").strip()
+        if not browser_tracker_id:
+            browser_tracker_id = str(secrets.randbelow(75_000) + 100_000) + str(secrets.randbelow(800_000) + 100_000)
+        guard_ok = False
+        guard_detail = ""
+        if multi_roblox:
+            guard_ok, guard_detail = ensure_multi_roblox_guard()
+            if not guard_ok:
+                return {"ok": False, "fatal": True, "msg": f"Multi Roblox guard failed: {guard_detail}"}
+            close_result = cls.kill_duplicate_instances(browser_tracker_id)
+        else:
+            release_multi_roblox_guard()
+            from services.process_service import ProcessManager
+
+            killed_count = ProcessManager.kill_all_roblox_clients(wait_seconds=2.5)
+            close_result = {"ok": True, "killed": [], "count": int(killed_count), "all_instances_closed": int(killed_count)}
+        place_id = str(target.get("place_id") or data.get("place_id") or "").strip()
+        job_id = str(target.get("job_id") or data.get("job_id") or "").strip()
+        explicit_vip_link = str(target.get("vip_link") or target.get("vip_url") or "").strip()
+        links = target.get("vip_links") or data.get("vip_links") or []
+        if isinstance(links, str):
+            links = [line.strip() for line in links.splitlines() if line.strip()]
+        if not isinstance(links, list):
+            links = []
+        global_vip_link = str(target.get("global_vip_link") or data.get("global_vip_link") or "").strip()
+        vip_link = explicit_vip_link
+        vip_resolved = False
+        vip_resolution: Dict[str, Any] = {}
+        if job_id.startswith("http") and not vip_link:
+            vip_link = job_id
+            job_id = ""
+        client = RobloxHTTP(cookie)
+        private_server_meta: Dict[str, Any] = {}
+        private_fallback_reason = ""
+        auto_private_enabled = bool(
+            target.get(
+                "auto_create_private_server_enabled",
+                data.get("auto_create_private_server_enabled", False),
+            )
+        )
+        if not auto_private_enabled and not explicit_vip_link:
+            links = []
+            global_vip_link = ""
+        # Shared-direct VIP: Shared mode with a complete shared link joins
+        # that exact room for every account (no per-owner ensure/create).
+        # Validated again here so a stale/mismatched value can never sneak in.
+        shared_direct = str(target.get("shared_direct_vip") or data.get("shared_direct_vip") or "").strip()
+        if shared_direct:
+            try:
+                _scomp = parse_vip_components(shared_direct)
+            except Exception:
+                _scomp = {}
+            _splace = str((_scomp or {}).get("place_id") or "").strip()
+            _scode = str((_scomp or {}).get("link_code") or "").strip() or str((_scomp or {}).get("access_code") or "").strip()
+            if _splace and _scode and (not place_id or _splace == place_id):
+                place_id = place_id or _splace
+                vip_link = shared_direct
+                vip_resolved = False
+                vip_resolution = {}
+                auto_private_enabled = False
+            else:
+                shared_direct = ""
+        if auto_private_enabled:
+            link_candidates = [str(vip_link or "").strip()] + [str(link or "").strip() for link in links] + [global_vip_link]
+            for candidate in link_candidates:
+                if not place_id:
+                    parsed_place, _link_code = parse_vip_link(candidate)
+                    if parsed_place:
+                        place_id = parsed_place
+                        break
+            if not place_id:
+                return {
+                    "ok": False,
+                    "fatal": True,
+                    "mode": "vip",
+                    "vip_resolved": False,
+                    "msg": "Auto Create Private Server requires Place ID or a VIP link with Place ID",
+                }
+            free_only = bool(target.get("auto_create_private_server_free_only", data.get("auto_create_private_server_free_only", True)))
+            known_private_servers = list(data.get("owned_private_servers") or [])
+            # A game that had no private servers recently will not have one
+            # now either. Skip the three Roblox calls and reuse the stored
+            # verdict, otherwise every relaunch re-probes the same fact.
+            cached_unavailable = remembered_vip_unavailable(known_private_servers, place_id)
+            for candidate_link in link_candidates:
+                components = parse_vip_components(candidate_link)
+                candidate_place = str(components.get("place_id") or "").strip()
+                candidate_link_code = str(components.get("link_code") or "").strip()
+                candidate_access_code = str(components.get("access_code") or "").strip()
+                if candidate_place and candidate_place != str(place_id):
+                    continue
+                if not (candidate_link_code or candidate_access_code):
+                    continue
+                known_private_servers.append(
+                    {
+                        "owner_user_id": str(identity.get("cookie_user_id") or data.get("cookie_user_id") or ""),
+                        "place_id": str(place_id),
+                        "link": candidate_link,
+                        "join_code": candidate_link_code,
+                        "access_code": candidate_access_code,
+                    }
+                )
+            private_result = (
+                {"ok": False, "msg": cached_unavailable, "place_id": place_id}
+                if cached_unavailable
+                else ensure_owned_private_server(
+                    client,
+                    owner_user_id=str(identity.get("cookie_user_id") or data.get("cookie_user_id") or ""),
+                    place_id=place_id,
+                    free_only=free_only,
+                    known_servers=known_private_servers,
+                )
+            )
+            if not private_result.get("ok"):
+                private_failure_msg = str(private_result.get("msg") or "private server creation failed")
+                if not cached_unavailable:
+                    ACCOUNT_STORE.update_record(
+                        username,
+                        {
+                            "owned_private_servers": _merge_owned_private_server(
+                                list(data.get("owned_private_servers") or []),
+                                {
+                                    "owner_user_id": str(identity.get("cookie_user_id") or data.get("cookie_user_id") or ""),
+                                    "place_id": place_id,
+                                    "universe_id": str(private_result.get("universe_id") or ""),
+                                    "status": "error",
+                                    "error": private_failure_msg,
+                                    "synced_at": time.time(),
+                                },
+                            )
+                        },
+                    )
+                # One game in the pool having no private servers must not
+                # sink the whole run: with multi-game setups the other maps
+                # still work. Only "VIP disabled / paid" is permanent, so
+                # give up on CREATING our own room.
+                #
+                # Careful: a permanent create failure does NOT mean the
+                # account cannot use a private server. A VIP link pasted
+                # from a friend still joins that exact room even when we
+                # are not allowed to create one (paid / free-only mode).
+                # So keep the best usable link and only drop to public
+                # when there is genuinely nothing to join.
+                if vip_unavailable_permanently(private_failure_msg):
+                    auto_private_enabled = False
+                    fallback_link = ""
+                    for candidate in link_candidates:
+                        if not candidate:
+                            continue
+                        cand_place, cand_code = parse_vip_link(candidate)
+                        if cand_place and cand_place != str(place_id):
+                            continue
+                        if not cand_code:
+                            continue
+                        fallback_link = candidate
+                        break
+                    if fallback_link:
+                        vip_link = fallback_link
+                        vip_resolution = {}
+                        vip_resolved = False
+                        private_fallback_reason = private_failure_msg
+                        try:
+                            from core import flog_kv
+
+                            flog_kv(
+                                "LAUNCH",
+                                "private_server_public_fallback",
+                                "warning",
+                                account=username,
+                                place_id=place_id,
+                                reason=private_failure_msg,
+                                joined_existing_vip=True,
+                            )
+                        except Exception:
+                            pass
+                    else:
+                        private_fallback_reason = private_failure_msg
+                        vip_link = ""
+                        links = []
+                        global_vip_link = ""
+                        try:
+                            from core import flog_kv
+
+                            flog_kv(
+                                "LAUNCH",
+                                "private_server_public_fallback",
+                                "warning",
+                                account=username,
+                                place_id=place_id,
+                                reason=private_failure_msg,
+                            )
+                        except Exception:
+                            pass
+                else:
+                    return {
+                        "ok": False,
+                        "fatal": True,
+                        "mode": "vip",
+                        "vip_resolved": False,
+                        "msg": private_failure_msg,
+                        "auto_private_server": True,
+                    }
+            else:
+                private_server_meta = dict(private_result)
+                vip_link = str(private_server_meta.get("link") or "").strip()
+                vip_resolution = {
+                    "ok": True,
+                    "place_id": str(private_server_meta.get("place_id") or place_id),
+                    "access_code": str(private_server_meta.get("access_code") or ""),
+                    "link_code": str(private_server_meta.get("join_code") or private_server_meta.get("access_code") or ""),
+                    "source": f"owned_private_server:{private_server_meta.get('source') or 'unknown'}",
+                }
+                if not vip_link:
+                    vip_link = build_owned_private_server_link(place_id, private_server_meta)
+                if not vip_resolution.get("access_code") and vip_link:
+                    vip_resolution = resolve_vip_access_code(cookie, vip_link)
+                    if not vip_resolution.get("ok"):
+                        return {
+                            "ok": False,
+                            "fatal": True,
+                            "msg": str(vip_resolution.get("msg") or "Owned private server invite resolve failed"),
+                            "mode": "vip",
+                            "vip_resolved": False,
+                            "auto_private_server": True,
+                        }
+                vip_resolved = True
+                place_id = place_id or str(vip_resolution.get("place_id") or "")
+                owned_servers = _merge_owned_private_server(list(data.get("owned_private_servers") or []), private_server_meta)
+                updated_vip_links = list(data.get("vip_links") or [])
+                if vip_link:
+                    components = parse_vip_components(vip_link)
+                    if (components.get("link_code") or components.get("access_code")) and vip_link not in updated_vip_links:
+                        updated_vip_links.insert(0, vip_link)
+                ACCOUNT_STORE.update_record(
+                    username,
+                    {
+                        "owned_private_servers": owned_servers,
+                        "vip_links": updated_vip_links,
+                        "place_id": place_id or data.get("place_id", ""),
+                    },
+                )
+        elif not vip_link:
+            if isinstance(links, list) and links:
+                vip_link = str(links[0] or "").strip()
+            if not vip_link:
+                vip_link = global_vip_link
+        if vip_link:
+            if not vip_resolution.get("ok"):
+                vip_resolution = resolve_vip_access_code(cookie, vip_link)
+                if not vip_resolution.get("ok"):
+                    return {"ok": False, "fatal": True, "msg": str(vip_resolution.get("msg") or "VIP invite resolve failed"), "mode": "vip", "vip_resolved": False}
+                vip_resolved = True
+            place_id = place_id or str(vip_resolution.get("place_id") or "")
+        follow_user_id = str(target.get("follow_user_id") or target.get("follow_user") or "").strip()
+        if not place_id and not vip_link and not job_id and not follow_user_id:
+            return {"ok": False, "msg": "PlaceId, JobId, VIP link, or follow user is required"}
+        ok, ticket = client.get_auth_ticket()
+        if not ok:
+            return {"ok": False, "msg": ticket}
+        launcher_url, mode, attempted_vip = build_place_launcher_url(
+            place_id=place_id,
+            job_id=job_id,
+            vip_link=vip_link,
+            follow_user_id=follow_user_id,
+            browser_tracker_id=browser_tracker_id,
+            vip_access_code=str(vip_resolution.get("access_code") or ""),
+            vip_link_code=str(vip_resolution.get("link_code") or ""),
+        )
+        uri = build_roblox_player_uri(ticket, launcher_url, browser_tracker_id)
+        open_roblox_uri(uri)
+        ACCOUNT_STORE.update_record(
+            str(data.get("username") or ""),
+            {
+                "browser_tracker_id": browser_tracker_id,
+                "last_use": time.time(),
+                "place_id": place_id or data.get("place_id", ""),
+                "job_id": job_id or data.get("job_id", ""),
+            },
+        )
+        return {
+            "ok": True,
+            "mode": mode,
+            "browser_tracker_id": browser_tracker_id,
+            "closed_duplicates": close_result.get("killed", []),
+            "closed_instances": close_result.get("count", 0),
+            "multi_roblox_guard": {"ok": guard_ok, "detail": guard_detail} if multi_roblox else {"ok": False, "detail": "disabled"},
+            "cookie_username": identity.get("cookie_username", ""),
+            "cookie_user_id": identity.get("cookie_user_id", ""),
+            "vip_resolved": vip_resolved,
+            "vip_access_code_hash": _safe_hash(str(vip_resolution.get("access_code") or "")),
+            "vip_link_code_hash": _safe_hash(str(vip_resolution.get("link_code") or "")),
+            "launch_uri_preview": re.sub(r"(gameinfo:)[^+]+", r"\1[REDACTED]", uri),
+            "attempted_vip": attempted_vip,
+            "auto_private_server": bool(auto_private_enabled),
+            "private_server_public_fallback": private_fallback_reason,
+            "owned_private_server_id": str(private_server_meta.get("private_server_id") or ""),
+            "private_server_source": str(private_server_meta.get("source") or ""),
+            "private_server_owner_user_id": str(private_server_meta.get("owner_user_id") or ""),
+            "private_server_place_id": str(private_server_meta.get("place_id") or ""),
+            "private_server_universe_id": str(private_server_meta.get("universe_id") or ""),
+            "msg": "Roblox launch requested",
+        }
+
+
+def validate_cookie(cookie: str) -> Tuple[bool, str, str]:
+    ok, username, detail, _meta = validate_cookie_details(cookie)
+    return ok, username, detail

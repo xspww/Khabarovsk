@@ -130,7 +130,7 @@ def _run(cfg, accounts, games, game_mode, cfg_mgr, outcome):
     if not needed:
         return outcome
 
-    from account_hybrid import ACCOUNT_STORE
+    from services.account_hybrid import ACCOUNT_STORE
 
     try:
         records = ACCOUNT_STORE.read_records(include_cookies=True)
@@ -144,7 +144,7 @@ def _run(cfg, accounts, games, game_mode, cfg_mgr, outcome):
         pass
 
     try:
-        from roblox_hybrid import RobloxHTTP, validate_record_cookie_identity
+        from services.roblox_hybrid import RobloxHTTP, validate_record_cookie_identity
         from domain.roblox_private_servers import ensure_owned_private_server
     except Exception as exc:
         for place, slot in needed.items():

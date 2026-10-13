@@ -190,7 +190,7 @@ class AccountLaunchService:
         idempotency_key: str = "",
         body_hash: str = "",
     ) -> Dict[str, Any]:
-        from roblox_hybrid import HybridLauncher
+        from services.roblox_hybrid import HybridLauncher
 
         username = str(record.get("username") or "")
         multi_roblox = bool(body.get("multi_roblox", cfg_mgr.get("multi_roblox_enabled", True)))
@@ -253,7 +253,7 @@ class AccountLaunchService:
         idempotency_key: str = "",
         body_hash: str = "",
     ) -> Dict[str, Any]:
-        from roblox_hybrid import HybridLauncher
+        from services.roblox_hybrid import HybridLauncher
 
         username = str(record.get("username") or "")
         tracker = str(record.get("browser_tracker_id") or "")
@@ -344,7 +344,7 @@ def launch(cls, acc: Account) -> Tuple[bool, str, str]:
 
     if str(getattr(acc, "cookie", "") or "").strip():
         try:
-            from roblox_hybrid import HybridLauncher
+            from services.roblox_hybrid import HybridLauncher
 
             from domain.games import (
                 effective_auto_flags,
@@ -498,7 +498,7 @@ def launch(cls, acc: Account) -> Tuple[bool, str, str]:
     )
     flog(f"[LAUNCH] {acc.display_name} → {safe_url[:120]}")
 
-    from roblox_hybrid import open_roblox_uri
+    from services.roblox_hybrid import open_roblox_uri
 
     try:
         open_roblox_uri(cls.LOGIN_WARMUP_URL)

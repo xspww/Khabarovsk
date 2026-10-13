@@ -206,7 +206,7 @@ class ManualLoginManager:
     @property
     def store(self) -> Any:
         if self._store is None:
-            from account_hybrid import ACCOUNT_STORE
+            from services.account_hybrid import ACCOUNT_STORE
 
             self._store = ACCOUNT_STORE
         return self._store
@@ -214,7 +214,7 @@ class ManualLoginManager:
     @property
     def validator(self) -> Callable[[str], Any]:
         if self._validator is None:
-            from roblox_hybrid import validate_cookie_details as _validate
+            from services.roblox_hybrid import validate_cookie_details as _validate
 
             self._validator = _validate
         return self._validator
@@ -224,7 +224,7 @@ class ManualLoginManager:
             if self._audit is not None:
                 self._audit(action, username=username, ok=ok, **fields)
             else:
-                from account_hybrid import audit_event as _audit_event
+                from services.account_hybrid import audit_event as _audit_event
 
                 _audit_event(action, username=username, ok=ok, **fields)
         except Exception:

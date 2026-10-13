@@ -188,7 +188,7 @@ def register(app, ctx: ApiContext) -> None:
         except Exception:
             body = {}
         try:
-            from roblox_hybrid import set_selected_roblox_version
+            from services.roblox_hybrid import set_selected_roblox_version
             set_selected_roblox_version(str(body.get("roblox_version") or "").strip())
         except Exception:
             pass

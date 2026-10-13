@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app_paths import APP_DATA_DIR
-from account_hybrid import redact_secret
+from services.account_hybrid import redact_secret
 from core import account_launch_block_reason, flog_kv
 from runtime.account_selection import runtime_account_filter_reason
 from runtime.diagnostic_bundle import build_runtime_diagnostic_bundle

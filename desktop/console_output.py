@@ -67,3 +67,46 @@ def clear_screen() -> None:
         os.system("cls" if os.name == "nt" else "clear")
     except Exception:
         pass
+
+
+def reattach_console_if_redirected() -> bool:
+    """Recreate a visible console when stdout was redirected at launch.
+
+    Updates applied by a pre-fix updater boot the new build with
+    stdout/stderr redirected into a log file, leaving the whole session
+    with a dead terminal until a manual restart. When that is detected,
+    detach and allocate a fresh console, then rebind the standard streams
+    to it so farm output is visible again. Returns True when a new
+    console was attached.
+    """
+    if os.name != "nt":
+        return False
+    try:
+        if getattr(sys.stdout, "isatty", lambda: False)():
+            return False
+    except Exception:
+        return False
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        try:
+            kernel32.FreeConsole()
+        except Exception:
+            pass
+        if not kernel32.AllocConsole():
+            return False
+        try:
+            codepage = int(kernel32.GetConsoleOutputCP() or 0)
+            encoding = "cp%d" % codepage if codepage > 0 else "utf-8"
+        except Exception:
+            encoding = "utf-8"
+        # Match the console codepage (not UTF-8) so non-ASCII output keeps
+        # the same encode-error fallback path as a normal launch.
+        for stream_name in ("stdout", "stderr"):
+            try:
+                setattr(sys, stream_name, open("CONOUT$", "w", encoding=encoding))
+            except Exception:
+                pass
+        return True
+    except Exception:
+        return False

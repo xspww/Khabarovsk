@@ -10,7 +10,7 @@ import urllib.request
 import webbrowser
 from typing import Any, Optional, Tuple
 
-from app_paths import APP_NAME, APP_ROOT_DIR
+from app_paths import APP_NAME, APP_ROOT_DIR, IS_COMPILED
 from desktop import console_output
 from desktop.constants import DEFAULT_PORT
 from console_activity import format_console_line
@@ -558,6 +558,13 @@ def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
     if fastapi_app is not None or farm_controller is not None:
         configure(fastapi_app, farm_controller)
     global PORT, _backend_host
+    if "--post-update" in sys.argv and IS_COMPILED:
+        # Self-heal for updates applied by a pre-fix updater, which boots
+        # this build with stdout/stderr redirected into a log file. Without
+        # this the whole session runs with a dead terminal until relaunch.
+        # (Fixed updaters no longer redirect; this covers the one update
+        # that delivers the fix, whose swap script came from the old build.)
+        console_output.reattach_console_if_redirected()
     _console_header()
     _console_status("startup", "Preparing single-instance guard")
     if "--post-update" in sys.argv:

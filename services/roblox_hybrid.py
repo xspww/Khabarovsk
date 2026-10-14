@@ -13,10 +13,10 @@ import time
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import net_tls
-from app_paths import EXECUTABLE_PATH, IS_COMPILED
+from app_paths import APP_ROOT_DIR, EXECUTABLE_PATH, IS_COMPILED
 from domain.roblox_private_servers import (
     _safe_hash,
     build_owned_private_server_link,
@@ -49,13 +49,13 @@ PUBLIC_HEADERS = {
     "Referer": "https://www.roblox.com/",
 }
 _MULTI_ROBLOX_LOCK = threading.RLock()
-_MULTI_ROBLOX_HANDLES: List[Tuple[str, int]] = []
-_MULTI_ROBLOX_HELPER: Optional[subprocess.Popen] = None
+_MULTI_ROBLOX_HANDLES: list[tuple[str, int]] = []
+_MULTI_ROBLOX_HELPER: subprocess.Popen | None = None
 _MULTI_ROBLOX_STATE = "stopped"
 _MULTI_ROBLOX_DETAIL = ""
 _MULTI_ROBLOX_LAST_FAILURE = ""
 _MULTI_ROBLOX_STARTED_AT = 0.0
-_MULTI_ROBLOX_HANDLE_NAMES: List[str] = []
+_MULTI_ROBLOX_HANDLE_NAMES: list[str] = []
 _MULTI_ROBLOX_GUARD_MODE = "mutex"
 ROBLOX_HOME = "https://www.roblox.com/"
 AUTH_BASE = "https://auth.roblox.com/"
@@ -131,7 +131,7 @@ class RobloxHTTP:
         self.cookie = str(cookie or "").strip()
         self.csrf_token = ""
 
-    def _headers(self, extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    def _headers(self, extra: dict[str, str] | None = None) -> dict[str, str]:
         headers = {
             "User-Agent": USER_AGENT,
             "Accept": "application/json, text/plain, */*",
@@ -149,11 +149,11 @@ class RobloxHTTP:
         self,
         url: str,
         method: str = "GET",
-        data: Optional[Any] = None,
-        headers: Optional[Dict[str, str]] = None,
+        data: Any | None = None,
+        headers: dict[str, str] | None = None,
         timeout: float = 12.0,
         retry_csrf: bool = True,
-    ) -> Tuple[int, str, Dict[str, str]]:
+    ) -> tuple[int, str, dict[str, str]]:
         body = None
         req_headers = self._headers(headers)
         if data is not None:
@@ -181,7 +181,7 @@ class RobloxHTTP:
                 body_text = str(exc)
             return exc.code, body_text, response_headers
 
-    def get_csrf(self) -> Tuple[bool, str]:
+    def get_csrf(self) -> tuple[bool, str]:
         status, body, headers = self.request(
             AUTH_BASE + "v1/authentication-ticket/",
             method="POST",
@@ -197,7 +197,7 @@ class RobloxHTTP:
             return False, challenge_detail
         return False, f"csrf failed ({status}) {body[:180]}"
 
-    def get_auth_ticket(self) -> Tuple[bool, str]:
+    def get_auth_ticket(self) -> tuple[bool, str]:
         if not self.csrf_token:
             ok, detail = self.get_csrf()
             if not ok:
@@ -216,7 +216,7 @@ class RobloxHTTP:
             return False, challenge_detail
         return False, f"auth ticket failed ({status}) {body[:180]}"
 
-    def authenticated_user(self) -> Tuple[bool, Dict[str, Any], str]:
+    def authenticated_user(self) -> tuple[bool, dict[str, Any], str]:
         status, body, headers = self.request(USERS_BASE + "v1/users/authenticated", method="GET")
         if status == 200:
             try:
@@ -229,13 +229,13 @@ class RobloxHTTP:
             return False, {}, challenge_detail
         return False, {}, f"cookie validation failed ({status}) {body[:180]}"
 
-    def csrf_post(self, url: str, data: Optional[Any] = None, method: str = "POST") -> Tuple[bool, Dict[str, Any], str, Dict[str, str]]:
+    def csrf_post(self, url: str, data: Any | None = None, method: str = "POST") -> tuple[bool, dict[str, Any], str, dict[str, str]]:
         if not self.csrf_token:
             ok, detail = self.get_csrf()
             if not ok:
                 return False, {}, detail, {}
         status, body, headers = self.request(url, method=method, data=data, retry_csrf=True)
-        parsed: Dict[str, Any] = {}
+        parsed: dict[str, Any] = {}
         try:
             parsed = json.loads(body) if body else {}
         except Exception:
@@ -258,8 +258,8 @@ def ensure_owned_private_server(
     owner_user_id: str,
     place_id: str,
     free_only: bool = True,
-    known_servers: Optional[List[Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
+    known_servers: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     return _ensure_owned_private_server(
         client,
         owner_user_id,
@@ -275,8 +275,8 @@ def ensure_owned_private_server(
     )
 
 
-def _merge_owned_private_server(records: List[Dict[str, Any]], server: Dict[str, Any]) -> List[Dict[str, Any]]:
-    merged: List[Dict[str, Any]] = []
+def _merge_owned_private_server(records: list[dict[str, Any]], server: dict[str, Any]) -> list[dict[str, Any]]:
+    merged: list[dict[str, Any]] = []
     incoming_id = str(server.get("private_server_id") or "").strip()
     incoming_key = (
         str(server.get("owner_user_id") or ""),
@@ -307,7 +307,7 @@ def _merge_owned_private_server(records: List[Dict[str, Any]], server: Dict[str,
     return merged
 
 
-def fetch_moderation_status(cookie: str, timeout: float = 8.0) -> Tuple[Optional[bool], str, Dict[str, Any]]:
+def fetch_moderation_status(cookie: str, timeout: float = 8.0) -> tuple[bool | None, str, dict[str, Any]]:
     """Read Roblox account moderation (suspension / ban) for a live cookie.
 
     The public profile's isBanned only reports permanent terminations. A
@@ -352,7 +352,7 @@ def fetch_moderation_status(cookie: str, timeout: float = 8.0) -> Tuple[Optional
     return True, _describe_moderation(data), data
 
 
-def _describe_moderation(data: Dict[str, Any]) -> str:
+def _describe_moderation(data: dict[str, Any]) -> str:
     """Summarize a not-approved payload into a short human reason."""
     kind = ""
     try:
@@ -378,7 +378,7 @@ def _describe_moderation(data: Dict[str, Any]) -> str:
     return f"Account suspended by Roblox{until}"
 
 
-def fetch_user_ban_status(user_id: str, timeout: float = 8.0, trusted_id: bool = True) -> Tuple[Optional[bool], str]:
+def fetch_user_ban_status(user_id: str, timeout: float = 8.0, trusted_id: bool = True) -> tuple[bool | None, str]:
     """Check Roblox account-level ban via public profile (isBanned).
 
     Returns (is_banned_or_None, detail). None = unknown/transient, caller
@@ -395,7 +395,7 @@ def fetch_user_ban_status(user_id: str, timeout: float = 8.0, trusted_id: bool =
         return None, ""
     url = f"{USERS_BASE}v1/users/{uid}"
 
-    def _fetch_once() -> Tuple[str, Any]:
+    def _fetch_once() -> tuple[str, Any]:
         """Returns (kind, payload): kind is ok|http_error|transient."""
         try:
             req = urllib.request.Request(url, headers=dict(PUBLIC_HEADERS))
@@ -451,7 +451,7 @@ def fetch_user_ban_status(user_id: str, timeout: float = 8.0, trusted_id: bool =
     return None, f"ban check HTTP {code}"
 
 
-def fetch_user_id_by_username(username: str, timeout: float = 8.0) -> Tuple[str, str]:
+def fetch_user_id_by_username(username: str, timeout: float = 8.0) -> tuple[str, str]:
     """Resolve a Roblox user_id from a username via public API (no cookie).
 
     Returns (user_id_or_empty, detail). Empty user_id means unknown â€”
@@ -492,7 +492,7 @@ def fetch_user_id_by_username(username: str, timeout: float = 8.0) -> Tuple[str,
     return "", "user not found"
 
 
-def fetch_ban_status_by_username(username: str, timeout: float = 8.0) -> Tuple[Optional[bool], str, str]:
+def fetch_ban_status_by_username(username: str, timeout: float = 8.0) -> tuple[bool | None, str, str]:
     """Check account-level ban by username (public API, no cookie needed).
 
     Returns (is_banned_or_None, user_id, detail). None = unknown (user not
@@ -505,7 +505,7 @@ def fetch_ban_status_by_username(username: str, timeout: float = 8.0) -> Tuple[O
     return banned, uid, ban_detail
 
 
-def cookie_embedded_identity(cookie: str) -> Tuple[str, str]:
+def cookie_embedded_identity(cookie: str) -> tuple[str, str]:
     """Read the (username, user_id) Roblox embeds inside the cookie token.
 
     `.ROBLOSECURITY` payloads carry protobuf fields `uname` and `uid`, so a
@@ -577,7 +577,7 @@ def username_for_cookie_in_store(cookie: str) -> str:
     return ""
 
 
-def resolve_ban_for_dead_cookie(cookie: str, username_hint: str = "", timeout: float = 8.0) -> Tuple[Optional[bool], str, str]:
+def resolve_ban_for_dead_cookie(cookie: str, username_hint: str = "", timeout: float = 8.0) -> tuple[bool | None, str, str]:
     """Check ban for a cookie that can no longer authenticate.
 
     The dead cookie cannot prove anything, so fall back to the public API by
@@ -617,7 +617,7 @@ def moderated_only_detail(detail: str) -> bool:
 
 def resolve_moderated_dead_cookie(
     cookie: str, username_hint: str = "", timeout: float = 8.0
-) -> Tuple[Optional[str], str, str, str]:
+) -> tuple[str | None, str, str, str]:
     """Disambiguate a dead cookie answered 403 "User is moderated".
 
     Returns (verdict, detail, username, user_id) with verdict in
@@ -647,7 +647,7 @@ def resolve_moderated_dead_cookie(
     return None, "", name, str(uid or "")
 
 
-def reprobe_moderation_response(cookie: str, attempts: int = 3, delay: float = 1.5, timeout: float = 8.0) -> Tuple[int, str]:
+def reprobe_moderation_response(cookie: str, attempts: int = 3, delay: float = 1.5, timeout: float = 8.0) -> tuple[int, str]:
     """Re-ask the authenticated endpoint a few times for a dead cookie.
 
     Roblox sometimes answers the same dead token with plain 401 and
@@ -678,7 +678,7 @@ def reprobe_moderation_response(cookie: str, attempts: int = 3, delay: float = 1
     return 0, ""
 
 
-def validate_cookie_details(cookie: str) -> Tuple[bool, str, str, Dict[str, Any]]:
+def validate_cookie_details(cookie: str) -> tuple[bool, str, str, dict[str, Any]]:
     ok, data, detail = RobloxHTTP(cookie).authenticated_user()
     if not ok:
         # Owner fallback: a dead cookie still names its account inside the
@@ -812,7 +812,7 @@ def validate_cookie_details(cookie: str) -> Tuple[bool, str, str, Dict[str, Any]
     return True, username, "ok", {"username": username, "user_id": user_id, "is_banned": False, "banned": False}
 
 
-def validate_record_cookie_identity(record: Dict[str, Any], cookie: str, update_store: bool = True) -> Dict[str, Any]:
+def validate_record_cookie_identity(record: dict[str, Any], cookie: str, update_store: bool = True) -> dict[str, Any]:
     username = str((record or {}).get("username") or "").strip()
     ok, cookie_username, detail, meta = validate_cookie_details(cookie)
     try:
@@ -1093,8 +1093,8 @@ def _multi_roblox_log(event: str, severity: str = "info", **fields: Any) -> None
         pass
 
 
-def _read_guard_ready_line(proc: subprocess.Popen, timeout: float) -> Tuple[str, str]:
-    box: Dict[str, str] = {}
+def _read_guard_ready_line(proc: subprocess.Popen, timeout: float) -> tuple[str, str]:
+    box: dict[str, str] = {}
 
     def _reader() -> None:
         try:
@@ -1113,7 +1113,7 @@ def _read_guard_ready_line(proc: subprocess.Popen, timeout: float) -> Tuple[str,
     return box.get("line", ""), box.get("error", "")
 
 
-def _parse_multi_roblox_ready_line(ready_line: str) -> Tuple[str, List[str], bool, bool]:
+def _parse_multi_roblox_ready_line(ready_line: str) -> tuple[str, list[str], bool, bool]:
     detail = str(ready_line or "").replace("multi_roblox_guard_ready", "", 1).strip()
     handle_part = detail.split(" pid=", 1)[0].strip()
     handle_names = [name for name in handle_part.split(",") if name]
@@ -1150,7 +1150,7 @@ def record_multi_roblox_guard_failure(detail: str) -> None:
     _multi_roblox_log("guard_failed", "error", detail=message)
 
 
-def multi_roblox_guard_status() -> Dict[str, Any]:
+def multi_roblox_guard_status() -> dict[str, Any]:
     global _MULTI_ROBLOX_STATE, _MULTI_ROBLOX_LAST_FAILURE, _MULTI_ROBLOX_DETAIL
     with _MULTI_ROBLOX_LOCK:
         proc = _MULTI_ROBLOX_HELPER
@@ -1177,7 +1177,7 @@ def multi_roblox_guard_status() -> Dict[str, Any]:
         }
 
 
-def ensure_multi_roblox_guard(timeout: float = 6.0) -> Tuple[bool, str]:
+def ensure_multi_roblox_guard(timeout: float = 6.0) -> tuple[bool, str]:
     global _MULTI_ROBLOX_HELPER, _MULTI_ROBLOX_STATE, _MULTI_ROBLOX_DETAIL
     global _MULTI_ROBLOX_LAST_FAILURE, _MULTI_ROBLOX_STARTED_AT, _MULTI_ROBLOX_HANDLE_NAMES
     with _MULTI_ROBLOX_LOCK:
@@ -1194,7 +1194,7 @@ def ensure_multi_roblox_guard(timeout: float = 6.0) -> Tuple[bool, str]:
             guard_path = EXECUTABLE_PATH or sys.executable or "CronusLauncher.exe"
             cmd = [guard_path, "--multi-roblox-guard", _MULTI_ROBLOX_GUARD_MODE, "--parent-pid", str(os.getpid())]
         else:
-            guard_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "multi_roblox_guard.py")
+            guard_path = os.path.join(APP_ROOT_DIR, "multi_roblox_guard.py")
             cmd = [
                 sys.executable or "python",
                 guard_path,
@@ -1289,7 +1289,7 @@ class HybridLauncher:
         return ""
 
     @classmethod
-    def duplicate_pids_for_tracker(cls, browser_tracker_id: str) -> List[int]:
+    def duplicate_pids_for_tracker(cls, browser_tracker_id: str) -> list[int]:
         browser_tracker_id = str(browser_tracker_id or "").strip()
         if not browser_tracker_id:
             return []
@@ -1297,7 +1297,7 @@ class HybridLauncher:
             from services.process_service import ProcessManager
         except Exception:
             return []
-        pids: List[int] = []
+        pids: list[int] = []
         for item in ProcessManager.list_live_game_processes():
             if cls._tracker_from_cmdline(str(item.get("cmdline") or "")) == browser_tracker_id:
                 pid = int(item.get("pid") or 0)
@@ -1306,12 +1306,12 @@ class HybridLauncher:
         return pids
 
     @classmethod
-    def kill_duplicate_instances(cls, browser_tracker_id: str) -> Dict[str, Any]:
+    def kill_duplicate_instances(cls, browser_tracker_id: str) -> dict[str, Any]:
         try:
             from services.process_service import ProcessManager
         except Exception as exc:
             return {"ok": False, "killed": [], "msg": str(exc)}
-        killed: List[int] = []
+        killed: list[int] = []
         for pid in cls.duplicate_pids_for_tracker(browser_tracker_id):
             try:
                 if ProcessManager.kill_pid(pid):
@@ -1321,7 +1321,7 @@ class HybridLauncher:
         return {"ok": True, "killed": killed, "count": len(killed)}
 
     @classmethod
-    def launch_record(cls, record: Dict[str, Any], target: Optional[Dict[str, Any]] = None, multi_roblox: bool = True) -> Dict[str, Any]:
+    def launch_record(cls, record: dict[str, Any], target: dict[str, Any] | None = None, multi_roblox: bool = True) -> dict[str, Any]:
         data = dict(record or {})
         target = dict(target or {})
         username = str(data.get("username") or "").strip()
@@ -1380,12 +1380,12 @@ class HybridLauncher:
         global_vip_link = str(target.get("global_vip_link") or data.get("global_vip_link") or "").strip()
         vip_link = explicit_vip_link
         vip_resolved = False
-        vip_resolution: Dict[str, Any] = {}
+        vip_resolution: dict[str, Any] = {}
         if job_id.startswith("http") and not vip_link:
             vip_link = job_id
             job_id = ""
         client = RobloxHTTP(cookie)
-        private_server_meta: Dict[str, Any] = {}
+        private_server_meta: dict[str, Any] = {}
         private_fallback_reason = ""
         auto_private_enabled = bool(
             target.get(
@@ -1657,6 +1657,6 @@ class HybridLauncher:
         }
 
 
-def validate_cookie(cookie: str) -> Tuple[bool, str, str]:
+def validate_cookie(cookie: str) -> tuple[bool, str, str]:
     ok, username, detail, _meta = validate_cookie_details(cookie)
     return ok, username, detail

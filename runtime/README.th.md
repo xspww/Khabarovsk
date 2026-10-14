@@ -35,7 +35,11 @@ recovery และ watchdog loop ทั้งหมด พึ่ง `domain/`, `
 
 | ไฟล์ | ทำอะไร | เชื่อมกับ |
 | ---- | --------- | ----------- |
-| `recovery_engine.py` | ตัวขับ state machine ของ recovery | `account_worker.py`, `recovery_evaluator.py` |
+| `recovery_engine.py` | facade บางๆ: `RecoveryCoordinator` = 4 mixin ล่าง + alias `RecoveryEngine` ไม่มี logic | `farm_lifecycle.py` สร้าง; `farm.py`, `dispatcher.py`, `account_worker.py`, `system_maintenance.py` ใช้ type-hint |
+| `recovery_core.py` | wiring/`__init__`, lifecycle, helper slot/cfg, ทางเข้า public (`handle_runtime_signal`, `evaluate`, `reconcile_all`) | บูตใน `farm.py`, สัญญาณใน `dispatcher.py` |
+| `recovery_txn.py` | budget/begin/clear, cooldown, `_queue_account`, กาว scheduler | ทุก reporter เรียกผ่าน `self` |
+| `recovery_reports.py` | `report_crash/launch_failure/lua_waiting/launch_success`, `fail_account`, `maybe_revive_transient_failed`, `force_rejoin` | อีเวนต์ใน `account_worker.py` |
+| `recovery_guard_net.py` | loop self-heal multi-roblox, `mark_network_lost/on_network_restored` | `services/multi_roblox_guard.py`, `services/network_monitor.py` |
 | `recovery_policy.py` | predicate นโยบายแบบ single-owner มีเทส | `tests/test_recovery_policy.py` |
 | `recovery_evaluator.py` + `recovery_context.py` + `recovery_support.py` | ให้คะแนนสัญญาณ → คำตัดสิน + บริบท | `recovery_engine.py` |
 | `recovery_signal_router.py` + `recovery_storm.py` + `recovery_owner.py` | เส้นทางสัญญาณ, กัน storm, เจ้าของเดียว | `event_bus.py` |

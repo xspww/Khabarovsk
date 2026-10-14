@@ -433,21 +433,22 @@ class EmbeddedIdentityTests(unittest.TestCase):
         self.assertEqual(cookie_embedded_identity("_|WARNING:x.|_QUJD"), ("", ""))
 
     def test_resolve_uses_embedded_name_without_hint(self):
-        import services.roblox_hybrid as roblox_hybrid
+        import services.roblox_identity as roblox_identity
+        import services.roblox_moderation as roblox_moderation
 
-        original_store = roblox_hybrid.username_for_cookie_in_store
-        original_ban = roblox_hybrid.fetch_ban_status_by_username
-        roblox_hybrid.username_for_cookie_in_store = lambda cookie: ""
-        roblox_hybrid.fetch_ban_status_by_username = lambda name, timeout=8.0: (
+        original_store = roblox_identity.username_for_cookie_in_store
+        original_ban = roblox_moderation.fetch_ban_status_by_username
+        roblox_identity.username_for_cookie_in_store = lambda cookie: ""
+        roblox_moderation.fetch_ban_status_by_username = lambda name, timeout=8.0: (
             (False, "4373927375", "") if name == "x1MiuytAi0" else (None, "", "")
         )
         try:
-            verdict, _detail, name, uid = roblox_hybrid.resolve_moderated_dead_cookie(
+            verdict, _detail, name, uid = roblox_identity.resolve_moderated_dead_cookie(
                 _synthetic_cookie(), ""
             )
         finally:
-            roblox_hybrid.username_for_cookie_in_store = original_store
-            roblox_hybrid.fetch_ban_status_by_username = original_ban
+            roblox_identity.username_for_cookie_in_store = original_store
+            roblox_moderation.fetch_ban_status_by_username = original_ban
         self.assertEqual(verdict, "locked")
         self.assertEqual(name, "x1MiuytAi0")
         self.assertEqual(uid, "4373927375")

@@ -36,7 +36,11 @@ Sub-package `popup_detector/` isolates popup CV/OCR rules.
 
 | File | Does what | Connects to |
 | ---- | --------- | ----------- |
-| `recovery_engine.py` | Recovery state machine driver. | `account_worker.py`, `recovery_evaluator.py`. |
+| `recovery_engine.py` | Thin facade: `RecoveryCoordinator` = 4 mixins below + `RecoveryEngine` alias. No logic. | `farm_lifecycle.py` constructs it; `farm.py`, `dispatcher.py`, `account_worker.py`, `system_maintenance.py` type-hint it. |
+| `recovery_core.py` | Wiring/`__init__`, lifecycle, slot/cfg helpers, public entries (`handle_runtime_signal`, `evaluate`, `reconcile_all`). | `farm.py` boot, `dispatcher.py` signals. |
+| `recovery_txn.py` | Budget/begin/clear, cooldown, `_queue_account`, scheduler glue. | Called by every reporter via `self`. |
+| `recovery_reports.py` | `report_crash/launch_failure/lua_waiting/launch_success`, `fail_account`, `maybe_revive_transient_failed`, `force_rejoin`. | `account_worker.py` events. |
+| `recovery_guard_net.py` | Multi-roblox self-heal loop, `mark_network_lost/on_network_restored`. | `services/multi_roblox_guard.py`, `services/network_monitor.py`. |
 | `recovery_policy.py` | Single-owner policy predicates. Tested. | `tests/test_recovery_policy.py`. |
 | `recovery_evaluator.py` + `recovery_context.py` + `recovery_support.py` | Score signals → verdict + context. | `recovery_engine.py`. |
 | `recovery_signal_router.py` + `recovery_storm.py` + `recovery_owner.py` | Route signals, suppress storms, single owner. | `event_bus.py`. |

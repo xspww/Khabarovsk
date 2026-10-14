@@ -26,7 +26,12 @@
 
 | ไฟล์ | ทำอะไร | เชื่อมกับ |
 | ---- | --------- | ----------- |
-| `roblox_hybrid.py` | Roblox API แบบ header เหมือนเบราว์เซอร์ + spawn `--multi-roblox-guard` | สาขา `--multi-roblox-guard` ใน `main.py`, `runtime/launch_controller.py`, `services/roblox_launch_service.py` |
+| `roblox_hybrid.py` | facade บางๆ re-export จาก 6 โมดูลล่าง (ห้ามใส่ logic) | ~20 จุด `from services.roblox_hybrid import …` ยังใช้ได้เหมือนเดิม |
+| `roblox_http.py` | `RobloxHTTP` (cookie+CSRF ผ่าน `infra/net_tls`), header browser-like, endpoint base, `open_roblox_uri` + version pin | `roblox_moderation.py`, `roblox_identity.py`, `roblox_validation.py`, `roblox_launcher.py`, `services/private_server_preflight.py` |
+| `roblox_moderation.py` | live moderation/ban (`fetch_moderation_status`, `fetch_user_ban_status`, `fetch_ban_status_by_username`) | `roblox_identity.py`, `roblox_validation.py`, `services/credential_check.py` |
+| `roblox_identity.py` | identity ออฟไลน์ (`cookie_embedded_identity`, `username_for_cookie_in_store`) + แยก dead-cookie (`resolve_ban/moderated_dead_cookie`, `reprobe`) | `roblox_validation.py`, `services/account_hybrid.py`, `api_routes/accounts_routes.py`, `api_routes/account_records.py` |
+| `roblox_validation.py` | `validate_cookie_details`, `validate_record_cookie_identity`, `validate_cookie` | `runtime/account_worker.py`, `runtime/captcha_detector.py`, `runtime/verify_detector.py`, `runtime/maintenance_moderation.py`, `services/manual_login_service.py`, `services/roblox_launcher.py` |
+| `roblox_multibox.py` | guard subprocess (`ensure/release/status`, spawn `services/multi_roblox_guard.py`, `atexit`) | `runtime/farm_lifecycle.py`, `runtime/recovery_engine.py`, `runtime/machine_supervisor.py`, `services/roblox_launcher.py` |
 | `roblox_launch_service.py` | บริการเปิดเกม: ประกอบ deeplink / join private-server | `runtime/launch_attempt.py`, `runtime/account_worker.py` |
 | `roblox_install_manager.py` | ตัวติดตั้ง/อัปเดตจาก official endpoint เท่านั้น + ล้างเวอร์ชันเก่า | `main.py` (`ROBLOX_INSTALLER`), `api_routes/system_routes.py` (Cronus Manager) |
 | `roblox_processes.py` | แจกแจง/ผูกโปรเซส (PID ↔ บัญชี) | `services/process_service.py`, เทสโดย `tests/test_process_binding.py` |

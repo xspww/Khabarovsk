@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, Dict, Iterable, Optional, Tuple
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from runtime.runtime_invariants import check_runtime_invariants, invariant_snapshot
 
@@ -19,17 +20,17 @@ class RuntimeInvariantMonitor:
     def __init__(
         self,
         accounts: Iterable[Any],
-        pid_validator: Optional[PidValidator] = None,
-        record_event: Optional[RecordEvent] = None,
+        pid_validator: PidValidator | None = None,
+        record_event: RecordEvent | None = None,
         suppress_seconds: float = 60.0,
     ):
         self._accounts = accounts
         self._pid_validator = pid_validator
         self._record_event = record_event
         self._suppress_seconds = max(1.0, float(suppress_seconds or 60.0))
-        self._last_emit: Dict[Tuple[str, str], float] = {}
+        self._last_emit: dict[tuple[str, str], float] = {}
 
-    def scan(self, now: Optional[float] = None) -> Dict[str, Any]:
+    def scan(self, now: float | None = None) -> dict[str, Any]:
         current = float(now if now is not None else time.time())
         checked = 0
         emitted = 0
@@ -81,7 +82,7 @@ class RuntimeInvariantMonitor:
         self._last_emit[key] = now
         return True
 
-    def _emit(self, account_key: str, code: str, item: Dict[str, Any]) -> None:
+    def _emit(self, account_key: str, code: str, item: dict[str, Any]) -> None:
         if not self._record_event:
             return
         level = "error" if item["severity"] == "critical" else "warning"

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import re
-from typing import Tuple
 
 # Single source of truth for the launcher version.
 # Release tags must match: tag "v1.0.0" <-> APP_VERSION "1.0.0".
@@ -43,12 +42,12 @@ def strip_tag_prefix(value: str) -> str:
     return text
 
 
-def parse_version_tuple(value: str) -> Tuple[int, ...]:
+def parse_version_tuple(value: str) -> tuple[int, ...]:
     parts = [int(item) for item in re.findall(r"\d+", str(value or ""))[:4]]
     return tuple(parts or [0])
 
 
-def _split_prerelease(value: str) -> Tuple[str, str]:
+def _split_prerelease(value: str) -> tuple[str, str]:
     text = strip_tag_prefix(value)
     head, sep, tail = text.partition("-")
     if sep and tail.strip():

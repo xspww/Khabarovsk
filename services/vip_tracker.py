@@ -3,7 +3,6 @@ from __future__ import annotations
 import random
 import threading
 import time
-from typing import Dict, List, Optional
 
 from core import flog
 
@@ -11,13 +10,13 @@ from core import flog
 class VipTracker:
     BLACKLIST_DURATION = 600
 
-    def __init__(self, links: List[str]):
+    def __init__(self, links: list[str]):
         self._links     = list(links)
-        self._scores:   Dict[str, float]  = dict.fromkeys(links, 1.0)
-        self._blacklist: Dict[str, float] = {}
+        self._scores:   dict[str, float]  = dict.fromkeys(links, 1.0)
+        self._blacklist: dict[str, float] = {}
         self._lock      = threading.Lock()
 
-    def pick(self) -> Optional[str]:
+    def pick(self) -> str | None:
         with self._lock:
             now = time.time()
             available = [lnk for lnk in self._links if self._blacklist.get(lnk, 0) < now]
@@ -41,7 +40,7 @@ class VipTracker:
             self._scores[link] = max(self._scores.get(link, 1.0) - 1.0, 0.1)
             self._blacklist[link] = time.time() + self.BLACKLIST_DURATION
 
-    def status(self) -> List[dict]:
+    def status(self) -> list[dict]:
         with self._lock:
             now = time.time()
             return [

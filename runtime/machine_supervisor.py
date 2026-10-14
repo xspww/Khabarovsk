@@ -2,35 +2,36 @@ from __future__ import annotations
 
 import threading
 import time
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Iterable, List, Optional
+from typing import Any
 
 from core import flog_kv
 
-ResourceProbe = Callable[[], Dict[str, float]]
-GuardProbe = Callable[[], Dict[str, Any]]
-ProcessProbe = Callable[[], List[Dict[str, Any]]]
+ResourceProbe = Callable[[], dict[str, float]]
+GuardProbe = Callable[[], dict[str, Any]]
+ProcessProbe = Callable[[], list[dict[str, Any]]]
 
 
 def _state_name(value: Any) -> str:
     return str(getattr(value, "name", value) or "").upper()
 
 
-def _cfg_bool(cfg: Dict[str, Any], key: str, default: bool) -> bool:
+def _cfg_bool(cfg: dict[str, Any], key: str, default: bool) -> bool:
     value = cfg.get(key, default)
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
     return bool(value)
 
 
-def _cfg_float(cfg: Dict[str, Any], key: str, default: float) -> float:
+def _cfg_float(cfg: dict[str, Any], key: str, default: float) -> float:
     try:
         return float(cfg.get(key, default))
     except Exception:
         return float(default)
 
 
-def _cfg_int(cfg: Dict[str, Any], key: str, default: int) -> int:
+def _cfg_int(cfg: dict[str, Any], key: str, default: int) -> int:
     try:
         return int(float(cfg.get(key, default)))
     except Exception:
@@ -42,7 +43,7 @@ class MachineSnapshot:
     checked_at: float
     enabled: bool
     degraded: bool
-    reasons: List[str] = field(default_factory=list)
+    reasons: list[str] = field(default_factory=list)
     cpu_percent: float = 0.0
     memory_percent: float = 0.0
     live_roblox_processes: int = 0
@@ -54,7 +55,7 @@ class MachineSnapshot:
     guard_state: str = ""
     guard_pid: int = 0
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "checked_at": self.checked_at,
             "enabled": self.enabled,
@@ -78,9 +79,9 @@ class MachineDecision:
     allowed: bool
     reason: str = ""
     retry_after_seconds: float = 0.0
-    snapshot: Optional[MachineSnapshot] = None
+    snapshot: MachineSnapshot | None = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "allowed": self.allowed,
             "reason": self.reason,
@@ -92,12 +93,12 @@ class MachineDecision:
 class MachineSupervisor:
     def __init__(
         self,
-        cfg: Optional[Dict[str, Any]] = None,
-        accounts: Optional[Iterable[Any]] = None,
+        cfg: dict[str, Any] | None = None,
+        accounts: Iterable[Any] | None = None,
         *,
-        resource_probe: Optional[ResourceProbe] = None,
-        guard_probe: Optional[GuardProbe] = None,
-        process_probe: Optional[ProcessProbe] = None,
+        resource_probe: ResourceProbe | None = None,
+        guard_probe: GuardProbe | None = None,
+        process_probe: ProcessProbe | None = None,
         clock: Callable[[], float] = time.time,
     ):
         self._cfg = dict(cfg or {})
@@ -107,10 +108,10 @@ class MachineSupervisor:
         self._process_probe = process_probe or self._default_process_probe
         self._clock = clock
         self._lock = threading.RLock()
-        self._cached_snapshot: Optional[MachineSnapshot] = None
+        self._cached_snapshot: MachineSnapshot | None = None
         self._cached_at = 0.0
 
-    def update_config(self, cfg: Dict[str, Any]) -> None:
+    def update_config(self, cfg: dict[str, Any]) -> None:
         with self._lock:
             self._cfg = dict(cfg or {})
             self._cached_snapshot = None
@@ -123,7 +124,7 @@ class MachineSupervisor:
     def _enabled(self) -> bool:
         return _cfg_bool(self._cfg, "machine_supervisor_enabled", True)
 
-    def _default_resource_probe(self) -> Dict[str, float]:
+    def _default_resource_probe(self) -> dict[str, float]:
         try:
             import psutil
 
@@ -134,7 +135,7 @@ class MachineSupervisor:
         except Exception:
             return {"cpu_percent": 0.0, "memory_percent": 0.0}
 
-    def _default_guard_probe(self) -> Dict[str, Any]:
+    def _default_guard_probe(self) -> dict[str, Any]:
         if not _cfg_bool(self._cfg, "multi_roblox_enabled", True):
             return {"state": "disabled", "pid": 0}
         try:
@@ -144,7 +145,7 @@ class MachineSupervisor:
         except Exception as exc:
             return {"state": "unknown", "pid": 0, "detail": str(exc), "last_failure": str(exc)}
 
-    def _default_process_probe(self) -> List[Dict[str, Any]]:
+    def _default_process_probe(self) -> list[dict[str, Any]]:
         try:
             from services.process_service import ProcessManager
 
@@ -152,7 +153,7 @@ class MachineSupervisor:
         except Exception:
             return []
 
-    def snapshot(self, *, excluding: Optional[Any] = None, force: bool = False) -> MachineSnapshot:
+    def snapshot(self, *, excluding: Any | None = None, force: bool = False) -> MachineSnapshot:
         with self._lock:
             now = self._clock()
             if not force and excluding is None and self._cached_snapshot and (now - self._cached_at) < 2.0:
@@ -160,7 +161,7 @@ class MachineSupervisor:
             resource = self._resource_probe()
             guard = self._guard_probe()
             live_processes = self._process_probe()
-            reasons: List[str] = []
+            reasons: list[str] = []
             cpu = float(resource.get("cpu_percent", 0.0) or 0.0)
             memory = float(resource.get("memory_percent", 0.0) or 0.0)
             if cpu >= _cfg_float(self._cfg, "machine_supervisor_cpu_high_percent", 96.0):

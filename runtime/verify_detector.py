@@ -12,7 +12,8 @@ Two cheap sources, no screenshots:
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 from services.verify_guard import (
     LOCKED_REASON,
@@ -24,7 +25,7 @@ from services.verify_guard import (
 )
 
 
-def read_window_texts(pid: Optional[int]) -> List[str]:
+def read_window_texts(pid: int | None) -> list[str]:
     if not pid:
         return []
     try:
@@ -35,7 +36,7 @@ def read_window_texts(pid: Optional[int]) -> List[str]:
         return []
 
 
-def inspect_locked_window(pid: Optional[int]) -> Dict[str, Any]:
+def inspect_locked_window(pid: int | None) -> dict[str, Any]:
     texts = read_window_texts(pid)
     if is_locked_window_texts(texts):
         detail = " | ".join(texts[:4]) if texts else "Roblox identity verification required"
@@ -59,7 +60,7 @@ def inspect_locked_window(pid: Optional[int]) -> Dict[str, Any]:
     }
 
 
-def inspect_recovery_window(pid: Optional[int]) -> Dict[str, Any]:
+def inspect_recovery_window(pid: int | None) -> dict[str, Any]:
     texts = read_window_texts(pid)
     if is_recovery_window_texts(texts):
         detail = " | ".join(texts[:4]) if texts else "Roblox account recovery required"
@@ -83,7 +84,7 @@ def inspect_recovery_window(pid: Optional[int]) -> Dict[str, Any]:
     }
 
 
-def inspect_verify_window(pid: Optional[int]) -> Dict[str, Any]:
+def inspect_verify_window(pid: int | None) -> dict[str, Any]:
     """Check PID window texts for lock first, then recovery."""
     found = inspect_locked_window(pid)
     if found.get("matched"):
@@ -93,8 +94,8 @@ def inspect_verify_window(pid: Optional[int]) -> Dict[str, Any]:
 
 def probe_cookie_verify(
     cookie: str,
-    validator: Optional[Callable[..., Any]] = None,
-) -> Dict[str, Any]:
+    validator: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
     token = str(cookie or "").strip()
     if not token:
         return {"matched": False, "reason_key": "", "detail": "", "evidence_source": "verify_cookie_api"}
@@ -127,13 +128,13 @@ def probe_cookie_verify(
 
 
 def inspect_verify(
-    pid: Optional[int],
+    pid: int | None,
     cookie: str = "",
-    validator: Optional[Callable[..., Any]] = None,
+    validator: Callable[..., Any] | None = None,
     *,
     window: bool = True,
     api: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     if window:
         found = inspect_verify_window(pid)
         if found.get("matched"):

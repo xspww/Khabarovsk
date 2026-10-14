@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core import flog_kv
 from runtime.runtime_state_manager import RuntimeStateManager
@@ -29,7 +29,7 @@ def account_browser_tracker_id(acc: Any) -> str:
     return str(getattr(acc, "browser_tracker_id", "") or "")
 
 
-def process_log_fields(account: Any, include_session: bool = True) -> Dict[str, Any]:
+def process_log_fields(account: Any, include_session: bool = True) -> dict[str, Any]:
     fields = {
         "runtime_generation": getattr(account, "runtime_generation", 0),
         "recovery_generation": getattr(account, "recovery_generation", 0),
@@ -45,7 +45,7 @@ def process_log_fields(account: Any, include_session: bool = True) -> Dict[str, 
     return fields
 
 
-def runtime_generation_matches(account: Any, expected_generation: Optional[int], reason: str) -> bool:
+def runtime_generation_matches(account: Any, expected_generation: int | None, reason: str) -> bool:
     if expected_generation is None:
         return True
     current = int(getattr(account, "runtime_generation", 0) or 0)
@@ -101,7 +101,7 @@ def set_process_diagnostics(
         _write()
 
 
-def quarantine_process_match(account: Any, reason: str, validation: Dict[str, Any], proof: Dict[str, Any]) -> None:
+def quarantine_process_match(account: Any, reason: str, validation: dict[str, Any], proof: dict[str, Any]) -> None:
     lock = getattr(account, "_lock", None)
 
     def _write() -> None:
@@ -124,10 +124,10 @@ def quarantine_process_match(account: Any, reason: str, validation: Dict[str, An
 
 
 def has_binding_evidence(
-    validation: Dict[str, Any],
+    validation: dict[str, Any],
     owner_key: str,
     expected_identity: str,
-    launched_after: Optional[float],
+    launched_after: float | None,
     expected_browser_tracker_id: str = "",
 ) -> bool:
     owner = str(validation.get("owner") or "")
@@ -147,8 +147,8 @@ def has_binding_evidence(
 
 def set_adopt_diagnostics(
     account: Any,
-    live: List[Dict[str, Any]],
-    candidate_pid: Optional[int] = None,
+    live: list[dict[str, Any]],
+    candidate_pid: int | None = None,
     reject_reason: str = "",
 ) -> None:
     lock = getattr(account, "_lock", None)
@@ -175,7 +175,7 @@ def mark_account_process_proof(
     account: Any,
     proof_level: str,
     reason: str = "",
-    confidence: Optional[float] = None,
+    confidence: float | None = None,
     status: str = "",
 ) -> None:
     proof = normalize_process_proof_level(proof_level)

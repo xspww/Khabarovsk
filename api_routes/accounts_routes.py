@@ -9,7 +9,7 @@ import time
 import urllib.parse
 import urllib.request
 import webbrowser
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from fastapi import HTTPException, Request
 
@@ -56,7 +56,7 @@ from .settings_state import _normalize_window_size_settings
 APP_USER_AGENT = "CronusLauncher/RT"
 
 
-def _is_moderation_mark(record: Dict[str, Any]) -> bool:
+def _is_moderation_mark(record: dict[str, Any]) -> bool:
     """True when the record carries a Banned or Suspended mark.
 
     Unmark has to clear both: a suspension blocks the account like a ban but
@@ -69,11 +69,11 @@ def _is_moderation_mark(record: Dict[str, Any]) -> bool:
     )
 
 
-_AVATAR_CACHE: Dict[str, Tuple[float, str]] = {}
+_AVATAR_CACHE: dict[str, tuple[float, str]] = {}
 _AVATAR_CACHE_TTL = 300.0
 # Place lookups hit 2-3 Roblox endpoints per call; cache successes so the
 # dashboard, game picker and Games card all resolve instantly after first.
-_PLACE_CACHE: Dict[str, Tuple[float, Dict[str, Any]]] = {}
+_PLACE_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _PLACE_CACHE_TTL = 600.0
 _PLACE_CACHE_LOCK = threading.Lock()
 
@@ -81,26 +81,26 @@ _PLACE_CACHE_LOCK = threading.Lock()
 def register(app, ctx: ApiContext) -> None:
     cfg_mgr = ctx.cfg_mgr
     farm = ctx.farm
-    def _account_data_api_records() -> List[Dict[str, Any]]:
+    def _account_data_api_records() -> list[dict[str, Any]]:
         return account_records.account_data_api_records(ACCOUNT_STORE, farm)
 
     def _replace_farm_accounts_from_store() -> int:
         return account_records.replace_farm_accounts_from_store(ctx, cfg_mgr, farm, ACCOUNT_STORE)
 
-    def _clear_runtime_allowlist_after_reload() -> Dict[str, Any]:
+    def _clear_runtime_allowlist_after_reload() -> dict[str, Any]:
         return account_records.clear_runtime_allowlist_after_reload(cfg_mgr, farm)
 
-    def _validate_cookie_records_from_store() -> Dict[str, Any]:
+    def _validate_cookie_records_from_store() -> dict[str, Any]:
         return account_records.validate_cookie_records_from_store(ACCOUNT_STORE, validate_cookie_details, audit_event)
 
-    def _find_account_record(username: str, include_cookie: bool = True) -> Optional[Dict[str, Any]]:
+    def _find_account_record(username: str, include_cookie: bool = True) -> dict[str, Any] | None:
         return account_records.find_account_record(ACCOUNT_STORE, username, include_cookie=include_cookie)
 
     def _import_cookie_validator(cookie: str):
         return account_records.import_cookie_validator(cookie, validate_cookie_details)
 
 
-    def _lookup_roblox_place(place_id: str) -> Dict[str, Any]:
+    def _lookup_roblox_place(place_id: str) -> dict[str, Any]:
         place = str(place_id or "").strip()
         if not place.isdigit():
             raise HTTPException(400, "place_id must be numeric")
@@ -110,7 +110,7 @@ def register(app, ctx: ApiContext) -> None:
             if hit and now - hit[0] < _PLACE_CACHE_TTL:
                 return dict(hit[1])
 
-        details: Dict[str, Any] = {}
+        details: dict[str, Any] = {}
         universe_id = ""
         image_url = ""
 
@@ -214,7 +214,7 @@ def register(app, ctx: ApiContext) -> None:
             "url": f"https://www.roblox.com/games/{place}",
         })
 
-    def _store_place_cache(place: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _store_place_cache(place: str, payload: dict[str, Any]) -> dict[str, Any]:
         with _PLACE_CACHE_LOCK:
             _PLACE_CACHE[place] = (time.time(), dict(payload))
             while len(_PLACE_CACHE) > 200:
@@ -368,7 +368,7 @@ def register(app, ctx: ApiContext) -> None:
 
     @app.get("/api/accounts/avatars")
     def api_account_avatars(user_ids: str = ""):
-        ids: List[str] = []
+        ids: list[str] = []
         seen = set()
         for raw in re.split(r"[,\s]+", str(user_ids or "")):
             uid = raw.strip()
@@ -380,9 +380,9 @@ def register(app, ctx: ApiContext) -> None:
                 break
 
         now = time.time()
-        avatars: Dict[str, str] = {}
-        missing: List[str] = []
-        to_fetch: List[str] = []
+        avatars: dict[str, str] = {}
+        missing: list[str] = []
+        to_fetch: list[str] = []
         for uid in ids:
             cached = _AVATAR_CACHE.get(uid)
             if cached and (now - cached[0]) < _AVATAR_CACHE_TTL:
@@ -829,9 +829,9 @@ def register(app, ctx: ApiContext) -> None:
         names = [str(n or "").strip() for n in raw_names if str(n or "").strip()]
         if not names:
             raise HTTPException(400, "usernames required")
-        marked: List[str] = []
-        missing: List[str] = []
-        killed: List[str] = []
+        marked: list[str] = []
+        missing: list[str] = []
+        killed: list[str] = []
         for username in names:
             if finished:
                 updates = {"manual_status": "Finished", "finished_at": time.time()}
@@ -864,7 +864,7 @@ def register(app, ctx: ApiContext) -> None:
             _replace_farm_accounts_from_store()
         except Exception:
             pass
-        relaunched: List[str] = []
+        relaunched: list[str] = []
         if finished:
             for username in marked:
                 try:
@@ -997,9 +997,9 @@ def register(app, ctx: ApiContext) -> None:
         names = [str(n or "").strip() for n in raw_names if str(n or "").strip()]
         if not names:
             raise HTTPException(400, "usernames required")
-        cleared: List[str] = []
-        missing: List[str] = []
-        skipped: List[str] = []
+        cleared: list[str] = []
+        missing: list[str] = []
+        skipped: list[str] = []
         for username in names:
             record = _find_account_record(username, include_cookie=False)
             if not record:

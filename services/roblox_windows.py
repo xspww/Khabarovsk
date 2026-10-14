@@ -3,7 +3,7 @@ from __future__ import annotations
 import ctypes
 import time
 from ctypes import wintypes
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from core import flog, flog_kv
 from runtime.popup_detector import DEFAULT_POPUP_OBSERVER, classify_texts, is_inspection_held
@@ -16,10 +16,10 @@ from services.window_control import (
 )
 
 
-def classify_disconnect_dialog_texts(cls, texts: List[str]) -> Dict[str, Any]:
+def classify_disconnect_dialog_texts(cls, texts: list[str]) -> dict[str, Any]:
     return classify_texts(texts)
 
-def _window_snapshot_for_pid(cls, pid: Optional[int]) -> Dict[str, Any]:
+def _window_snapshot_for_pid(cls, pid: int | None) -> dict[str, Any]:
     snapshot = {"count": 0, "hwnd": 0, "responsive": False, "hung": False}
     if pid is None:
         return snapshot
@@ -50,10 +50,10 @@ def _window_snapshot_for_pid(cls, pid: Optional[int]) -> Dict[str, Any]:
         pass
     return snapshot
 
-def _count_visible_windows_for_pid(cls, pid: Optional[int]) -> int:
+def _count_visible_windows_for_pid(cls, pid: int | None) -> int:
     return int(cls._window_snapshot_for_pid(pid).get("count") or 0)
 
-def _placement_normal_rect(user32: Any, hwnd: int) -> Optional[Tuple[int, int, int, int]]:
+def _placement_normal_rect(user32: Any, hwnd: int) -> tuple[int, int, int, int] | None:
     """Return the restored (normal) rect for a window, even when minimized.
 
     SetWindowPos on an iconic window is a no-op for its normal position
@@ -106,9 +106,9 @@ def _passes_window_size_filter(width: Any, height: Any) -> bool:
     return width >= _MIN_WINDOW_WIDTH and height >= _MIN_WINDOW_HEIGHT and (width * height) > 0
 
 
-def _dedupe_largest_per_pid(windows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _dedupe_largest_per_pid(windows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Single owner for largest-per-pid dedupe + stable (created, pid) order."""
-    by_pid: Dict[int, Dict[str, Any]] = {}
+    by_pid: dict[int, dict[str, Any]] = {}
     for item in windows:
         try:
             pid = int(item.get("pid") or 0)
@@ -120,10 +120,10 @@ def _dedupe_largest_per_pid(windows: List[Dict[str, Any]]) -> List[Dict[str, Any
     return sorted(by_pid.values(), key=lambda item: (float(item.get("created") or 0.0), int(item.get("pid") or 0)))
 
 
-def _visible_roblox_windows(cls, include_minimized: bool = True) -> List[Dict[str, Any]]:
-    windows: List[Dict[str, Any]] = []
+def _visible_roblox_windows(cls, include_minimized: bool = True) -> list[dict[str, Any]]:
+    windows: list[dict[str, Any]] = []
     try:
-        proc_meta: Dict[int, Dict[str, Any]] = {}
+        proc_meta: dict[int, dict[str, Any]] = {}
         for proc in cls._iter_roblox_processes(game_only=True):
             try:
                 proc_meta[int(proc.pid)] = {
@@ -208,15 +208,15 @@ def _visible_roblox_windows(cls, include_minimized: bool = True) -> List[Dict[st
     ]
     return _dedupe_largest_per_pid(eligible)
 
-def minimize_roblox_windows(cls) -> Dict[str, Any]:
+def minimize_roblox_windows(cls) -> dict[str, Any]:
     return minimize_windows(cls._visible_roblox_windows(include_minimized=False))
 
-def resize_roblox_windows(cls, width: int, height: int, unlock_size: bool = True, exclude_pids: Optional[List[int]] = None) -> Dict[str, Any]:
+def resize_roblox_windows(cls, width: int, height: int, unlock_size: bool = True, exclude_pids: list[int] | None = None) -> dict[str, Any]:
     excluded = {int(pid) for pid in (exclude_pids or []) if pid}
     windows = [item for item in cls._visible_roblox_windows(include_minimized=True) if int(item.get("pid") or 0) not in excluded]
     return resize_windows(windows, width, height, unlock_size=unlock_size)
 
-def _primary_monitor_work_area(cls) -> Dict[str, int]:
+def _primary_monitor_work_area(cls) -> dict[str, int]:
     return primary_monitor_work_area()
 
 def arrange_roblox_windows(
@@ -228,17 +228,17 @@ def arrange_roblox_windows(
     margin: int = 0,
     unlock_size: bool = True,
     resize: bool = True,
-    exclude_pids: Optional[List[int]] = None,
-    rows: Optional[int] = None,
-) -> Dict[str, Any]:
+    exclude_pids: list[int] | None = None,
+    rows: int | None = None,
+) -> dict[str, Any]:
     excluded = {int(pid) for pid in (exclude_pids or []) if pid}
     windows = [item for item in cls._visible_roblox_windows(include_minimized=True) if int(item.get("pid") or 0) not in excluded]
     return arrange_windows(windows, width, height, columns, gap, margin, unlock_size=unlock_size, resize=resize, rows=rows)
 
-def restore_roblox_window_styles(cls) -> Dict[str, Any]:
+def restore_roblox_window_styles(cls) -> dict[str, Any]:
     return restore_window_styles(cls._visible_roblox_windows(include_minimized=True))
 
-def unminimize_roblox_windows(cls, exclude_pids: Optional[List[int]] = None) -> Dict[str, Any]:
+def unminimize_roblox_windows(cls, exclude_pids: list[int] | None = None) -> dict[str, Any]:
     """Manual-action helper: restore minimized Roblox windows so arrange/resize applies immediately.
 
     Auto cycles must NOT call this (would flicker + defeat auto-minimize).
@@ -249,7 +249,7 @@ def unminimize_roblox_windows(cls, exclude_pids: Optional[List[int]] = None) -> 
     windows = [item for item in cls._visible_roblox_windows(include_minimized=True) if int(item.get("pid") or 0) not in excluded]
     return unminimize_windows(windows)
 
-def _hidden_roblox_windows(cls) -> List[Dict[str, Any]]:
+def _hidden_roblox_windows(cls) -> list[dict[str, Any]]:
     """Windows hidden via minimize+DeleteTab (taskbar prop) or legacy SW_HIDE.
 
     New mode keeps IsWindowVisible=True so Task Manager still lists each
@@ -257,9 +257,9 @@ def _hidden_roblox_windows(cls) -> List[Dict[str, Any]]:
     are still included so Show restores them too. Filters out tiny
     helper/message windows. Picks largest per pid like visible.
     """
-    windows: List[Dict[str, Any]] = []
+    windows: list[dict[str, Any]] = []
     try:
-        proc_meta: Dict[int, Dict[str, Any]] = {}
+        proc_meta: dict[int, dict[str, Any]] = {}
         for proc in cls._iter_roblox_processes(game_only=True):
             try:
                 proc_meta[int(proc.pid)] = {
@@ -350,7 +350,7 @@ def _hidden_roblox_windows(cls) -> List[Dict[str, Any]]:
         return []
     return _dedupe_largest_per_pid(windows)
 
-def hide_roblox_windows(cls, exclude_pids: Optional[List[int]] = None) -> Dict[str, Any]:
+def hide_roblox_windows(cls, exclude_pids: list[int] | None = None) -> dict[str, Any]:
     from services.window_control import hide_windows
 
     excluded = {int(pid) for pid in (exclude_pids or []) if pid}
@@ -372,14 +372,14 @@ def hide_roblox_windows(cls, exclude_pids: Optional[List[int]] = None) -> Dict[s
         pass
     return hide_windows(windows)
 
-def show_roblox_windows(cls, exclude_pids: Optional[List[int]] = None) -> Dict[str, Any]:
+def show_roblox_windows(cls, exclude_pids: list[int] | None = None) -> dict[str, Any]:
     from services.window_control import show_windows
 
     excluded = {int(pid) for pid in (exclude_pids or []) if pid}
     windows = [item for item in cls._hidden_roblox_windows() if int(item.get("pid") or 0) not in excluded]
     return show_windows(windows)
 
-def is_not_responding(cls, pid: Optional[int]) -> bool:
+def is_not_responding(cls, pid: int | None) -> bool:
     """
     ตรวจจับ 'Not Responding' ผ่าน Windows IsHungAppWindow()
     เหมือน Task Manager ทุกประการ
@@ -426,11 +426,11 @@ def is_not_responding(cls, pid: Optional[int]) -> bool:
 
 def inspect_disconnect_dialog(
     cls,
-    pid: Optional[int],
+    pid: int | None,
     prepare: bool = False,
     process_idle: bool = False,
-    sample_count: Optional[int] = None,
-) -> Dict[str, Any]:
+    sample_count: int | None = None,
+) -> dict[str, Any]:
     if pid is None:
         return {"matched": False, "action": "", "reason_key": "", "detail": "", "error_code": ""}
     try:
@@ -444,18 +444,18 @@ def inspect_disconnect_dialog(
         flog(f"[PROC] inspect_disconnect_dialog error for PID {pid}: {e}", "warning")
         return cls._inspect_disconnect_dialog_visual(pid)
 
-def detect_connection_error(cls, pid: Optional[int]) -> Tuple[bool, str]:
+def detect_connection_error(cls, pid: int | None) -> tuple[bool, str]:
     info = cls.inspect_disconnect_dialog(pid)
     if not info.get("matched") or str(info.get("action") or "") not in {"rejoin", "conditional_rejoin"}:
         return False, ""
     return True, str(info.get("detail") or "")
 
-def _get_pid_window_rect(cls, pid: Optional[int]) -> Optional[Tuple[int, int, int, int]]:
+def _get_pid_window_rect(cls, pid: int | None) -> tuple[int, int, int, int] | None:
     if pid is None:
         return None
     try:
         user32 = ctypes.windll.user32
-        rects: List[Tuple[int, int, int, int, int]] = []
+        rects: list[tuple[int, int, int, int, int]] = []
         WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_long)
 
         class RECT(ctypes.Structure):
@@ -497,7 +497,7 @@ def _get_pid_window_rect(cls, pid: Optional[int]) -> Optional[Tuple[int, int, in
     except Exception:
         return None
 
-def _capture_pid_window_image(cls, pid: Optional[int]):
+def _capture_pid_window_image(cls, pid: int | None):
     rect = cls._get_pid_window_rect(pid)
     if not rect:
         return None
@@ -582,7 +582,7 @@ def _capture_pid_window_image(cls, pid: Optional[int]):
     except Exception:
         return None
 
-def _inspect_disconnect_dialog_visual(cls, pid: Optional[int]) -> Dict[str, Any]:
+def _inspect_disconnect_dialog_visual(cls, pid: int | None) -> dict[str, Any]:
     try:
         return DEFAULT_POPUP_OBSERVER.inspect_pid(pid, prepare=False, sample_count=2)
     except Exception as e:

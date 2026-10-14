@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core import Account, AccountState, flog, flog_kv
 from runtime.lua_liveness_policy import LUA_WAITING_STATUS, lua_liveness_required, lua_wait_timeout_seconds
@@ -25,7 +25,7 @@ from services.verify_guard import LOCKED_REASON, RECOVERY_REASON
 
 class MaintenanceLivenessMixin:
     def _reconcile_duplicate_pid_claims(self):
-        owners: Dict[int, List[Account]] = {}
+        owners: dict[int, list[Account]] = {}
         for acc in self._accounts:
             if acc.pid:
                 owners.setdefault(int(acc.pid), []).append(acc)
@@ -449,9 +449,9 @@ class MaintenanceLivenessMixin:
                 continue
 
             inactive_for = max(0.0, now - last_activity)
-            dialog_rejoin: Optional[Dict[str, Any]] = None
-            memory_pressure_hold: Optional[Dict[str, Any]] = None
-            memory_pressure_rejoin: Optional[Dict[str, Any]] = None
+            dialog_rejoin: dict[str, Any] | None = None
+            memory_pressure_hold: dict[str, Any] | None = None
+            memory_pressure_rejoin: dict[str, Any] | None = None
             with acc._lock:
                 if state != acc.liveness_state:
                     flog_kv(

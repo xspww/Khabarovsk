@@ -13,7 +13,7 @@ import os
 import re
 import shutil
 import urllib.request
-from typing import Any, Dict
+from typing import Any
 
 import net_tls
 from version import (
@@ -40,13 +40,13 @@ _LAST_CHECK_AT = 0.0
 # Serve the last snapshot instantly instead of stalling page opens.
 _CHECK_CACHE_AT = 0.0
 _CHECK_CACHE_OK = False
-_CHECK_CACHE_SNAP: Dict[str, Any] = {}
+_CHECK_CACHE_SNAP: dict[str, Any] = {}
 _CHECK_CACHE_TTL_OK = 180.0
 _CHECK_CACHE_TTL_FAIL = 30.0
 _RELEASE_TAG_RE = re.compile(r"^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
 
 
-def _cached_check_snapshot() -> Dict[str, Any] | None:
+def _cached_check_snapshot() -> dict[str, Any] | None:
     try:
         import time as _time
 
@@ -66,7 +66,7 @@ def _cached_check_snapshot() -> Dict[str, Any] | None:
         return None
 
 
-def _store_check_snapshot(snap: Dict[str, Any], ok: bool) -> None:
+def _store_check_snapshot(snap: dict[str, Any], ok: bool) -> None:
     global _CHECK_CACHE_AT, _CHECK_CACHE_OK, _CHECK_CACHE_SNAP
     try:
         import time as _time
@@ -113,7 +113,7 @@ def _note_check_error(reason: str) -> None:
         pass
 
 
-def _assets_from_payload(payload: Dict[str, Any]) -> list:
+def _assets_from_payload(payload: dict[str, Any]) -> list:
     raw_assets = payload.get("assets")
     if not isinstance(raw_assets, list):
         return []
@@ -145,9 +145,9 @@ def _is_usable_release(payload: Any) -> bool:
     return bool(tag and _RELEASE_TAG_RE.fullmatch(tag))
 
 
-def _pick_newest_stable(payloads: Any, current: str) -> Dict[str, Any]:
+def _pick_newest_stable(payloads: Any, current: str) -> dict[str, Any]:
     """Return the newest stable release newer than current, or {}."""
-    best: Dict[str, Any] = {}
+    best: dict[str, Any] = {}
     if not isinstance(payloads, list):
         return best
     for item in payloads:
@@ -167,7 +167,7 @@ def _pick_newest_stable(payloads: Any, current: str) -> Dict[str, Any]:
     return best if isinstance(best, dict) else {}
 
 
-def check_app_update() -> Dict[str, Any]:
+def check_app_update() -> dict[str, Any]:
     """Return {current_version, latest_version, latest_url, update_available}.
 
     Never raises and never downloads anything. Any failure (offline,
@@ -190,7 +190,7 @@ def check_app_update() -> Dict[str, Any]:
         # does not show a stale error after a successful cached hit.
         hit["check_error"] = _LAST_CHECK_ERROR if not hit.get("update_available") else ""
         return hit
-    base: Dict[str, Any] = {
+    base: dict[str, Any] = {
         "ok": True,
         "current_version": current,
         "latest_version": "",

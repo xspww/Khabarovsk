@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 from domain.session_identity import create_rejoin_transaction, create_session_identity
 
@@ -23,9 +24,9 @@ def _display_name(acc: Any) -> str:
 def begin_rejoin_transaction(
     acc: Any,
     reason: str,
-    launch_intent: Optional[Dict[str, Any]] = None,
-    emit: Optional[Emit] = None,
-) -> Dict[str, Any]:
+    launch_intent: dict[str, Any] | None = None,
+    emit: Emit | None = None,
+) -> dict[str, Any]:
     account_id = str(getattr(acc, "_config_username", "") or getattr(acc, "username", "") or "")
     identity = create_session_identity(
         account_id=account_id,
@@ -95,8 +96,8 @@ def update_rejoin_transaction(
     reason: str = "",
     server_validation: str = "",
     scheduler_slot: str = "",
-    emit: Optional[Emit] = None,
-) -> Dict[str, Any]:
+    emit: Emit | None = None,
+) -> dict[str, Any]:
     if status:
         acc.last_transaction_status = status
     if step:
@@ -171,10 +172,10 @@ def finish_rejoin_transaction(
     acc: Any,
     status: str,
     reason: str,
-    destination_evidence: Optional[Dict[str, Any]] = None,
+    destination_evidence: dict[str, Any] | None = None,
     server_validation: str = "",
-    emit: Optional[Emit] = None,
-) -> Dict[str, Any]:
+    emit: Emit | None = None,
+) -> dict[str, Any]:
     final_status = status or "failed"
     acc.last_transaction_status = final_status
     acc.last_transaction_reason = reason

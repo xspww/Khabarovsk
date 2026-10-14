@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any
 
 
 def _text(value: Any) -> str:
@@ -12,7 +13,7 @@ def _lower_set(values: Iterable[Any]) -> set[str]:
     return {str(value).strip().lower() for value in values if str(value or "").strip()}
 
 
-def _pid(value: Any) -> Optional[int]:
+def _pid(value: Any) -> int | None:
     try:
         parsed = int(str(value or "").strip())
     except (TypeError, ValueError):
@@ -26,7 +27,7 @@ class LuaIdentity:
     username: str
     configured_account: str
     user_id: str
-    pid: Optional[int]
+    pid: int | None
     place_id: str
     job_id: str
 
@@ -39,8 +40,8 @@ class LuaAccountResolution:
     ambiguous: bool = False
     match_reason: str = ""
     score: int = 0
-    candidates: Tuple[str, ...] = ()
-    bound_pid: Optional[int] = None
+    candidates: tuple[str, ...] = ()
+    bound_pid: int | None = None
     pid_match: bool = True
 
     @property
@@ -56,7 +57,7 @@ class LuaAccountResolution:
         return str(getattr(self.account, "display_name", "") or self.account_key)
 
 
-def normalize_lua_identity(payload: Dict[str, Any]) -> LuaIdentity:
+def normalize_lua_identity(payload: dict[str, Any]) -> LuaIdentity:
     return LuaIdentity(
         account=_text(payload.get("account")),
         username=_text(payload.get("username") or payload.get("player_name") or payload.get("name")),
@@ -68,7 +69,7 @@ def normalize_lua_identity(payload: Dict[str, Any]) -> LuaIdentity:
     )
 
 
-def _account_identity(acc: Any) -> Tuple[set[str], set[str]]:
+def _account_identity(acc: Any) -> tuple[set[str], set[str]]:
     names = _lower_set(
         [
             getattr(acc, "_config_username", ""),
@@ -87,7 +88,7 @@ def _account_identity(acc: Any) -> Tuple[set[str], set[str]]:
     return names, user_ids
 
 
-def _bound_pid(acc: Any) -> Optional[int]:
+def _bound_pid(acc: Any) -> int | None:
     lock = getattr(acc, "_lock", None)
     if lock:
         with lock:
@@ -95,19 +96,19 @@ def _bound_pid(acc: Any) -> Optional[int]:
     return _pid(getattr(acc, "pid", None))
 
 
-def resolve_lua_account(accounts: Iterable[Any], payload: Dict[str, Any]) -> LuaAccountResolution:
+def resolve_lua_account(accounts: Iterable[Any], payload: dict[str, Any]) -> LuaAccountResolution:
     identity = normalize_lua_identity(payload)
     username = (identity.username or identity.account).lower()
     account_name = identity.account.lower()
     configured = identity.configured_account.lower()
     user_id = identity.user_id.lower()
     allow_configured_hint = not username and not account_name and not user_id
-    matches: List[Tuple[int, str, Any]] = []
+    matches: list[tuple[int, str, Any]] = []
 
     for acc in accounts:
         names, user_ids = _account_identity(acc)
         score = 0
-        reasons: List[str] = []
+        reasons: list[str] = []
         if user_id and user_id in user_ids:
             score += 100
             reasons.append("user_id")

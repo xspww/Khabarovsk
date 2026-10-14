@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import time
 from collections import Counter
-from typing import Any, Dict, Iterable, List, Optional
+from collections.abc import Iterable
+from typing import Any
 
 RUNTIME_HEALTH_EVENT_WINDOW_SECONDS = 600.0
 FARM_HEALTH_STUCK_STATE_SECONDS = 180.0
@@ -11,7 +12,7 @@ CONTROL_PLANE_RESTART_BACKOFF_SECONDS = 300.0
 FARM_HEALTH_RECOVERY_STATES = {"CRASH", "NETWORK_LOST", "COOLDOWN", "QUEUED", "LAUNCHING", "VERIFY"}
 
 
-def _event_type(event: Dict[str, Any]) -> str:
+def _event_type(event: dict[str, Any]) -> str:
     return str(event.get("event_type") or event.get("kind") or "").lower()
 
 
@@ -29,7 +30,7 @@ def _safe_int(value: Any, default: int = 0) -> int:
         return int(default)
 
 
-def _runtime_event_age(events: Iterable[Dict[str, Any]], now: float) -> float:
+def _runtime_event_age(events: Iterable[dict[str, Any]], now: float) -> float:
     ages = []
     for event in events or []:
         ts = _safe_float(event.get("ts"), 0.0)
@@ -38,15 +39,15 @@ def _runtime_event_age(events: Iterable[Dict[str, Any]], now: float) -> float:
     return round(min(ages), 1) if ages else 0.0
 
 
-def _account_state(row: Dict[str, Any]) -> str:
+def _account_state(row: dict[str, Any]) -> str:
     return str(row.get("state") or row.get("public_state") or "").upper()
 
 
-def _account_flags(row: Dict[str, Any]) -> List[str]:
+def _account_flags(row: dict[str, Any]) -> list[str]:
     return [str(flag) for flag in (row.get("health_flags") or []) if str(flag)]
 
 
-def _queue_public(queue_snapshot: Dict[str, Any]) -> Dict[str, Any]:
+def _queue_public(queue_snapshot: dict[str, Any]) -> dict[str, Any]:
     size = _safe_int(queue_snapshot.get("size", queue_snapshot.get("pending", 0)), 0)
     return {
         "size": size,
@@ -56,7 +57,7 @@ def _queue_public(queue_snapshot: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _queue_detailed(queue_snapshot: Dict[str, Any]) -> Dict[str, Any]:
+def _queue_detailed(queue_snapshot: dict[str, Any]) -> dict[str, Any]:
     queue = _queue_public(queue_snapshot)
     queue.update({
         "closed": bool(queue_snapshot.get("closed", False)),
@@ -83,7 +84,7 @@ def _queue_detailed(queue_snapshot: Dict[str, Any]) -> Dict[str, Any]:
     return queue
 
 
-def _is_recent_event(event: Dict[str, Any], now: float, window_seconds: float = RUNTIME_HEALTH_EVENT_WINDOW_SECONDS) -> bool:
+def _is_recent_event(event: dict[str, Any], now: float, window_seconds: float = RUNTIME_HEALTH_EVENT_WINDOW_SECONDS) -> bool:
     try:
         ts = float(event.get("ts") or 0.0)
     except Exception:
@@ -93,7 +94,7 @@ def _is_recent_event(event: Dict[str, Any], now: float, window_seconds: float = 
     return 0.0 <= (now - ts) <= max(1.0, float(window_seconds or RUNTIME_HEALTH_EVENT_WINDOW_SECONDS))
 
 
-def _is_relaunch_pressure_event(event: Dict[str, Any]) -> bool:
+def _is_relaunch_pressure_event(event: dict[str, Any]) -> bool:
     event_type = _event_type(event)
     reason = str(event.get("reason") or "").lower()
     severity = str(event.get("severity") or "").lower()
@@ -132,9 +133,9 @@ def _is_relaunch_pressure_event(event: Dict[str, Any]) -> bool:
     return False
 
 
-def account_health_flags(account: Dict[str, Any], now: Optional[float] = None) -> List[str]:
+def account_health_flags(account: dict[str, Any], now: float | None = None) -> list[str]:
     current = float(now if now is not None else time.time())
-    flags: List[str] = []
+    flags: list[str] = []
     if account.get("blocked_reason"):
         flags.append("blocked")
     if account.get("command_inflight"):
@@ -164,13 +165,13 @@ def account_health_flags(account: Dict[str, Any], now: Optional[float] = None) -
 
 
 def find_stuck_farm_states(
-    accounts: Iterable[Dict[str, Any]],
-    now: Optional[float] = None,
+    accounts: Iterable[dict[str, Any]],
+    now: float | None = None,
     stuck_after_seconds: float = FARM_HEALTH_STUCK_STATE_SECONDS,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     current = float(now if now is not None else time.time())
     threshold = max(1.0, float(stuck_after_seconds or FARM_HEALTH_STUCK_STATE_SECONDS))
-    stuck: List[Dict[str, Any]] = []
+    stuck: list[dict[str, Any]] = []
     for row in accounts or []:
         if not isinstance(row, dict):
             continue
@@ -200,7 +201,7 @@ def find_stuck_farm_states(
     return stuck
 
 
-def _ambiguous_process_count(accounts: Iterable[Dict[str, Any]]) -> int:
+def _ambiguous_process_count(accounts: Iterable[dict[str, Any]]) -> int:
     count = 0
     for row in accounts or []:
         if not isinstance(row, dict):
@@ -212,7 +213,7 @@ def _ambiguous_process_count(accounts: Iterable[Dict[str, Any]]) -> int:
     return count
 
 
-def _watchdog_task_health(snapshot: Dict[str, Any]) -> Dict[str, Any]:
+def _watchdog_task_health(snapshot: dict[str, Any]) -> dict[str, Any]:
     raw = dict(snapshot.get("watchdog_task") or {})
     if not raw:
         return {
@@ -255,7 +256,7 @@ def _watchdog_task_health(snapshot: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def build_public_farm_health(snapshot: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]:
+def build_public_farm_health(snapshot: dict[str, Any], now: float | None = None) -> dict[str, Any]:
     current = float(now if now is not None else time.time())
     accounts = [row for row in (snapshot.get("accounts") or []) if isinstance(row, dict)]
     runtime_health = dict(snapshot.get("runtime_health") or {})
@@ -304,14 +305,14 @@ def build_public_farm_health(snapshot: Dict[str, Any], now: Optional[float] = No
     }
 
 
-def build_control_plane_health(snapshot: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]:
+def build_control_plane_health(snapshot: dict[str, Any], now: float | None = None) -> dict[str, Any]:
     current = float(now if now is not None else time.time())
     running = bool(snapshot.get("running", False))
     scheduler = dict(snapshot.get("scheduler_health") or {})
     dispatcher = dict(snapshot.get("dispatcher") or {})
     maintenance = dict(snapshot.get("maintenance") or {})
-    reasons: List[str] = []
-    ages: List[float] = []
+    reasons: list[str] = []
+    ages: list[float] = []
     if running:
         if dispatcher.get("configured") and not dispatcher.get("alive"):
             reasons.append("dispatcher_dead")
@@ -345,11 +346,11 @@ def build_control_plane_health(snapshot: Dict[str, Any], now: Optional[float] = 
 
 
 def decide_farm_watchdog_action(
-    health: Dict[str, Any],
-    now: Optional[float] = None,
+    health: dict[str, Any],
+    now: float | None = None,
     control_plane_restart_threshold_seconds: float = CONTROL_PLANE_RESTART_THRESHOLD_SECONDS,
     control_plane_restart_backoff_seconds: float = CONTROL_PLANE_RESTART_BACKOFF_SECONDS,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     current = float(now if now is not None else time.time())
     if not bool(health.get("running", True)):
         return {
@@ -427,7 +428,7 @@ def decide_farm_watchdog_action(
     }
 
 
-def build_detailed_farm_health(snapshot: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]:
+def build_detailed_farm_health(snapshot: dict[str, Any], now: float | None = None) -> dict[str, Any]:
     current = float(now if now is not None else time.time())
     control_plane = build_control_plane_health(snapshot, now=current)
     detail_snapshot = dict(snapshot)
@@ -489,12 +490,12 @@ def build_detailed_farm_health(snapshot: Dict[str, Any], now: Optional[float] = 
 
 
 def build_runtime_health(
-    accounts: Iterable[Dict[str, Any]],
-    queue_snapshot: Dict[str, Any],
-    recent_events: Iterable[Dict[str, Any]],
-    scheduler_snapshot: Optional[Dict[str, Any]] = None,
-    now: Optional[float] = None,
-) -> Dict[str, Any]:
+    accounts: Iterable[dict[str, Any]],
+    queue_snapshot: dict[str, Any],
+    recent_events: Iterable[dict[str, Any]],
+    scheduler_snapshot: dict[str, Any] | None = None,
+    now: float | None = None,
+) -> dict[str, Any]:
     current = float(now if now is not None else time.time())
     account_rows = list(accounts or [])
     event_rows = list(recent_events or [])
@@ -511,7 +512,7 @@ def build_runtime_health(
         if row.get("process_alive") and float(row.get("last_heartbeat") or 0.0) > 0.0
     ]
     queue_depth = int(queue_snapshot.get("size") or queue_snapshot.get("pending") or 0)
-    warnings: List[str] = []
+    warnings: list[str] = []
     if stale_work_count >= 3:
         warnings.append("stale_work_pressure")
     if invariant_count:

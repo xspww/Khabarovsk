@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import TYPE_CHECKING, Any
 
 from core import Account, StateManager, flog
 from runtime.invariant_monitor import RuntimeInvariantMonitor
@@ -29,15 +30,15 @@ class SystemMaintenance(
 ):
     def __init__(
         self,
-        accounts: List[Account],
-        workers: Dict[str, AccountWorker],
+        accounts: list[Account],
+        workers: dict[str, AccountWorker],
         recovery: RecoveryEngine,
         state_mgr: StateManager,
         cfg: dict,
         stop: threading.Event,
-        supervisor: Optional[SupervisorRuntime] = None,
-        scheduler: Optional[RuntimeScheduler] = None,
-        record_runtime_event: Optional[Callable[..., None]] = None,
+        supervisor: SupervisorRuntime | None = None,
+        scheduler: RuntimeScheduler | None = None,
+        record_runtime_event: Callable[..., None] | None = None,
     ):
         super().__init__(daemon=True, name="Maintenance")
         self._accounts = accounts
@@ -58,18 +59,18 @@ class SystemMaintenance(
         self._cpu_limiter_released = False
         self._last_window_resize_at = 0.0
         self._last_auto_minimize_at = 0.0
-        self._auto_minimize_first_seen: Dict[int, float] = {}
-        self._last_popup_scan_at: Dict[str, float] = {}
+        self._auto_minimize_first_seen: dict[int, float] = {}
+        self._last_popup_scan_at: dict[str, float] = {}
         self._last_popup_batch_at = 0.0
         self._popup_scan_cursor = 0
-        self._moderation_last_check: Dict[str, float] = {}
+        self._moderation_last_check: dict[str, float] = {}
         self._owns_scheduler = scheduler is None
         self._scheduler = scheduler or RuntimeScheduler(
             stop=stop,
             state_manager=self._runtime_state,
             name="MaintenanceScheduler",
         )
-        self._maintenance_job_keys: List[str] = []
+        self._maintenance_job_keys: list[str] = []
         self._invariant_monitor = RuntimeInvariantMonitor(
             accounts,
             pid_validator=self._runtime_pid_validator,
@@ -205,7 +206,7 @@ class SystemMaintenance(
             return owner.reconcile_all(self._accounts, trigger=trigger, force_restart=force_restart)
         return self._recovery.reconcile_all(self._accounts, trigger=trigger, force_restart=force_restart)
 
-    def _set_recovery_status(self, acc: Account, status: str = "", reason: str = "", inflight: Optional[bool] = None):
+    def _set_recovery_status(self, acc: Account, status: str = "", reason: str = "", inflight: bool | None = None):
         owner = getattr(self, "_runtime_owner", None)
         if owner and hasattr(owner, "set_recovery_status"):
             return owner.set_recovery_status(acc, status=status, reason=reason, inflight=inflight)

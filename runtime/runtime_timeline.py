@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class RuntimeTimeline:
@@ -11,8 +11,8 @@ class RuntimeTimeline:
     def __init__(
         self,
         store: Any = None,
-        memory_log: Optional[List[Dict[str, Any]]] = None,
-        memory_lock: Optional[threading.RLock] = None,
+        memory_log: list[dict[str, Any]] | None = None,
+        memory_lock: threading.RLock | None = None,
         logger: Any = None,
         memory_limit: int = 500,
     ):
@@ -32,10 +32,10 @@ class RuntimeTimeline:
 
     def record(
         self,
-        event: Dict[str, Any],
-        account_snapshot: Optional[Dict[str, Any]] = None,
+        event: dict[str, Any],
+        account_snapshot: dict[str, Any] | None = None,
         account_id: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         item = dict(event or {})
         item.setdefault("ts", time.time())
         item.setdefault("severity", "info")

@@ -26,7 +26,7 @@ import re
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 import net_tls
 
@@ -99,7 +99,7 @@ def _looks_like_twostep(text: str) -> bool:
     return "twostepverification" in compacted
 
 
-def extract_security_cookie(set_cookies: List[str]) -> str:
+def extract_security_cookie(set_cookies: list[str]) -> str:
     for entry in set_cookies or []:
         match = re.search(r"\.ROBLOSECURITY=([^;,\s]+)", str(entry or ""))
         if match and match.group(1).strip():
@@ -107,7 +107,7 @@ def extract_security_cookie(set_cookies: List[str]) -> str:
     return ""
 
 
-def challenge_type_of(headers: Dict[str, str]) -> str:
+def challenge_type_of(headers: dict[str, str]) -> str:
     """Read the Roblox challenge type header ("" when none)."""
     try:
         for key, value in dict(headers or {}).items():
@@ -118,7 +118,7 @@ def challenge_type_of(headers: Dict[str, str]) -> str:
     return ""
 
 
-def has_challenge_headers(headers: Dict[str, str]) -> bool:
+def has_challenge_headers(headers: dict[str, str]) -> bool:
     try:
         for key in dict(headers or {}):
             if str(key or "").strip().lower().startswith("rblx-challenge-"):
@@ -148,7 +148,7 @@ def _log_unknown_login(username: str, status: int, challenge_type: str, body_hea
         pass
 
 
-def _header_names(headers: Dict[str, str]) -> str:
+def _header_names(headers: dict[str, str]) -> str:
     try:
         return ",".join(sorted(str(k or "").strip().lower() for k in dict(headers or {}) if str(k or "").strip()))
     except Exception:
@@ -159,7 +159,7 @@ def login_with_credentials(
     username: str,
     password: str,
     timeout: float = 12.0,
-) -> Tuple[int, str, Dict[str, str], List[str]]:
+) -> tuple[int, str, dict[str, str], list[str]]:
     """Attempt a password login. Returns (status, body, headers, set_cookies).
 
     Never raises: network failures come back as status 0 (transient).
@@ -216,7 +216,7 @@ def check_credentials(
     username: str,
     password: str,
     timeout: float = 12.0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Classify what an account needs via a real login attempt.
 
     Returns {"outcome": ..., "detail": ..., "fresh_cookie": ...}.
@@ -340,7 +340,7 @@ def check_credentials(
     return {"outcome": UNKNOWN, "detail": (body_text.strip()[:180] or f"HTTP {status}").strip(), "fresh_cookie": "", "challenge_type": challenge_type_of(headers)}
 
 
-def paced_check_credentials(username: str, password: str, timeout: float = 12.0, pace_seconds: float = 1.0) -> Dict[str, Any]:
+def paced_check_credentials(username: str, password: str, timeout: float = 12.0, pace_seconds: float = 1.0) -> dict[str, Any]:
     """check_credentials with a small delay to avoid hammering Roblox."""
     try:
         if pace_seconds > 0:

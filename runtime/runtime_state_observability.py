@@ -3,7 +3,8 @@ from __future__ import annotations
 import inspect
 import sys
 import threading
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 from domain.runtime_lifecycle import lifecycle_for_public, lifecycle_for_runtime_state
 from domain.states import AccountState, RuntimeState, runtime_state_for_public
@@ -12,7 +13,7 @@ from runtime.runtime_invariants import check_runtime_invariants, invariant_snaps
 Logger = Callable[..., None]
 
 
-def emit(logger: Optional[Logger], scope: str, event: str, level: str = "info", **fields: Any) -> None:
+def emit(logger: Logger | None, scope: str, event: str, level: str = "info", **fields: Any) -> None:
     if not logger:
         return
     thread_name = threading.current_thread().name
@@ -47,7 +48,7 @@ def account_name(acc: Any) -> str:
     )
 
 
-def runtime_log_fields(acc: Any, reason: str = "", **fields: Any) -> Dict[str, Any]:
+def runtime_log_fields(acc: Any, reason: str = "", **fields: Any) -> dict[str, Any]:
     state = getattr(acc, "state", None)
     runtime_state = ""
     public_state = ""
@@ -79,10 +80,10 @@ def runtime_log_fields(acc: Any, reason: str = "", **fields: Any) -> Dict[str, A
 
 
 def emit_invariant_violations(
-    logger: Optional[Logger],
+    logger: Logger | None,
     acc: Any,
     reason: str,
-    runtime_state: Optional[RuntimeState] = None,
+    runtime_state: RuntimeState | None = None,
 ) -> bool:
     violations = check_runtime_invariants(acc, runtime_state=runtime_state)
     if not violations:
@@ -107,7 +108,7 @@ def emit_invariant_violations(
 
 
 def transition_invariant_blockers(
-    logger: Optional[Logger],
+    logger: Logger | None,
     acc: Any,
     new_runtime: RuntimeState,
     reason: str,
@@ -129,7 +130,7 @@ def transition_invariant_blockers(
     return blockers
 
 
-def snapshot_account_runtime(logger: Optional[Logger], acc: Any) -> Dict[str, Any]:
+def snapshot_account_runtime(logger: Logger | None, acc: Any) -> dict[str, Any]:
     lock = getattr(acc, "_lock", None)
     try:
         if lock is not None:

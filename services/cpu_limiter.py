@@ -4,8 +4,9 @@ import ctypes
 import os
 import sys
 import threading
+from collections.abc import Iterable
 from ctypes import wintypes
-from typing import Any, Dict, Iterable, List
+from typing import Any
 
 CPU_LIMIT_MIN = 5
 CPU_LIMIT_MAX = 95
@@ -47,9 +48,9 @@ def normalize_cpu_mode(value: Any, default: str = "hard") -> str:
     return mode
 
 
-def normalize_cpu_limiter_settings(source: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_cpu_limiter_settings(source: dict[str, Any]) -> dict[str, Any]:
     raw_accounts = source.get("cpu_limiter_accounts") if "cpu_limiter_accounts" in source else source.get("accounts", {})
-    accounts: Dict[str, Dict[str, Any]] = {}
+    accounts: dict[str, dict[str, Any]] = {}
     if isinstance(raw_accounts, list):
         iterable = raw_accounts
     elif isinstance(raw_accounts, dict):
@@ -99,11 +100,11 @@ def _account_pid(account: Any) -> int:
 class CpuLimiter:
     def __init__(self):
         self._lock = threading.RLock()
-        self._job_handles: Dict[int, Dict[str, Any]] = {}
-        self._soft_originals: Dict[int, Dict[str, Any]] = {}
-        self._last_rows: Dict[str, Dict[str, Any]] = {}
+        self._job_handles: dict[int, dict[str, Any]] = {}
+        self._soft_originals: dict[int, dict[str, Any]] = {}
+        self._last_rows: dict[str, dict[str, Any]] = {}
 
-    def snapshot(self, accounts: Iterable[Any], settings: Dict[str, Any]) -> Dict[str, Any]:
+    def snapshot(self, accounts: Iterable[Any], settings: dict[str, Any]) -> dict[str, Any]:
         normalized = normalize_cpu_limiter_settings(settings)
         rows = self._build_rows(accounts, normalized, self._last_rows)
         return {
@@ -112,7 +113,7 @@ class CpuLimiter:
             "rows": rows,
         }
 
-    def release_all(self) -> Dict[str, Any]:
+    def release_all(self) -> dict[str, Any]:
         with self._lock:
             pids = sorted(set(self._job_handles) | set(self._soft_originals))
         released = 0
@@ -139,7 +140,7 @@ class CpuLimiter:
         self._close_handle(handle)
         return True
 
-    def apply(self, accounts: Iterable[Any], settings: Dict[str, Any]) -> Dict[str, Any]:
+    def apply(self, accounts: Iterable[Any], settings: dict[str, Any]) -> dict[str, Any]:
         normalized = normalize_cpu_limiter_settings(settings)
         account_list = list(accounts)
         if not normalized["enabled"]:
@@ -189,7 +190,7 @@ class CpuLimiter:
             "failed": sum(1 for row in rows if row.get("status") == "Failed"),
         }
 
-    def _row_base(self, account: Any, settings: Dict[str, Any]) -> Dict[str, Any]:
+    def _row_base(self, account: Any, settings: dict[str, Any]) -> dict[str, Any]:
         username = _account_username(account)
         override = settings["accounts"].get(username, {})
         if settings["apply_all"]:
@@ -209,7 +210,7 @@ class CpuLimiter:
             "message": "",
         }
 
-    def _build_rows(self, accounts: Iterable[Any], settings: Dict[str, Any], last_rows: Dict[str, Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _build_rows(self, accounts: Iterable[Any], settings: dict[str, Any], last_rows: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
         rows = []
         for account in accounts:
             row = self._row_base(account, settings)
@@ -227,7 +228,7 @@ class CpuLimiter:
             rows.append(row)
         return rows
 
-    def _apply_pid(self, pid: int, limit_percent: int, mode: str) -> Dict[str, str]:
+    def _apply_pid(self, pid: int, limit_percent: int, mode: str) -> dict[str, str]:
         if mode == "soft":
             ok, msg = self._apply_soft(pid, limit_percent)
             return {"status": "Applied" if ok else "Failed", "message": msg}
@@ -322,7 +323,7 @@ class CpuLimiter:
             with self._lock:
                 current = self._soft_originals.get(int(pid))
                 if not current or float(current.get("create_time") or 0.0) != float(create_time or 0.0):
-                    original: Dict[str, Any] = {"create_time": float(create_time or 0.0)}
+                    original: dict[str, Any] = {"create_time": float(create_time or 0.0)}
                     try:
                         original["nice"] = proc.nice()
                     except Exception:

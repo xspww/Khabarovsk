@@ -4,7 +4,7 @@ import os
 import subprocess
 import threading
 import time
-from typing import Any, Dict
+from typing import Any
 
 EXECUTOR_NAMES = ("Volt", "Potassium", "Real", "Madium")
 
@@ -105,8 +105,8 @@ class ExecutorRelaunchService:
         self.logger = logger or (lambda *_args, **_kwargs: None)
         self._lock = threading.RLock()
         self._running = False
-        self._launch_inflight: Dict[str, float] = {}
-        self._status: Dict[str, Any] = {"state": "idle", "attempt": 0, "max_attempts": 10, "message": ""}
+        self._launch_inflight: dict[str, float] = {}
+        self._status: dict[str, Any] = {"state": "idle", "attempt": 0, "max_attempts": 10, "message": ""}
 
     def _cfg(self, key: str, default: Any = None) -> Any:
         try:
@@ -118,7 +118,7 @@ class ExecutorRelaunchService:
     def path_key(name: str) -> str:
         return f"executor_path_{str(name or '').strip().lower()}"
 
-    def paths(self) -> Dict[str, str]:
+    def paths(self) -> dict[str, str]:
         return {name: str(self._cfg(self.path_key(name), "") or "").strip() for name in EXECUTOR_NAMES}
 
     def selected_path(self) -> str:
@@ -183,7 +183,7 @@ class ExecutorRelaunchService:
             return False, "Selected Executor .exe path is missing"
         return True, ""
 
-    def status(self) -> Dict[str, Any]:
+    def status(self) -> dict[str, Any]:
         with self._lock:
             supported, reason = self.relaunch_support()
             snapshot = {**self._status, "running": self._running, "paths": self.paths(), "selected_path": self.selected_path(), "relaunch_supported": supported, "relaunch_support_reason": reason}
@@ -207,7 +207,7 @@ class ExecutorRelaunchService:
             snapshot.setdefault("launch_fallback", False)
         return snapshot
 
-    def local_executor_info(self) -> Dict[str, Any]:
+    def local_executor_info(self) -> dict[str, Any]:
         """Detect the selected Executor build actually present/running locally.
 
         Returns {name, configured_path, launch_path, launch_fallback,
@@ -217,12 +217,11 @@ class ExecutorRelaunchService:
         unrelated numbers (``1.0.0.0``). ``version_source`` is ``folder``,
         ``file`` or ``''`` (unknown). Never raises.
         """
-        from typing import List
 
         selected = str(self._cfg("executor_selected", "") or "").strip()
         configured = str(self.selected_path() or "").strip()
         launch_path, launch_fallback = self.resolve_launch_path()
-        info: Dict[str, Any] = {
+        info: dict[str, Any] = {
             "name": selected,
             "configured_path": configured,
             "launch_path": launch_path,
@@ -243,7 +242,7 @@ class ExecutorRelaunchService:
             runtime_candidates = []
         if runtime_candidates:
             info["runtime_exe"] = str(runtime_candidates[0])
-        running_exes: List[tuple] = []
+        running_exes: list[tuple] = []
         try:
             import psutil
 
@@ -258,7 +257,7 @@ class ExecutorRelaunchService:
         except Exception:
             running_exes = []
 
-        def _pick_version(candidates: List[str]) -> tuple[str, str]:
+        def _pick_version(candidates: list[str]) -> tuple[str, str]:
             for candidate in candidates:
                 folder_version = executor_version_from_path(candidate)
                 if folder_version:

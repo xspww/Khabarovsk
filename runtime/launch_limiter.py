@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Optional
 
 
 class GlobalLaunchLimiter:
@@ -11,7 +10,7 @@ class GlobalLaunchLimiter:
         self._lock = threading.Lock()
         self._last = 0.0
 
-    def wait(self, stop: Optional[threading.Event] = None):
+    def wait(self, stop: threading.Event | None = None):
         with self._lock:
             now   = time.time()
             delta = self.interval - (now - self._last)

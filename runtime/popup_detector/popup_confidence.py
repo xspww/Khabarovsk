@@ -1,17 +1,17 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 
 def popup_confidence_score(
-    text_features: Dict[str, Any],
-    visual_features: Dict[str, Any] | None = None,
+    text_features: dict[str, Any],
+    visual_features: dict[str, Any] | None = None,
     *,
     process_idle: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     visual_features = dict(visual_features or {})
     score = 0.0
-    breakdown: Dict[str, float] = {}
+    breakdown: dict[str, float] = {}
 
     if text_features.get("has_disconnected"):
         breakdown["disconnected_text"] = 0.5

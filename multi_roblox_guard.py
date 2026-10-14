@@ -7,7 +7,6 @@ import signal
 import sys
 import time
 from ctypes import wintypes
-from typing import List, Optional, Tuple
 
 KERNEL32 = ctypes.WinDLL("kernel32", use_last_error=True)
 KERNEL32.CreateMutexW.argtypes = [ctypes.c_void_p, wintypes.BOOL, wintypes.LPCWSTR]
@@ -33,9 +32,9 @@ def _last_error_suffix() -> str:
     return "existing" if err == ERROR_ALREADY_EXISTS else f"err={err}"
 
 
-def create_multi_roblox_handles(mode: str = "mutex") -> List[Tuple[str, int]]:
+def create_multi_roblox_handles(mode: str = "mutex") -> list[tuple[str, int]]:
     mode = str(mode or "mutex").strip().lower()
-    handles: List[Tuple[str, int]] = []
+    handles: list[tuple[str, int]] = []
     if mode in {"mutex", "both"}:
         ctypes.set_last_error(0)
         handle = KERNEL32.CreateMutexW(None, True, MUTEX_NAME)
@@ -49,7 +48,7 @@ def create_multi_roblox_handles(mode: str = "mutex") -> List[Tuple[str, int]]:
     return handles
 
 
-def close_handles(handles: List[Tuple[str, int]]) -> None:
+def close_handles(handles: list[tuple[str, int]]) -> None:
     for _name, handle in handles:
         try:
             KERNEL32.CloseHandle(ctypes.c_void_p(handle))
@@ -57,7 +56,7 @@ def close_handles(handles: List[Tuple[str, int]]) -> None:
             pass
 
 
-def _parent_alive(parent_pid: Optional[int]) -> bool:
+def _parent_alive(parent_pid: int | None) -> bool:
     if not parent_pid:
         return True
     handle = KERNEL32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, int(parent_pid))
@@ -75,7 +74,7 @@ def _parent_alive(parent_pid: Optional[int]) -> bool:
             pass
 
 
-def _parse_args(argv: List[str]) -> argparse.Namespace:
+def _parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Hold Roblox singleton handles for Cronus Multi Roblox.")
     parser.add_argument("mode", nargs="?", default="mutex", choices=["mutex", "event", "both"])
     parser.add_argument("--parent-pid", type=int, default=0)

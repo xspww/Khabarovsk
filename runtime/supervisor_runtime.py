@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 SUPERVISOR_TREE = {
     "GlobalSupervisor": ("SchedulerSupervisor", "RuntimeSupervisor", "TelemetrySupervisor", "AccountSupervisor"),
@@ -25,12 +25,12 @@ class SupervisorRuntime:
         self,
         supervisor: str,
         event_type: str,
-        account: Optional[Any] = None,
+        account: Any | None = None,
         severity: str = "info",
         reason: str = "",
-        payload: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        snapshot: Dict[str, Any] = {}
+        payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        snapshot: dict[str, Any] = {}
         account_id = ""
         if account is not None:
             try:
@@ -82,7 +82,7 @@ class SupervisorRuntime:
                 pass
         return event
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> dict[str, Any]:
         return {
             "type": "supervisor_tree",
             "tree": {key: list(value) for key, value in SUPERVISOR_TREE.items()},

@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 import secrets
-from typing import Any, Dict, Optional
+from typing import Any
 from urllib.parse import quote
 
 from fastapi import HTTPException, Request
@@ -97,7 +97,7 @@ def _load_executor_loader() -> str:
         return handle.read()
 
 
-def _render_lua_template(template: str, replacements: Dict[str, str]) -> str:
+def _render_lua_template(template: str, replacements: dict[str, str]) -> str:
     for key, value in replacements.items():
         template = template.replace(key, value)
     # Some executors reject an empty statement (`;;`) even though Luau accepts
@@ -152,7 +152,7 @@ def _render_requeue_source(account: str, port: int, shutdown_delay: float, token
     )
 
 
-def _account_session_fields(account: Any) -> Dict[str, str]:
+def _account_session_fields(account: Any) -> dict[str, str]:
     if not account:
         return {"session_id": "", "launch_nonce": "", "pid": ""}
     lock = getattr(account, "_lock", None)
@@ -170,7 +170,7 @@ def _account_session_fields(account: Any) -> Dict[str, str]:
     }
 
 
-def _lua_scope_for_account(farm: Any, account: str) -> Dict[str, str]:
+def _lua_scope_for_account(farm: Any, account: str) -> dict[str, str]:
     requested = _text(account)
     if requested:
         resolution = resolve_lua_account(
@@ -188,7 +188,7 @@ def _lua_scope_for_account(farm: Any, account: str) -> Dict[str, str]:
     return {"account": requested, "session_id": "", "launch_nonce": "", "pid": ""}
 
 
-def _lua_scope_for_payload(farm: Any, body: Dict[str, Any]) -> Optional[Dict[str, str]]:
+def _lua_scope_for_payload(farm: Any, body: dict[str, Any]) -> dict[str, str] | None:
     resolution = resolve_lua_account(getattr(farm, "_accounts", []) or [], body)
     if not resolution.account:
         return None
@@ -201,12 +201,12 @@ def _lua_scope_for_payload(farm: Any, body: Dict[str, Any]) -> Optional[Dict[str
     }
 
 
-def _issue_lua_token(ctx: ApiContext, account: str) -> Dict[str, str]:
+def _issue_lua_token(ctx: ApiContext, account: str) -> dict[str, str]:
     scope = _lua_scope_for_account(ctx.farm, account)
     return _issue_lua_token_for_scope(ctx, scope)
 
 
-def _issue_lua_token_for_scope(ctx: ApiContext, scope: Dict[str, str]) -> Dict[str, str]:
+def _issue_lua_token_for_scope(ctx: ApiContext, scope: dict[str, str]) -> dict[str, str]:
     token = issue_lua_session_token(
         str(ctx.instance_token or ""),
         account=scope["account"],
@@ -217,7 +217,7 @@ def _issue_lua_token_for_scope(ctx: ApiContext, scope: Dict[str, str]) -> Dict[s
     return {**scope, "token": token}
 
 
-def _render_token_scope(ctx: ApiContext, account: str, existing_scope: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+def _render_token_scope(ctx: ApiContext, account: str, existing_scope: dict[str, str] | None = None) -> dict[str, str]:
     if existing_scope and existing_scope.get("token"):
         return {
             "account": _text(existing_scope.get("account") or account),
@@ -229,7 +229,7 @@ def _render_token_scope(ctx: ApiContext, account: str, existing_scope: Optional[
     return _issue_lua_token(ctx, account)
 
 
-def _validate_lua_helper_access(ctx: ApiContext, request: Request, account: str) -> Optional[Dict[str, str]]:
+def _validate_lua_helper_access(ctx: ApiContext, request: Request, account: str) -> dict[str, str] | None:
     if api_token_valid(request, str(ctx.instance_token or "")):
         return None
 
@@ -261,7 +261,7 @@ def _render_rejoin_helper(
     account: str,
     port: int,
     shutdown_delay: float,
-    token_scope: Optional[Dict[str, str]] = None,
+    token_scope: dict[str, str] | None = None,
 ) -> str:
     selected_port = int(port or request.url.port or 7777)
     delay = max(0.5, min(float(shutdown_delay or 3.0), 60.0))
@@ -285,7 +285,7 @@ def _render_account_module(
     request: Request,
     account: str,
     port: int,
-    token_scope: Optional[Dict[str, str]] = None,
+    token_scope: dict[str, str] | None = None,
 ) -> str:
     template = _load_account_module_template()
     token_scope = _render_token_scope(ctx, account, token_scope)
@@ -312,7 +312,7 @@ def _lua_text_response(script: str) -> PlainTextResponse:
     )
 
 
-def _lua_request_token(request: Request, body: Dict[str, Any]) -> str:
+def _lua_request_token(request: Request, body: dict[str, Any]) -> str:
     for header in _TOKEN_HEADERS:
         supplied = str(request.headers.get(header) or "")
         if supplied:
@@ -328,7 +328,7 @@ def _lua_request_token(request: Request, body: Dict[str, Any]) -> str:
     return ""
 
 
-def _strip_token_fields(body: Dict[str, Any]) -> Dict[str, Any]:
+def _strip_token_fields(body: dict[str, Any]) -> dict[str, Any]:
     clean = dict(body)
     for key in _TOKEN_BODY_KEYS:
         clean.pop(key, None)
@@ -364,7 +364,7 @@ def _reject_lua_helper_request(
     raise HTTPException(status_code, detail)
 
 
-def _validate_lua_bootstrap_access(ctx: ApiContext, request: Request, account: str) -> Optional[Dict[str, str]]:
+def _validate_lua_bootstrap_access(ctx: ApiContext, request: Request, account: str) -> dict[str, str] | None:
     if not _query_enabled(request, "bootstrap"):
         return None
     if not _is_loopback_request(request):
@@ -402,7 +402,7 @@ def _validate_lua_bootstrap_access(ctx: ApiContext, request: Request, account: s
     return _issue_lua_token_for_scope(ctx, scope)
 
 
-def _local_fallback_allowed(request: Request, body: Dict[str, Any], transport: str) -> bool:
+def _local_fallback_allowed(request: Request, body: dict[str, Any], transport: str) -> bool:
     if transport != "get_fallback" or not _is_loopback_request(request):
         return False
     event_name = str(body.get("event") or "").strip().lower()
@@ -421,12 +421,12 @@ def _local_fallback_allowed(request: Request, body: Dict[str, Any], transport: s
     return bool(identity)
 
 
-def _state_changing_get_rejected(body: Dict[str, Any], transport: str) -> bool:
+def _state_changing_get_rejected(body: dict[str, Any], transport: str) -> bool:
     event_name = str(body.get("event") or "").strip().lower()
     return transport == "get_fallback" and event_name in _STATE_CHANGING_EVENTS
 
 
-def _validate_lua_session_auth(ctx: ApiContext, farm: Any, body: Dict[str, Any], supplied_token: str) -> str:
+def _validate_lua_session_auth(ctx: ApiContext, farm: Any, body: dict[str, Any], supplied_token: str) -> str:
     scope = _lua_scope_for_payload(farm, body)
     if not scope:
         return "lua_account_not_found"
@@ -477,15 +477,15 @@ def _validate_lua_session_auth(ctx: ApiContext, farm: Any, body: Dict[str, Any],
     return ""
 
 
-def _query_payload(request: Request) -> Dict[str, Any]:
-    payload: Dict[str, Any] = {}
+def _query_payload(request: Request) -> dict[str, Any]:
+    payload: dict[str, Any] = {}
     for key, value in request.query_params.multi_items():
         if key not in _TOKEN_QUERY_KEYS:
             payload[key] = value
     return payload
 
 
-def _handle_lua_rejoin_event(ctx: ApiContext, farm: Any, request: Request, body: Dict[str, Any], transport: str) -> Dict[str, Any]:
+def _handle_lua_rejoin_event(ctx: ApiContext, farm: Any, request: Request, body: dict[str, Any], transport: str) -> dict[str, Any]:
     if _state_changing_get_rejected(body, transport):
         flog_kv(
             "LUA",
@@ -545,7 +545,7 @@ def _handle_lua_rejoin_event(ctx: ApiContext, farm: Any, request: Request, body:
             flog_kv("LUA", "rejoin_event_rejected", "warning", reason="invalid_token", transport=transport)
             raise HTTPException(403, "Invalid API token")
 
-    result: Dict[str, Any] = farm.handle_lua_rejoin_event(_strip_token_fields(body))
+    result: dict[str, Any] = farm.handle_lua_rejoin_event(_strip_token_fields(body))
     status = 200 if result.get("ok") else int(result.get("status_code") or 400)
     if status >= 400:
         raise HTTPException(status, result.get("msg") or "Lua rejoin event rejected")

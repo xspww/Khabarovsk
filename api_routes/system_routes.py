@@ -6,7 +6,6 @@ import secrets
 import subprocess
 import threading
 import time
-from typing import List
 
 from fastapi import HTTPException, Request
 from fastapi.responses import HTMLResponse
@@ -36,7 +35,7 @@ def register(app, ctx: ApiContext) -> None:
         text = _COOKIE_RE.sub("[ROBLOX_COOKIE_REDACTED]", str(line or ""))
         return _KV_SECRET_RE.sub(lambda m: f"{m.group(1)}=[REDACTED]", text)
 
-    def _tail_log_lines(limit: int = 300) -> List[str]:
+    def _tail_log_lines(limit: int = 300) -> list[str]:
         limit = max(1, min(int(limit or 300), 1000))
         log_file = _log_file()
         if not os.path.exists(log_file):

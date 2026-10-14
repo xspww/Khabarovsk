@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, Dict, Iterable, Optional
+from collections.abc import Callable, Iterable
+from typing import Any
 
 from services.process_service import ProcessManager, ProcessService
 
@@ -34,7 +35,7 @@ class RuntimeOrphanSweeper:
         runtime_state: Any = None,
         process_service: Any = ProcessService,
         process_manager: Any = ProcessManager,
-        record_event: Optional[RecordEvent] = None,
+        record_event: RecordEvent | None = None,
     ):
         self._accounts = accounts
         self._runtime_state = runtime_state
@@ -42,7 +43,7 @@ class RuntimeOrphanSweeper:
         self._process_manager = process_manager
         self._record_event = record_event
 
-    def sweep(self, cfg: Dict[str, Any], now: Optional[float] = None) -> Dict[str, Any]:
+    def sweep(self, cfg: dict[str, Any], now: float | None = None) -> dict[str, Any]:
         if not bool(cfg.get("orphan_sweeper_enabled", True)):
             return {"enabled": False, "candidates": 0, "killed": 0, "skipped": 0}
         current = float(now if now is not None else time.time())
@@ -85,9 +86,9 @@ class RuntimeOrphanSweeper:
             "skipped": skipped,
         }
 
-    def _collect_candidates(self, now: float, min_confidence: float) -> Dict[int, Dict[str, Any]]:
+    def _collect_candidates(self, now: float, min_confidence: float) -> dict[int, dict[str, Any]]:
         by_key = {_account_key(account): account for account in list(self._accounts or [])}
-        candidates: Dict[int, Dict[str, Any]] = {}
+        candidates: dict[int, dict[str, Any]] = {}
         for account in by_key.values():
             if self._account_is_active(account):
                 continue
@@ -98,7 +99,7 @@ class RuntimeOrphanSweeper:
             candidates.setdefault(int(entry["pid"]), entry)
         return candidates
 
-    def _account_orphan_candidate(self, account: Any, now: float, min_confidence: float) -> Dict[str, Any]:
+    def _account_orphan_candidate(self, account: Any, now: float, min_confidence: float) -> dict[str, Any]:
         lock = getattr(account, "_lock", None)
         if lock:
             with lock:
@@ -122,7 +123,7 @@ class RuntimeOrphanSweeper:
             "source": "account_orphan_diagnostics",
         }
 
-    def _live_owner_claim_candidates(self, accounts: Dict[str, Any]) -> list:
+    def _live_owner_claim_candidates(self, accounts: dict[str, Any]) -> list:
         try:
             live = self._process_manager.list_live_game_processes(launched_after=None)
         except Exception:
@@ -156,8 +157,8 @@ class RuntimeOrphanSweeper:
         account: Any,
         severity: str,
         reason: str,
-        candidate: Dict[str, Any],
-        result: Optional[Dict[str, Any]] = None,
+        candidate: dict[str, Any],
+        result: dict[str, Any] | None = None,
     ) -> None:
         if not self._record_event:
             return

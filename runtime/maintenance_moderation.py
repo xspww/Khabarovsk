@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 from core import flog_kv
 
@@ -43,7 +43,7 @@ class MaintenanceModerationMixin:
             value = 2
         return max(1, min(5, value))
 
-    def _moderation_state(self) -> Dict[str, float]:
+    def _moderation_state(self) -> dict[str, float]:
         store = getattr(self, "_moderation_last_check", None)
         if not isinstance(store, dict):
             store = {}
@@ -80,7 +80,7 @@ class MaintenanceModerationMixin:
         interval = self._moderation_interval()
         batch = self._moderation_batch()
         last = self._moderation_state()
-        candidates: List[Any] = []
+        candidates: list[Any] = []
         for acc in accounts:
             try:
                 cookie = str(getattr(acc, "cookie", "") or "").strip()

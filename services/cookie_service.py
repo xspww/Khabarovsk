@@ -8,7 +8,6 @@ import re
 import sqlite3
 import time
 from ctypes import wintypes
-from typing import Tuple
 
 from app_paths import USER_DATA_ROOT
 from core import flog
@@ -98,7 +97,7 @@ class IsolationManager:
         return path
 
     @classmethod
-    def inject_cookie(cls, username: str, cookie: str) -> Tuple[bool, str]:
+    def inject_cookie(cls, username: str, cookie: str) -> tuple[bool, str]:
         """
         RT.1.0 FIX: inject cookie หลายจุด เพื่อให้ Roblox ทุก version อ่านได้
 

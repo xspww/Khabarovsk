@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import threading
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from core import (
     APP_DATA_DIR,
@@ -81,18 +81,18 @@ class FarmController:
         )
         self._stop = threading.Event()
         self.running = False
-        self.start_ts: Optional[float] = None
+        self.start_ts: float | None = None
         self._executor_start_guard = None
 
-        self._accounts: List[Account] = []
-        self._workers: Dict[str, AccountWorker] = {}
-        self._net_mon: Optional[NetworkMonitor] = None
-        self._dispatcher: Optional[Dispatcher] = None
-        self._queue: Optional[SmartQueue] = None
-        self._recovery: Optional[RecoveryEngine] = None
-        self._maintenance: Optional[SystemMaintenance] = None
-        self._state_mgr: Optional[StateManager] = None
-        self._runtime_scheduler: Optional[Any] = None
+        self._accounts: list[Account] = []
+        self._workers: dict[str, AccountWorker] = {}
+        self._net_mon: NetworkMonitor | None = None
+        self._dispatcher: Dispatcher | None = None
+        self._queue: SmartQueue | None = None
+        self._recovery: RecoveryEngine | None = None
+        self._maintenance: SystemMaintenance | None = None
+        self._state_mgr: StateManager | None = None
+        self._runtime_scheduler: Any | None = None
         self._shutting_down = False
         self._last_control_plane_restart_at = 0.0
         self._force_rejoin_limiter = PerAccountRateLimiter(FORCE_REJOIN_INTERVAL_SECONDS)
@@ -104,7 +104,7 @@ class FarmController:
         self._status_lock = threading.Lock()
         self._status_revision = 0
         self._status_cache_lock = threading.Lock()
-        self._status_cache_snapshot: Optional[dict] = None
+        self._status_cache_snapshot: dict | None = None
         self._status_cache_revision = -1
         self._status_cache_expires_at = 0.0
         self._status_cache_hits = 0
@@ -112,9 +112,9 @@ class FarmController:
         self._status_cache_last_build_ms = 0.0
         self._status_stream_clients = 0
         self._dashboard_process_cache_lock = threading.Lock()
-        self._dashboard_process_cache: Dict[Any, Any] = {}
-        self._last_runtime_truth_state: Dict[str, str] = {}
-        self._last_runtime_truth_progress: Dict[str, int] = {}
+        self._dashboard_process_cache: dict[Any, Any] = {}
+        self._last_runtime_truth_state: dict[str, str] = {}
+        self._last_runtime_truth_progress: dict[str, int] = {}
         self._runtime_state = RuntimeStateManager(logger=flog_kv)
         self._runtime_store = RuntimeStore(os.path.join(APP_DATA_DIR, "cronus_runtime.db"))
         self._timeline = RuntimeTimeline(
@@ -189,7 +189,7 @@ class FarmController:
             self._status_stream_clients = max(0, self._status_stream_clients - 1)
             return self._status_stream_clients
 
-    def _status_perf_snapshot(self, cache_hit: bool, cache_age: float = 0.0) -> Dict[str, Any]:
+    def _status_perf_snapshot(self, cache_hit: bool, cache_age: float = 0.0) -> dict[str, Any]:
         # Shape is public API (dashboard/diagnostics may read it) — keep keys.
         # Single owner for hit/miss accounting; called under _status_cache_lock.
         return {
@@ -201,7 +201,7 @@ class FarmController:
             "active_stream_clients": int(self._status_stream_clients),
         }
 
-    def _get_cached_status(self, revision: int, now: float) -> Optional[dict]:
+    def _get_cached_status(self, revision: int, now: float) -> dict | None:
         cached = self._status_cache_snapshot
         if cached is None:
             return None
@@ -255,7 +255,7 @@ class FarmController:
         }
         self._timeline.record(item, account_snapshot=snapshot if acc else None, account_id=account_key)
 
-    def _find_account(self, username: str) -> Optional[Account]:
+    def _find_account(self, username: str) -> Account | None:
         return next(
             (
                 a for a in self._accounts
@@ -444,7 +444,7 @@ class FarmController:
         except Exception:
             return False
 
-    def _command_capability(self, action: str, account: str = "") -> Tuple[bool, str, Optional[Account]]:
+    def _command_capability(self, action: str, account: str = "") -> tuple[bool, str, Account | None]:
         acc = self._find_account(account) if account else None
         if action == "start":
             if self.running:
@@ -480,7 +480,7 @@ class FarmController:
         ttl: float = 15.0,
         idempotency_key: str = "",
         request_fingerprint: str = "",
-    ) -> Tuple[bool, Dict[str, Any]]:
+    ) -> tuple[bool, dict[str, Any]]:
         return self._command_tracker.begin(
             key,
             action,
@@ -490,20 +490,20 @@ class FarmController:
             request_fingerprint=request_fingerprint,
         )
 
-    def finish_command(self, key: str, command_id: str, ok: bool = True, error: str = "", response: Optional[Dict[str, Any]] = None):
+    def finish_command(self, key: str, command_id: str, ok: bool = True, error: str = "", response: dict[str, Any] | None = None):
         self._command_tracker.finish(key, command_id, ok=ok, error=error, response=response)
 
     def _cancel_commands_for_shutdown(self) -> None:
         self._command_tracker.cancel_for_shutdown()
 
-    def command_inflight(self, key: str) -> Optional[Dict[str, Any]]:
+    def command_inflight(self, key: str) -> dict[str, Any] | None:
         return self._command_tracker.command_inflight(key)
 
-    def _recovery_step_for_account(self, acc: Account, display_state: AccountState) -> Tuple[str, int, float]:
+    def _recovery_step_for_account(self, acc: Account, display_state: AccountState) -> tuple[str, int, float]:
         network_state = self._net_mon.get_state() if self._net_mon else NET_ONLINE
         return recovery_step_for_account(acc, display_state, network_state=network_state)
 
-    def _initial_state_sync(self, state_mgr: Optional[StateManager] = None):
+    def _initial_state_sync(self, state_mgr: StateManager | None = None):
         if state_mgr is None:
             state_mgr = StateManager(self.bus)
         cfg = self.cfg_mgr.snapshot() if hasattr(self, "cfg_mgr") else {}
@@ -514,8 +514,8 @@ class FarmController:
             runtime_state=getattr(self, "_runtime_state", None),
         )
 
-    def _preflight_cookie_blocks(self) -> Dict[str, str]:
-        blocked: Dict[str, str] = {}
+    def _preflight_cookie_blocks(self) -> dict[str, str]:
+        blocked: dict[str, str] = {}
         recovery = self._recovery
         state_mgr = self._state_mgr
         runtime_state = self._runtime_state
@@ -562,7 +562,7 @@ class FarmController:
     def stop_fast(self):
         return self._lifecycle.stop_fast()
 
-    def set_accounts(self, accounts: List[Account]):
+    def set_accounts(self, accounts: list[Account]):
         self._accounts = accounts
         try:
             from console_activity import set_total_accounts
@@ -607,7 +607,7 @@ class FarmController:
             if callable(update):
                 update(cfg)
 
-    def _check_force_rejoin_rate_limit(self, account_key: str) -> Tuple[bool, str]:
+    def _check_force_rejoin_rate_limit(self, account_key: str) -> tuple[bool, str]:
         limiter = getattr(self, "_force_rejoin_limiter", None)
         if limiter is None:
             limiter = PerAccountRateLimiter(FORCE_REJOIN_INTERVAL_SECONDS)
@@ -653,7 +653,7 @@ class FarmController:
             command_id=command_id,
         )
 
-    def kill_account_pid(self, username: str, reason: str = "api_kill_pid") -> Tuple[bool, str]:
+    def kill_account_pid(self, username: str, reason: str = "api_kill_pid") -> tuple[bool, str]:
         acc = self._find_account(username)
         if not acc:
             return False, "Account not found"
@@ -682,7 +682,7 @@ class FarmController:
         self._push_event("system", f"Kill PID requested: {acc.display_name} (PID {pid})", account=acc, severity="warn", reason=reason)
         return True, f"Killed PID for {username}" if killed else f"Released stale PID for {username}"
 
-    def _set_lua_account_description(self, acc: Account, description: str) -> Tuple[bool, str]:
+    def _set_lua_account_description(self, acc: Account, description: str) -> tuple[bool, str]:
         text = str(description or "").strip()
         if len(text) > 500:
             text = text[:500]
@@ -707,16 +707,16 @@ class FarmController:
 
         return persisted, text
 
-    def resume_captcha_account(self, username: str) -> Tuple[bool, str]:
+    def resume_captcha_account(self, username: str) -> tuple[bool, str]:
         return self._resume_blocked_account(username, clear_account_captcha_hold, "Captcha", "captcha", "captcha_resume")
 
-    def resume_locked_account(self, username: str) -> Tuple[bool, str]:
+    def resume_locked_account(self, username: str) -> tuple[bool, str]:
         return self._resume_blocked_account(username, clear_account_locked_hold, "Locked", "verify", "locked_resume")
 
-    def resume_recovery_account(self, username: str) -> Tuple[bool, str]:
+    def resume_recovery_account(self, username: str) -> tuple[bool, str]:
         return self._resume_blocked_account(username, clear_account_recovery_hold, "Recovery", "verify", "recovery_resume")
 
-    def resume_verify_account(self, username: str) -> Tuple[bool, str]:
+    def resume_verify_account(self, username: str) -> tuple[bool, str]:
         """Clear whichever verify hold is present (Locked / Recovery / Captcha)."""
         acc = self._find_account(username)
         if not acc:
@@ -751,7 +751,7 @@ class FarmController:
             return self._resume_blocked_account(username, lambda a, runtime_writer=None: False, "Verify", "verify", "verify_resume")
         return False, f"No Locked/Recovery/Captcha hold for {username}"
 
-    def _resume_blocked_account(self, username: str, clear_fn: Any, kind_label: str, event_kind: str, resume_reason: str) -> Tuple[bool, str]:
+    def _resume_blocked_account(self, username: str, clear_fn: Any, kind_label: str, event_kind: str, resume_reason: str) -> tuple[bool, str]:
         acc = self._find_account(username)
         if not acc:
             return False, "Account not found"
@@ -868,7 +868,7 @@ class FarmController:
             or str(launch_intent.get("active_private_link_code_hash") or "").strip()
         )
 
-    def _apply_lua_server_detection(self, acc: Account, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def _apply_lua_server_detection(self, acc: Account, payload: dict[str, Any]) -> dict[str, Any]:
         detection = detect_lua_server(payload)
         if not detection.observed:
             return {}
@@ -964,7 +964,7 @@ class FarmController:
             "observed_server_at": now,
         }
 
-    def _lua_event_handler_error(self, acc: Account, event_name: str, error: Exception) -> Dict[str, Any]:
+    def _lua_event_handler_error(self, acc: Account, event_name: str, error: Exception) -> dict[str, Any]:
         flog_kv(
             "LUA_EVENT",
             "event_handler_exception",
@@ -975,7 +975,7 @@ class FarmController:
         )
         return lua_event_handler_error_response(acc, event_name)
 
-    def handle_lua_rejoin_event(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def handle_lua_rejoin_event(self, payload: dict[str, Any]) -> dict[str, Any]:
         return _handle_lua_rejoin_event(
             self,
             payload,
@@ -1036,7 +1036,7 @@ class FarmController:
     ) -> dict:
         return get_runtime_diagnostics_payload(self, account_id=account_id, limit=limit, event_type=event_type, severity=severity)
 
-    def get_account(self, username: str) -> Optional[dict]:
+    def get_account(self, username: str) -> dict | None:
         return get_farm_account(self, username)
 
     def _on_rejoin(self, account: Account, **_):
@@ -1125,7 +1125,7 @@ class FarmController:
                 accounts=len(self._accounts),
             )
 
-    def _push_event(self, kind: str, msg: str, account: Optional[Account] = None, severity: str = "info", reason: str = "", **fields: Any):
+    def _push_event(self, kind: str, msg: str, account: Account | None = None, severity: str = "info", reason: str = "", **fields: Any):
         if account:
             with account._lock:
                 runtime_snapshot = account.runtime_snapshot()

@@ -5,7 +5,7 @@ import time
 import traceback
 import urllib.error
 import urllib.request
-from typing import Any, Tuple
+from typing import Any
 
 import uvicorn
 
@@ -79,7 +79,7 @@ class BackendHost:
                 traceback=traceback.format_exc(),
             )
 
-    def wait_ready(self, server_thread: threading.Thread, timeout: float = 20.0) -> Tuple[bool, str]:
+    def wait_ready(self, server_thread: threading.Thread, timeout: float = 20.0) -> tuple[bool, str]:
         wait_seconds = max(1.0, float(timeout or 20.0))
         started_at = time.time()
         deadline = started_at + wait_seconds

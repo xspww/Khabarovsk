@@ -4,7 +4,8 @@ import ctypes
 import os
 import signal
 import sys
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 from app_paths import APP_DATA_DIR, APP_NAME, APP_ROOT_DIR, CACHE_DIR, resource_path
 from core import flog_kv
@@ -288,7 +289,7 @@ class DesktopWindow:
         url: str,
         farm: Any,
         shutdown_event: Any,
-        on_first_show: Optional[Callable[[], None]] = None,
+        on_first_show: Callable[[], None] | None = None,
     ) -> bool:
         runtime_version = _ensure_webview2_runtime()
         if not runtime_version:

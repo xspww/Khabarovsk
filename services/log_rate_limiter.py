@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Callable, Dict, Hashable, Tuple
+from collections.abc import Callable, Hashable
+from typing import Any
 
 LogFunction = Callable[..., None]
 
@@ -11,13 +12,13 @@ class LogRateLimiter:
     def __init__(self, clock: Callable[[], float] = time.time):
         self._clock = clock
         self._lock = threading.RLock()
-        self._last_emit_at: Dict[Tuple[Hashable, ...], float] = {}
+        self._last_emit_at: dict[tuple[Hashable, ...], float] = {}
 
     def clear(self) -> None:
         with self._lock:
             self._last_emit_at.clear()
 
-    def should_emit(self, key: Tuple[Hashable, ...], interval_seconds: float) -> bool:
+    def should_emit(self, key: tuple[Hashable, ...], interval_seconds: float) -> bool:
         now = self._clock()
         interval = max(0.0, float(interval_seconds or 0.0))
         with self._lock:
@@ -29,7 +30,7 @@ class LogRateLimiter:
 
     def emit(
         self,
-        key: Tuple[Hashable, ...],
+        key: tuple[Hashable, ...],
         interval_seconds: float,
         log_func: LogFunction,
         *args: Any,

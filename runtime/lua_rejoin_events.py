@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict
+from typing import Any
 
 from core import AccountState, flog_kv
 from domain.states import RuntimeSignal
@@ -11,13 +11,13 @@ from runtime.lua_identity import lua_event_requires_pid_guard, resolve_lua_accou
 from services.process_service import ProcessService
 
 
-def _lua_has_server_job(payload: Dict[str, Any]) -> bool:
+def _lua_has_server_job(payload: dict[str, Any]) -> bool:
     place_id = str(payload.get("observed_place_id") or payload.get("place_id") or "").strip()
     job_id = str(payload.get("observed_job_id") or payload.get("job_id") or "").strip()
     return bool(place_id and place_id != "0" and job_id)
 
 
-def _lua_session_binding_matches(acc: Any, payload: Dict[str, Any]) -> bool:
+def _lua_session_binding_matches(acc: Any, payload: dict[str, Any]) -> bool:
     """Check payload session_id/launch_nonce against the account's live session.
 
     Executors without a PID API (no getprocessid/getpid/...) send pid="".
@@ -49,13 +49,13 @@ def _lua_session_binding_matches(acc: Any, payload: Dict[str, Any]) -> bool:
     )
 def handle_lua_rejoin_event(
     farm: Any,
-    payload: Dict[str, Any],
+    payload: dict[str, Any],
     *,
     validate_payload=validate_lua_event_payload,
     resolve_account=resolve_lua_account,
     log=flog_kv,
     process_service=ProcessService,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     valid_payload, payload_error = validate_payload(payload)
     if not valid_payload:
         log(
@@ -140,7 +140,7 @@ def handle_lua_rejoin_event(
         "matched_pid": resolution.bound_pid or "",
         "identity_match": resolution.match_reason,
     }
-    server_detection: Dict[str, Any] = {}
+    server_detection: dict[str, Any] = {}
     requires_pid_guard = lua_event_requires_pid_guard(event_name)
     if requires_pid_guard and resolution.bound_pid and identity.pid is None:
         try:

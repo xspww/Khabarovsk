@@ -3,8 +3,9 @@ from __future__ import annotations
 import threading
 import time
 import zlib
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Any, Dict, Iterable, List
+from typing import Any
 
 from core import AccountState
 
@@ -18,21 +19,21 @@ RECOVERY_STORM_STATES = {
 }
 
 
-def _bool(cfg: Dict[str, Any], key: str, default: bool) -> bool:
+def _bool(cfg: dict[str, Any], key: str, default: bool) -> bool:
     value = cfg.get(key, default)
     if isinstance(value, str):
         return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
     return bool(value)
 
 
-def _float(cfg: Dict[str, Any], key: str, default: float) -> float:
+def _float(cfg: dict[str, Any], key: str, default: float) -> float:
     try:
         return float(cfg.get(key, default))
     except Exception:
         return float(default)
 
 
-def _int(cfg: Dict[str, Any], key: str, default: int) -> int:
+def _int(cfg: dict[str, Any], key: str, default: int) -> int:
     try:
         return int(float(cfg.get(key, default)))
     except Exception:
@@ -58,7 +59,7 @@ class RecoveryStormDecision:
     def delayed(self) -> bool:
         return self.delay_seconds > self.requested_delay + 0.05
 
-    def to_log_fields(self) -> Dict[str, Any]:
+    def to_log_fields(self) -> dict[str, Any]:
         return {
             "requested_delay": f"{self.requested_delay:.1f}",
             "delay": f"{self.delay_seconds:.1f}",
@@ -69,15 +70,15 @@ class RecoveryStormDecision:
 
 
 class RecoveryStormController:
-    def __init__(self, cfg: Dict[str, Any], accounts: Iterable[Any], *, clock=time.time):
+    def __init__(self, cfg: dict[str, Any], accounts: Iterable[Any], *, clock=time.time):
         self._cfg = dict(cfg or {})
-        self._accounts: List[Any] = list(accounts or [])
+        self._accounts: list[Any] = list(accounts or [])
         self._clock = clock
         self._lock = threading.Lock()
         self._next_due_at = 0.0
         self._last_decision = RecoveryStormDecision(0.0, 0.0, "disabled", 0, True)
 
-    def update_config(self, cfg: Dict[str, Any]) -> None:
+    def update_config(self, cfg: dict[str, Any]) -> None:
         with self._lock:
             self._cfg = dict(cfg or {})
 
@@ -148,7 +149,7 @@ class RecoveryStormController:
             self._last_decision = decision
             return decision
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> dict[str, Any]:
         with self._lock:
             cfg = dict(self._cfg)
             accounts = list(self._accounts)

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import re
 import time
-from typing import Any, Dict, Iterable, List, Mapping, Optional
+from collections.abc import Iterable, Mapping
+from typing import Any
 
 SECRET_KEY_RE = re.compile(r"(cookie|password|token|secret|roblosecurity|private.*link|accesscode|linkcode|nonce)", re.IGNORECASE)
 COOKIE_RE = re.compile(r"(_\|WARNING:[^\s'\"<>]+|\.ROBLOSECURITY[^\s'\"<>]*)", re.IGNORECASE)
@@ -123,11 +124,11 @@ def _redact_value(key: str, value: Any) -> Any:
     return text
 
 
-def _safe_config(cfg: Mapping[str, Any]) -> Dict[str, Any]:
+def _safe_config(cfg: Mapping[str, Any]) -> dict[str, Any]:
     return {key: _redact_value(key, cfg.get(key)) for key in SAFE_CONFIG_KEYS if key in cfg}
 
 
-def _safe_account(row: Mapping[str, Any]) -> Dict[str, Any]:
+def _safe_account(row: Mapping[str, Any]) -> dict[str, Any]:
     item = {key: _redact_value(key, row.get(key)) for key in ACCOUNT_KEYS if key in row}
     runtime = row.get("runtime") if isinstance(row.get("runtime"), Mapping) else {}
     for key in ("orphan_pid", "orphan_identity", "orphan_verify_after", "orphan_observed_at"):
@@ -136,7 +137,7 @@ def _safe_account(row: Mapping[str, Any]) -> Dict[str, Any]:
     return item
 
 
-def _safe_event(event: Mapping[str, Any]) -> Dict[str, Any]:
+def _safe_event(event: Mapping[str, Any]) -> dict[str, Any]:
     return _redact_value("", dict(event))
 
 
@@ -152,8 +153,8 @@ def _matches_account(row: Mapping[str, Any], account_id: str) -> bool:
     return any(str(value or "").strip().lower() == target for value in values)
 
 
-def _recommendations(status: Mapping[str, Any], accounts: Iterable[Mapping[str, Any]], events: Iterable[Mapping[str, Any]]) -> List[str]:
-    output: List[str] = []
+def _recommendations(status: Mapping[str, Any], accounts: Iterable[Mapping[str, Any]], events: Iterable[Mapping[str, Any]]) -> list[str]:
+    output: list[str] = []
     health = status.get("runtime_health") if isinstance(status.get("runtime_health"), Mapping) else {}
     warnings = [str(_redact_value("runtime_health", item)) for item in health.get("warnings", [])] if isinstance(health, Mapping) else []
     if warnings:
@@ -186,8 +187,8 @@ def build_runtime_diagnostic_bundle(
     event_type: str = "",
     severity: str = "",
     limit: int = 200,
-    now: Optional[float] = None,
-) -> Dict[str, Any]:
+    now: float | None = None,
+) -> dict[str, Any]:
     generated_at = float(now if now is not None else time.time())
     safe_limit = max(1, min(int(limit or 200), 500))
     accounts = [

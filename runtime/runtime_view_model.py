@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Dict, List
+from typing import Any
 
 from core import AccountState, account_launch_block_reason, flog_kv
 from runtime.account_selection import runtime_account_filter_reason
@@ -55,7 +55,7 @@ IMPORTANT_RUNTIME_EVENTS = {
 }
 
 
-def _important_runtime_event(event: Dict[str, Any]) -> bool:
+def _important_runtime_event(event: dict[str, Any]) -> bool:
     kind = str(event.get("event_type") or event.get("kind") or "").strip().lower()
     return kind in IMPORTANT_RUNTIME_EVENTS
 
@@ -76,7 +76,7 @@ class RuntimeViewModelBuilder:
             return 0.0
         return min(10.0, max(1.0, value))
 
-    def _process_status(self, acc: Any, pid: int | None, identity: str) -> Dict[str, Any]:
+    def _process_status(self, acc: Any, pid: int | None, identity: str) -> dict[str, Any]:
         if not pid:
             return {"alive": False, "validation": {}, "not_responding": False}
         ttl = self._process_cache_ttl()
@@ -186,7 +186,7 @@ class RuntimeViewModelBuilder:
                 recent_runtime_events = []
         else:
             recent_runtime_events = []
-        events_by_account: Dict[str, List[Dict[str, Any]]] = {}
+        events_by_account: dict[str, list[dict[str, Any]]] = {}
         for event in recent_runtime_events:
             events_by_account.setdefault(str(event.get("account", "") or ""), []).append(event)
 

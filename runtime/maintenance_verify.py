@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict
+from typing import Any
 
 from core import flog_kv
 from services.process_service import ProcessService
@@ -74,7 +74,7 @@ def detect_and_hold_verify(owner: Any, acc: Any, pid: int, source: str) -> bool:
     return handle_watchdog_verify(owner, acc, pid, dialog, require_confirm=False)
 
 
-def handle_watchdog_verify(owner: Any, acc: Any, pid: int, dialog: Dict[str, Any], *, require_confirm: bool = True) -> bool:
+def handle_watchdog_verify(owner: Any, acc: Any, pid: int, dialog: dict[str, Any], *, require_confirm: bool = True) -> bool:
     reason_key = str(dialog.get("reason_key") or "")
     if reason_key not in (LOCKED_REASON, RECOVERY_REASON):
         # Infer from detail when caller only has window text.

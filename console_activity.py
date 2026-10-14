@@ -5,7 +5,7 @@ import re
 import sys
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 from desktop import console_output
 
@@ -14,19 +14,19 @@ _ACTIVE_ACCOUNTS: set[str] = set()
 _CAPTCHA_ACCOUNTS: set[str] = set()
 _TOTAL_ACCOUNTS = 0
 _QUEUE_SIZE = 0
-_LAST_DISCONNECT_AT: Dict[str, float] = {}
-_LAST_CAPTCHA_AT: Dict[str, float] = {}
+_LAST_DISCONNECT_AT: dict[str, float] = {}
+_LAST_CAPTCHA_AT: dict[str, float] = {}
 _SUSPECT_LOGGED_ACCOUNTS: set[str] = set()
-_SUSPECT_FINALIZED_AT_BY_ACCOUNT: Dict[str, float] = {}
-_LAST_PID_BY_ACCOUNT: Dict[str, str] = {}
-_SERVER_TYPE_BY_ACCOUNT: Dict[str, str] = {}
-_LAST_FOUND_AT_BY_KEY: Dict[str, float] = {}
-_LAST_TELEPORT_AT_BY_ACCOUNT: Dict[str, float] = {}
-_LAST_JOB_BY_ACCOUNT: Dict[str, str] = {}
-_LAST_PLACE_BY_ACCOUNT: Dict[str, str] = {}
+_SUSPECT_FINALIZED_AT_BY_ACCOUNT: dict[str, float] = {}
+_LAST_PID_BY_ACCOUNT: dict[str, str] = {}
+_SERVER_TYPE_BY_ACCOUNT: dict[str, str] = {}
+_LAST_FOUND_AT_BY_KEY: dict[str, float] = {}
+_LAST_TELEPORT_AT_BY_ACCOUNT: dict[str, float] = {}
+_LAST_JOB_BY_ACCOUNT: dict[str, str] = {}
+_LAST_PLACE_BY_ACCOUNT: dict[str, str] = {}
 _BLOCKED_ACCOUNTS: set[str] = set()
 _FINISHED_ACCOUNTS: set[str] = set()
-_LAST_FINISHED_AT_BY_KEY: Dict[str, float] = {}
+_LAST_FINISHED_AT_BY_KEY: dict[str, float] = {}
 _LUA_LIVENESS_REQUIRED = False
 _DISCONNECT_DEDUP_SECONDS = 3.0
 _CAPTCHA_DEDUP_SECONDS = 3.0
@@ -95,7 +95,7 @@ _COLOR_BY_ICON = {
     _ICON_SERVER: "\x1b[93m",
     _ICON_RAM: "\x1b[96m",
 }
-_COLOR_SUPPORT: Optional[bool] = None
+_COLOR_SUPPORT: bool | None = None
 
 _KV_LINE_RE = re.compile(r"^\[[A-Z_]+\]\s+[a-z0-9_]+\b.*\b[a-zA-Z_][a-zA-Z0-9_]*=")
 
@@ -160,7 +160,7 @@ def _boolish(value: Any, default: bool = False) -> bool:
     return default
 
 
-def _account(fields: Dict[str, Any]) -> str:
+def _account(fields: dict[str, Any]) -> str:
     for key in ("account", "username", "account_id", "user"):
         value = _text(fields.get(key))
         if value:
@@ -183,7 +183,7 @@ def _is_auth_blocked(account: Any) -> bool:
     return False
 
 
-def _reason(fields: Dict[str, Any], default: str = "") -> str:
+def _reason(fields: dict[str, Any], default: str = "") -> str:
     for key in ("reason", "trigger", "detail", "reject"):
         value = _text(fields.get(key))
         if value:
@@ -196,7 +196,7 @@ def _reason_text(value: Any, default: str = "") -> str:
     return text.strip().lower().replace(" ", "_") if text else default
 
 
-def _disconnect_reason(fields: Dict[str, Any], default: str = "") -> str:
+def _disconnect_reason(fields: dict[str, Any], default: str = "") -> str:
     detail = " ".join(
         _text(fields.get(key)).lower()
         for key in ("detail", "reason_msg", "message")
@@ -211,7 +211,7 @@ def _disconnect_reason(fields: Dict[str, Any], default: str = "") -> str:
     return _reason_text(default)
 
 
-def _pid(fields: Dict[str, Any]) -> str:
+def _pid(fields: dict[str, Any]) -> str:
     return _int_text(
         fields.get("pid")
         or fields.get("PID")
@@ -223,7 +223,7 @@ def _pid(fields: Dict[str, Any]) -> str:
     )
 
 
-def _job_id(fields: Dict[str, Any]) -> str:
+def _job_id(fields: dict[str, Any]) -> str:
     for key in ("job_id", "observed_job_id", "new_job_id", "server_job_id", "jobId"):
         value = _text(fields.get(key))
         if value and value != "0":
@@ -231,7 +231,7 @@ def _job_id(fields: Dict[str, Any]) -> str:
     return ""
 
 
-def _place_id(fields: Dict[str, Any]) -> str:
+def _place_id(fields: dict[str, Any]) -> str:
     for key in ("place_id", "observed_place_id", "teleport_place_id", "placeId"):
         value = _text(fields.get(key))
         if value and value != "0":
@@ -252,7 +252,7 @@ def _username_paren(value: Any, *, color: str = _COLOR_USERNAME) -> str:
     return _paint(f"({_text(value, 'Account')})", color)
 
 
-def _server_kind(fields: Dict[str, Any]) -> str:
+def _server_kind(fields: dict[str, Any]) -> str:
     server_type = _text(fields.get("server_type") or fields.get("observed_server_type")).upper()
     if _boolish(fields.get("is_vip") or fields.get("is_vip_server") or fields.get("private_server")):
         return "VIP"
@@ -271,7 +271,7 @@ def _server_paren(kind: str) -> str:
     return ""
 
 
-def _found_process_line(account: str, pid: Any, fields: Dict[str, Any] | None = None) -> Optional[str]:
+def _found_process_line(account: str, pid: Any, fields: dict[str, Any] | None = None) -> str | None:
     account_text = _text(account, "Account")
     key = _account_key(account_text)
     # One logical "found" event reaches us through several event shapes
@@ -315,7 +315,7 @@ def _reload_all_line(count: Any) -> str:
     return _line(_ICON_TELEPORT, f"Reload All Roblox ( {account_count} Accounts )", stamp_color=_COLOR_RELOAD_STAMP)
 
 
-def _config_line(action: str, fields: Dict[str, Any]) -> str:
+def _config_line(action: str, fields: dict[str, Any]) -> str:
     # Product style: header only, no key details.
     # e.g. "Game saved" / "Windows saved" / "Queue saved"
     updated = fields.get("updated") or fields.get("keys") or ""
@@ -449,7 +449,7 @@ def _ram_skipped_line(percent: Any = "", reason: Any = "") -> str:
     return _line(_ICON_RAM, f"{_paint('RAM cleanup skipped', _COLOR_WHITE)} {_paint(f'— {why}{suffix}', _COLOR_GRAY)}")
 
 
-def _ram_skip_reason(fields: Dict[str, Any], name: Any = "") -> str:
+def _ram_skip_reason(fields: dict[str, Any], name: Any = "") -> str:
     reason = _text(fields.get("reason") or "").lower()
     if "admin" in reason or _text(name) == "ram_cleanup_skipped_no_admin":
         return "requires admin — relaunch as administrator"
@@ -465,7 +465,7 @@ def _ram_skip_reason(fields: Dict[str, Any], name: Any = "") -> str:
     return _text(fields.get("reason")) or "requires admin — relaunch as administrator"
 
 
-def _teleport_line(account: str) -> Optional[str]:
+def _teleport_line(account: str) -> str | None:
     key = _account_key(account)
     now = time.monotonic()
     previous = float(_LAST_TELEPORT_AT_BY_ACCOUNT.get(key) or 0.0)
@@ -475,7 +475,7 @@ def _teleport_line(account: str) -> Optional[str]:
     return _line(_ICON_TELEPORT, f"{_username_paren(account)} Teleporting")
 
 
-def _server_moved_line(account: str, old_job: str, new_job: str, place: str = "") -> Optional[str]:
+def _server_moved_line(account: str, old_job: str, new_job: str, place: str = "") -> str | None:
     key = _account_key(account)
     now = time.monotonic()
     previous = float(_LAST_TELEPORT_AT_BY_ACCOUNT.get(key) or 0.0)
@@ -533,7 +533,7 @@ def format_console_line(icon: str, message: str, *, indent: bool = False) -> str
     return _line(_normalize_icon(icon), _text(message), indent=indent)
 
 
-def _disconnect_line(account: str, reason: str = "") -> Optional[str]:
+def _disconnect_line(account: str, reason: str = "") -> str | None:
     now = time.monotonic()
     key = _text(account, "Account").lower()
     previous = float(_LAST_DISCONNECT_AT.get(key) or 0.0)
@@ -545,7 +545,7 @@ def _disconnect_line(account: str, reason: str = "") -> Optional[str]:
     return _line(_ICON_WARN, f"{status}{suffix}", stamp_color=_COLOR_DISCONNECT_STAMP)
 
 
-def _captcha_line(account: str, pid: str = "") -> Optional[str]:
+def _captcha_line(account: str, pid: str = "") -> str | None:
     now = time.monotonic()
     key = _text(account, "Account").lower()
     previous = float(_LAST_CAPTCHA_AT.get(key) or 0.0)
@@ -560,7 +560,7 @@ def _print_line(line: str) -> None:
     console_output.write_line(line)
 
 
-def _emit_suspect_process_check(fields: Dict[str, Any]) -> None:
+def _emit_suspect_process_check(fields: dict[str, Any]) -> None:
     account = _account(fields)
     key = account.lower()
     final = _boolish(fields.get("final"), False)
@@ -627,7 +627,7 @@ def set_total_accounts(count: Any) -> None:
         _set_title_locked()
 
 
-def _update_counters(scope: str, name: str, fields: Dict[str, Any]) -> None:
+def _update_counters(scope: str, name: str, fields: dict[str, Any]) -> None:
     global _QUEUE_SIZE
     account = _account(fields)
     # Never track the fallback "Account" placeholder as a real account.
@@ -703,7 +703,7 @@ def _update_counters(scope: str, name: str, fields: Dict[str, Any]) -> None:
             _QUEUE_SIZE = 0
 
 
-def _format_state(name: str, fields: Dict[str, Any]) -> Optional[str]:
+def _format_state(name: str, fields: dict[str, Any]) -> str | None:
     account = _account(fields)
     pid = _pid(fields)
     if name == "transition":
@@ -727,7 +727,7 @@ def _format_state(name: str, fields: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _format_recovery(name: str, fields: Dict[str, Any]) -> Optional[str]:
+def _format_recovery(name: str, fields: dict[str, Any]) -> str | None:
     account = _account(fields)
     reason = _reason(fields, "recovery")
     if name == "captcha_hold" or reason in {"captcha_required", "identity_locked", "account_recovery"}:
@@ -740,7 +740,7 @@ def _format_recovery(name: str, fields: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]:
+def _format_misc(scope: str, name: str, fields: dict[str, Any]) -> str | None:
     account = _account(fields)
     pid = _pid(fields)
     # ── Product actions: config / farm / finished / reload ──
@@ -893,7 +893,7 @@ def _format_misc(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]
     return None
 
 
-def _format_structured(scope: str, name: str, fields: Dict[str, Any]) -> Optional[str]:
+def _format_structured(scope: str, name: str, fields: dict[str, Any]) -> str | None:
     if scope == "STATUS":
         return None
     if scope == "STATE":
@@ -922,7 +922,7 @@ def emit_structured(scope: str, name: str, **fields: Any) -> None:
         _set_title_locked()
 
 
-def _format_text(message: str) -> Optional[str]:
+def _format_text(message: str) -> str | None:
     msg = message.strip()
     if not msg or _KV_LINE_RE.match(msg):
         return None

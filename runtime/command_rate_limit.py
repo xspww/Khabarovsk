@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Dict, Tuple
 
 FORCE_REJOIN_INTERVAL_SECONDS = 10.0
 
@@ -11,9 +10,9 @@ class PerAccountRateLimiter:
     def __init__(self, interval_seconds: float):
         self._interval_seconds = max(0.0, float(interval_seconds or 0.0))
         self._lock = threading.Lock()
-        self._last_at: Dict[str, float] = {}
+        self._last_at: dict[str, float] = {}
 
-    def check(self, account_key: str) -> Tuple[bool, str]:
+    def check(self, account_key: str) -> tuple[bool, str]:
         now = time.time()
         with self._lock:
             last_at = float(self._last_at.get(account_key) or 0.0)

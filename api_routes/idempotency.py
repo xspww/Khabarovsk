@@ -5,14 +5,14 @@ import json
 import threading
 import time
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import Request
 
 from core import flog_kv
 
 _LOCK = threading.RLock()
-_CACHE: Dict[str, Dict[str, Any]] = {}
+_CACHE: dict[str, dict[str, Any]] = {}
 _TTL_SECONDS = 300.0
 
 
@@ -24,7 +24,7 @@ class IdempotencyContext:
     account: str = ""
     body_hash: str = ""
     replay: bool = False
-    response: Dict[str, Any] | None = None
+    response: dict[str, Any] | None = None
 
 
 def _cleanup_locked(now: float) -> None:
@@ -79,7 +79,7 @@ def begin_idempotent_request_sync(request: Request, action: str, account: str = 
     return _begin(request, action, account, _hash_body(b""))
 
 
-def finish_idempotent_request(ctx: IdempotencyContext, response: Dict[str, Any]) -> None:
+def finish_idempotent_request(ctx: IdempotencyContext, response: dict[str, Any]) -> None:
     if not ctx.scope or ctx.replay:
         return
     with _LOCK:

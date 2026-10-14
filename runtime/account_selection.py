@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Iterable, List, Set
+from collections.abc import Iterable
+from typing import Any
 
 
 def _items(raw: Any) -> Iterable[str]:
@@ -13,9 +14,9 @@ def _items(raw: Any) -> Iterable[str]:
     return [str(raw or "")]
 
 
-def runtime_account_allowlist(cfg: dict | None) -> List[str]:
-    seen: Set[str] = set()
-    result: List[str] = []
+def runtime_account_allowlist(cfg: dict | None) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
     for item in _items((cfg or {}).get("runtime_account_allowlist")):
         text = str(item or "").strip()
         key = text.lower()
@@ -26,11 +27,11 @@ def runtime_account_allowlist(cfg: dict | None) -> List[str]:
     return result
 
 
-def runtime_account_allowlist_keys(cfg: dict | None) -> Set[str]:
+def runtime_account_allowlist_keys(cfg: dict | None) -> set[str]:
     return {item.lower() for item in runtime_account_allowlist(cfg)}
 
 
-def account_identity_keys(account: Any) -> Set[str]:
+def account_identity_keys(account: Any) -> set[str]:
     values = {
         getattr(account, "_config_username", ""),
         getattr(account, "username", ""),
@@ -52,7 +53,7 @@ def runtime_account_filter_reason(account: Any, cfg: dict | None) -> str:
     return f"Disabled by runtime account allowlist: {allowlist}"
 
 
-def runtime_account_filter_blocked_keys(accounts: Iterable[Any], cfg: dict | None) -> Set[str]:
+def runtime_account_filter_blocked_keys(accounts: Iterable[Any], cfg: dict | None) -> set[str]:
     return {
         str(getattr(account, "_config_username", getattr(account, "username", "")) or "")
         for account in accounts

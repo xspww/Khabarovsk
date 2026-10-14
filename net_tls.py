@@ -46,7 +46,7 @@ import os
 import ssl
 import threading
 import urllib.request
-from typing import Any, Optional, Tuple
+from typing import Any
 
 # Operators export these to point an app at their corporate CA bundle.
 _CA_ENV_VARS = ("SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_BUNDLE")
@@ -54,8 +54,8 @@ _CA_ENV_VARS = ("SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_
 _WINDOWS_CERT_STORES = ("CA", "ROOT")
 
 _LOCK = threading.Lock()
-_CONTEXT: Optional[ssl.SSLContext] = None
-_SOURCES: Tuple[str, ...] = ()
+_CONTEXT: ssl.SSLContext | None = None
+_SOURCES: tuple[str, ...] = ()
 
 
 _PEM_HEADER = "-----BEGIN CERTIFICATE-----"
@@ -139,7 +139,7 @@ def _count_certs(pem: str) -> int:
     return pem.count(_PEM_HEADER)
 
 
-def _build() -> Tuple[ssl.SSLContext, Tuple[str, ...]]:
+def _build() -> tuple[ssl.SSLContext, tuple[str, ...]]:
     context = ssl.create_default_context()
     sources = ["system default verify paths"]
 
@@ -186,7 +186,7 @@ def default_context() -> ssl.SSLContext:
         return _CONTEXT
 
 
-def trust_sources() -> Tuple[str, ...]:
+def trust_sources() -> tuple[str, ...]:
     """Human-readable list of what default_context() actually loaded."""
     default_context()
     return _SOURCES
@@ -197,12 +197,12 @@ def https_handler() -> urllib.request.HTTPSHandler:
     return urllib.request.HTTPSHandler(context=default_context())
 
 
-def urlopen(request: Any, timeout: Optional[float] = None) -> Any:
+def urlopen(request: Any, timeout: float | None = None) -> Any:
     """urllib.request.urlopen with the shared TLS context attached."""
     return urllib.request.urlopen(request, timeout=timeout, context=default_context())
 
 
-def looks_like_certificate_error(exc: Optional[BaseException]) -> bool:
+def looks_like_certificate_error(exc: BaseException | None) -> bool:
     """True when exc is a TLS trust failure worth explaining in the UI."""
     if exc is None:
         return False

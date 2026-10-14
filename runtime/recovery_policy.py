@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Callable, Dict, List, Tuple
+from collections.abc import Callable
+from typing import Any
 
 from runtime.recovery_context import (
     SESSION_CONFLICT,
@@ -103,7 +104,7 @@ def display_recovery_reason(reason_key: str, canonical: str, reason_msg: str = "
     return canonical
 
 
-def duplicate_signal_key(account_key: str, signal_name: str, reason_key: str, recovery_generation: int) -> Tuple[str, str, str, int]:
+def duplicate_signal_key(account_key: str, signal_name: str, reason_key: str, recovery_generation: int) -> tuple[str, str, str, int]:
     """Single owner for router dedupe-key construction (canonicalized)."""
     return (str(account_key or ""), str(signal_name or ""), canonical_reason(reason_key), int(recovery_generation or 0))
 
@@ -155,11 +156,11 @@ def is_game_unavailable_detail(text: str) -> bool:
     return any(sig in lowered for sig in signatures)
 
 
-def policy_for(reason_key: str) -> Dict[str, Any]:
+def policy_for(reason_key: str) -> dict[str, Any]:
     return dict(RECOVERY_POLICIES.get(canonical_reason(reason_key), {"bucket": "crash", "cap": 30.0, "fatal": False}))
 
 
-def build_recovery_log_payload(event: str, account: Any, reason: str, fields: Dict[str, Any]) -> Dict[str, Any]:
+def build_recovery_log_payload(event: str, account: Any, reason: str, fields: dict[str, Any]) -> dict[str, Any]:
     try:
         runtime_snapshot = account.runtime_snapshot()
     except Exception:
@@ -189,7 +190,7 @@ def build_recovery_log_payload(event: str, account: Any, reason: str, fields: Di
 
 
 def adaptive_recovery_delay(
-    cfg: Dict[str, Any],
+    cfg: dict[str, Any],
     account: Any,
     reason_key: str,
     cooldown: float | None,
@@ -226,7 +227,7 @@ def adaptive_recovery_delay(
     return min(float(policy.get("cap") or 30), compute_backoff(max(1, crash_retry), base=int(rejoin_base), cap=int(policy.get("cap") or 30)))
 
 
-def context_from_signal(account: Any, signal: str, reason_key: str, payload: Dict[str, Any]) -> RecoveryAttemptContext:
+def context_from_signal(account: Any, signal: str, reason_key: str, payload: dict[str, Any]) -> RecoveryAttemptContext:
     payload = dict(payload or {})
     context = RecoveryAttemptContext.from_account_payload(account, signal, reason_key, payload)
     if payload.get("disconnect_category") or payload.get("category"):
@@ -259,10 +260,10 @@ def context_from_signal(account: Any, signal: str, reason_key: str, payload: Dic
 class RecoveryDedupeTracker:
     def __init__(self, window_seconds: float):
         self.window_seconds = max(1.0, float(window_seconds or 3.0))
-        self._recent: Dict[Tuple[str, int, str], Tuple[float, int]] = {}
+        self._recent: dict[tuple[str, int, str], tuple[float, int]] = {}
         self._lock = threading.Lock()
 
-    def check_and_mark(self, ctx: RecoveryAttemptContext, now: float | None = None) -> Dict[str, Any]:
+    def check_and_mark(self, ctx: RecoveryAttemptContext, now: float | None = None) -> dict[str, Any]:
         now = time.time() if now is None else float(now)
         with self._lock:
             stale_cutoff = now - max(self.window_seconds * 4.0, 30.0)
@@ -297,7 +298,7 @@ class RecoveryGate:
         self._owner = owner
         self._dedupe = dedupe
         self._duplicate_window = max(1.0, float(duplicate_window or 1.0))
-        self._recent_signals: Dict[Tuple[str, str, str, int], float] = {}
+        self._recent_signals: dict[tuple[str, str, str, int], float] = {}
         self._lock = threading.Lock()
 
     def clear(self) -> None:
@@ -313,7 +314,7 @@ class RecoveryGate:
         reason_key: str,
         recovery_generation: int,
         now: float | None = None,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         now = time.time() if now is None else float(now)
         block = self._owner.block_reason(str(account_key or ""), ctx)
         if block.get("blocked"):
@@ -345,7 +346,7 @@ class RecoveryGate:
 
 class SessionConflictTracker:
     def __init__(self):
-        self._attempts: Dict[str, List[float]] = {}
+        self._attempts: dict[str, list[float]] = {}
         self._lock = threading.Lock()
 
     def record(self, account_id: str, window_seconds: float) -> int:
@@ -370,7 +371,7 @@ class SessionConflictTracker:
             return len(attempts)
 
 
-def active_recovery_block_reason(owner: Dict[str, Any] | None, ctx: RecoveryAttemptContext) -> Dict[str, Any]:
+def active_recovery_block_reason(owner: dict[str, Any] | None, ctx: RecoveryAttemptContext) -> dict[str, Any]:
     if not owner:
         return {"blocked": False}
     owner_priority = int(owner.get("priority", 0) or 0)
@@ -388,7 +389,7 @@ def active_recovery_block_reason(owner: Dict[str, Any] | None, ctx: RecoveryAtte
 def kill_local_duplicate_for_session_conflict(
     account: Any,
     ctx: RecoveryAttemptContext,
-    list_processes: Callable[[], List[Dict[str, Any]]],
+    list_processes: Callable[[], list[dict[str, Any]]],
     kill_pid: Callable[[int], bool],
     log_event: Callable[..., None],
 ) -> int:

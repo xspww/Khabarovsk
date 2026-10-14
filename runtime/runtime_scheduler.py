@@ -3,8 +3,9 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
 from core import flog_kv
 from runtime.runtime_scheduler_dispatch import SchedulerDispatchPool
@@ -17,12 +18,12 @@ class RuntimeScheduledJob:
     reason: str = ""
     account_id: str = ""
     account: Any = None
-    runtime_generation: Optional[int] = None
-    recovery_generation: Optional[int] = None
-    command_generation: Optional[int] = None
+    runtime_generation: int | None = None
+    recovery_generation: int | None = None
+    command_generation: int | None = None
     interval_seconds: float = 0.0
     periodic: bool = False
-    payload: Dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] = field(default_factory=dict)
     job_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     created_at: float = field(default_factory=time.time)
 
@@ -32,10 +33,10 @@ class RuntimeScheduler:
 
     def __init__(
         self,
-        stop: Optional[threading.Event] = None,
-        state_manager: Optional[Any] = None,
-        timeline: Optional[Any] = None,
-        logger: Optional[Callable[..., None]] = None,
+        stop: threading.Event | None = None,
+        state_manager: Any | None = None,
+        timeline: Any | None = None,
+        logger: Callable[..., None] | None = None,
         name: str = "RuntimeScheduler",
         autostart: bool = True,
         dispatch_worker_count: int = 0,
@@ -45,7 +46,7 @@ class RuntimeScheduler:
         self._timeline = timeline
         self._log = logger or flog_kv
         self._name = name
-        self._jobs: Dict[str, tuple[RuntimeScheduledJob, ScheduleCallback]] = {}
+        self._jobs: dict[str, tuple[RuntimeScheduledJob, ScheduleCallback]] = {}
         self._lock = threading.RLock()
         self._cond = threading.Condition(self._lock)
         self._closed = False
@@ -77,7 +78,7 @@ class RuntimeScheduler:
         if self._dispatch_pool:
             self._dispatch_pool.stop(timeout=timeout)
 
-    def get(self, job_key: str) -> Optional[RuntimeScheduledJob]:
+    def get(self, job_key: str) -> RuntimeScheduledJob | None:
         with self._lock:
             item = self._jobs.get(job_key)
             return item[0] if item else None
@@ -87,15 +88,15 @@ class RuntimeScheduler:
         job_key: str,
         callback: ScheduleCallback,
         delay: float = 0.0,
-        due_at: Optional[float] = None,
+        due_at: float | None = None,
         reason: str = "",
         account: Any = None,
         account_id: str = "",
-        runtime_generation: Optional[int] = None,
-        recovery_generation: Optional[int] = None,
-        command_generation: Optional[int] = None,
-        payload: Optional[Dict[str, Any]] = None,
-        now: Optional[float] = None,
+        runtime_generation: int | None = None,
+        recovery_generation: int | None = None,
+        command_generation: int | None = None,
+        payload: dict[str, Any] | None = None,
+        now: float | None = None,
     ) -> RuntimeScheduledJob:
         current = time.time() if now is None else float(now)
         due = float(due_at if due_at is not None else current + max(0.0, float(delay or 0.0)))
@@ -119,11 +120,11 @@ class RuntimeScheduler:
         interval_seconds: float,
         callback: ScheduleCallback,
         reason: str = "",
-        initial_delay: Optional[float] = None,
+        initial_delay: float | None = None,
         account: Any = None,
         account_id: str = "",
-        payload: Optional[Dict[str, Any]] = None,
-        now: Optional[float] = None,
+        payload: dict[str, Any] | None = None,
+        now: float | None = None,
     ) -> RuntimeScheduledJob:
         interval = max(0.1, float(interval_seconds or 0.1))
         current = time.time() if now is None else float(now)
@@ -160,7 +161,7 @@ class RuntimeScheduler:
             self._emit("runtime_schedule_cancelled", job, reason=reason)
         return len(items)
 
-    def run_due(self, now: Optional[float] = None) -> int:
+    def run_due(self, now: float | None = None) -> int:
         current = time.time() if now is None else float(now)
         due_items = []
         with self._cond:
@@ -180,7 +181,7 @@ class RuntimeScheduler:
                 self._dispatch(job, callback, current)
         return len(due_items)
 
-    def snapshot(self, now: Optional[float] = None) -> Dict[str, Any]:
+    def snapshot(self, now: float | None = None) -> dict[str, Any]:
         current = time.time() if now is None else float(now)
         with self._lock:
             jobs = [item[0] for item in self._jobs.values()]
@@ -294,7 +295,7 @@ class RuntimeScheduler:
                 return False
         return True
 
-    def effective_runtime_generation(self, job: RuntimeScheduledJob) -> Optional[int]:
+    def effective_runtime_generation(self, job: RuntimeScheduledJob) -> int | None:
         account = job.account
         expected = job.runtime_generation
         if account is None:

@@ -13,7 +13,8 @@ never report captcha — see ``popup_classifier`` guard.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 from services.captcha_guard import (
     CAPTCHA_REASON,
@@ -22,7 +23,7 @@ from services.captcha_guard import (
 )
 
 
-def read_window_texts(pid: Optional[int]) -> List[str]:
+def read_window_texts(pid: int | None) -> list[str]:
     """Read visible window + child control texts for a PID (text only)."""
     if not pid:
         return []
@@ -33,7 +34,7 @@ def read_window_texts(pid: Optional[int]) -> List[str]:
     except Exception:
         return []
     try:
-        texts: List[str] = []
+        texts: list[str] = []
         seen = set()
         WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_long)
 
@@ -75,7 +76,7 @@ def read_window_texts(pid: Optional[int]) -> List[str]:
         return []
 
 
-def inspect_captcha_window(pid: Optional[int]) -> Dict[str, Any]:
+def inspect_captcha_window(pid: int | None) -> dict[str, Any]:
     """Check a bound PID's window texts for a captcha challenge."""
     texts = read_window_texts(pid)
     if is_captcha_window_texts(texts):
@@ -102,8 +103,8 @@ def inspect_captcha_window(pid: Optional[int]) -> Dict[str, Any]:
 
 def probe_cookie_captcha(
     cookie: str,
-    validator: Optional[Callable[..., Any]] = None,
-) -> Dict[str, Any]:
+    validator: Callable[..., Any] | None = None,
+) -> dict[str, Any]:
     """Check a .ROBLOSECURITY cookie for a Roblox challenge response."""
     token = str(cookie or "").strip()
     if not token:
@@ -142,13 +143,13 @@ def probe_cookie_captcha(
 
 
 def inspect_captcha(
-    pid: Optional[int],
+    pid: int | None,
     cookie: str = "",
-    validator: Optional[Callable[..., Any]] = None,
+    validator: Callable[..., Any] | None = None,
     *,
     window: bool = True,
     api: bool = True,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Combined captcha check: window text first (cheap), cookie API second."""
     if window:
         found = inspect_captcha_window(pid)

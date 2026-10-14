@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 from domain.states import AccountState, RuntimeState, runtime_state_for_public
 from services.process_proof_policy import PROOF_STRONG, is_at_least_process_proof
@@ -18,7 +19,7 @@ def _public_state(acc: Any) -> str:
     return str(getattr(state, "name", state) or "")
 
 
-def _runtime_state(acc: Any, override: Optional[RuntimeState] = None) -> RuntimeState:
+def _runtime_state(acc: Any, override: RuntimeState | None = None) -> RuntimeState:
     if override is not None:
         return override
     state = getattr(acc, "state", AccountState.IDLE)
@@ -27,7 +28,7 @@ def _runtime_state(acc: Any, override: Optional[RuntimeState] = None) -> Runtime
     return RuntimeState.STOPPED
 
 
-def invariant_snapshot(acc: Any, runtime_state: Optional[RuntimeState] = None) -> Dict[str, Any]:
+def invariant_snapshot(acc: Any, runtime_state: RuntimeState | None = None) -> dict[str, Any]:
     return {
         "account_id": _account_id(acc),
         "runtime_state": (runtime_state or _runtime_state(acc)).value,
@@ -49,13 +50,13 @@ def invariant_snapshot(acc: Any, runtime_state: Optional[RuntimeState] = None) -
 
 def check_runtime_invariants(
     acc: Any,
-    runtime_state: Optional[RuntimeState] = None,
-    pid_validator: Optional[PidValidator] = None,
-    now: Optional[float] = None,
-) -> List[Dict[str, Any]]:
+    runtime_state: RuntimeState | None = None,
+    pid_validator: PidValidator | None = None,
+    now: float | None = None,
+) -> list[dict[str, Any]]:
     state = _runtime_state(acc, runtime_state)
     current_time = float(now if now is not None else time.time())
-    violations: List[Dict[str, Any]] = []
+    violations: list[dict[str, Any]] = []
     pid = getattr(acc, "pid", None)
     binding_status = str(getattr(acc, "process_binding_status", "") or "")
     recovery_inflight = bool(getattr(acc, "recovery_inflight", False))

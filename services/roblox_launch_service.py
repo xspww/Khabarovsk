@@ -4,13 +4,13 @@ import random
 import re
 import time
 import urllib.parse
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 from core import Account, ServerType, account_launch_block_reason, flog, flog_kv
 from services.browser_tracker import tracker_label
 
 
-def parse_vip_link(vip_url: str) -> Tuple[str, str]:
+def parse_vip_link(vip_url: str) -> tuple[str, str]:
     # Canonical parser lives in domain.roblox_private_servers (single owner).
     # This wrapper preserves the public import path + warning logs so
     # ProcessManager.parse_vip_link / accounts_routes callers see no change.
@@ -51,7 +51,7 @@ class AccountLaunchService:
     """
 
     @staticmethod
-    def _resolve_game(record: Dict[str, Any], body: Dict[str, Any], cfg_mgr: Any):
+    def _resolve_game(record: dict[str, Any], body: dict[str, Any], cfg_mgr: Any):
         """Find the game entry for a launch.
 
         Returns (game_or_None, games_list). Empty games list means the
@@ -92,7 +92,7 @@ class AccountLaunchService:
             return None, games
 
     @staticmethod
-    def build_target(body: Dict[str, Any], record: Dict[str, Any], cfg_mgr: Any) -> Dict[str, Any]:
+    def build_target(body: dict[str, Any], record: dict[str, Any], cfg_mgr: Any) -> dict[str, Any]:
         target = dict(body or {})
         game, games = AccountLaunchService._resolve_game(record, target, cfg_mgr)
         try:
@@ -184,13 +184,13 @@ class AccountLaunchService:
 
     @staticmethod
     def launch_record(
-        record: Dict[str, Any],
-        body: Dict[str, Any],
+        record: dict[str, Any],
+        body: dict[str, Any],
         cfg_mgr: Any,
-        window_settings: Optional[Dict[str, Any]] = None,
+        window_settings: dict[str, Any] | None = None,
         idempotency_key: str = "",
         body_hash: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         from services.roblox_hybrid import HybridLauncher
 
         username = str(record.get("username") or "")
@@ -250,10 +250,10 @@ class AccountLaunchService:
 
     @staticmethod
     def kill_duplicate_instances(
-        record: Dict[str, Any],
+        record: dict[str, Any],
         idempotency_key: str = "",
         body_hash: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         from services.roblox_hybrid import HybridLauncher
 
         username = str(record.get("username") or "")
@@ -271,7 +271,7 @@ class AccountLaunchService:
         )
         return result
 
-def build_launch_url(cls, acc: Account) -> Tuple[str, ServerType, str]:
+def build_launch_url(cls, acc: Account) -> tuple[str, ServerType, str]:
     try:
         from domain.games import effective_place, game_for_account, normalize_game_mode
 
@@ -337,7 +337,7 @@ def build_launch_url(cls, acc: Account) -> Tuple[str, ServerType, str]:
 
     return "", ServerType.UNKNOWN, ""
 
-def launch(cls, acc: Account) -> Tuple[bool, str, str]:
+def launch(cls, acc: Account) -> tuple[bool, str, str]:
     block_reason = account_launch_block_reason(acc)
     if block_reason:
         flog(f"[LAUNCH] Blocked for {acc.display_name}: {block_reason}", "warning")

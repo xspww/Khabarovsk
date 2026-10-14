@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict
+from typing import Any
 
 from core import flog_kv
 from services.captcha_guard import (
@@ -87,7 +87,7 @@ def detect_and_hold_captcha(owner: Any, acc: Any, pid: int, source: str) -> bool
     return handle_watchdog_captcha(owner, acc, pid, dialog, require_confirm=False)
 
 
-def handle_watchdog_captcha(owner: Any, acc: Any, pid: int, dialog: Dict[str, Any], *, require_confirm: bool = True) -> bool:
+def handle_watchdog_captcha(owner: Any, acc: Any, pid: int, dialog: dict[str, Any], *, require_confirm: bool = True) -> bool:
     """Confirm a captcha sighting before holding the account and killing the game.
 
     Returns True when the account was put on captcha hold (process closed).

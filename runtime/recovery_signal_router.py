@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 from domain.states import RuntimeSignal, is_recovery_signal, normalize_runtime_signal
 from runtime.lua_liveness_policy import lua_event_source
@@ -41,8 +42,8 @@ class RecoverySignalRouter:
         acc: Any,
         signal: str,
         reason: str = "",
-        payload: Optional[Dict[str, Any]] = None,
-        expected_runtime_generation: Optional[int] = None,
+        payload: dict[str, Any] | None = None,
+        expected_runtime_generation: int | None = None,
         expected_session_id: str = "",
         expected_launch_nonce: str = "",
         expected_transaction_id: str = "",
@@ -168,9 +169,9 @@ class RecoverySignalRouter:
         acc: Any,
         signal_name: str,
         reason_key: str,
-        payload: Dict[str, Any],
+        payload: dict[str, Any],
         context: Any,
-        expected_runtime_generation: Optional[int],
+        expected_runtime_generation: int | None,
         expected_session_id: str,
         expected_launch_nonce: str,
         expected_transaction_id: str,

@@ -7,7 +7,6 @@ import threading
 import time
 from importlib import metadata as importlib_metadata
 from importlib import util as importlib_util
-from typing import Dict, List, Optional, Tuple
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
@@ -17,11 +16,11 @@ from app_paths import APP_NAME, IS_COMPILED, resource_path
 from desktop import console_output
 
 REQUIREMENTS_FILE = os.path.join(BASE_DIR, "requirements.txt")
-_STARTUP_COLOR_SUPPORT: Optional[bool] = None
+_STARTUP_COLOR_SUPPORT: bool | None = None
 _COLOR_GREEN = "\x1b[92m"
 _COLOR_RED = "\x1b[91m"
 _COLOR_DIM = "\x1b[90m"
-_REQUIREMENT_IMPORT_NAMES: Dict[str, str] = {
+_REQUIREMENT_IMPORT_NAMES: dict[str, str] = {
     "pillow": "PIL",
     "pyside6": "PySide6",
 }
@@ -56,7 +55,7 @@ def _startup_fail_line(package: str, reason: str) -> str:
     return f"{_startup_paint('×', _COLOR_RED)} {package} {reason}".rstrip()  # noqa: RUF001 - intentional console glyph
 
 
-def _startup_distribution_version(name: str) -> Optional[str]:
+def _startup_distribution_version(name: str) -> str | None:
     try:
         return importlib_metadata.version(name)
     except importlib_metadata.PackageNotFoundError:
@@ -72,8 +71,8 @@ def _startup_import_available(name: str) -> bool:
         return False
 
 
-def _startup_requirement_rows(requirements_file: str = REQUIREMENTS_FILE) -> List[Tuple[str, str, str]]:
-    rows: List[Tuple[str, str, str]] = []
+def _startup_requirement_rows(requirements_file: str = REQUIREMENTS_FILE) -> list[tuple[str, str, str]]:
+    rows: list[tuple[str, str, str]] = []
     try:
         with open(requirements_file, encoding="utf-8") as handle:
             lines = handle.readlines()
@@ -93,7 +92,7 @@ def _startup_requirement_rows(requirements_file: str = REQUIREMENTS_FILE) -> Lis
     return rows
 
 
-def _startup_version_tuple(value: str) -> Tuple[int, ...]:
+def _startup_version_tuple(value: str) -> tuple[int, ...]:
     parts = [int(item) for item in re.findall(r"\d+", str(value or ""))[:4]]
     return tuple(parts or [0])
 
@@ -111,7 +110,7 @@ def _run_startup_dependency_checks(
     animate: bool = True,
 ) -> bool:
     rows = _startup_requirement_rows(requirements_file)
-    failures: List[str] = []
+    failures: list[str] = []
     for package, import_name, minimum in rows:
         installed = _startup_distribution_version(package)
         import_ok = _startup_import_available(import_name)

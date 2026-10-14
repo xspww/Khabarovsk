@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import os
 import subprocess
-from typing import Any, Dict, Optional
+from typing import Any
 
 SHORTCUT_NAME = "Cronus Launcher.lnk"
 AUTOSTART_FLAG = "--autostart"
@@ -33,7 +33,7 @@ def _ps_single(value: str) -> str:
     return "'" + str(value or "").replace("'", "''") + "'"
 
 
-def _run_ps(script: str, timeout: float = 30.0) -> Dict[str, Any]:
+def _run_ps(script: str, timeout: float = 30.0) -> dict[str, Any]:
     try:
         proc = subprocess.run(
             ["powershell.exe", "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
@@ -68,7 +68,7 @@ _WRITE_SNIPPET = (
 )
 
 
-def read_shortcut(path: Optional[str] = None) -> Dict[str, Any]:
+def read_shortcut(path: str | None = None) -> dict[str, Any]:
     target = path or shortcut_path()
     script = _READ_SNIPPET.replace("__PATH__", _ps_single(target))
     res = _run_ps(script)
@@ -93,7 +93,7 @@ def _norm(path: str) -> str:
         return os.path.normcase(str(path or ""))
 
 
-def ensure_shortcut(exe_path: str) -> Dict[str, Any]:
+def ensure_shortcut(exe_path: str) -> dict[str, Any]:
     exe = os.path.abspath(exe_path)
     if not os.path.isfile(exe):
         return {"ok": False, "msg": f"exe not found: {exe}"}
@@ -112,7 +112,7 @@ def ensure_shortcut(exe_path: str) -> Dict[str, Any]:
     return {"ok": True, "msg": "installed", "changed": True}
 
 
-def remove_shortcut() -> Dict[str, Any]:
+def remove_shortcut() -> dict[str, Any]:
     target = shortcut_path()
     try:
         if not os.path.exists(target):
@@ -123,7 +123,7 @@ def remove_shortcut() -> Dict[str, Any]:
         return {"ok": False, "msg": f"remove failed: {exc}"}
 
 
-def shortcut_status(exe_path: str = "") -> Dict[str, Any]:
+def shortcut_status(exe_path: str = "") -> dict[str, Any]:
     info = read_shortcut()
     if not info.get("present"):
         return {"ok": True, "present": False, "healthy": False, "target": "", "args": ""}
@@ -135,7 +135,7 @@ def shortcut_status(exe_path: str = "") -> Dict[str, Any]:
             "target": info.get("target", ""), "args": info.get("args", "")}
 
 
-def heal_shortcut(exe_path: str) -> Dict[str, Any]:
+def heal_shortcut(exe_path: str) -> dict[str, Any]:
     """Rewrite a missing/stale shortcut. Call only when start_on_boot is on."""
     status = shortcut_status(exe_path)
     if status.get("healthy"):

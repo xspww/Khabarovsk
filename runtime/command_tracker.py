@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Callable, Dict, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 Logger = Callable[..., None]
 
@@ -13,12 +14,12 @@ class RuntimeCommandTracker:
     def __init__(
         self,
         runtime_state: Any,
-        find_account: Callable[[str], Optional[Any]],
-        capability: Callable[[str, str], Tuple[bool, str, Optional[Any]]],
+        find_account: Callable[[str], Any | None],
+        capability: Callable[[str, str], tuple[bool, str, Any | None]],
         record_timeline: Callable[..., None],
         bump_status_revision: Callable[[], int],
-        logger: Optional[Logger] = None,
-        is_shutting_down: Optional[Callable[[], bool]] = None,
+        logger: Logger | None = None,
+        is_shutting_down: Callable[[], bool] | None = None,
         idempotency_ttl: float = 300.0,
     ):
         self._runtime_state = runtime_state
@@ -30,8 +31,8 @@ class RuntimeCommandTracker:
         self._is_shutting_down = is_shutting_down or (lambda: False)
         self._idempotency_ttl = max(30.0, float(idempotency_ttl or 300.0))
         self._lock = threading.RLock()
-        self._commands: Dict[str, Dict[str, Any]] = {}
-        self._idempotency: Dict[str, Dict[str, Any]] = {}
+        self._commands: dict[str, dict[str, Any]] = {}
+        self._idempotency: dict[str, dict[str, Any]] = {}
         self._seq = 0
         self._generation = 0
 
@@ -82,14 +83,14 @@ class RuntimeCommandTracker:
         for key in expired_idem:
             self._idempotency.pop(key, None)
 
-    def _conflict_locked(self, key: str) -> Optional[Dict[str, Any]]:
+    def _conflict_locked(self, key: str) -> dict[str, Any] | None:
         for existing_key, item in self._commands.items():
             if existing_key == key:
                 continue
             return item
         return None
 
-    def _duplicate(self, key: str, action: str, account: str, existing: Dict[str, Any], reason: str = "duplicate_command") -> Tuple[bool, Dict[str, Any]]:
+    def _duplicate(self, key: str, action: str, account: str, existing: dict[str, Any], reason: str = "duplicate_command") -> tuple[bool, dict[str, Any]]:
         self._emit(
             "duplicate",
             "warning",
@@ -113,7 +114,7 @@ class RuntimeCommandTracker:
         ttl: float = 15.0,
         idempotency_key: str = "",
         request_fingerprint: str = "",
-    ) -> Tuple[bool, Dict[str, Any]]:
+    ) -> tuple[bool, dict[str, Any]]:
         scope = self._scope(idempotency_key, request_fingerprint)
         now = time.time()
         with self._lock:
@@ -222,7 +223,7 @@ class RuntimeCommandTracker:
             self._record_timeline("command_accepted", account, "info", action, action=action, command_id=command["command_id"], command_generation=command["command_generation"])
             return True, dict(command)
 
-    def finish(self, key: str, command_id: str, ok: bool = True, error: str = "", response: Optional[Dict[str, Any]] = None) -> None:
+    def finish(self, key: str, command_id: str, ok: bool = True, error: str = "", response: dict[str, Any] | None = None) -> None:
         with self._lock:
             current = self._commands.get(key)
             if current and current.get("command_id") == command_id:
@@ -274,7 +275,7 @@ class RuntimeCommandTracker:
     def cancel_for_shutdown(self) -> None:
         with self._lock:
             commands = []
-            preserved: Dict[str, Dict[str, Any]] = {}
+            preserved: dict[str, dict[str, Any]] = {}
             for key, item in self._commands.items():
                 if str(item.get("action", "")) == "stop":
                     preserved[key] = item
@@ -301,7 +302,7 @@ class RuntimeCommandTracker:
                 reason="shutdown",
             )
 
-    def command_inflight(self, key: str) -> Optional[Dict[str, Any]]:
+    def command_inflight(self, key: str) -> dict[str, Any] | None:
         with self._lock:
             self._cleanup_locked()
             item = self._commands.get(key)

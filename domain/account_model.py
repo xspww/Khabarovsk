@@ -4,13 +4,13 @@ import threading
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from domain.runtime_lifecycle import lifecycle_for_public
 from domain.runtime_models import AccountRuntime
 from domain.states import LIFECYCLE_STATE, AccountState, runtime_state_for_public
 
-STATE_META: Dict[AccountState, Dict[str, str]] = {
+STATE_META: dict[AccountState, dict[str, str]] = {
     AccountState.IDLE:         {"label": "Idle",         "color": "#6b7280"},
     AccountState.READY:        {"label": "Ready",        "color": "#3b82f6"},
     AccountState.QUEUED:       {"label": "Queued",       "color": "#8b5cf6"},
@@ -35,7 +35,7 @@ class Account:
     priority:   int  = 50
     place_id:   str  = ""
     game_id:    str  = ""
-    vip_links:  List[str] = field(default_factory=list)
+    vip_links:  list[str] = field(default_factory=list)
     alias:      str  = ""
     cookie:     str  = ""
     browser_tracker_id: str = ""
@@ -50,7 +50,7 @@ class Account:
     # runtime (not persisted to config)
     state:          AccountState    = AccountState.IDLE
     desired_state:  AccountState    = AccountState.IN_GAME
-    pid:            Optional[int]   = None
+    pid:            int | None   = None
     server_type:    ServerType      = ServerType.UNKNOWN
     active_vip:     str             = ""
     bound_process_name: str         = ""
@@ -63,11 +63,11 @@ class Account:
     crash_retry_count: int          = 0
     network_retry_count: int        = 0
     session_retry_count: int        = 0
-    in_game_since:  Optional[float] = None
-    last_crash_at:  Optional[float] = None
-    last_launch_at: Optional[float] = None
-    retry_history:  List[Dict]      = field(default_factory=list)
-    recovery_budget_attempts: List[float] = field(default_factory=list)
+    in_game_since:  float | None = None
+    last_crash_at:  float | None = None
+    last_launch_at: float | None = None
+    retry_history:  list[dict]      = field(default_factory=list)
+    recovery_budget_attempts: list[float] = field(default_factory=list)
     session_valid:  bool            = False
     session_checked: bool           = False
     session_wait_started_at: float  = 0.0
@@ -75,7 +75,7 @@ class Account:
     cooldown_until: float           = 0.0
     teleport_suppress_until: float  = 0.0  # Lua-reported teleport handoff â€” don't fault until arrival
     rapid_relaunch_count: int       = 0
-    last_network_lost_at: Optional[float] = None
+    last_network_lost_at: float | None = None
     last_pid_change_at: float       = 0.0
     last_reconcile_at: float        = 0.0
     last_signal_confidence: float   = 0.0
@@ -109,11 +109,11 @@ class Account:
     process_reject_reason: str      = ""
     process_owner_claim: str        = ""
     unmanaged_live_process_count: int = 0
-    unmanaged_live_pids: List[int]  = field(default_factory=list)
-    adopt_candidate_pid: Optional[int] = None
+    unmanaged_live_pids: list[int]  = field(default_factory=list)
+    adopt_candidate_pid: int | None = None
     adopt_reject_reason: str        = ""
     orphan_confidence: float        = 0.0
-    orphan_pid: Optional[int]       = None
+    orphan_pid: int | None       = None
     orphan_identity: str            = ""
     orphan_observed_at: float       = 0.0
     orphan_verify_after: float      = 0.0
@@ -145,8 +145,8 @@ class Account:
     last_transaction_failure_reason: str = ""
     session_started_at: float       = 0.0
     last_transaction_at: float      = 0.0
-    launch_intent: Dict[str, Any]   = field(default_factory=dict)
-    launch_intent_summary: Dict[str, Any] = field(default_factory=dict)
+    launch_intent: dict[str, Any]   = field(default_factory=dict)
+    launch_intent_summary: dict[str, Any] = field(default_factory=dict)
 
     # crash reason tracking
     last_crash_reason: str = ""
@@ -243,7 +243,7 @@ class Account:
         self.runtime.last_error = self.last_error or ""
         return self.runtime
 
-    def runtime_snapshot(self) -> Dict[str, Any]:
+    def runtime_snapshot(self) -> dict[str, Any]:
         return self.sync_runtime().snapshot()
 
     @property

@@ -3,7 +3,6 @@ from __future__ import annotations
 import threading
 import time
 import urllib.request
-from typing import Optional
 
 import net_tls
 from core import EventBus, flog
@@ -25,7 +24,7 @@ CHECK_ROBLOX = "https://www.roblox.com"
 
 class NetworkMonitor:
     def __init__(self, bus: EventBus, interval: int = 5, debounce: int = 3,
-                 stop: Optional[threading.Event] = None):
+                 stop: threading.Event | None = None):
         self._bus         = bus
         self._interval    = interval
         self._debounce    = debounce
@@ -41,7 +40,7 @@ class NetworkMonitor:
         if not self._thread.is_alive():
             self._thread.start()
 
-    def join(self, timeout: Optional[float] = None):
+    def join(self, timeout: float | None = None):
         if self._thread.is_alive():
             self._thread.join(timeout=timeout)
 
@@ -52,7 +51,7 @@ class NetworkMonitor:
     def is_online(self) -> bool:
         return self.get_state() == NET_ONLINE
 
-    def wait_until_online(self, timeout: Optional[float] = None) -> bool:
+    def wait_until_online(self, timeout: float | None = None) -> bool:
         return self._online_ev.wait(timeout=timeout)
 
     def _check(self) -> str:
@@ -79,7 +78,7 @@ class NetworkMonitor:
 
     def _run(self):
         first_run = True
-        pending_state: Optional[str] = None
+        pending_state: str | None = None
         pending_since: float = 0.0
 
         while not self._stop.is_set():

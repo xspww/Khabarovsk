@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any
 
 _VIP_TYPES = {"VIP", "PRIVATE", "PRIVATE_SERVER"}
 _PUBLIC_TYPES = {"PUBLIC", "STANDARD"}
@@ -32,7 +32,7 @@ def _boolish(value: Any) -> bool | None:
     return None
 
 
-def detect_lua_server(payload: Dict[str, Any]) -> LuaServerDetection:
+def detect_lua_server(payload: dict[str, Any]) -> LuaServerDetection:
     private_server_id = _text(payload.get("private_server_id") or payload.get("privateServerId"))
     private_server_owner_id = _text(payload.get("private_server_owner_id") or payload.get("privateServerOwnerId"))
     server_type = _text(payload.get("server_type") or payload.get("observed_server_type")).upper()

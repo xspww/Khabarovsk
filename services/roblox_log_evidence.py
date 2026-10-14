@@ -4,8 +4,9 @@ import os
 import re
 import threading
 import time
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple
+from typing import Any
 
 _ERROR_CODE_RE = re.compile(r"error\s*code[:\s]+(\d+)", re.IGNORECASE)
 _DISCONNECT_KEYWORDS = (
@@ -20,7 +21,7 @@ _DISCONNECT_KEYWORDS = (
 )
 
 
-def classify_log_line(line: Any) -> Dict[str, Any]:
+def classify_log_line(line: Any) -> dict[str, Any]:
     text = str(line or "")
     lower = text.lower()
     code_match = _ERROR_CODE_RE.search(text)
@@ -48,11 +49,11 @@ def default_log_dir() -> Path:
 
 
 def collect_recent_log_evidence(
-    log_dir: Optional[Any] = None,
+    log_dir: Any | None = None,
     since_seconds: float = 180.0,
     max_files: int = 4,
     max_lines: int = 1000,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     root = Path(log_dir) if log_dir is not None else default_log_dir()
     if not root.exists():
         return {"matched": False, "source": "roblox_log", "reason": "log_dir_missing"}
@@ -68,7 +69,7 @@ def collect_recent_log_evidence(
             candidates.append((modified, path))
     candidates.sort(reverse=True)
 
-    best: Dict[str, Any] = {"matched": False, "source": "roblox_log", "reason": "no_recent_disconnect_evidence"}
+    best: dict[str, Any] = {"matched": False, "source": "roblox_log", "reason": "no_recent_disconnect_evidence"}
     for _modified, path in candidates[: max(1, int(max_files or 1))]:
         try:
             lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-max(20, int(max_lines or 20)):]
@@ -86,7 +87,7 @@ def collect_recent_log_evidence(
     return best
 
 
-LogEvidenceCollector = Callable[..., Dict[str, Any]]
+LogEvidenceCollector = Callable[..., dict[str, Any]]
 
 
 class CachedLogEvidenceCollector:
@@ -96,7 +97,7 @@ class CachedLogEvidenceCollector:
         self._ttl_seconds = max(0.1, float(ttl_seconds or 2.0))
         self._clock = clock
         self._lock = threading.RLock()
-        self._cache: Dict[Tuple[str, float, int, int], Tuple[float, Dict[str, Any]]] = {}
+        self._cache: dict[tuple[str, float, int, int], tuple[float, dict[str, Any]]] = {}
 
     def clear(self) -> None:
         with self._lock:
@@ -105,14 +106,14 @@ class CachedLogEvidenceCollector:
     def collect(
         self,
         *,
-        collector: Optional[LogEvidenceCollector] = None,
-        log_dir: Optional[Any] = None,
+        collector: LogEvidenceCollector | None = None,
+        log_dir: Any | None = None,
         since_seconds: float = 180.0,
         max_files: int = 4,
         max_lines: int = 1000,
-        now: Optional[float] = None,
+        now: float | None = None,
         force_refresh: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         current = self._clock() if now is None else float(now)
         collect = collector or collect_recent_log_evidence
         key = (

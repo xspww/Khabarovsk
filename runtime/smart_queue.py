@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 from core_logging import flog_kv
 
@@ -16,7 +16,7 @@ class SmartQueue:
     def __init__(self):
         self._lock = threading.Lock()
         self._cond = threading.Condition(self._lock)
-        self._entries: Dict[str, Dict[str, Any]] = {}
+        self._entries: dict[str, dict[str, Any]] = {}
         self._busy = threading.Event()
         self._closed = False
         self._stale_rejections = 0
@@ -42,8 +42,8 @@ class SmartQueue:
         self,
         acc: Any,
         reason: str = "",
-        runtime_generation: Optional[int] = None,
-        recovery_generation: Optional[int] = None,
+        runtime_generation: int | None = None,
+        recovery_generation: int | None = None,
         delay_seconds: float = 0.0,
     ):
         key = acc._config_username
@@ -135,20 +135,20 @@ class SmartQueue:
         boost = -1000.0 if boosted else 0.0
         return base + retry_penalty + boost
 
-    def _entry_score(self, entry: Dict[str, Any]) -> float:
+    def _entry_score(self, entry: dict[str, Any]) -> float:
         try:
             return float(entry.get("score"))
         except (TypeError, ValueError):
             return self._calculate_score(entry["acc"], bool(entry.get("boosted")))
 
-    def _entry_due_at(self, entry: Dict[str, Any]) -> float:
+    def _entry_due_at(self, entry: dict[str, Any]) -> float:
         acc = entry["acc"]
         return max(
             float(entry.get("due_at") or 0.0),
             float(getattr(acc, "cooldown_until", 0.0) or 0.0),
         )
 
-    def _snapshot_sort_key(self, entry: Dict[str, Any], now: float):
+    def _snapshot_sort_key(self, entry: dict[str, Any], now: float):
         due_at = self._entry_due_at(entry)
         queued_at = float(entry.get("queued_at") or now)
         sequence = int(entry.get("sequence") or 0)
@@ -156,7 +156,7 @@ class SmartQueue:
         score_at_due = self._entry_score(entry)
         return (ready_rank, due_at if ready_rank else 0.0, score_at_due, sequence, queued_at)
 
-    def pop(self, timeout: float = 1.0) -> Optional[Any]:
+    def pop(self, timeout: float = 1.0) -> Any | None:
         deadline = time.time() + timeout
         with self._cond:
             while True:
@@ -253,7 +253,7 @@ class SmartQueue:
         flog_kv("QUEUE", "cancel_all", reason=reason, count=count)
         return count
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> dict[str, Any]:
         now = time.time()
         with self._lock:
             entries = []

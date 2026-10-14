@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, Optional
+from typing import Any
 
 from .runtime_lifecycle import lifecycle_for_runtime_state
 from .states import AccountState, RuntimeState
@@ -15,7 +15,7 @@ class AccountRuntime:
     canonical_state: str = "STOPPED"
     public_state: str = AccountState.IDLE.name
     desired_public_state: str = AccountState.IN_GAME.name
-    pid: Optional[int] = None
+    pid: int | None = None
     process_identity: str = ""
     bind_status: str = "unbound"
     binding_status: str = "unbound"
@@ -26,15 +26,15 @@ class AccountRuntime:
     process_owner_claim: str = ""
     unmanaged_live_process_count: int = 0
     unmanaged_live_pids: list[int] = field(default_factory=list)
-    adopt_candidate_pid: Optional[int] = None
+    adopt_candidate_pid: int | None = None
     adopt_reject_reason: str = ""
-    orphan_pid: Optional[int] = None
+    orphan_pid: int | None = None
     orphan_identity: str = ""
     orphan_confidence: float = 0.0
     orphan_observed_at: float = 0.0
     orphan_verify_after: float = 0.0
     destination_validation: str = "unverified"
-    launch_intent_summary: Dict[str, Any] = field(default_factory=dict)
+    launch_intent_summary: dict[str, Any] = field(default_factory=dict)
     generation: int = 0
     runtime_generation: int = 0
     recovery_generation: int = 0
@@ -74,10 +74,10 @@ class AccountRuntime:
     last_transition_at: float = field(default_factory=time.time)
     last_transition_reason: str = ""
     current_command: str = ""
-    command_inflight: Optional[Dict[str, Any]] = None
+    command_inflight: dict[str, Any] | None = None
     last_error: str = ""
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> dict[str, Any]:
         cooldown_left = max(0, int(float(self.cooldown_until or 0.0) - time.time()))
         return {
             "account_id": self.account_id,

@@ -4,7 +4,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any
 
 import net_tls
 from core import (
@@ -60,8 +60,8 @@ class AccountWorker(threading.Thread):
         cfg: dict,
         recovery: RecoveryEngine,
         stop: threading.Event,
-        supervisor: Optional[SupervisorRuntime] = None,
-        accounts: Optional[List[Account]] = None,
+        supervisor: SupervisorRuntime | None = None,
+        accounts: list[Account] | None = None,
     ):
         super().__init__(daemon=True, name=f"Worker-{acc.username}")
         self.acc = acc
@@ -78,8 +78,8 @@ class AccountWorker(threading.Thread):
         self._supervisor = supervisor
         self._accounts = accounts or [acc]
         self._wake = threading.Event()
-        self._not_responding_since: Optional[float] = None
-        self._connection_error_since: Optional[float] = None
+        self._not_responding_since: float | None = None
+        self._connection_error_since: float | None = None
         self._last_missing_hold_log = 0.0
 
     def wake(self):
@@ -91,7 +91,7 @@ class AccountWorker(threading.Thread):
         self,
         reason_key: str,
         extra: str = "",
-        expected_runtime_generation: Optional[int] = None,
+        expected_runtime_generation: int | None = None,
         expected_session_id: str = "",
         expected_launch_nonce: str = "",
         expected_transaction_id: str = "",
@@ -227,7 +227,7 @@ class AccountWorker(threading.Thread):
             )
         return False
 
-    def _assess_missing_bound_process(self, source: str) -> Dict[str, object]:
+    def _assess_missing_bound_process(self, source: str) -> dict[str, object]:
         acc = self.acc
         now = time.time()
         grace_period = max(4.0, min(float(self.cfg.get("crash_timeout", 30)), 10.0))
@@ -287,8 +287,8 @@ class AccountWorker(threading.Thread):
 
     def _looks_like_multi_roblox_guard_failure(
         self,
-        pid_was: Optional[int],
-        presence: Dict[str, Any],
+        pid_was: int | None,
+        presence: dict[str, Any],
         missing_for: float,
         grace_period: float,
     ) -> bool:

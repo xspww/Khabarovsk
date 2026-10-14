@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 from core import flog_kv
 from services.log_rate_limiter import LogRateLimiter
@@ -9,7 +9,7 @@ WATCHDOG_LOG_RATE_LIMITER = LogRateLimiter()
 _WATCHDOG_HOLD_LOG_INTERVAL_SECONDS = 15.0
 
 
-def handle_memory_pressure_rejoin(owner: Any, acc: Any, pid: Any, pressure: Dict[str, Any]) -> None:
+def handle_memory_pressure_rejoin(owner: Any, acc: Any, pid: Any, pressure: dict[str, Any]) -> None:
     ram_mb = float(pressure.get("ram_mb") or 0.0)
     limit_mb = float(pressure.get("limit_mb") or 0.0)
     high_for = float(pressure.get("high_for") or 0.0)
@@ -42,7 +42,7 @@ def handle_memory_pressure_rejoin(owner: Any, acc: Any, pid: Any, pressure: Dict
     )
 
 
-def log_memory_pressure_hold(acc: Any, pid: Any, pressure: Dict[str, Any], hold_seconds: float) -> None:
+def log_memory_pressure_hold(acc: Any, pid: Any, pressure: dict[str, Any], hold_seconds: float) -> None:
     WATCHDOG_LOG_RATE_LIMITER.emit(
         (
             "WATCHDOG",
@@ -65,7 +65,7 @@ def log_memory_pressure_hold(acc: Any, pid: Any, pressure: Dict[str, Any], hold_
     )
 
 
-def handle_disconnect_dialog_rejoin(owner: Any, acc: Any, pid: Any, dialog: Dict[str, Any]) -> None:
+def handle_disconnect_dialog_rejoin(owner: Any, acc: Any, pid: Any, dialog: dict[str, Any]) -> None:
     reason_key = str(dialog.get("reason_key") or "connection_error")
     detail = str(dialog.get("detail") or "")
     error_code = str(dialog.get("error_code") or "")

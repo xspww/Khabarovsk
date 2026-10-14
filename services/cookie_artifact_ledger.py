@@ -5,7 +5,7 @@ import json
 import os
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app_paths import APP_DATA_DIR
 
@@ -39,7 +39,7 @@ class CookieArtifactLedger:
         self.path = path
         self.max_artifacts = max(1, int(max_artifacts or MAX_COOKIE_ARTIFACTS))
 
-    def _read_artifacts(self) -> List[Dict[str, Any]]:
+    def _read_artifacts(self) -> list[dict[str, Any]]:
         if not os.path.exists(self.path):
             return []
         try:
@@ -56,7 +56,7 @@ class CookieArtifactLedger:
             return []
         return [item for item in artifacts if isinstance(item, dict)]
 
-    def _write_artifacts(self, artifacts: List[Dict[str, Any]]) -> bool:
+    def _write_artifacts(self, artifacts: list[dict[str, Any]]) -> bool:
         parent = os.path.dirname(os.path.abspath(self.path))
         tmp_path = f"{self.path}.{os.getpid()}.{threading.get_ident()}.tmp"
         payload = {
@@ -83,7 +83,7 @@ class CookieArtifactLedger:
             return False
 
     @staticmethod
-    def _target_key(artifact: Dict[str, Any]) -> tuple:
+    def _target_key(artifact: dict[str, Any]) -> tuple:
         return (
             str(artifact.get("target_type") or "").strip().lower(),
             _norm_path(str(artifact.get("path") or "")),
@@ -127,7 +127,7 @@ class CookieArtifactLedger:
     def record_json_cookie(self, account: str, path: str, cookie: str) -> bool:
         return self.record_artifact(account, "json", path, cookie, COOKIE_STORAGE_KEY)
 
-    def _write_json_artifact(self, path: str, payload: Dict[str, Any]) -> None:
+    def _write_json_artifact(self, path: str, payload: dict[str, Any]) -> None:
         tmp_path = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
         with open(tmp_path, "w", encoding="utf-8") as handle:
             json.dump(payload, handle, indent=2, ensure_ascii=False)
@@ -135,13 +135,13 @@ class CookieArtifactLedger:
             os.fsync(handle.fileno())
         os.replace(tmp_path, path)
 
-    def scrub_json_cookie_artifacts(self, account: Optional[str] = None) -> Dict[str, int]:
+    def scrub_json_cookie_artifacts(self, account: str | None = None) -> dict[str, int]:
         account_key = str(account or "").strip().lower()
         summary = {"scrubbed": 0, "skipped": 0, "missing": 0}
 
         with _LEDGER_LOCK:
             artifacts = self._read_artifacts()
-            remaining: List[Dict[str, Any]] = []
+            remaining: list[dict[str, Any]] = []
             for artifact in artifacts:
                 if str(artifact.get("target_type") or "").strip().lower() != "json":
                     remaining.append(artifact)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core import (
     Account,
@@ -27,10 +27,10 @@ class LaunchController:
         state_mgr: StateManager,
         bus: EventBus,
         cfg: dict,
-        accounts: Optional[List[Account]] = None,
-        runtime_state: Optional[RuntimeStateManager] = None,
-        runtime_store: Optional[RuntimeStore] = None,
-        supervisor: Optional[SupervisorRuntime] = None,
+        accounts: list[Account] | None = None,
+        runtime_state: RuntimeStateManager | None = None,
+        runtime_store: RuntimeStore | None = None,
+        supervisor: SupervisorRuntime | None = None,
     ):
         self._limiter = limiter
         self._state_mgr = state_mgr
@@ -53,7 +53,7 @@ class LaunchController:
             except Exception:
                 pass
 
-    def _record_transaction(self, acc: Account, snapshot: Dict[str, Any]):
+    def _record_transaction(self, acc: Account, snapshot: dict[str, Any]):
         if self._runtime_store and snapshot.get("transaction_id"):
             try:
                 self._runtime_store.record_transaction(snapshot)
@@ -61,7 +61,7 @@ class LaunchController:
             except Exception as e:
                 flog_kv("RUNTIME", "store_transaction_failed", "warning", account=acc.display_name, error=e)
 
-    def _record_stale_transaction(self, acc: Account, expected: Dict[str, Any], reason: str):
+    def _record_stale_transaction(self, acc: Account, expected: dict[str, Any], reason: str):
         if not expected:
             return
         snapshot = {
@@ -104,7 +104,7 @@ class LaunchController:
         step: str = "",
         reason: str = "",
         server_validation: str = "",
-        expected: Optional[Dict[str, Any]] = None,
+        expected: dict[str, Any] | None = None,
     ) -> bool:
         with acc._lock:
             expected = expected or {}
@@ -136,8 +136,8 @@ class LaunchController:
         pid: int,
         process_name: str,
         reason: str,
-        expected_runtime_generation: Optional[int] = None,
-        launched_after: Optional[float] = None,
+        expected_runtime_generation: int | None = None,
+        launched_after: float | None = None,
     ) -> bool:
         bind_result = ProcessService.bind_account_process(
             acc,
@@ -189,7 +189,7 @@ class LaunchController:
         acc: Account,
         pid: int,
         reason: str,
-        launched_after: Optional[float],
+        launched_after: float | None,
     ) -> bool:
         expected_identity = acc.bound_process_identity if pid == acc.pid else ""
         validation = ProcessManager.validate_binding(
@@ -249,8 +249,8 @@ class LaunchController:
         self,
         acc: Account,
         reason: str,
-        launched_after: Optional[float] = None,
-        expected_runtime_generation: Optional[int] = None,
+        launched_after: float | None = None,
+        expected_runtime_generation: int | None = None,
     ) -> bool:
         pid, name = ProcessManager.find_bound_game_process(
             preferred_pid=acc.pid,
@@ -294,8 +294,8 @@ class LaunchController:
         self,
         acc: Account,
         reason: str,
-        expected_runtime_generation: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        expected_runtime_generation: int | None = None,
+    ) -> dict[str, Any]:
         result = ProcessService.safe_adopt_visible_process(
             acc,
             self._state_mgr,
@@ -317,7 +317,7 @@ class LaunchController:
             _apply_cpu_limiter_for_bound_process(self._accounts, self._cfg, reason, acc)
         return result
 
-    def _visible_process_presence(self, exclude_pids: Optional[List[int]] = None) -> Dict[str, Any]:
+    def _visible_process_presence(self, exclude_pids: list[int] | None = None) -> dict[str, Any]:
         excluded = {int(pid) for pid in (exclude_pids or []) if pid}
         live = ProcessManager.list_live_game_processes()
         visible = [

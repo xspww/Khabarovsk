@@ -32,7 +32,7 @@ import sys
 import threading
 import time
 from ctypes import wintypes
-from typing import Any, Dict
+from typing import Any
 
 try:
     import psutil  # type: ignore
@@ -169,7 +169,7 @@ def _nt_set_info(info_class: int, buffer, size: int) -> int:
         return -1
 
 
-def _ram_snapshot_mb() -> Dict[str, float]:
+def _ram_snapshot_mb() -> dict[str, float]:
     if psutil is None:
         return {"used_mb": 0.0, "total_mb": 0.0, "percent": 0.0}
     try:
@@ -192,7 +192,7 @@ class RamCleanupService:
         self._last_check_at = 0.0
         self._interval_anchor_at = 0.0
         self._last_freed_mb = 0.0
-        self._last_status: Dict[str, Any] = {}
+        self._last_status: dict[str, Any] = {}
 
     def current_percent(self) -> float:
         try:
@@ -217,7 +217,7 @@ class RamCleanupService:
             return 0.0
 
     # -- stats --
-    def snapshot(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
+    def snapshot(self, cfg: dict[str, Any]) -> dict[str, Any]:
         snap = _ram_snapshot_mb()
         enabled = bool(cfg.get("ram_cleanup_enabled", False))
         interval_min = _interval_min(cfg.get("ram_cleanup_interval_min", 15))
@@ -254,7 +254,7 @@ class RamCleanupService:
             return max(0.0, _CLEANUP_COOLDOWN_SECONDS - (now - self._last_run_at)) \
                 if self._last_run_at else 0.0
 
-    def decide_auto_clean(self, cfg: Dict[str, Any], now: float | None = None) -> Dict[str, Any]:
+    def decide_auto_clean(self, cfg: dict[str, Any], now: float | None = None) -> dict[str, Any]:
         """Independent dual-trigger decision.
 
         - Threshold trigger: RAM percent >= threshold -> clean immediately,
@@ -301,16 +301,16 @@ class RamCleanupService:
         return {"eligible": True, "reason": "ready",
                 "trigger": trigger, **common}
 
-    def should_auto_clean(self, cfg: Dict[str, Any], now: float | None = None) -> Dict[str, Any]:
+    def should_auto_clean(self, cfg: dict[str, Any], now: float | None = None) -> dict[str, Any]:
         # Backward-compatible wrapper — now backed by the dual-trigger
         # decision (threshold immediate, interval unconditional).
         return self.decide_auto_clean(cfg, now)
 
     # -- core clean (MemReduct REDUCT_MASK_DEFAULT port) --
-    def clean(self, source: str = "manual") -> Dict[str, Any]:
+    def clean(self, source: str = "manual") -> dict[str, Any]:
         before = _ram_snapshot_mb()
         errors: list = []
-        steps: Dict[str, Any] = {}
+        steps: dict[str, Any] = {}
 
         if os.name != "nt":
             return {"ok": False, "msg": "RAM cleanup supports Windows only",
@@ -430,7 +430,7 @@ class RamCleanupService:
 RAM_CLEANUP = RamCleanupService()
 
 
-def normalize_ram_cleanup_settings(source: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_ram_cleanup_settings(source: dict[str, Any]) -> dict[str, Any]:
     threshold = _num(source.get("ram_cleanup_threshold_pct",
                                 source.get("threshold_pct", 85.0)), 85.0)
     interval = _num(source.get("ram_cleanup_interval_min",

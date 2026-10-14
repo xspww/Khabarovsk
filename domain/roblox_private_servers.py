@@ -7,7 +7,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import net_tls
 
@@ -30,7 +30,7 @@ def _safe_hash(value: str) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()[:16]
 
 
-def parse_vip_link(value: str) -> Tuple[str, str]:
+def parse_vip_link(value: str) -> tuple[str, str]:
     text = str(value or "").strip()
     if not text:
         return "", ""
@@ -47,7 +47,7 @@ def parse_vip_link(value: str) -> Tuple[str, str]:
     return str(place_id or ""), str(link_code or "")
 
 
-def parse_vip_components(value: str) -> Dict[str, str]:
+def parse_vip_components(value: str) -> dict[str, str]:
     text = str(value or "").strip()
     if not text:
         return {"place_id": "", "link_code": "", "access_code": ""}
@@ -67,7 +67,7 @@ def parse_vip_components(value: str) -> Dict[str, str]:
     return {"place_id": str(place_id or ""), "link_code": str(link_code or ""), "access_code": str(access_code or "")}
 
 
-def parse_vip_access_code_html(html: str) -> Dict[str, str]:
+def parse_vip_access_code_html(html: str) -> dict[str, str]:
     match = PRIVATE_GAME_RE.search(str(html or ""))
     if not match:
         return {"ok": False, "place_id": "", "access_code": "", "link_code": "", "msg": "joinPrivateGame marker not found"}
@@ -80,7 +80,7 @@ def parse_vip_access_code_html(html: str) -> Dict[str, str]:
     }
 
 
-def resolve_vip_access_code(cookie: str, vip_link: str, timeout: float = 12.0) -> Dict[str, Any]:
+def resolve_vip_access_code(cookie: str, vip_link: str, timeout: float = 12.0) -> dict[str, Any]:
     parts = parse_vip_components(vip_link)
     place_id = parts.get("place_id", "")
     link_code = parts.get("link_code", "")
@@ -121,7 +121,7 @@ def resolve_vip_access_code(cookie: str, vip_link: str, timeout: float = 12.0) -
     }
 
 
-def _json_body(body: str) -> Dict[str, Any]:
+def _json_body(body: str) -> dict[str, Any]:
     try:
         parsed = json.loads(body or "{}")
         return parsed if isinstance(parsed, dict) else {}
@@ -129,7 +129,7 @@ def _json_body(body: str) -> Dict[str, Any]:
         return {"raw": str(body or "")}
 
 
-def _api_error_message(payload: Dict[str, Any], fallback: str) -> str:
+def _api_error_message(payload: dict[str, Any], fallback: str) -> str:
     try:
         errors = payload.get("errors")
         if isinstance(errors, list) and errors:
@@ -142,7 +142,7 @@ def _api_error_message(payload: Dict[str, Any], fallback: str) -> str:
     return message or fallback
 
 
-def universe_id_for_place(place_id: str, timeout: float = 8.0) -> Tuple[bool, str, str]:
+def universe_id_for_place(place_id: str, timeout: float = 8.0) -> tuple[bool, str, str]:
     place = str(place_id or "").strip()
     if not place.isdigit():
         return False, "", "Place ID is required before creating a private server"
@@ -161,7 +161,7 @@ def universe_id_for_place(place_id: str, timeout: float = 8.0) -> Tuple[bool, st
     return True, universe_id, "ok"
 
 
-def game_name_for_universe(client: Any, universe_id: str) -> Tuple[bool, str, str]:
+def game_name_for_universe(client: Any, universe_id: str) -> tuple[bool, str, str]:
     uid = str(universe_id or "").strip()
     if not uid:
         return False, "", "missing universe id"
@@ -179,11 +179,11 @@ def game_name_for_universe(client: Any, universe_id: str) -> Tuple[bool, str, st
     return False, "", "Roblox did not return a game name"
 
 
-def _server_id(server: Dict[str, Any]) -> str:
+def _server_id(server: dict[str, Any]) -> str:
     return str(server.get("private_server_id") or server.get("privateServerId") or server.get("vipServerId") or server.get("id") or "").strip()
 
 
-def _server_owner_id(server: Dict[str, Any]) -> str:
+def _server_owner_id(server: dict[str, Any]) -> str:
     owner = server.get("owner")
     if isinstance(owner, dict):
         value = owner.get("id") or owner.get("userId")
@@ -192,7 +192,7 @@ def _server_owner_id(server: Dict[str, Any]) -> str:
     return str(server.get("owner_user_id") or server.get("ownerId") or server.get("ownerUserId") or "").strip()
 
 
-def _server_place_id(server: Dict[str, Any]) -> str:
+def _server_place_id(server: dict[str, Any]) -> str:
     game = server.get("game")
     if isinstance(game, dict):
         value = game.get("placeId") or game.get("rootPlaceId")
@@ -201,7 +201,7 @@ def _server_place_id(server: Dict[str, Any]) -> str:
     return str(server.get("place_id") or server.get("placeId") or "").strip()
 
 
-def _server_universe_id(server: Dict[str, Any]) -> str:
+def _server_universe_id(server: dict[str, Any]) -> str:
     game = server.get("game")
     if isinstance(game, dict):
         value = game.get("universeId")
@@ -210,7 +210,7 @@ def _server_universe_id(server: Dict[str, Any]) -> str:
     return str(server.get("universe_id") or server.get("universeId") or "").strip()
 
 
-def _server_join_code(server: Dict[str, Any]) -> str:
+def _server_join_code(server: dict[str, Any]) -> str:
     link = server.get("link")
     if isinstance(link, dict):
         value = link.get("code") or link.get("joinCode") or link.get("privateServerLinkCode")
@@ -225,11 +225,11 @@ def _server_join_code(server: Dict[str, Any]) -> str:
     ).strip()
 
 
-def _server_access_code(server: Dict[str, Any]) -> str:
+def _server_access_code(server: dict[str, Any]) -> str:
     return str(server.get("access_code") or server.get("accessCode") or "").strip()
 
 
-def build_owned_private_server_link(place_id: str, server: Dict[str, Any]) -> str:
+def build_owned_private_server_link(place_id: str, server: dict[str, Any]) -> str:
     raw_link = server.get("link") or server.get("join_link") or server.get("joinLink") or ""
     if isinstance(raw_link, dict):
         raw_link = raw_link.get("url") or raw_link.get("href") or raw_link.get("link") or ""
@@ -254,7 +254,7 @@ def build_owned_private_server_link(place_id: str, server: Dict[str, Any]) -> st
 
 
 def _private_server_matches_owner(
-    server: Dict[str, Any],
+    server: dict[str, Any],
     owner_user_id: str,
     place_id: str,
     universe_id: str,
@@ -273,8 +273,8 @@ def _private_server_matches_owner(
     return bool(_server_id(server) or build_owned_private_server_link(place_id, server))
 
 
-def list_my_private_servers(client: Any, limit: int = 100, max_pages: int = 5) -> Tuple[bool, List[Dict[str, Any]], str]:
-    servers: List[Dict[str, Any]] = []
+def list_my_private_servers(client: Any, limit: int = 100, max_pages: int = 5) -> tuple[bool, list[dict[str, Any]], str]:
+    servers: list[dict[str, Any]] = []
     cursor = ""
     for _page in range(max(1, int(max_pages or 1))):
         params = {"limit": str(max(10, min(int(limit or 100), 100)))}
@@ -299,11 +299,11 @@ def list_private_servers_for_place(
     place_id: str,
     limit: int = 100,
     max_pages: int = 5,
-) -> Tuple[bool, List[Dict[str, Any]], str]:
+) -> tuple[bool, list[dict[str, Any]], str]:
     place = str(place_id or "").strip()
     if not place:
         return False, [], "missing place id"
-    servers: List[Dict[str, Any]] = []
+    servers: list[dict[str, Any]] = []
     cursor = ""
     for _page in range(max(1, int(max_pages or 1))):
         params = {
@@ -326,7 +326,7 @@ def list_private_servers_for_place(
     return True, servers, "ok"
 
 
-def fetch_private_server_metadata(client: Any, private_server_id: str) -> Tuple[bool, Dict[str, Any], str]:
+def fetch_private_server_metadata(client: Any, private_server_id: str) -> tuple[bool, dict[str, Any], str]:
     sid = str(private_server_id or "").strip()
     if not sid:
         return False, {}, "missing private server id"
@@ -337,7 +337,7 @@ def fetch_private_server_metadata(client: Any, private_server_id: str) -> Tuple[
     return False, payload, _api_error_message(payload, f"Private server metadata failed ({status})")
 
 
-def private_servers_enabled_for_universe(client: Any, universe_id: str) -> Tuple[bool, bool, str]:
+def private_servers_enabled_for_universe(client: Any, universe_id: str) -> tuple[bool, bool, str]:
     uid = str(universe_id or "").strip()
     if not uid:
         return False, False, "missing universe id"
@@ -352,14 +352,14 @@ def private_servers_enabled_for_universe(client: Any, universe_id: str) -> Tuple
 
 
 def _private_server_record(
-    server: Dict[str, Any],
+    server: dict[str, Any],
     place_id: str,
     universe_id: str,
     owner_user_id: str,
     source: str,
     status: str = "ok",
     error: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     place = str(place_id or _server_place_id(server) or "").strip()
     link = build_owned_private_server_link(place, server)
     return {
@@ -379,7 +379,7 @@ def _private_server_record(
     }
 
 
-def _private_server_identity_key(server: Dict[str, Any], owner_user_id: str, place_id: str, universe_id: str) -> Tuple[str, str, str]:
+def _private_server_identity_key(server: dict[str, Any], owner_user_id: str, place_id: str, universe_id: str) -> tuple[str, str, str]:
     return (
         _server_owner_id(server) or str(owner_user_id or ""),
         _server_place_id(server) or str(place_id or ""),
@@ -387,7 +387,7 @@ def _private_server_identity_key(server: Dict[str, Any], owner_user_id: str, pla
     )
 
 
-def _merge_private_server_secrets(candidate: Dict[str, Any], known: Dict[str, Any]) -> None:
+def _merge_private_server_secrets(candidate: dict[str, Any], known: dict[str, Any]) -> None:
     if not known:
         return
     for src_key, dst_key in (
@@ -406,15 +406,15 @@ def _merge_private_server_secrets(candidate: Dict[str, Any], known: Dict[str, An
 
 
 def _known_private_server_for(
-    records: List[Dict[str, Any]],
+    records: list[dict[str, Any]],
     private_server_id: str,
     owner_user_id: str,
     place_id: str,
     universe_id: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     expected_key = (str(owner_user_id or ""), str(place_id or ""), str(universe_id or ""))
     sid = str(private_server_id or "").strip()
-    fallback: Dict[str, Any] = {}
+    fallback: dict[str, Any] = {}
     for item in records or []:
         if not isinstance(item, dict):
             continue
@@ -435,13 +435,13 @@ def _known_private_server_for(
 
 
 def _place_private_server_for(
-    servers: List[Dict[str, Any]],
+    servers: list[dict[str, Any]],
     private_server_id: str,
     owner_user_id: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     sid = str(private_server_id or "").strip()
     owner = str(owner_user_id or "").strip()
-    fallback: Dict[str, Any] = {}
+    fallback: dict[str, Any] = {}
     for item in servers or []:
         if not isinstance(item, dict):
             continue
@@ -493,9 +493,9 @@ VIP_UNAVAILABLE_TTL_SECONDS = 6 * 60 * 60
 
 
 def remembered_vip_unavailable(
-    records: Optional[List[Dict[str, Any]]],
+    records: list[dict[str, Any]] | None,
     place_id: Any,
-    now: Optional[float] = None,
+    now: float | None = None,
     ttl_seconds: float = VIP_UNAVAILABLE_TTL_SECONDS,
 ) -> str:
     """Return a cached permanent-failure reason for this place, or "".
@@ -538,7 +538,7 @@ def ensure_owned_private_server(
     owner_user_id: str,
     place_id: str,
     free_only: bool = True,
-    known_servers: Optional[List[Dict[str, Any]]] = None,
+    known_servers: list[dict[str, Any]] | None = None,
     *,
     universe_lookup=universe_id_for_place,
     list_my_private_servers_fn=list_my_private_servers,
@@ -546,7 +546,7 @@ def ensure_owned_private_server(
     fetch_private_server_metadata_fn=fetch_private_server_metadata,
     private_servers_enabled_for_universe_fn=private_servers_enabled_for_universe,
     game_name_for_universe_fn=game_name_for_universe,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     place = str(place_id or "").strip()
     ok, universe_id, detail = universe_lookup(place)
     if not ok:
@@ -557,7 +557,7 @@ def ensure_owned_private_server(
         return {"ok": False, "msg": list_msg, "place_id": place, "universe_id": universe_id}
 
     place_servers_loaded = False
-    place_servers: List[Dict[str, Any]] = []
+    place_servers: list[dict[str, Any]] = []
     place_servers_msg = ""
 
     for server in servers:
@@ -659,7 +659,7 @@ def ensure_owned_private_server(
 
 
 
-def parse_launch_destination_from_cmdline(cmdline: str) -> Dict[str, Any]:
+def parse_launch_destination_from_cmdline(cmdline: str) -> dict[str, Any]:
     text = str(cmdline or "")
     launcher = ""
     match = re.search(r"placelauncherurl:([^+\s]+)", text, flags=re.IGNORECASE)
@@ -698,7 +698,7 @@ def build_place_launcher_url(
     browser_tracker_id: str = "",
     vip_access_code: str = "",
     vip_link_code: str = "",
-) -> Tuple[str, str, str]:
+) -> tuple[str, str, str]:
     place_id = str(place_id or "").strip()
     job_id = str(job_id or "").strip()
     vip_link = str(vip_link or "").strip()

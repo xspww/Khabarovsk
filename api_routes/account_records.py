@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core import (
     account_launch_block_reason,
@@ -46,20 +46,20 @@ from services.verify_guard import (
 from .settings_state import _apply_game_defaults, persist_config
 
 
-def account_data_records(store: Any, include_cookies: bool = False) -> List[Dict[str, Any]]:
+def account_data_records(store: Any, include_cookies: bool = False) -> list[dict[str, Any]]:
     try:
         return store.read_records(include_cookies=include_cookies)
     except Exception as e:
         flog_kv("ACCOUNT_DATA", "read_failed", "warning", error=e)
         return []
-def account_data_api_records(store: Any, farm: Any) -> List[Dict[str, Any]]:
+def account_data_api_records(store: Any, farm: Any) -> list[dict[str, Any]]:
     records = account_data_records(store, include_cookies=False)
     runtime_by_user = {
         str(account.username or "").strip().lower(): account
         for account in farm._accounts
         if str(account.username or "").strip()
     }
-    result: List[Dict[str, Any]] = []
+    result: list[dict[str, Any]] = []
     for record in records:
         item = store.to_api_record(record)
         blocked_reason = cookie_identity_block_reason(
@@ -124,7 +124,7 @@ def replace_farm_accounts_from_store(ctx: Any, cfg_mgr: Any, farm: Any, store: A
     new_accounts = load_accounts_from_store(store)
     _apply_game_defaults(ctx, new_accounts, persist=False)
     return replace_farm_accounts(farm, cfg_mgr, new_accounts)
-def clear_runtime_allowlist_after_reload(cfg_mgr: Any, farm: Any) -> Dict[str, Any]:
+def clear_runtime_allowlist_after_reload(cfg_mgr: Any, farm: Any) -> dict[str, Any]:
     current = runtime_account_allowlist({
         "runtime_account_allowlist": cfg_mgr.get("runtime_account_allowlist", [])
     })
@@ -145,16 +145,16 @@ def clear_runtime_allowlist_after_reload(cfg_mgr: Any, farm: Any) -> Dict[str, A
             cleared_count=len(current),
         )
     return {"allowlist_cleared": True, "allowlist_cleared_count": len(current)}
-def validate_cookie_records_from_store(store: Any, validate_cookie: Any, audit: Any) -> Dict[str, Any]:
+def validate_cookie_records_from_store(store: Any, validate_cookie: Any, audit: Any) -> dict[str, Any]:
     records = store.read_records(include_cookies=True)
-    kept: List[Dict[str, Any]] = []
-    invalid: List[Dict[str, str]] = []
-    captcha: List[Dict[str, str]] = []
-    banned: List[Dict[str, str]] = []
-    suspended: List[Dict[str, str]] = []
-    locked: List[Dict[str, str]] = []
-    account_recovery: List[Dict[str, str]] = []
-    valid: List[Dict[str, str]] = []
+    kept: list[dict[str, Any]] = []
+    invalid: list[dict[str, str]] = []
+    captcha: list[dict[str, str]] = []
+    banned: list[dict[str, str]] = []
+    suspended: list[dict[str, str]] = []
+    locked: list[dict[str, str]] = []
+    account_recovery: list[dict[str, str]] = []
+    valid: list[dict[str, str]] = []
     for record in records:
         username = str(record.get("username") or "").strip()
         cookie = str(record.get("cookie") or "").strip()
@@ -398,7 +398,7 @@ def validate_cookie_records_from_store(store: Any, validate_cookie: Any, audit: 
         "locked_accounts": locked,
         "recovery_accounts": account_recovery,
     }
-def find_account_record(store: Any, username: str, include_cookie: bool = True) -> Optional[Dict[str, Any]]:
+def find_account_record(store: Any, username: str, include_cookie: bool = True) -> dict[str, Any] | None:
     wanted = str(username or "").strip().lower()
     for record in account_data_records(store, include_cookies=include_cookie):
         if str(record.get("username") or "").strip().lower() == wanted:

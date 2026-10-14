@@ -6,7 +6,7 @@ import os
 import threading
 import time
 from ctypes import wintypes
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from runtime.popup_detector.popup_classifier import PopupClassification, classify_popup_observation
 from runtime.recovery_context import VISUAL_DISCONNECT
@@ -36,10 +36,10 @@ def _visual_enabled() -> bool:
 
 
 _HOLD_LOCK = threading.RLock()
-_INSPECTION_HOLDS: Dict[int, float] = {}
+_INSPECTION_HOLDS: dict[int, float] = {}
 
 
-def clear_expired_inspection_holds(now: Optional[float] = None) -> None:
+def clear_expired_inspection_holds(now: float | None = None) -> None:
     now = time.time() if now is None else float(now)
     with _HOLD_LOCK:
         expired = [pid for pid, until in _INSPECTION_HOLDS.items() if until <= now]
@@ -47,7 +47,7 @@ def clear_expired_inspection_holds(now: Optional[float] = None) -> None:
             _INSPECTION_HOLDS.pop(pid, None)
 
 
-def is_inspection_held(pid: Optional[int]) -> bool:
+def is_inspection_held(pid: int | None) -> bool:
     if not pid:
         return False
     clear_expired_inspection_holds()
@@ -55,14 +55,14 @@ def is_inspection_held(pid: Optional[int]) -> bool:
         return float(_INSPECTION_HOLDS.get(int(pid), 0.0) or 0.0) > time.time()
 
 
-def _set_inspection_hold(pid: Optional[int], seconds: float = 15.0) -> None:
+def _set_inspection_hold(pid: int | None, seconds: float = 15.0) -> None:
     if not pid:
         return
     with _HOLD_LOCK:
         _INSPECTION_HOLDS[int(pid)] = time.time() + max(1.0, float(seconds or 15.0))
 
 
-def _release_inspection_hold(pid: Optional[int]) -> None:
+def _release_inspection_hold(pid: int | None) -> None:
     if not pid:
         return
     with _HOLD_LOCK:
@@ -74,12 +74,12 @@ class PopupWindowSampler:
         self.inspection_width = max(320, int(inspection_width or 320))
         self.inspection_height = max(240, int(inspection_height or 240))
 
-    def windows_for_pid(self, pid: Optional[int], include_hidden: bool = True) -> List[Dict[str, Any]]:
+    def windows_for_pid(self, pid: int | None, include_hidden: bool = True) -> list[dict[str, Any]]:
         if not pid:
             return []
         try:
             user32 = ctypes.windll.user32
-            windows: List[Dict[str, Any]] = []
+            windows: list[dict[str, Any]] = []
             WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_long)
 
             class RECT(ctypes.Structure):
@@ -125,7 +125,7 @@ class PopupWindowSampler:
         except Exception:
             return []
 
-    def prepare_popup_inspection(self, pid: Optional[int], hold_seconds: float = 15.0) -> Dict[str, Any]:
+    def prepare_popup_inspection(self, pid: int | None, hold_seconds: float = 15.0) -> dict[str, Any]:
         windows = self.windows_for_pid(pid, include_hidden=True)
         if not windows:
             return {"ok": False, "reason": "no_hwnd", "pid": pid, "windows": []}
@@ -146,7 +146,7 @@ class PopupWindowSampler:
         except Exception as exc:
             return {"ok": False, "reason": str(exc), "pid": pid, "hwnd": hwnd, "windows": windows}
 
-    def focus_pid_window(self, pid: Optional[int]) -> Dict[str, Any]:
+    def focus_pid_window(self, pid: int | None) -> dict[str, Any]:
         windows = self.windows_for_pid(pid, include_hidden=True)
         if not windows:
             return {"ok": False, "reason": "no_hwnd", "pid": pid, "windows": []}
@@ -168,12 +168,12 @@ class PopupWindowSampler:
         except Exception as exc:
             return {"ok": False, "reason": str(exc), "pid": pid, "hwnd": hwnd, "windows": windows}
 
-    def read_texts(self, hwnd: int) -> List[str]:
+    def read_texts(self, hwnd: int) -> list[str]:
         if not hwnd:
             return []
         try:
             user32 = ctypes.windll.user32
-            texts: List[str] = []
+            texts: list[str] = []
             seen = set()
             WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_long)
 
@@ -349,22 +349,22 @@ class PopupObserver:
 
     def inspect_pid(
         self,
-        pid: Optional[int],
+        pid: int | None,
         *,
         prepare: bool = False,
         process_idle: bool = False,
-        sample_count: Optional[int] = None,
-        sample_interval: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        sample_count: int | None = None,
+        sample_interval: float | None = None,
+    ) -> dict[str, Any]:
         if pid is None:
             return {"matched": False, "action": "", "reason_key": "", "detail": "", "error_code": ""}
         sample_total = max(1, int(sample_count or self.sample_count))
         interval = max(0.0, float(self.sample_interval if sample_interval is None else sample_interval))
-        prepared: Dict[str, Any] = {}
+        prepared: dict[str, Any] = {}
         if prepare:
             prepared = self.sampler.prepare_popup_inspection(pid)
         try:
-            samples: List[PopupClassification] = []
+            samples: list[PopupClassification] = []
             hwnd = int((prepared.get("hwnd") if prepared else 0) or 0)
             for index in range(sample_total):
                 if not hwnd:

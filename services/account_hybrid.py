@@ -8,8 +8,9 @@ import os
 import re
 import secrets
 import time
+from collections.abc import Iterable
 from ctypes import wintypes
-from typing import Any, Dict, Iterable, List, Optional, Tuple
+from typing import Any
 
 from app_paths import APP_DATA_DIR, LOG_DIR, move_app_data_file
 
@@ -31,7 +32,7 @@ class DATA_BLOB(ctypes.Structure):
     _fields_ = [("cbData", wintypes.DWORD), ("pbData", ctypes.POINTER(ctypes.c_char))]
 
 
-def _make_blob(data: bytes) -> Tuple[DATA_BLOB, Any]:
+def _make_blob(data: bytes) -> tuple[DATA_BLOB, Any]:
     buffer = ctypes.create_string_buffer(data)
     return DATA_BLOB(len(data), ctypes.cast(buffer, ctypes.POINTER(ctypes.c_char))), buffer
 
@@ -124,7 +125,7 @@ def _short_hash(value: Any) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()[:16]
 
 
-def _normalize_owned_private_servers(value: Any) -> List[Dict[str, Any]]:
+def _normalize_owned_private_servers(value: Any) -> list[dict[str, Any]]:
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -134,7 +135,7 @@ def _normalize_owned_private_servers(value: Any) -> List[Dict[str, Any]]:
         value = [value]
     if not isinstance(value, list):
         return []
-    clean: List[Dict[str, Any]] = []
+    clean: list[dict[str, Any]] = []
     for item in value:
         if not isinstance(item, dict):
             continue
@@ -171,8 +172,8 @@ def _normalize_owned_private_servers(value: Any) -> List[Dict[str, Any]]:
     return clean
 
 
-def _public_owned_private_servers(value: Any) -> List[Dict[str, Any]]:
-    public: List[Dict[str, Any]] = []
+def _public_owned_private_servers(value: Any) -> list[dict[str, Any]]:
+    public: list[dict[str, Any]] = []
     for item in _normalize_owned_private_servers(value):
         link = str(item.get("link") or "")
         join_code = str(item.get("join_code") or "")
@@ -200,7 +201,7 @@ def _public_owned_private_servers(value: Any) -> List[Dict[str, Any]]:
     return public
 
 
-def _redact_vip_links_for_api(value: Any) -> Tuple[List[str], List[str]]:
+def _redact_vip_links_for_api(value: Any) -> tuple[list[str], list[str]]:
     if isinstance(value, str):
         links = [line.strip() for line in value.splitlines() if line.strip()]
     elif isinstance(value, list):
@@ -222,7 +223,7 @@ def _merge_redacted_vip_links(new_value: Any, old_value: Any) -> Any:
         return new_value
     if not old_links:
         return [link for link in new_links if "[REDACTED]" not in link]
-    merged: List[str] = []
+    merged: list[str] = []
     for idx, link in enumerate(new_links):
         if "[REDACTED]" in link and idx < len(old_links):
             merged.append(old_links[idx])
@@ -233,12 +234,12 @@ def _merge_redacted_vip_links(new_value: Any, old_value: Any) -> Any:
     return merged
 
 
-def parse_cookie_line(line: str) -> Tuple[str, str]:
+def parse_cookie_line(line: str) -> tuple[str, str]:
     username, _password, cookie = parse_credential_line(line)
     return username, cookie
 
 
-def parse_credential_line(line: str) -> Tuple[str, str, str]:
+def parse_credential_line(line: str) -> tuple[str, str, str]:
     """Split a ``user:pass:cookie`` (or cookie-only) line.
 
     Returns (username, password, cookie). The password is only present on
@@ -263,7 +264,7 @@ def parse_credential_line(line: str) -> Tuple[str, str, str]:
     return "", "", ""
 
 
-def parse_userpass_line(line: str) -> Tuple[str, str]:
+def parse_userpass_line(line: str) -> tuple[str, str]:
     text = str(line or "").strip()
     if not text:
         return "", ""
@@ -288,7 +289,7 @@ class AccountDataStore:
         return json.loads(data.decode("utf-8-sig"))
 
     @classmethod
-    def decode_account_file_bytes(cls, data: bytes) -> List[Dict[str, Any]]:
+    def decode_account_file_bytes(cls, data: bytes) -> list[dict[str, Any]]:
         if not data:
             return []
         stripped = data.lstrip()
@@ -307,14 +308,14 @@ class AccountDataStore:
             raise ValueError("AccountData must contain an account array")  # noqa: TRY004 - public contract raises ValueError
         return [cls.normalize_record(item) for item in accounts if isinstance(item, dict)]
 
-    def read_records(self, include_cookies: bool = False) -> List[Dict[str, Any]]:
+    def read_records(self, include_cookies: bool = False) -> list[dict[str, Any]]:
         records = self.decode_account_file_bytes(self._read_bytes())
         if include_cookies:
             for record in records:
                 record["cookie"] = self.get_cookie_from_record(record)
         return records
 
-    def write_records(self, records: Iterable[Dict[str, Any]]) -> None:
+    def write_records(self, records: Iterable[dict[str, Any]]) -> None:
         clean = [self.normalize_record(item) for item in records if isinstance(item, dict)]
         payload = {
             "schema": "cronus.accountdata.v1",
@@ -332,7 +333,7 @@ class AccountDataStore:
         os.replace(tmp_path, self.path)
 
     @staticmethod
-    def get_cookie_from_record(record: Dict[str, Any]) -> str:
+    def get_cookie_from_record(record: dict[str, Any]) -> str:
         encrypted = str(record.get("encrypted_cookie") or record.get("EncryptedCookie") or "").strip()
         if encrypted:
             return decrypt_cookie(encrypted)
@@ -342,7 +343,7 @@ class AccountDataStore:
         return ""
 
     @classmethod
-    def normalize_record(cls, item: Dict[str, Any]) -> Dict[str, Any]:
+    def normalize_record(cls, item: dict[str, Any]) -> dict[str, Any]:
         fields = item.get("fields") if isinstance(item.get("fields"), dict) else item.get("Fields")
         if not isinstance(fields, dict):
             fields = {}
@@ -416,7 +417,7 @@ class AccountDataStore:
         }
 
     @classmethod
-    def to_api_record(cls, record: Dict[str, Any], include_cookie: bool = False) -> Dict[str, Any]:
+    def to_api_record(cls, record: dict[str, Any], include_cookie: bool = False) -> dict[str, Any]:
         out = dict(cls.normalize_record(record))
         cookie = cls.get_cookie_from_record(record)
         out["cookie_present"] = bool(cookie)
@@ -431,7 +432,7 @@ class AccountDataStore:
         return out
 
     @classmethod
-    def to_cronus_account(cls, record: Dict[str, Any]) -> Dict[str, Any]:
+    def to_cronus_account(cls, record: dict[str, Any]) -> dict[str, Any]:
         normalized = cls.normalize_record(record)
         return {
             "username": normalized["username"],
@@ -453,16 +454,16 @@ class AccountDataStore:
             "finished_at": normalized["finished_at"],
         }
 
-    def to_cronus_accounts(self) -> List[Dict[str, Any]]:
+    def to_cronus_accounts(self) -> list[dict[str, Any]]:
         return [self.to_cronus_account(record) for record in self.read_records(include_cookies=True)]
 
-    def replace_from_cronus_payload(self, payload: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def replace_from_cronus_payload(self, payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
         existing = {
             str(record.get("username") or "").strip().lower(): record
             for record in self.read_records(include_cookies=False)
             if str(record.get("username") or "").strip()
         }
-        records: List[Dict[str, Any]] = []
+        records: list[dict[str, Any]] = []
         for item in payload:
             data = dict(item)
             username = str(data.get("username") or data.get("Username") or "").strip()
@@ -479,7 +480,7 @@ class AccountDataStore:
         self.write_records(records)
         return records
 
-    def upsert_records(self, new_records: Iterable[Dict[str, Any]]) -> Tuple[int, List[Dict[str, Any]]]:
+    def upsert_records(self, new_records: Iterable[dict[str, Any]]) -> tuple[int, list[dict[str, Any]]]:
         merged = {
             str(record.get("username") or "").strip().lower(): record
             for record in self.read_records(include_cookies=False)
@@ -500,9 +501,9 @@ class AccountDataStore:
         self.write_records(records)
         return changed, records
 
-    def import_cookie_lines(self, lines: Iterable[str], validator=None) -> Dict[str, Any]:
-        records: List[Dict[str, Any]] = []
-        errors: List[str] = []
+    def import_cookie_lines(self, lines: Iterable[str], validator=None) -> dict[str, Any]:
+        records: list[dict[str, Any]] = []
+        errors: list[str] = []
         banned = 0
         locked = 0
         account_recovery = 0
@@ -1012,7 +1013,7 @@ class AccountDataStore:
                 }
             )
         changed, merged = self.upsert_records(records)
-        result: Dict[str, Any] = {"ok": True, "imported": changed, "errors": errors, "count": len(merged)}
+        result: dict[str, Any] = {"ok": True, "imported": changed, "errors": errors, "count": len(merged)}
         if banned:
             result["banned"] = banned
         if locked:
@@ -1026,7 +1027,7 @@ class AccountDataStore:
         return result
 
     @staticmethod
-    def load_pending_imports() -> List[Dict[str, Any]]:
+    def load_pending_imports() -> list[dict[str, Any]]:
         if not os.path.exists(PENDING_IMPORT_FILE):
             return []
         try:
@@ -1037,16 +1038,16 @@ class AccountDataStore:
             return []
 
     @staticmethod
-    def write_pending_imports(items: List[Dict[str, Any]]) -> None:
+    def write_pending_imports(items: list[dict[str, Any]]) -> None:
         tmp_path = f"{PENDING_IMPORT_FILE}.{os.getpid()}.tmp"
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(items, f, indent=2, ensure_ascii=False)
         os.replace(tmp_path, PENDING_IMPORT_FILE)
 
-    def update_record(self, username: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def update_record(self, username: str, updates: dict[str, Any]) -> dict[str, Any] | None:
         records = self.read_records(include_cookies=False)
         key = str(username or "").strip().lower()
-        updated: Optional[Dict[str, Any]] = None
+        updated: dict[str, Any] | None = None
         for idx, record in enumerate(records):
             if str(record.get("username") or "").strip().lower() == key:
                 records[idx] = self.normalize_record({**record, **updates})

@@ -7,13 +7,14 @@ table-testable on fake accounts without a farm, network, or HTTP layer.
 """
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 
 from core import account_launch_block_reason, flog_kv
 from runtime.account_selection import runtime_account_filter_reason
 
 
-def blocked_summary(blocked: List[Dict[str, Any]]) -> str:
+def blocked_summary(blocked: list[dict[str, Any]]) -> str:
     if not blocked:
         return ""
     reasons = [str(item.get("reason") or "").lower() for item in blocked]
@@ -25,13 +26,13 @@ def blocked_summary(blocked: List[Dict[str, Any]]) -> str:
 
 
 def decide_start(
-    accounts: List[Any],
-    cfg: Dict[str, Any],
+    accounts: list[Any],
+    cfg: dict[str, Any],
     command_id: str,
     starter: Callable[[], Any],
     cfg_mgr: Any = None,
-    run_preflight: Optional[Callable[..., Dict[str, Any]]] = None,
-) -> Dict[str, Any]:
+    run_preflight: Callable[..., dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     """Run every START guard, call starter() only when all pass.
 
     Returns the final result payload in every case (same shapes the route

@@ -28,8 +28,9 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 LOGIN_URL = "https://www.roblox.com/login"
 LOGIN_USERNAME_SELECTOR = "#login-username"
@@ -108,13 +109,13 @@ class ManualLoginSkipped(RuntimeError):
     """The user pressed Skip for the current entry."""
 
 
-def parse_userpass_entries(text: str) -> List[Dict[str, str]]:
+def parse_userpass_entries(text: str) -> list[dict[str, str]]:
     """Parse ``user:pass`` per line for Manual Login - Multi.
 
     Blank lines and lines without ``:`` are skipped. The password keeps
     everything after the first ``:`` (passwords may contain ``:``).
     """
-    entries: List[Dict[str, str]] = []
+    entries: list[dict[str, str]] = []
     for raw_line in str(text or "").splitlines():
         line = raw_line.strip()
         if not line or ":" not in line:
@@ -136,7 +137,7 @@ class ManualLoginEntry:
     imported_as: str = ""
     password: str = field(default="", repr=False)
 
-    def public(self) -> Dict[str, str]:
+    def public(self) -> dict[str, str]:
         return {
             "username": self.username_hint or self.imported_as,
             "status": self.status,
@@ -149,7 +150,7 @@ class ManualLoginEntry:
 class ManualLoginSession:
     session_id: str
     mode: str  # single|multi
-    entries: List[ManualLoginEntry] = field(default_factory=list)
+    entries: list[ManualLoginEntry] = field(default_factory=list)
     state: str = "running"  # running|installing|done|cancelled|error
     note: str = ""
     created_at: float = field(default_factory=time.time)
@@ -157,7 +158,7 @@ class ManualLoginSession:
     skip_event: threading.Event = field(default_factory=threading.Event)
     lock: threading.Lock = field(default_factory=threading.Lock)
 
-    def public(self) -> Dict[str, Any]:
+    def public(self) -> dict[str, Any]:
         with self.lock:
             items = [entry.public() for entry in self.entries]
             done = sum(1 for entry in self.entries if entry.status == "done")
@@ -185,12 +186,12 @@ class ManualLoginManager:
     def __init__(
         self,
         store: Any = None,
-        validator: Optional[Callable[[str], Any]] = None,
-        on_imported: Optional[Callable[[], None]] = None,
-        audit: Optional[Callable[..., None]] = None,
-        browser_login: Optional[Callable[..., str]] = None,
+        validator: Callable[[str], Any] | None = None,
+        on_imported: Callable[[], None] | None = None,
+        audit: Callable[..., None] | None = None,
+        browser_login: Callable[..., str] | None = None,
         login_timeout_s: float = DEFAULT_LOGIN_TIMEOUT_S,
-        credential_check: Optional[Callable[..., Any]] = None,
+        credential_check: Callable[..., Any] | None = None,
     ) -> None:
         self._store = store
         self._validator = validator
@@ -199,7 +200,7 @@ class ManualLoginManager:
         self._browser_login = browser_login or self._playwright_login
         self._credential_check = credential_check
         self._login_timeout_s = float(login_timeout_s or DEFAULT_LOGIN_TIMEOUT_S)
-        self._sessions: Dict[str, ManualLoginSession] = {}
+        self._sessions: dict[str, ManualLoginSession] = {}
         self._guard = threading.Lock()
 
     # -- store / validator lazy binding (avoids import cycles at module load) --
@@ -239,7 +240,7 @@ class ManualLoginManager:
         )
         return self._launch(session)
 
-    def start_multi(self, entries: List[Dict[str, str]]) -> ManualLoginSession:
+    def start_multi(self, entries: list[dict[str, str]]) -> ManualLoginSession:
         clean = [
             ManualLoginEntry(username_hint=str(item.get("username") or "").strip(), password=str(item.get("password") or ""))
             for item in entries or []
@@ -250,11 +251,11 @@ class ManualLoginManager:
         session = ManualLoginSession(session_id=secrets.token_hex(8), mode="multi", entries=clean)
         return self._launch(session)
 
-    def get_session(self, session_id: str) -> Optional[ManualLoginSession]:
+    def get_session(self, session_id: str) -> ManualLoginSession | None:
         with self._guard:
             return self._sessions.get(str(session_id or ""))
 
-    def public_status(self, session_id: str) -> Optional[Dict[str, Any]]:
+    def public_status(self, session_id: str) -> dict[str, Any] | None:
         session = self.get_session(session_id)
         return session.public() if session else None
 
@@ -414,7 +415,7 @@ class ManualLoginManager:
         callable does not accept them, so test doubles with a minimal
         signature keep working.
         """
-        full_kwargs: Dict[str, Any] = {
+        full_kwargs: dict[str, Any] = {
             "username_hint": entry.username_hint,
             "password": entry.password,
             "timeout_s": self._login_timeout_s,
@@ -435,7 +436,7 @@ class ManualLoginManager:
         self,
         username: str,
         password: str,
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """One login attempt via the Auth API. Never raises, never logs secrets.
 
         Returns {"outcome": ..., "detail": ..., "fresh_cookie": ...}.
@@ -589,10 +590,10 @@ class ManualLoginManager:
         username_hint: str = "",
         password: str = "",
         timeout_s: float = DEFAULT_LOGIN_TIMEOUT_S,
-        cancel_event: Optional[threading.Event] = None,
-        skip_event: Optional[threading.Event] = None,
+        cancel_event: threading.Event | None = None,
+        skip_event: threading.Event | None = None,
         status_note: str = "",
-        on_note: Optional[Callable[[str], None]] = None,
+        on_note: Callable[[str], None] | None = None,
     ) -> str:
         try:
             from playwright.sync_api import sync_playwright
@@ -636,7 +637,7 @@ class ManualLoginManager:
                 except Exception:
                     pass
 
-    def _launch_chromium(self, playwright: Any, on_note: Optional[Callable[[str], None]] = None) -> Any:
+    def _launch_chromium(self, playwright: Any, on_note: Callable[[str], None] | None = None) -> Any:
         launch_args = ["--disable-web-security"]
         # Prefer the browsers already on the machine (no download, isolated
         # throwaway profile per login). Fall back to bundled Chromium.
@@ -758,10 +759,10 @@ class ManualLoginManager:
         page: Any,
         login_seen: threading.Event,
         deadline: float,
-        cancel_event: Optional[threading.Event],
-        skip_event: Optional[threading.Event] = None,
+        cancel_event: threading.Event | None,
+        skip_event: threading.Event | None = None,
         status_note: str = "",
-        on_note: Optional[Callable[[str], None]] = None,
+        on_note: Callable[[str], None] | None = None,
     ) -> str:
         last_note = ""
         wrong_password_polls = 0

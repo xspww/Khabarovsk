@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, Iterable, List
+from collections.abc import Iterable
+from typing import Any
 
 from services.captcha_guard import is_captcha_window_texts
 from services.verify_guard import is_locked_window_texts, is_recovery_window_texts
@@ -21,8 +22,8 @@ CONNECTION_KEYWORDS = (
 )
 
 
-def normalize_texts(texts: Iterable[Any]) -> List[str]:
-    out: List[str] = []
+def normalize_texts(texts: Iterable[Any]) -> list[str]:
+    out: list[str] = []
     seen = set()
     for item in texts or []:
         text = str(item or "").strip()
@@ -36,7 +37,7 @@ def normalize_texts(texts: Iterable[Any]) -> List[str]:
     return out
 
 
-def detect_text_features(texts: Iterable[Any]) -> Dict[str, Any]:
+def detect_text_features(texts: Iterable[Any]) -> dict[str, Any]:
     normalized = normalize_texts(texts)
     joined_lower = " | ".join(text.lower() for text in normalized)
     matched_code = re.search(r"error\s*code\s*[:#]?\s*(\d+)", joined_lower, flags=re.IGNORECASE)

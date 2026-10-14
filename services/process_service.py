@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import threading
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core import flog_kv
 from services.browser_tracker import tracker_matches
@@ -51,10 +51,10 @@ def _lower_path(value: Any) -> str:
 
 
 def _has_binding_evidence(
-    validation: Dict[str, Any],
+    validation: dict[str, Any],
     owner_key: str,
     expected_identity: str,
-    launched_after: Optional[float],
+    launched_after: float | None,
     expected_browser_tracker_id: str = "",
 ) -> bool:
     """Single owner for the binding-evidence predicate (binding decision leverages this)."""
@@ -74,16 +74,16 @@ def _has_binding_evidence(
 
 
 def _validate_process_ownership(
-    validation: Dict[str, Any],
+    validation: dict[str, Any],
     *,
-    pid: Optional[int],
+    pid: int | None,
     owner_key: str,
     expected_identity: str = "",
-    launched_after: Optional[float] = None,
-    expected_runtime_generation: Optional[int] = None,
-    current_runtime_generation: Optional[int] = None,
+    launched_after: float | None = None,
+    expected_runtime_generation: int | None = None,
+    current_runtime_generation: int | None = None,
     expected_executable_hint: str = "RobloxPlayerBeta.exe",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Single owner for the ownership predicate (binding decision leverages this)."""
     result = dict(validation or {})
     reasons = []
@@ -129,15 +129,15 @@ class ProcessService:
     @staticmethod
     def validate_binding(
         account: Any,
-        pid: Optional[int],
-        expected_identity: Optional[str] = None,
+        pid: int | None,
+        expected_identity: str | None = None,
         require_window: bool = False,
         reason: str = "",
-        launched_after: Optional[float] = None,
+        launched_after: float | None = None,
         min_ram_mb: float = 20.0,
         log_success: bool = True,
         log_failure: bool = True,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         owner_key = _account_key(account)
         expected_browser_tracker_id = _account_browser_tracker_id(account)
         if expected_identity is None:
@@ -256,17 +256,17 @@ class ProcessService:
     @staticmethod
     def bind_account_process(
         account: Any,
-        pid: Optional[int],
+        pid: int | None,
         state_manager: Any,
         reason: str = "",
         require_window: bool = False,
-        expected_identity: Optional[str] = None,
-        launched_after: Optional[float] = None,
+        expected_identity: str | None = None,
+        launched_after: float | None = None,
         process_name: str = "",
         min_ram_mb: float = 20.0,
         increment_generation: bool = True,
-        expected_runtime_generation: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        expected_runtime_generation: int | None = None,
+    ) -> dict[str, Any]:
         if not _runtime_generation_matches(account, expected_runtime_generation, reason or "bind_account_process"):
             return {"ok": False, "pid": pid, "reason": "stale_runtime_generation", "validation": {}}
         if state_manager is None or not hasattr(state_manager, "bind_process"):
@@ -357,12 +357,12 @@ class ProcessService:
     def safe_adopt_visible_process(
         account: Any,
         state_manager: Any,
-        accounts: Optional[List[Any]] = None,
+        accounts: list[Any] | None = None,
         reason: str = "",
-        expected_runtime_generation: Optional[int] = None,
-        launched_after: Optional[float] = None,
+        expected_runtime_generation: int | None = None,
+        launched_after: float | None = None,
         min_ram_mb: float = 100.0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         if not _runtime_generation_matches(account, expected_runtime_generation, reason or "safe_adopt_visible_process"):
             return {"ok": False, "reason": "stale_runtime_generation", "pid": None}
 
@@ -398,7 +398,7 @@ class ProcessService:
 
         owner = str(candidate.get("owner") or _ProcessBackend.get_pid_owner(pid) or "")
         account_key = _account_key(account)
-        ambiguous_accounts: List[str] = []
+        ambiguous_accounts: list[str] = []
         for other in all_accounts:
             if other is account:
                 continue
@@ -515,7 +515,7 @@ class ProcessService:
         account: Any,
         proof_level: str,
         reason: str = "",
-        confidence: Optional[float] = None,
+        confidence: float | None = None,
         status: str = "",
     ) -> None:
         return _mark_account_process_proof(
@@ -527,7 +527,7 @@ class ProcessService:
         )
 
     @staticmethod
-    def release_account_process(account: Any, pid: Optional[int] = None, reason: str = "") -> None:
+    def release_account_process(account: Any, pid: int | None = None, reason: str = "") -> None:
         target_pid = pid or getattr(account, "pid", None)
         if not target_pid:
             return
@@ -553,12 +553,12 @@ class ProcessService:
     @staticmethod
     def safe_kill_owned_orphan(
         account: Any,
-        pid: Optional[int],
+        pid: int | None,
         runtime_state: Any = None,
         expected_identity: str = "",
         reason: str = "",
         min_confidence: float = 45.0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         try:
             target_pid = int(pid or 0)
         except Exception:
@@ -651,8 +651,8 @@ class ProcessService:
         state_manager: Any = None,
         reason: str = "",
         increment_generation: bool = True,
-        expected_runtime_generation: Optional[int] = None,
-    ) -> Dict[str, Any]:
+        expected_runtime_generation: int | None = None,
+    ) -> dict[str, Any]:
         with account._lock:
             pid = getattr(account, "pid", None)
             identity = str(getattr(account, "bound_process_identity", "") or "")
@@ -769,7 +769,7 @@ class ProcessService:
         return {"ok": True, "killed": bool(killed), "pid": pid, "reason": "killed" if killed else "kill_failed", "validation": validation}
 
     @staticmethod
-    def evict_pid_cache(pid: Optional[int], reason: str = "", account: Any = None) -> None:
+    def evict_pid_cache(pid: int | None, reason: str = "", account: Any = None) -> None:
         if not pid:
             return
         _ProcessBackend.evict_pid_cache(pid)
@@ -785,7 +785,7 @@ class ProcessService:
     @staticmethod
     def kill_all_roblox_clients(
         wait_seconds: float = 4.0,
-        exclude_pids: Optional[List[int]] = None,
+        exclude_pids: list[int] | None = None,
         reason: str = "",
         idempotency_key: str = "",
         command_id: str = "",
@@ -811,8 +811,8 @@ class ProcessService:
     @staticmethod
     def cleanup_extra_launch_processes(
         before: set,
-        keep_pids: Optional[List[int]] = None,
-        launched_after: Optional[float] = None,
+        keep_pids: list[int] | None = None,
+        launched_after: float | None = None,
         wait_seconds: float = 2.0,
         reason: str = "",
         account: Any = None,
@@ -840,11 +840,11 @@ class ProcessService:
         width: int,
         height: int,
         unlock_size: bool = True,
-        exclude_pids: Optional[List[int]] = None,
+        exclude_pids: list[int] | None = None,
         reason: str = "",
         account: Any = None,
         idempotency_key: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         result = _ProcessBackend.resize_roblox_windows(width, height, unlock_size=unlock_size, exclude_pids=exclude_pids)
         flog_kv(
             "WINDOW",
@@ -870,12 +870,12 @@ class ProcessService:
         margin: int = 0,
         unlock_size: bool = True,
         resize: bool = True,
-        rows: Optional[int] = None,
-        exclude_pids: Optional[List[int]] = None,
+        rows: int | None = None,
+        exclude_pids: list[int] | None = None,
         reason: str = "",
         account: Any = None,
         idempotency_key: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         result = _ProcessBackend.arrange_roblox_windows(
             width,
             height,
@@ -910,11 +910,11 @@ class ProcessService:
 
     @staticmethod
     def unminimize_roblox_windows(
-        exclude_pids: Optional[List[int]] = None,
+        exclude_pids: list[int] | None = None,
         reason: str = "",
         account: Any = None,
         idempotency_key: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         result = _ProcessBackend.unminimize_roblox_windows(exclude_pids=exclude_pids)
         flog_kv(
             "WINDOW",
@@ -930,11 +930,11 @@ class ProcessService:
 
     @staticmethod
     def hide_roblox_windows(
-        exclude_pids: Optional[List[int]] = None,
+        exclude_pids: list[int] | None = None,
         reason: str = "",
         account: Any = None,
         idempotency_key: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         result = _ProcessBackend.hide_roblox_windows(exclude_pids=exclude_pids)
         flog_kv(
             "WINDOW",
@@ -950,11 +950,11 @@ class ProcessService:
 
     @staticmethod
     def show_roblox_windows(
-        exclude_pids: Optional[List[int]] = None,
+        exclude_pids: list[int] | None = None,
         reason: str = "",
         account: Any = None,
         idempotency_key: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         result = _ProcessBackend.show_roblox_windows(exclude_pids=exclude_pids)
         flog_kv(
             "WINDOW",
@@ -973,7 +973,7 @@ class ProcessService:
         reason: str = "",
         account: Any = None,
         idempotency_key: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         result = _ProcessBackend.restore_roblox_window_styles()
         flog_kv(
             "WINDOW",

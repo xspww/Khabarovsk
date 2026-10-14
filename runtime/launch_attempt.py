@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import threading
 import time
-from typing import Any, Tuple
+from typing import Any
 
 from core import Account, AccountState, EventName, flog, flog_kv
 from domain.session_identity import build_launch_intent
@@ -110,7 +110,7 @@ class LaunchAttempt:
                 if killed:
                     flog(f"[LAUNCH] Cleared {killed} existing Roblox client process(es) before relaunch")
                 time.sleep(1.2)
-            def inject_cookie_for_direct_launch() -> Tuple[bool, str]:
+            def inject_cookie_for_direct_launch() -> tuple[bool, str]:
                 if not acc.cookie:
                     return False, "no cookie available"
                 from services.cookie_service import IsolationManager

@@ -24,7 +24,7 @@ import os
 import subprocess
 import time
 from ctypes import wintypes
-from typing import Any, Dict, Tuple
+from typing import Any
 
 try:
     import psutil  # type: ignore
@@ -85,7 +85,7 @@ def system_drive_free_gb(drive: str = "C:\\") -> float:
     return 0.0
 
 
-def _run_ps_json(script: str, timeout: int = 30) -> Dict[str, Any]:
+def _run_ps_json(script: str, timeout: int = 30) -> dict[str, Any]:
     """Run non-elevated PowerShell CIM query, return parsed JSON (or error)."""
     try:
         proc = subprocess.run(
@@ -112,14 +112,14 @@ $use = @(Get-CimInstance Win32_PageFileUsage | Select-Object Name, AllocatedBase
 """
 
 
-def status() -> Dict[str, Any]:
+def status() -> dict[str, Any]:
     total_gb = round(installed_ram_gb(), 1)
     free_gb = round(system_drive_free_gb("C:\\"), 1)
     presets = [
         {"label": f"{m:g}x RAM", "multiplier": m, "gb": int(round(total_gb * m))}
         for m in VM_PRESET_MULTIPLIERS
     ]
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "ok": True,
         "total_ram_gb": total_gb,
         "system_drive": "C:",
@@ -190,7 +190,7 @@ def status() -> Dict[str, Any]:
     return payload
 
 
-def normalize_virtual_memory_settings(source: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_virtual_memory_settings(source: dict[str, Any]) -> dict[str, Any]:
     mode = str(source.get("virtual_memory_mode", source.get("mode", "system_managed")) or
                "system_managed").strip().lower()
     if mode not in ("system_managed", "custom", "managed", "auto"):
@@ -269,9 +269,9 @@ def _describe_current(current: Any) -> str:
 
 
 def _wait_for_setting(mode: str, size_gb: int,
-                      timeout_s: int = VM_VERIFY_TIMEOUT_S) -> Tuple[bool, Dict[str, Any]]:
+                      timeout_s: int = VM_VERIFY_TIMEOUT_S) -> tuple[bool, dict[str, Any]]:
     """Poll status() until the requested setting is visible (UAC path)."""
-    last: Dict[str, Any] = {}
+    last: dict[str, Any] = {}
     deadline = time.monotonic() + max(1, int(timeout_s))
     while True:
         try:
@@ -285,7 +285,7 @@ def _wait_for_setting(mode: str, size_gb: int,
         time.sleep(VM_VERIFY_INTERVAL_S)
 
 
-def apply(mode: str, size_gb: int) -> Dict[str, Any]:
+def apply(mode: str, size_gb: int) -> dict[str, Any]:
     """Apply pagefile setting with UAC elevation. Returns ok/reboot_required."""
     if os.name != "nt":
         return {"ok": False, "msg": "Virtual memory control supports Windows only"}
@@ -309,7 +309,7 @@ def apply(mode: str, size_gb: int) -> Dict[str, Any]:
                         "msg": (proc.stderr or out or f"exit {proc.returncode}").strip()[-800:]}
             current = status()
             if current.get("ok") and not _current_matches(current.get("current"), mode, size_gb):
-                failure: Dict[str, Any] = {
+                failure: dict[str, Any] = {
                     "ok": False,
                     "msg": f"Windows did not confirm the new setting (still {_describe_current(current.get('current'))})",
                 }

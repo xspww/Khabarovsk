@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, List
+from typing import Any
 
 from core import Account, AccountState, flog, flog_kv
 from runtime.lua_liveness_policy import mark_waiting_for_lua
 from services.process_service import ProcessManager, ProcessService
 
 
-def initial_state_sync(accounts: List[Account], state_mgr: Any, lua_required: bool = False, runtime_state: Any = None) -> None:
+def initial_state_sync(accounts: list[Account], state_mgr: Any, lua_required: bool = False, runtime_state: Any = None) -> None:
     live_processes = ProcessManager.list_live_game_processes()
     if not live_processes:
         flog("[FARM] initial_state_sync: no live RobloxPlayerBeta.exe found")

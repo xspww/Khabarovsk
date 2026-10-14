@@ -5,7 +5,7 @@ import os
 import sqlite3
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class RuntimeStore:
@@ -123,7 +123,7 @@ class RuntimeStore:
             )
             self._conn.commit()
 
-    def record_account_snapshot(self, account_id: str, snapshot: Dict[str, Any]) -> None:
+    def record_account_snapshot(self, account_id: str, snapshot: dict[str, Any]) -> None:
         now = time.time()
         self._execute(
             """
@@ -136,7 +136,7 @@ class RuntimeStore:
             (str(account_id or ""), self._json(snapshot), now),
         )
 
-    def record_session(self, snapshot: Dict[str, Any], status: str = "active") -> None:
+    def record_session(self, snapshot: dict[str, Any], status: str = "active") -> None:
         now = time.time()
         self._execute(
             """
@@ -168,7 +168,7 @@ class RuntimeStore:
             ),
         )
 
-    def record_transaction(self, snapshot: Dict[str, Any]) -> None:
+    def record_transaction(self, snapshot: dict[str, Any]) -> None:
         self._execute(
             """
             INSERT INTO rejoin_transactions(
@@ -208,7 +208,7 @@ class RuntimeStore:
             ),
         )
 
-    def record_process_binding(self, account_id: str, pid: Optional[int], identity: str, session_id: str, transaction_id: str, status: str, reason: str = "") -> None:
+    def record_process_binding(self, account_id: str, pid: int | None, identity: str, session_id: str, transaction_id: str, status: str, reason: str = "") -> None:
         self._execute(
             """
             INSERT INTO process_bindings(account_id, pid, process_identity, session_id, transaction_id, status, reason, created_at)
@@ -217,7 +217,7 @@ class RuntimeStore:
             (str(account_id or ""), pid, str(identity or ""), str(session_id or ""), str(transaction_id or ""), str(status or ""), str(reason or ""), time.time()),
         )
 
-    def record_event(self, event: Dict[str, Any]) -> None:
+    def record_event(self, event: dict[str, Any]) -> None:
         with self._lock:
             try:
                 self._conn.execute(
@@ -270,10 +270,10 @@ class RuntimeStore:
         limit: int = 100,
         event_type: str = "",
         severity: str = "",
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         safe_limit = max(1, min(int(limit or 100), 500))
-        filters: List[str] = []
-        params: List[Any] = []
+        filters: list[str] = []
+        params: list[Any] = []
         if account_id:
             filters.append("account_id=?")
             params.append(str(account_id or ""))
@@ -288,7 +288,7 @@ class RuntimeStore:
         params.append(safe_limit)
         with self._lock:
             rows = list(self._conn.execute(sql, tuple(params)).fetchall())
-        events: List[Dict[str, Any]] = []
+        events: list[dict[str, Any]] = []
         for row in rows:
             payload = self._decode_json(row["payload_json"])
             item = {

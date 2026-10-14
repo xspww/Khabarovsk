@@ -16,7 +16,7 @@ or the Shared one) are never touched and never notified.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 def _usable_link_code(link: Any, place_id: str) -> bool:
@@ -41,14 +41,14 @@ def _classify_failure(message: str) -> str:
 
 
 def run_private_server_preflight(
-    cfg: Dict[str, Any],
-    accounts: List[Any],
-    games: List[Dict[str, Any]],
+    cfg: dict[str, Any],
+    accounts: list[Any],
+    games: list[dict[str, Any]],
     game_mode: str = "shared",
     cfg_mgr: Any = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Attempt auto-create once per place. Never raises (fail-open)."""
-    outcome: Dict[str, Any] = {
+    outcome: dict[str, Any] = {
         "created": [],
         "failures": [],
         "skipped_usernames": [],
@@ -79,7 +79,7 @@ def _run(cfg, accounts, games, game_mode, cfg_mgr, outcome):
     legacy_free_only = bool(cfg.get("auto_create_private_server_free_only", True))
 
     # place_id -> {"game": dict|None, "free_only": bool, "accounts": [Account]}
-    needed: Dict[str, Dict[str, Any]] = {}
+    needed: dict[str, dict[str, Any]] = {}
     for acc in list(accounts or []):
         try:
             game = None
@@ -101,7 +101,7 @@ def _run(cfg, accounts, games, game_mode, cfg_mgr, outcome):
             ).strip()
             if not place:
                 continue
-            links: List[str] = []
+            links: list[str] = []
             try:
                 links.extend(list(getattr(acc, "vip_links", []) or []))
             except Exception:
@@ -160,8 +160,8 @@ def _run(cfg, accounts, games, game_mode, cfg_mgr, outcome):
             )
         return outcome
 
-    games_patch: Dict[str, str] = {}
-    legacy_patch: Optional[str] = None
+    games_patch: dict[str, str] = {}
+    legacy_patch: str | None = None
 
     for place, slot in needed.items():
         game = slot.get("game")
@@ -263,7 +263,7 @@ def _run(cfg, accounts, games, game_mode, cfg_mgr, outcome):
     # Persist created links so launches reuse them silently.
     if (games_patch or legacy_patch) and cfg_mgr is not None:
         try:
-            updates: Dict[str, Any] = {}
+            updates: dict[str, Any] = {}
             if games_patch and games:
                 fresh = []
                 for entry in games:

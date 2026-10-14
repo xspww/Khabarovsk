@@ -12,8 +12,9 @@ import threading
 import time
 import urllib.request
 import zipfile
+from collections.abc import Callable
 from pathlib import Path, PurePosixPath
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any
 
 import net_tls
 
@@ -73,19 +74,19 @@ class RobloxInstallManager:
         *,
         guard_running: Callable[[], bool],
         roblox_running: Callable[[], bool],
-        logger: Optional[Callable[[str], None]] = None,
+        logger: Callable[[str], None] | None = None,
     ):
         self.guard_running = guard_running
         self.roblox_running = roblox_running
         self.logger = logger or (lambda _msg: None)
         self._lock = threading.RLock()
-        self._job: Dict[str, Any] = self._new_job("Ready")
+        self._job: dict[str, Any] = self._new_job("Ready")
         self._latest_version = ""
         self._latest_version_error = ""
         self._latest_version_checked_at = 0.0
         self._latest_version_refreshing = False
 
-    def _new_job(self, state: str, **extra: Any) -> Dict[str, Any]:
+    def _new_job(self, state: str, **extra: Any) -> dict[str, Any]:
         payload = {
             "active": False,
             "state": state,
@@ -101,7 +102,7 @@ class RobloxInstallManager:
         payload.update(extra)
         return payload
 
-    def status(self) -> Dict[str, Any]:
+    def status(self) -> dict[str, Any]:
         with self._lock:
             job = dict(self._job)
         installed = self.detect_installed()
@@ -128,7 +129,7 @@ class RobloxInstallManager:
             "job": job,
         }
 
-    def _latest_version_status(self) -> Dict[str, Any]:
+    def _latest_version_status(self) -> dict[str, Any]:
         now = time.time()
         with self._lock:
             version = self._latest_version
@@ -170,17 +171,17 @@ class RobloxInstallManager:
             self._latest_version_checked_at = time.time()
             self._latest_version_refreshing = False
 
-    def start_uninstall(self) -> Dict[str, Any]:
+    def start_uninstall(self) -> dict[str, Any]:
         return self._start_job("uninstall", self._run_uninstall)
 
-    def start_latest(self) -> Dict[str, Any]:
+    def start_latest(self) -> dict[str, Any]:
         return self._start_job("latest", self._run_latest)
 
-    def start_update_official(self, version: str) -> Dict[str, Any]:
+    def start_update_official(self, version: str) -> dict[str, Any]:
         normalized = normalize_roblox_version(version)
         return self._start_job("update_official", self._run_update_official, normalized)
 
-    def _start_job(self, action: str, target: Callable[..., None], *args: Any) -> Dict[str, Any]:
+    def _start_job(self, action: str, target: Callable[..., None], *args: Any) -> dict[str, Any]:
         if self.guard_running() or self.roblox_running():
             return {"ok": False, "accepted": False, "msg": "Stop Cronus and close Roblox first"}
         blockers = self.find_install_blockers()
@@ -252,7 +253,7 @@ class RobloxInstallManager:
         # passed validation. Only then remove older version
         # directories (Auto update deletes old versions).
         removed = 0
-        cleanup_roots: List[Path] = list(self.roblox_roots())
+        cleanup_roots: list[Path] = list(self.roblox_roots())
         for root in cleanup_roots:
             versions_dir = root / "Versions"
             if not versions_dir.is_dir():
@@ -298,8 +299,8 @@ class RobloxInstallManager:
                 removed += 1
         self._set_job("Done", version=normalized, removed_old_versions=removed, msg=f"Installed {normalized}", progress="Done")
 
-    def roblox_roots(self) -> List[Path]:
-        roots: List[Path] = []
+    def roblox_roots(self) -> list[Path]:
+        roots: list[Path] = []
         local = os.environ.get("LOCALAPPDATA", "").strip()
         if local:
             roots.append(Path(local) / "Roblox")
@@ -307,7 +308,7 @@ class RobloxInstallManager:
             value = os.environ.get(env_name, "").strip()
             if value:
                 roots.append(Path(value) / "Roblox")
-        unique: List[Path] = []
+        unique: list[Path] = []
         seen = set()
         for root in roots:
             key = str(root).lower()
@@ -316,7 +317,7 @@ class RobloxInstallManager:
                 unique.append(root)
         return unique
 
-    def list_installed(self) -> List[Dict[str, Any]]:
+    def list_installed(self) -> list[dict[str, Any]]:
         """Return every installed Roblox player version, newest-modified first.
 
         Deduplicated by version hash: the same ``version-xxxx`` folder can
@@ -324,7 +325,7 @@ class RobloxInstallManager:
         dedup the Join-game picker renders two identical "Roblox LAST" rows,
         which then flicker when post-render JS tries to remove the duplicate.
         """
-        candidates: List[Dict[str, Any]] = []
+        candidates: list[dict[str, Any]] = []
         for root in self.roblox_roots():
             versions_dir = root / "Versions"
             if not versions_dir.exists():
@@ -343,7 +344,7 @@ class RobloxInstallManager:
                 # version need the concrete version directory instead.
                 candidates.append({"version": child.name, "path": str(exe), "root": str(child), "modified": modified})
         candidates.sort(key=lambda item: float(item.get("modified") or 0), reverse=True)
-        deduped: List[Dict[str, Any]] = []
+        deduped: list[dict[str, Any]] = []
         seen_versions = set()
         for item in candidates:
             key = str(item.get("version") or "").strip().lower()
@@ -353,7 +354,7 @@ class RobloxInstallManager:
             deduped.append(item)
         return deduped
 
-    def detect_installed(self) -> Dict[str, Any]:
+    def detect_installed(self) -> dict[str, Any]:
         candidates = self.list_installed()
         if not candidates:
             return {"installed": False, "version": "", "path": "", "root": ""}
@@ -361,8 +362,8 @@ class RobloxInstallManager:
         best["installed"] = True
         return best
 
-    def find_install_blockers(self) -> List[Dict[str, Any]]:
-        blockers: List[Dict[str, Any]] = []
+    def find_install_blockers(self) -> list[dict[str, Any]]:
+        blockers: list[dict[str, Any]] = []
         try:
             import psutil
         except Exception:
@@ -404,7 +405,7 @@ class RobloxInstallManager:
         blockers.sort(key=lambda item: (str(item.get("name") or "").lower(), int(item.get("pid") or 0)))
         return blockers
 
-    def _format_blockers(self, blockers: List[Dict[str, Any]]) -> str:
+    def _format_blockers(self, blockers: list[dict[str, Any]]) -> str:
         if not blockers:
             return ""
         # Keep the install banner to one short line so it does not wrap to
@@ -415,9 +416,9 @@ class RobloxInstallManager:
             return "Close Roblox first (1 app running)"
         return f"Close Roblox first ({count} apps running)"
 
-    def full_wipe(self) -> Dict[str, Any]:
-        removed: List[str] = []
-        failed: List[Dict[str, str]] = []
+    def full_wipe(self) -> dict[str, Any]:
+        removed: list[str] = []
+        failed: list[dict[str, str]] = []
         for root in self.roblox_roots():
             if not self._safe_roblox_root(root):
                 failed.append({"path": str(root), "error": "unsafe path"})
@@ -460,7 +461,7 @@ class RobloxInstallManager:
         if not root.exists():
             return
 
-        last_error: Optional[BaseException] = None
+        last_error: BaseException | None = None
         for attempt in range(4):
             self._clear_tree_attributes(root)
             if attempt == 1:
@@ -557,9 +558,9 @@ class RobloxInstallManager:
             pass
         return str(root)
 
-    def remove_protocol_registry(self) -> Dict[str, Any]:
-        removed: List[str] = []
-        failed: List[Dict[str, str]] = []
+    def remove_protocol_registry(self) -> dict[str, Any]:
+        removed: list[str] = []
+        failed: list[dict[str, str]] = []
         if os.name != "nt":
             return {"removed": removed, "failed": failed}
         try:
@@ -640,9 +641,9 @@ class RobloxInstallManager:
                 with zipfile.ZipFile(zip_path) as archive:
                     self._safe_extract_zip(archive, extract_dir)
 
-    def _parse_pkg_manifest(self, text: str) -> List[Dict[str, str]]:
+    def _parse_pkg_manifest(self, text: str) -> list[dict[str, str]]:
         lines = [line.strip() for line in str(text or "").splitlines() if line.strip()]
-        packages: List[Dict[str, str]] = []
+        packages: list[dict[str, str]] = []
         index = 0
         while index < len(lines):
             line = lines[index]
@@ -691,10 +692,10 @@ class RobloxInstallManager:
         )
         return path
 
-    def validate_install(self, exe_path: Path, *, require_protocol: bool) -> Dict[str, Any]:
+    def validate_install(self, exe_path: Path, *, require_protocol: bool) -> dict[str, Any]:
         exe = Path(exe_path)
         version_root = exe.parent
-        missing: List[str] = []
+        missing: list[str] = []
         if not exe.exists():
             missing.append(ROBLOX_EXE)
         if not (version_root / "AppSettings.xml").exists():

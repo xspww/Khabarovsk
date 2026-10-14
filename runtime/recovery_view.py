@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from typing import Any, Tuple
+from typing import Any
 
 from core import AccountState
 from services.network_monitor import NET_ONLINE
 
 
-def recovery_step_for_account(acc: Any, display_state: AccountState, network_state: str = NET_ONLINE) -> Tuple[str, int, float]:
+def recovery_step_for_account(acc: Any, display_state: AccountState, network_state: str = NET_ONLINE) -> tuple[str, int, float]:
     reason_text = " ".join(
         str(value or "")
         for value in (

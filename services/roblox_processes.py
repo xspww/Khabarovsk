@@ -4,7 +4,7 @@ import getpass
 import os
 import subprocess
 import time
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from core import flog, flog_kv
 from runtime.runtime_state_manager import RuntimeStateManager
@@ -26,7 +26,7 @@ def _same_windows_user(process_user: str) -> bool:
         return bool(user and user == current)
     except Exception:
         return True
-def get_process_identity(cls, pid: Optional[int]) -> str:
+def get_process_identity(cls, pid: int | None) -> str:
     if pid is None:
         return ""
     try:
@@ -38,19 +38,19 @@ def get_process_identity(cls, pid: Optional[int]) -> str:
         return f"{name}|{created:.6f}|{exe}"
     except Exception:
         return ""
-def claim_pid_owner(cls, pid: Optional[int], owner_key: str):
+def claim_pid_owner(cls, pid: int | None, owner_key: str):
     if not pid or not owner_key:
         return
     with cls._ownership_lock:
         cls._pid_owner[int(pid)] = str(owner_key)
-def release_pid_owner(cls, pid: Optional[int], owner_key: Optional[str] = None):
+def release_pid_owner(cls, pid: int | None, owner_key: str | None = None):
     if not pid:
         return
     with cls._ownership_lock:
         current = cls._pid_owner.get(int(pid))
         if owner_key is None or current == owner_key:
             cls._pid_owner.pop(int(pid), None)
-def get_pid_owner(cls, pid: Optional[int]) -> str:
+def get_pid_owner(cls, pid: int | None) -> str:
     if not pid:
         return ""
     with cls._ownership_lock:
@@ -70,7 +70,7 @@ def _iter_roblox_processes(cls, game_only: bool = False):
                 yield proc
     except ImportError:
         return
-def _inspect_roblox_process(cls, proc) -> Dict[str, Any]:
+def _inspect_roblox_process(cls, proc) -> dict[str, Any]:
     proc_info = getattr(proc, "info", {}) or {}
     name = str(proc_info.get("name") or proc.name() or "")
     name_l = name.lower()
@@ -141,14 +141,14 @@ def _inspect_roblox_process(cls, proc) -> Dict[str, Any]:
     }
 def validate_game_process(
     cls,
-    pid: Optional[int],
+    pid: int | None,
     owner_key: str = "",
     expected_identity: str = "",
-    launched_after: Optional[float] = None,
+    launched_after: float | None = None,
     min_ram_mb: float = 20.0,
     expected_browser_tracker_id: str = "",
-) -> Dict[str, Any]:
-    result: Dict[str, Any] = {
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
         "ok": False,
         "pid": pid,
         "reason": "",
@@ -243,7 +243,7 @@ def validate_game_process(
         else:
             result["reason"] = f"error:{e}"
         return result
-def get_game_activity(cls, pid: Optional[int]) -> Dict[str, Any]:
+def get_game_activity(cls, pid: int | None) -> dict[str, Any]:
     validation = cls.validate_game_process(pid, min_ram_mb=0.0)
     return {
         "alive": bool(validation.get("ok")),
@@ -252,7 +252,7 @@ def get_game_activity(cls, pid: Optional[int]) -> Dict[str, Any]:
         "ram_mb": float(validation.get("ram_mb") or 0.0),
         "reason": str(validation.get("reason") or ""),
     }
-def get_pid_cmdline(cls, pid: Optional[int]) -> str:
+def get_pid_cmdline(cls, pid: int | None) -> str:
     if not pid:
         return ""
     try:
@@ -273,15 +273,15 @@ def confidence_level(cls, confidence: float) -> str:
 
 def find_bound_game_process(
     cls,
-    preferred_pid: Optional[int] = None,
-    launched_after: Optional[float] = None,
+    preferred_pid: int | None = None,
+    launched_after: float | None = None,
     owner_key: str = "",
     expected_identity: str = "",
     expected_browser_tracker_id: str = "",
-) -> Tuple[Optional[int], str]:
+) -> tuple[int | None, str]:
     try:
         import psutil
-        candidates: List[Tuple[float, float, int, str]] = []
+        candidates: list[tuple[float, float, int, str]] = []
         cls.cleanup_stale_pid_claims()
         for proc in cls._iter_roblox_processes(game_only=True):
             try:
@@ -354,9 +354,9 @@ def find_bound_game_process(
 
 def summarize_game_presence(
     cls,
-    launched_after: Optional[float] = None,
-) -> Dict[str, Any]:
-    summary: Dict[str, Any] = {
+    launched_after: float | None = None,
+) -> dict[str, Any]:
+    summary: dict[str, Any] = {
         "pids": [],
         "visible_windows": 0,
         "max_ram_mb": 0.0,
@@ -395,9 +395,9 @@ def summarize_game_presence(
 
 def list_live_game_processes(
     cls,
-    launched_after: Optional[float] = None,
-) -> List[Dict[str, Any]]:
-    entries: List[Dict[str, Any]] = []
+    launched_after: float | None = None,
+) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
     try:
         import psutil
         for proc in cls._iter_roblox_processes(game_only=True):
@@ -461,7 +461,7 @@ def snapshot_pids(cls) -> set:
 def kill_all_roblox_clients(
     cls,
     wait_seconds: float = 4.0,
-    exclude_pids: Optional[List[int]] = None,
+    exclude_pids: list[int] | None = None,
 ) -> int:
     killed = 0
     try:
@@ -497,8 +497,8 @@ def kill_all_roblox_clients(
 def cleanup_extra_launch_processes(
     cls,
     before: set,
-    keep_pids: Optional[List[int]] = None,
-    launched_after: Optional[float] = None,
+    keep_pids: list[int] | None = None,
+    launched_after: float | None = None,
     wait_seconds: float = 2.0,
 ) -> int:
     killed = 0
@@ -546,13 +546,13 @@ def detect_new_pid(
     cls,
     before: set,
     timeout: float = 20.0,
-    launched_after: Optional[float] = None,
+    launched_after: float | None = None,
     created_after_slack: float = 0.0,
     expected_browser_tracker_id: str = "",
-) -> Optional[int]:
+) -> int | None:
     try:
         deadline = time.time() + timeout
-        first_seen: Dict[int, float] = {}
+        first_seen: dict[int, float] = {}
         settle_seconds = 2.0
         created_threshold = None
         if launched_after:
@@ -599,7 +599,7 @@ def detect_new_pid(
         pass
     return None
 
-def is_pid_alive(cls, pid: Optional[int]) -> bool:
+def is_pid_alive(cls, pid: int | None) -> bool:
     if pid is None:
         return False
     try:
@@ -610,7 +610,7 @@ def is_pid_alive(cls, pid: Optional[int]) -> bool:
 
 def is_bound_game_alive(
     cls,
-    pid: Optional[int],
+    pid: int | None,
     owner_key: str = "",
     expected_identity: str = "",
     expected_browser_tracker_id: str = "",
@@ -632,7 +632,7 @@ def get_pid_memory_mb(cls, pid: int) -> float:
     """ดึง RAM MB จาก RealtimeResourceMonitor (realtime, non-blocking)"""
     return _rt_monitor.get_ram(pid)
 
-def evict_pid_cache(cls, pid: Optional[int]):
+def evict_pid_cache(cls, pid: int | None):
     if pid is not None:
         with cls._cache_lock:
             cls._process_cache.pop(pid, None)
@@ -640,7 +640,7 @@ def evict_pid_cache(cls, pid: Optional[int]):
         cls.release_pid_owner(pid)
         _rt_monitor.unregister(pid)
 
-def kill_pid(cls, pid: Optional[int]) -> bool:
+def kill_pid(cls, pid: int | None) -> bool:
     if not pid:
         return False
     cls.evict_pid_cache(pid)

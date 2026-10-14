@@ -8,7 +8,7 @@ import threading
 import time
 import urllib.request
 import webbrowser
-from typing import Any, Optional, Tuple
+from typing import Any
 
 from app_paths import APP_NAME, APP_ROOT_DIR, IS_COMPILED
 from console_activity import format_console_line
@@ -40,7 +40,7 @@ PORT = DEFAULT_PORT
 _SHUTDOWN_REQUESTED = threading.Event()
 _app = None
 _farm = None
-_backend_host: Optional[BackendHost] = None
+_backend_host: BackendHost | None = None
 _STARTUP_PROGRESS_WIDTH = 44
 _STARTUP_PROGRESS_TOTAL_STEPS = 6
 _STARTUP_PROGRESS_FRAME_DELAY = 0.012
@@ -50,7 +50,7 @@ _STARTUP_PROGRESS_LAST_LEN = 0
 _STARTUP_PROGRESS_PERCENT = 0
 _STARTUP_SPINNER_INDEX = 0
 _STARTUP_CLEAR_AFTER_WINDOW_SHOW = False
-_STARTUP_COLOR_SUPPORT: Optional[bool] = None
+_STARTUP_COLOR_SUPPORT: bool | None = None
 _COLOR_DIM = "\x1b[90m"
 _COLOR_NAVY_BLUE = "\x1b[38;2;30;64;175m"
 _COLOR_NAVY_TEXT = "\x1b[38;2;96;165;250m"
@@ -202,7 +202,7 @@ _UPDATE_PHASE_LABELS = {
 }
 
 
-def _parse_update_percent(job: dict) -> Optional[int]:
+def _parse_update_percent(job: dict) -> int | None:
     try:
         match = re.search(r"(\d{1,3})\s*%", str((job or {}).get("progress") or ""))
         if match:
@@ -287,7 +287,7 @@ def configure(fastapi_app: Any, farm_controller: Any) -> None:
     _farm = farm_controller
 
 
-def _require_configured() -> Tuple[Any, Any]:
+def _require_configured() -> tuple[Any, Any]:
     if _app is None or _farm is None:
         raise RuntimeError("desktop_host is not configured")
     return _app, _farm
@@ -577,7 +577,7 @@ def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
         try:
             from desktop import instance_guard as _ig
 
-            def _leftover_app_process() -> Optional[int]:
+            def _leftover_app_process() -> int | None:
                 pid = _ig._find_same_app_process()
                 if pid:
                     try:

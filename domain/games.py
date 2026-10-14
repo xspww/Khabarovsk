@@ -30,7 +30,8 @@ switching back to ``"per_account"`` restores them).
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any
 
 DEFAULT_GAME_ID = "game-1"
 LEGACY_PLACE_KEY = "game_place_id"
@@ -60,7 +61,7 @@ def _bool(value: Any, default: bool = False) -> bool:
     return bool(default)
 
 
-def normalize_game(raw: Any, index: int = 0) -> Dict[str, Any]:
+def normalize_game(raw: Any, index: int = 0) -> dict[str, Any]:
     """Clean one game entry. Raises ValueError on a bad place_id."""
     source = raw if isinstance(raw, dict) else {}
     game_id = _text(source.get("id") or source.get("game_id")) or f"game-{index + 1}"
@@ -80,13 +81,13 @@ def normalize_game(raw: Any, index: int = 0) -> Dict[str, Any]:
     }
 
 
-def normalize_games(raw: Any) -> List[Dict[str, Any]]:
+def normalize_games(raw: Any) -> list[dict[str, Any]]:
     """Clean a games list, dropping empties and de-duplicating ids."""
     if isinstance(raw, dict):
         raw = [raw]
     if not isinstance(raw, list):
         return []
-    games: List[Dict[str, Any]] = []
+    games: list[dict[str, Any]] = []
     seen = set()
     for item in raw:
         if not isinstance(item, dict):
@@ -105,7 +106,7 @@ def normalize_games(raw: Any) -> List[Dict[str, Any]]:
     return games
 
 
-def ensure_games_migrated(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
+def ensure_games_migrated(cfg: dict[str, Any]) -> list[dict[str, Any]]:
     """One-way migration: legacy single-game keys become the first game.
 
     Mutates ``cfg`` in place (sets ``games``) and returns the games list.
@@ -136,19 +137,19 @@ def ensure_games_migrated(cfg: Dict[str, Any]) -> List[Dict[str, Any]]:
     return games
 
 
-def games_by_id(games: Any) -> Dict[str, Dict[str, Any]]:
-    out: Dict[str, Dict[str, Any]] = {}
+def games_by_id(games: Any) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
     for game in normalize_games(games):
         out[game["id"].lower()] = game
     return out
 
 
-def default_game(games: Any) -> Optional[Dict[str, Any]]:
+def default_game(games: Any) -> dict[str, Any] | None:
     items = normalize_games(games)
     return items[0] if items else None
 
 
-def get_game(games: Any, game_id: Any) -> Optional[Dict[str, Any]]:
+def get_game(games: Any, game_id: Any) -> dict[str, Any] | None:
     wanted = _text(game_id).lower()
     if not wanted:
         return None
@@ -159,7 +160,7 @@ def game_for_account(
     game_id: Any,
     account_place_id: Any,
     games: Any,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Find the game an account points at: id first, then matching place."""
     items = normalize_games(games)
     if not items:
@@ -196,7 +197,7 @@ def new_game_id(games: Any) -> str:
     return f"game-{index}"
 
 
-def new_game_template(games: Any) -> Dict[str, Any]:
+def new_game_template(games: Any) -> dict[str, Any]:
     count = len(normalize_games(games))
     return {
         "id": new_game_id(games),
@@ -210,7 +211,7 @@ def new_game_template(games: Any) -> Dict[str, Any]:
 
 def effective_place(
     account_place_id: Any,
-    game: Optional[Mapping[str, Any]],
+    game: Mapping[str, Any] | None,
     legacy_place_id: Any = "",
 ) -> str:
     """Account override wins, then the game, then the legacy global key."""
@@ -225,7 +226,7 @@ def effective_place(
 
 
 def effective_global_vip(
-    game: Optional[Mapping[str, Any]],
+    game: Mapping[str, Any] | None,
     legacy_vip_url: Any = "",
     place_id: Any = "",
     parse_vip_place=None,
@@ -246,10 +247,10 @@ def effective_global_vip(
 
 
 def effective_auto_flags(
-    game: Optional[Mapping[str, Any]],
+    game: Mapping[str, Any] | None,
     legacy_enabled: Any = False,
     legacy_free_only: Any = True,
-) -> Dict[str, bool]:
+) -> dict[str, bool]:
     """Resolve the auto-create flags for a launch.
 
     The Game card toggle is a MASTER switch: turning it on enables
@@ -268,7 +269,7 @@ def effective_auto_flags(
     return {"enabled": legacy_on, "free_only": _bool(legacy_free_only, True)}
 
 
-def describe_target(game: Optional[Mapping[str, Any]], place_id: Any = "") -> str:
+def describe_target(game: Mapping[str, Any] | None, place_id: Any = "") -> str:
     if game:
         label = _text(game.get("name")) or _text(game.get("id"))
         place = _text(place_id) or _text(game.get("place_id"))

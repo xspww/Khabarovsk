@@ -6,7 +6,7 @@ import time
 import urllib.parse
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from services.browser_tracker import tracker_label
 
@@ -24,9 +24,9 @@ class RuntimeSessionIdentity:
     launch_nonce: str
     reason: str = ""
     created_at: float = field(default_factory=time.time)
-    launch_intent: Dict[str, Any] = field(default_factory=dict)
+    launch_intent: dict[str, Any] = field(default_factory=dict)
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> dict[str, Any]:
         return {
             "account_id": self.account_id,
             "runtime_generation": self.runtime_generation,
@@ -53,13 +53,13 @@ class RejoinTransaction:
     step: str = "begin"
     reason: str = ""
     failure_reason: str = ""
-    launch_intent: Dict[str, Any] = field(default_factory=dict)
-    destination_evidence: Dict[str, Any] = field(default_factory=dict)
+    launch_intent: dict[str, Any] = field(default_factory=dict)
+    destination_evidence: dict[str, Any] = field(default_factory=dict)
     created_at: float = field(default_factory=time.time)
     updated_at: float = field(default_factory=time.time)
     completed_at: float = 0.0
 
-    def update(self, status: Optional[str] = None, step: Optional[str] = None, reason: str = "", failure_reason: str = "", destination_evidence: Optional[Dict[str, Any]] = None) -> None:
+    def update(self, status: str | None = None, step: str | None = None, reason: str = "", failure_reason: str = "", destination_evidence: dict[str, Any] | None = None) -> None:
         if status:
             self.status = status
         if step:
@@ -74,7 +74,7 @@ class RejoinTransaction:
         if self.status in {"committed", "rolled_back", "failed"}:
             self.completed_at = self.updated_at
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> dict[str, Any]:
         return {
             "transaction_id": self.transaction_id,
             "account_id": self.account_id,
@@ -96,7 +96,7 @@ class RejoinTransaction:
         }
 
 
-def create_session_identity(account_id: str, runtime_generation: int, account_runtime_id: str = "", reason: str = "", launch_intent: Optional[Dict[str, Any]] = None) -> RuntimeSessionIdentity:
+def create_session_identity(account_id: str, runtime_generation: int, account_runtime_id: str = "", reason: str = "", launch_intent: dict[str, Any] | None = None) -> RuntimeSessionIdentity:
     runtime_id = account_runtime_id or _new_id("acctrt")
     return RuntimeSessionIdentity(
         account_id=str(account_id or ""),
@@ -131,7 +131,7 @@ def _safe_hash(value: str) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()[:16]
 
 
-def _parse_vip_link(vip_url: str) -> Dict[str, Any]:
+def _parse_vip_link(vip_url: str) -> dict[str, Any]:
     text = str(vip_url or "").strip()
     if not text:
         return {}
@@ -163,9 +163,9 @@ def _parse_vip_link(vip_url: str) -> Dict[str, Any]:
         return {"url_hash": _safe_hash(text), "parse_error": True}
 
 
-def _unique(values: List[str], limit: int = 10) -> List[str]:
+def _unique(values: list[str], limit: int = 10) -> list[str]:
     seen = set()
-    out: List[str] = []
+    out: list[str] = []
     for value in values:
         text = str(value or "").strip()
         if not text or text in seen:
@@ -177,7 +177,7 @@ def _unique(values: List[str], limit: int = 10) -> List[str]:
     return out
 
 
-def build_launch_intent(account: Any, reason: str = "") -> Dict[str, Any]:
+def build_launch_intent(account: Any, reason: str = "") -> dict[str, Any]:
     vip_links = list(getattr(account, "vip_links", []) or [])
     active_vip = str(getattr(account, "active_vip", "") or "")
     browser_tracker_id = str(getattr(account, "browser_tracker_id", "") or "")

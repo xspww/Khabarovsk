@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Dict, Optional, Set
 
 from core_logging import flog_kv
 from domain.account_model import Account
@@ -10,7 +9,7 @@ from domain.states import LIFECYCLE_ALLOWED_TRANSITIONS, LIFECYCLE_STATE, Accoun
 from runtime.event_bus import EventBus, EventName
 from runtime.runtime_state_manager import RuntimeStateManager
 
-ALLOWED_STATE_TRANSITIONS: Dict[AccountState, Set[AccountState]] = {
+ALLOWED_STATE_TRANSITIONS: dict[AccountState, set[AccountState]] = {
     AccountState.IDLE: {
         AccountState.READY,
         AccountState.FAILED,
@@ -238,7 +237,7 @@ class StateManager:
             command_generation=acc.command_generation,
         )
 
-    def set_recovery(self, acc: Account, status: str = "", reason: str = "", inflight: Optional[bool] = None):
+    def set_recovery(self, acc: Account, status: str = "", reason: str = "", inflight: bool | None = None):
         with acc._lock:
             self._runtime.set_recovery(acc, status=status, reason=reason, inflight=inflight)
         flog_kv(
@@ -253,7 +252,7 @@ class StateManager:
             command_generation=acc.command_generation,
         )
 
-    def clear_recovery(self, acc: Account, reason: str = "", inflight: Optional[bool] = False):
+    def clear_recovery(self, acc: Account, reason: str = "", inflight: bool | None = False):
         with acc._lock:
             self._runtime.clear_recovery(acc, reason=reason, inflight=inflight)
         flog_kv(

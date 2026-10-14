@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from services.browser_tracker import tracker_matches
 
@@ -67,14 +67,14 @@ def score_resource_signals(windows: Any = 0, rss_mb: Any = 0.0, cpu: Any = 0.0) 
 
 
 def classify_process_proof(
-    validation: Dict[str, Any],
+    validation: dict[str, Any],
     *,
     owner_key: str = "",
     expected_identity: str = "",
     expected_browser_tracker_id: str = "",
-    launched_after: Optional[float] = None,
+    launched_after: float | None = None,
     current_process_proof_level: str = "",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     if not validation or not validation.get("ok"):
         return {
             "process_proof_level": PROOF_UNTRUSTED,

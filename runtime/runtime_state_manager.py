@@ -3,7 +3,8 @@ from __future__ import annotations
 import sys
 import threading
 import time
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 from domain.states import AccountState, RuntimeState, is_valid_runtime_transition, runtime_state_for_public
 from runtime.runtime_invariants import invariant_snapshot
@@ -48,7 +49,7 @@ Logger = Callable[..., None]
 class RuntimeStateManager:
     """Single-writer helper for lifecycle-critical Account runtime fields."""
 
-    def __init__(self, logger: Optional[Logger] = None):
+    def __init__(self, logger: Logger | None = None):
         self._log = logger
 
     def _emit(self, scope: str, event: str, level: str = "info", **fields: Any) -> None:
@@ -77,16 +78,16 @@ class RuntimeStateManager:
     def _account_name(self, acc: Any) -> str:
         return _account_name(acc)
 
-    def _runtime_log_fields(self, acc: Any, reason: str = "", **fields: Any) -> Dict[str, Any]:
+    def _runtime_log_fields(self, acc: Any, reason: str = "", **fields: Any) -> dict[str, Any]:
         return _runtime_log_fields(acc, reason=reason, **fields)
 
-    def _emit_invariant_violations(self, acc: Any, reason: str, runtime_state: Optional[RuntimeState] = None) -> bool:
+    def _emit_invariant_violations(self, acc: Any, reason: str, runtime_state: RuntimeState | None = None) -> bool:
         return _emit_invariant_violations(self._log, acc, reason, runtime_state=runtime_state)
 
-    def snapshot(self, acc: Any) -> Dict[str, Any]:
+    def snapshot(self, acc: Any) -> dict[str, Any]:
         return _snapshot_account_runtime(self._log, acc)
 
-    def guard_runtime_generation(self, acc: Any, expected_generation: Optional[int], reason: str = "") -> bool:
+    def guard_runtime_generation(self, acc: Any, expected_generation: int | None, reason: str = "") -> bool:
         if expected_generation is None:
             return True
         current = int(getattr(acc, "runtime_generation", 0) or 0)
@@ -107,7 +108,7 @@ class RuntimeStateManager:
         )
         return False
 
-    def guard_recovery_generation(self, acc: Any, expected_generation: Optional[int], reason: str = "") -> bool:
+    def guard_recovery_generation(self, acc: Any, expected_generation: int | None, reason: str = "") -> bool:
         if expected_generation is None:
             return True
         current = int(getattr(acc, "recovery_generation", 0) or 0)
@@ -131,7 +132,7 @@ class RuntimeStateManager:
     def guard_session_identity(
         self,
         acc: Any,
-        expected_generation: Optional[int] = None,
+        expected_generation: int | None = None,
         expected_session_id: str = "",
         expected_launch_nonce: str = "",
         expected_transaction_id: str = "",
@@ -190,10 +191,10 @@ class RuntimeStateManager:
         )
         return int(acc.runtime_generation)
 
-    def begin_rejoin_transaction(self, acc: Any, reason: str, launch_intent: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def begin_rejoin_transaction(self, acc: Any, reason: str, launch_intent: dict[str, Any] | None = None) -> dict[str, Any]:
         return _begin_rejoin_transaction(acc, reason, launch_intent, emit=self._emit)
 
-    def update_rejoin_transaction(self, acc: Any, status: str = "", step: str = "", reason: str = "", server_validation: str = "", scheduler_slot: str = "") -> Dict[str, Any]:
+    def update_rejoin_transaction(self, acc: Any, status: str = "", step: str = "", reason: str = "", server_validation: str = "", scheduler_slot: str = "") -> dict[str, Any]:
         return _update_rejoin_transaction(
             acc,
             status=status,
@@ -209,9 +210,9 @@ class RuntimeStateManager:
         acc: Any,
         status: str,
         reason: str,
-        destination_evidence: Optional[Dict[str, Any]] = None,
+        destination_evidence: dict[str, Any] | None = None,
         server_validation: str = "",
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         return _finish_rejoin_transaction(
             acc,
             status,
@@ -227,7 +228,7 @@ class RuntimeStateManager:
         new_state: AccountState,
         reason: str = "",
         force: bool = False,
-        expected_generation: Optional[int] = None,
+        expected_generation: int | None = None,
         increment_generation: bool = False,
     ) -> bool:
         if not self.guard_runtime_generation(acc, expected_generation, reason or "transition"):
@@ -390,9 +391,9 @@ class RuntimeStateManager:
     def update_launch_intent(
         self,
         acc: Any,
-        launch_intent: Dict[str, Any],
+        launch_intent: dict[str, Any],
         reason: str = "",
-        expected_generation: Optional[int] = None,
+        expected_generation: int | None = None,
     ) -> bool:
         if not self.guard_runtime_generation(acc, expected_generation, reason or "launch_intent_update"):
             return False
@@ -414,7 +415,7 @@ class RuntimeStateManager:
         )
         return True
 
-    def set_recovery(self, acc: Any, status: str = "", reason: str = "", inflight: Optional[bool] = None) -> None:
+    def set_recovery(self, acc: Any, status: str = "", reason: str = "", inflight: bool | None = None) -> None:
         if status:
             acc.recovery_status = str(status)
         if reason:
@@ -434,7 +435,7 @@ class RuntimeStateManager:
             ),
         )
 
-    def clear_recovery(self, acc: Any, reason: str = "", inflight: Optional[bool] = False) -> None:
+    def clear_recovery(self, acc: Any, reason: str = "", inflight: bool | None = False) -> None:
         acc.recovery_status = ""
         acc.last_recovery_reason = ""
         if inflight is not None:
@@ -489,7 +490,7 @@ class RuntimeStateManager:
         )
         return True
 
-    def bump_recovery_generation(self, acc: Any, reason: str = "", now: Optional[float] = None) -> int:
+    def bump_recovery_generation(self, acc: Any, reason: str = "", now: float | None = None) -> int:
         acc.recovery_generation = int(getattr(acc, "recovery_generation", 0) or 0) + 1
         acc.last_recovery_at = float(now if now is not None else time.time())
         acc.sync_runtime(reason or "recovery_generation")
@@ -511,7 +512,7 @@ class RuntimeStateManager:
         status: str,
         reason: str,
         bucket: str = "crash",
-        now: Optional[float] = None,
+        now: float | None = None,
         count_retry: bool = True,
         count_crash: bool = True,
         count_fail: bool = True,
@@ -553,7 +554,7 @@ class RuntimeStateManager:
         )
         return generation
 
-    def begin_account_command(self, acc: Any, command: Dict[str, Any]) -> int:
+    def begin_account_command(self, acc: Any, command: dict[str, Any]) -> int:
         current_id = str(getattr(acc, "current_command_id", "") or "")
         next_id = str(command.get("command_id", "") or "")
         if current_id and current_id != next_id:

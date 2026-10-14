@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from services.process_proof_policy import PROOF_STRONG, is_at_least_process_proof
 
@@ -29,8 +29,8 @@ class RuntimeTruthSnapshot:
     account_id: str
     truth_state: str
     confidence: float
-    reasons: List[str] = field(default_factory=list)
-    pid: Optional[int] = None
+    reasons: list[str] = field(default_factory=list)
+    pid: int | None = None
     process_alive: bool = False
     window_count: int = 0
     heartbeat_age_seconds: float = 0.0
@@ -39,7 +39,7 @@ class RuntimeTruthSnapshot:
     public_state: str = ""
     runtime_state: str = ""
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "account_id": self.account_id,
             "truth_state": self.truth_state,
@@ -59,9 +59,9 @@ class RuntimeTruthSnapshot:
 def build_account_truth(
     account: Any,
     *,
-    process_alive: Optional[bool] = None,
-    window_count: Optional[int] = None,
-    now: Optional[float] = None,
+    process_alive: bool | None = None,
+    window_count: int | None = None,
+    now: float | None = None,
     heartbeat_timeout: float = 120.0,
     server_evidence_timeout: float = 300.0,
 ) -> RuntimeTruthSnapshot:
@@ -82,7 +82,7 @@ def build_account_truth(
     heartbeat_age = _age(current, getattr(account, "last_activity_at", 0.0))
     server_age = _age(current, getattr(account, "observed_server_at", 0.0))
     desired = _state_name(getattr(account, "desired_state", ""), "IN_GAME")
-    reasons: List[str] = []
+    reasons: list[str] = []
 
     if (
         bool(getattr(account, "cookie_mismatch", False))

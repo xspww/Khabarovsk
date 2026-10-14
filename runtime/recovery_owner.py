@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 from runtime.recovery_context import RecoveryAttemptContext
 from runtime.recovery_policy import active_recovery_block_reason
@@ -12,7 +12,7 @@ class RecoveryOwnerRegistry:
     """Owns active recovery ownership and generation-safe release checks."""
 
     def __init__(self):
-        self._active_recoveries: Dict[str, Dict[str, Any]] = {}
+        self._active_recoveries: dict[str, dict[str, Any]] = {}
         self._lock = threading.Lock()
 
     def active_count(self) -> int:
@@ -25,12 +25,12 @@ class RecoveryOwnerRegistry:
             self._active_recoveries.clear()
             return count
 
-    def get(self, account_key: str) -> Optional[Dict[str, Any]]:
+    def get(self, account_key: str) -> dict[str, Any] | None:
         with self._lock:
             owner = self._active_recoveries.get(str(account_key or ""))
             return dict(owner) if owner else None
 
-    def block_reason(self, account_key: str, ctx: RecoveryAttemptContext) -> Dict[str, Any]:
+    def block_reason(self, account_key: str, ctx: RecoveryAttemptContext) -> dict[str, Any]:
         owner = self.get(account_key)
         return active_recovery_block_reason(owner, ctx)
 
@@ -42,7 +42,7 @@ class RecoveryOwnerRegistry:
         reason: str,
         current_state: Any,
         force: bool = False,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         account_id = str(account_key or "")
         state_name = str(getattr(current_state, "name", current_state or ""))
         with self._lock:
@@ -90,8 +90,8 @@ class RecoveryOwnerRegistry:
         bucket: str,
         priority: int = 0,
         token: str = "",
-        now: Optional[float] = None,
-    ) -> Dict[str, Any]:
+        now: float | None = None,
+    ) -> dict[str, Any]:
         account_id = str(account_key or "")
         started_at = time.time() if now is None else float(now)
         owner = {
@@ -115,10 +115,10 @@ class RecoveryOwnerRegistry:
     def release(
         self,
         account_key: str,
-        runtime_generation: Optional[int],
-        recovery_generation: Optional[int],
+        runtime_generation: int | None,
+        recovery_generation: int | None,
         reason: str,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         account_id = str(account_key or "")
         with self._lock:
             owner = self._active_recoveries.get(account_id)

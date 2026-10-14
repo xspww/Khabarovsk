@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import threading
-from typing import Any, ClassVar, Dict, Tuple
+from typing import Any, ClassVar
 
 from services import roblox_launch_service as _launch_service
 from services import roblox_liveness as _liveness
@@ -47,16 +47,16 @@ class ProcessManager:
     )
     REJOINABLE_DISCONNECT_CODES: ClassVar[set] = {"277"}
     CONDITIONAL_REJOIN_DISCONNECT_CODES: ClassVar[set] = {"273"}
-    FATAL_DISCONNECT_CODES: ClassVar[Dict[str, str]] = {
+    FATAL_DISCONNECT_CODES: ClassVar[dict[str, str]] = {
         "267": "security_kick",
         "268": "unexpected_client_behavior",
     }
-    _process_cache: ClassVar[Dict[int, Any]] = {}
+    _process_cache: ClassVar[dict[int, Any]] = {}
     _cache_lock = threading.Lock()
-    _nr_cache: ClassVar[Dict[int, Tuple[float, bool]]] = {}
+    _nr_cache: ClassVar[dict[int, tuple[float, bool]]] = {}
     _nr_cache_ttl = 2.0
     _ownership_lock = threading.Lock()
-    _pid_owner: ClassVar[Dict[int, str]] = {}
+    _pid_owner: ClassVar[dict[int, str]] = {}
     HIGH_CONFIDENCE = 75.0
     MEDIUM_CONFIDENCE = 45.0
 

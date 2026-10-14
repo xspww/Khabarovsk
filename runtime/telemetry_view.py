@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, Iterable, List
+from collections.abc import Iterable
+from typing import Any
 
 
 def _num(value: Any, default: float = 0.0) -> float:
@@ -11,12 +12,12 @@ def _num(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def _event_type(event: Dict[str, Any]) -> str:
+def _event_type(event: dict[str, Any]) -> str:
     return str(event.get("event_type") or event.get("kind") or "").lower()
 
 
-def _durations(events: Iterable[Dict[str, Any]]) -> List[float]:
-    values: List[float] = []
+def _durations(events: Iterable[dict[str, Any]]) -> list[float]:
+    values: list[float] = []
     for event in events:
         for key in ("reconnect_duration_seconds", "duration_seconds", "elapsed_seconds"):
             if key in event:
@@ -27,7 +28,7 @@ def _durations(events: Iterable[Dict[str, Any]]) -> List[float]:
     return values
 
 
-def build_runtime_telemetry(status: Dict[str, Any], now: float | None = None) -> Dict[str, Any]:
+def build_runtime_telemetry(status: dict[str, Any], now: float | None = None) -> dict[str, Any]:
     current = float(now if now is not None else time.time())
     accounts = list(status.get("accounts") or [])
     events = list(status.get("recent_runtime_events") or [])
@@ -44,7 +45,7 @@ def build_runtime_telemetry(status: Dict[str, Any], now: float | None = None) ->
     memory_mb = round(sum(_num(row.get("mem_mb"), 0.0) for row in accounts), 2)
     durations = _durations(events)
     completed = total_rejoin + total_crash
-    event_counts: Dict[str, int] = {}
+    event_counts: dict[str, int] = {}
     for event in events:
         key = _event_type(event) or "runtime_event"
         event_counts[key] = event_counts.get(key, 0) + 1

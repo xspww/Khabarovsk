@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from core import Account, flog_kv
 from performance_settings import (
@@ -31,7 +31,7 @@ def _float_setting(value, default: float, min_value: float, max_value: float) ->
     return max(min_value, min(parsed, max_value))
 
 
-def persist_config(ctx: ApiContext, updates: Dict[str, Any], *, apply_snapshot: bool = False, strict_snapshot: bool = False) -> None:
+def persist_config(ctx: ApiContext, updates: dict[str, Any], *, apply_snapshot: bool = False, strict_snapshot: bool = False) -> None:
     """Single write path for config: update + save, then fan out to the farm.
 
     Route modules leverage this instead of repeating the triple. strict_snapshot
@@ -54,7 +54,7 @@ def persist_config(ctx: ApiContext, updates: Dict[str, Any], *, apply_snapshot: 
         pass
 
 
-WINDOW_SIZE_PRESETS: Dict[str, Tuple[int, int]] = {
+WINDOW_SIZE_PRESETS: dict[str, tuple[int, int]] = {
     "200x150": (200, 150),
     "240x180": (240, 180),
     "320x240": (320, 240),
@@ -68,7 +68,7 @@ WINDOW_SIZE_PRESETS: Dict[str, Tuple[int, int]] = {
 }
 
 
-def _normalize_window_size_settings(ctx: ApiContext, body: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _normalize_window_size_settings(ctx: ApiContext, body: dict[str, Any] | None = None) -> dict[str, Any]:
     body = body or {}
     unlock_size_enabled = bool(body.get("unlock_size_enabled", body.get("roblox_window_unlock_size_enabled", ctx.cfg_mgr.get("roblox_window_unlock_size_enabled", True))))
     enabled = bool(body.get("enabled", body.get("roblox_window_resize_enabled", ctx.cfg_mgr.get("roblox_window_resize_enabled", False))))
@@ -133,7 +133,7 @@ def _normalize_window_size_settings(ctx: ApiContext, body: Optional[Dict[str, An
     }
 
 
-def _window_size_status(ctx: ApiContext) -> Dict[str, Any]:
+def _window_size_status(ctx: ApiContext) -> dict[str, Any]:
     settings = _normalize_window_size_settings(ctx, {})
     visible_count = 0
     hidden_count = 0
@@ -169,7 +169,7 @@ def _window_size_status(ctx: ApiContext) -> Dict[str, Any]:
     }
 
 
-def _roblox_runtime_restart_required(ctx: ApiContext) -> Dict[str, Any]:
+def _roblox_runtime_restart_required(ctx: ApiContext) -> dict[str, Any]:
     running = False
     count = 0
     try:
@@ -207,14 +207,14 @@ def _roblox_runtime_restart_required(ctx: ApiContext) -> Dict[str, Any]:
     }
 
 
-def _volume_status_from_config(ctx: ApiContext) -> Dict[str, Any]:
+def _volume_status_from_config(ctx: ApiContext) -> dict[str, Any]:
     return {
         "roblox_volume_muted": bool(ctx.cfg_mgr.get("roblox_volume_muted", False)),
         "roblox_volume_level": _int_setting(ctx.cfg_mgr.get("roblox_volume_level", 10), 10, 0, 10),
     }
 
 
-def _fps_limiter_status(ctx: ApiContext, path: str = DEFAULT_ROBLOX_SETTINGS_PATH) -> Dict[str, Any]:
+def _fps_limiter_status(ctx: ApiContext, path: str = DEFAULT_ROBLOX_SETTINGS_PATH) -> dict[str, Any]:
     file_status = read_fps_settings(path)
     runtime_status = _roblox_runtime_restart_required(ctx)
     try:
@@ -245,7 +245,7 @@ def _fps_limiter_status(ctx: ApiContext, path: str = DEFAULT_ROBLOX_SETTINGS_PAT
     return payload
 
 
-def _graphics_status(ctx: ApiContext, path: str = DEFAULT_ROBLOX_SETTINGS_PATH) -> Dict[str, Any]:
+def _graphics_status(ctx: ApiContext, path: str = DEFAULT_ROBLOX_SETTINGS_PATH) -> dict[str, Any]:
     file_status = read_fps_settings(path)
     runtime_status = _roblox_runtime_restart_required(ctx)
     graphics_enabled = bool(ctx.cfg_mgr.get("graphics_low_enabled", ctx.cfg_mgr.get("graphics_auto_enabled", False)))
@@ -265,7 +265,7 @@ def _graphics_status(ctx: ApiContext, path: str = DEFAULT_ROBLOX_SETTINGS_PATH) 
     return payload
 
 
-def _cpu_limiter_settings_from_config(ctx: ApiContext, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+def _cpu_limiter_settings_from_config(ctx: ApiContext, extra: dict[str, Any] | None = None) -> dict[str, Any]:
     source = {
         "cpu_limiter_enabled": ctx.cfg_mgr.get("cpu_limiter_enabled", False),
         "cpu_limiter_mode": ctx.cfg_mgr.get("cpu_limiter_mode", "hard"),
@@ -296,12 +296,12 @@ def _cpu_limiter_settings_from_config(ctx: ApiContext, extra: Optional[Dict[str,
     return normalize_cpu_limiter_settings(source)
 
 
-def _cpu_limiter_status(ctx: ApiContext) -> Dict[str, Any]:
+def _cpu_limiter_status(ctx: ApiContext) -> dict[str, Any]:
     settings = _cpu_limiter_settings_from_config(ctx)
     return CPU_LIMITER.snapshot(getattr(ctx.farm, "_accounts", []), settings)
 
 
-def _ram_cleanup_status(ctx: ApiContext) -> Dict[str, Any]:
+def _ram_cleanup_status(ctx: ApiContext) -> dict[str, Any]:
     try:
         from services.ram_cleanup import RAM_CLEANUP
     except Exception as exc:
@@ -317,7 +317,7 @@ def _ram_cleanup_status(ctx: ApiContext) -> Dict[str, Any]:
         return {"ok": False, "msg": str(exc), **cfg}
 
 
-def _process_trim_status(ctx: ApiContext) -> Dict[str, Any]:
+def _process_trim_status(ctx: ApiContext) -> dict[str, Any]:
     try:
         from services.process_trim import PROCESS_TRIM
     except Exception as exc:
@@ -334,7 +334,7 @@ def _process_trim_status(ctx: ApiContext) -> Dict[str, Any]:
         return {"ok": False, "msg": str(exc), **cfg}
 
 
-def _virtual_memory_status(ctx: ApiContext) -> Dict[str, Any]:
+def _virtual_memory_status(ctx: ApiContext) -> dict[str, Any]:
     try:
         from services import virtual_memory as _vm
     except Exception as exc:
@@ -351,7 +351,7 @@ def _virtual_memory_status(ctx: ApiContext) -> Dict[str, Any]:
     return payload
 
 
-def _migrate_account_games(ctx: ApiContext, accounts_to_update: List[Account]) -> int:
+def _migrate_account_games(ctx: ApiContext, accounts_to_update: list[Account]) -> int:
     """One-time linking of existing accounts to games. Returns linked count.
 
     Links by id when present, otherwise by matching place_id. Accounts with
@@ -402,7 +402,7 @@ def _migrate_account_games(ctx: ApiContext, accounts_to_update: List[Account]) -
     return linked
 
 
-def _apply_game_defaults(ctx: ApiContext, accounts_to_update: List[Account], persist: bool = False) -> int:
+def _apply_game_defaults(ctx: ApiContext, accounts_to_update: list[Account], persist: bool = False) -> int:
     try:
         from domain.games import ensure_games_migrated, game_for_account, normalize_game_mode
     except Exception:
@@ -480,9 +480,9 @@ def _apply_game_defaults(ctx: ApiContext, accounts_to_update: List[Account], per
 
 def _apply_legacy_game_defaults(
     ctx: ApiContext,
-    accounts_to_update: List[Account],
+    accounts_to_update: list[Account],
     persist: bool = False,
-    cfg: Optional[Dict[str, Any]] = None,
+    cfg: dict[str, Any] | None = None,
 ) -> int:
     if cfg is None:
         try:

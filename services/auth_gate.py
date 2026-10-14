@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict
+from typing import Any
 
 from core import account_launch_block_reason, cookie_invalid_block_reason
 from runtime.recovery_support import _set_account_cookie_block
@@ -34,7 +34,7 @@ class AuthGateDecision:
     def launchable(self) -> bool:
         return not self.blocked
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "blocked": self.blocked,
             "launchable": self.launchable,

@@ -9,7 +9,6 @@ state lookup costs one import and one hop.
 from __future__ import annotations
 
 from enum import Enum, StrEnum, auto
-from typing import Dict, Optional, Set
 
 
 class AccountState(Enum):
@@ -35,7 +34,7 @@ class RuntimeState(StrEnum):
     FAILED     = "FAILED"
 
 
-RUNTIME_ALLOWED_TRANSITIONS: Dict[RuntimeState, Set[RuntimeState]] = {
+RUNTIME_ALLOWED_TRANSITIONS: dict[RuntimeState, set[RuntimeState]] = {
     RuntimeState.STOPPED:    {RuntimeState.STARTING, RuntimeState.FAILED},
     RuntimeState.STARTING:   {RuntimeState.JOINING, RuntimeState.FAILED},
     RuntimeState.JOINING:    {RuntimeState.RUNNING, RuntimeState.FAILED},
@@ -61,7 +60,7 @@ def is_valid_runtime_transition(old: RuntimeState, new: RuntimeState, force: boo
     return new in RUNTIME_ALLOWED_TRANSITIONS.get(old, set())
 
 
-PUBLIC_TO_RUNTIME_STATE: Dict[AccountState, RuntimeState] = {
+PUBLIC_TO_RUNTIME_STATE: dict[AccountState, RuntimeState] = {
     AccountState.IDLE:         RuntimeState.STOPPED,
     AccountState.READY:        RuntimeState.STOPPED,
     AccountState.QUEUED:       RuntimeState.STARTING,
@@ -74,7 +73,7 @@ PUBLIC_TO_RUNTIME_STATE: Dict[AccountState, RuntimeState] = {
     AccountState.COOLDOWN:     RuntimeState.BACKOFF,
 }
 
-RUNTIME_TO_DEFAULT_PUBLIC_STATE: Dict[RuntimeState, AccountState] = {
+RUNTIME_TO_DEFAULT_PUBLIC_STATE: dict[RuntimeState, AccountState] = {
     RuntimeState.STOPPED:    AccountState.IDLE,
     RuntimeState.STARTING:   AccountState.LAUNCHING,
     RuntimeState.JOINING:    AccountState.VERIFY,
@@ -84,7 +83,7 @@ RUNTIME_TO_DEFAULT_PUBLIC_STATE: Dict[RuntimeState, AccountState] = {
     RuntimeState.FAILED:     AccountState.FAILED,
 }
 
-LIFECYCLE_STATE: Dict[AccountState, str] = {
+LIFECYCLE_STATE: dict[AccountState, str] = {
     AccountState.IDLE:         "STOPPED",
     AccountState.READY:        "STOPPED",
     AccountState.QUEUED:       "STARTING",
@@ -102,7 +101,7 @@ def runtime_state_for_public(public_state: AccountState) -> RuntimeState:
     return PUBLIC_TO_RUNTIME_STATE.get(public_state, RuntimeState.STOPPED)
 
 
-def public_state_for_runtime(runtime_state: RuntimeState, fallback: Optional[AccountState] = None) -> AccountState:
+def public_state_for_runtime(runtime_state: RuntimeState, fallback: AccountState | None = None) -> AccountState:
     return fallback or RUNTIME_TO_DEFAULT_PUBLIC_STATE.get(runtime_state, AccountState.IDLE)
 
 

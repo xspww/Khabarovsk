@@ -8,7 +8,7 @@ import secrets
 import socket
 import time
 import urllib.request
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from app_paths import APP_DATA_DIR, APP_ROOT_DIR, IS_COMPILED, path_targets_current_exe
 from core import flog_kv
@@ -20,7 +20,7 @@ INSTANCE_TOKEN = secrets.token_urlsafe(32)
 _APP_MUTEX = None
 _INSTANCE_SOCKET = None
 _INSTANCE_STATE_FILE = os.path.join(APP_DATA_DIR, "cronus_rt_instance.json")
-_PYTHON_ENTRYPOINTS: Tuple[Tuple[str, ...], ...] = (
+_PYTHON_ENTRYPOINTS: tuple[tuple[str, ...], ...] = (
     ("main.py",),
 )
 
@@ -36,7 +36,7 @@ def _find_free_port(start: int = DEFAULT_PORT) -> int:
     return start
 
 
-def _find_existing_dashboard(start: int = DEFAULT_PORT) -> Optional[int]:
+def _find_existing_dashboard(start: int = DEFAULT_PORT) -> int | None:
     for p in range(start, start + PORT_SCAN_COUNT):
         try:
             req = urllib.request.Request(
@@ -62,7 +62,7 @@ def _normalize_path(path: str, cwd: str = "") -> str:
     return os.path.normcase(os.path.abspath(text))
 
 
-def _entrypoint_path(parts: Tuple[str, ...]) -> str:
+def _entrypoint_path(parts: tuple[str, ...]) -> str:
     return os.path.normcase(os.path.abspath(os.path.join(BASE_DIR, *parts)))
 
 
@@ -71,7 +71,7 @@ def _cmdline_part_matches_entrypoint(part: str, cwd: str, entrypoint: str) -> bo
     return bool(candidate and candidate == entrypoint)
 
 
-def _cmdline_targets_this_app(cmdline: List[str], cwd: str = "") -> bool:
+def _cmdline_targets_this_app(cmdline: list[str], cwd: str = "") -> bool:
     try:
         cwd_norm = os.path.normcase(os.path.abspath(cwd or "")) if cwd else ""
     except Exception:
@@ -130,7 +130,7 @@ def _is_pid_alive(pid: int) -> bool:
         return False
 
 
-def _read_instance_state() -> Dict[str, Any]:
+def _read_instance_state() -> dict[str, Any]:
     try:
         if not os.path.exists(_INSTANCE_STATE_FILE):
             return {}
@@ -250,7 +250,7 @@ def _stop_same_app_processes() -> int:
     return stopped
 
 
-def _find_same_app_process() -> Optional[int]:
+def _find_same_app_process() -> int | None:
     try:
         import psutil
 

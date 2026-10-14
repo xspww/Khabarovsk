@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Optional
+from typing import Any
 
 from core import AccountState
 from runtime.recovery_support import RECOVERY_REASON_MESSAGES, compute_backoff
@@ -20,8 +20,8 @@ class RecoveryEvaluator:
         acc: Any,
         trigger: str = "evaluate",
         force_restart: bool = False,
-        expected_runtime_generation: Optional[int] = None,
-        expected_recovery_generation: Optional[int] = None,
+        expected_runtime_generation: int | None = None,
+        expected_recovery_generation: int | None = None,
         expected_session_id: str = "",
         expected_launch_nonce: str = "",
         expected_transaction_id: str = "",

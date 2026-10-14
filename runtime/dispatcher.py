@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 from core import Account, AccountState, EventBus, SmartQueue, StateManager, flog, flog_kv
 from domain.session_identity import build_launch_intent
@@ -24,15 +24,15 @@ class Dispatcher(threading.Thread):
         launcher: LaunchController,
         state_mgr: StateManager,
         bus: EventBus,
-        workers: Dict[str, AccountWorker],
+        workers: dict[str, AccountWorker],
         recovery: RecoveryEngine,
         net: NetworkMonitor,
         stop: threading.Event,
-        cfg: Optional[dict] = None,
-        runtime_state: Optional[RuntimeStateManager] = None,
-        runtime_store: Optional[RuntimeStore] = None,
-        supervisor: Optional[SupervisorRuntime] = None,
-        accounts: Optional[list] = None, machine_supervisor: Optional[Any] = None,
+        cfg: dict | None = None,
+        runtime_state: RuntimeStateManager | None = None,
+        runtime_store: RuntimeStore | None = None,
+        supervisor: SupervisorRuntime | None = None,
+        accounts: list | None = None, machine_supervisor: Any | None = None,
     ):
         super().__init__(daemon=True, name="Dispatcher")
         self._queue = queue
@@ -128,7 +128,7 @@ class Dispatcher(threading.Thread):
             except Exception:
                 pass
 
-    def _record_transaction(self, acc: Account, snapshot: Dict[str, Any], session_status: str = "active"):
+    def _record_transaction(self, acc: Account, snapshot: dict[str, Any], session_status: str = "active"):
         if not self._runtime_store:
             return
         try:
@@ -144,7 +144,7 @@ class Dispatcher(threading.Thread):
         except Exception as e:
             flog_kv("RUNTIME", "store_transaction_failed", "warning", account=acc.display_name, error=e)
 
-    def _record_stale_transaction(self, acc: Account, expected: Dict[str, Any], reason: str):
+    def _record_stale_transaction(self, acc: Account, expected: dict[str, Any], reason: str):
         if not expected:
             return
         snapshot = {
@@ -182,7 +182,7 @@ class Dispatcher(threading.Thread):
         if self._supervisor:
             self._supervisor.emit("RecoverySupervisor", "TRANSACTION_STALE_REJECTED", account=acc, severity="warning", reason=reason, payload=snapshot)
 
-    def _destination_evidence(self, acc: Account) -> Dict[str, Any]:
+    def _destination_evidence(self, acc: Account) -> dict[str, Any]:
         current_intent = build_launch_intent(acc, reason="destination_evidence")
         evidence = {
             "configured_place_id": str(getattr(acc, "place_id", "") or ""),
@@ -207,7 +207,7 @@ class Dispatcher(threading.Thread):
             pass
         return evidence
 
-    def _validate_launch_intent(self, acc: Account, evidence: Dict[str, Any]) -> Tuple[bool, str, str]:
+    def _validate_launch_intent(self, acc: Account, evidence: dict[str, Any]) -> tuple[bool, str, str]:
         intent = dict(getattr(acc, "launch_intent", {}) or {})
         expected_place = str(intent.get("place_id", "") or "").strip()
         actual_place = str(evidence.get("observed_place_id", "") or "").strip()
@@ -291,9 +291,9 @@ class Dispatcher(threading.Thread):
         acc: Account,
         status: str,
         reason: str,
-        evidence: Optional[Dict[str, Any]] = None,
+        evidence: dict[str, Any] | None = None,
         server_validation: str = "",
-        expected: Optional[Dict[str, Any]] = None,
+        expected: dict[str, Any] | None = None,
     ) -> bool:
         with acc._lock:
             expected = expected or {}

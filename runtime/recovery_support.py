@@ -2,7 +2,7 @@
 
 import random
 import sys
-from typing import Any, Dict
+from typing import Any
 
 from core import Account, flog_kv
 from runtime.recovery_context import SESSION_CONFLICT
@@ -41,7 +41,7 @@ RECOVERY_REASON_MESSAGES = {
 }
 
 
-def _enrich_visual_disconnect_payload_with_log(payload: Dict[str, Any]) -> Dict[str, Any]:
+def _enrich_visual_disconnect_payload_with_log(payload: dict[str, Any]) -> dict[str, Any]:
     """Attach late Roblox log evidence when visual popup recovery wins the race."""
     if not payload:
         return payload

@@ -3,7 +3,8 @@ from __future__ import annotations
 import queue
 import threading
 import time
-from typing import Any, Callable, Dict, List, Set, Tuple
+from collections.abc import Callable
+from typing import Any
 
 from core_logging import flog_kv
 
@@ -20,7 +21,7 @@ class EventName:
     NETWORK_STATE_CHANGE = "network_state_change"
     NETWORK_LOST_ACCOUNT = "network_lost_account"
 
-EVENT_CONTRACTS: Dict[str, Tuple[str, ...]] = {
+EVENT_CONTRACTS: dict[str, tuple[str, ...]] = {
     EventName.STATE_CHANGE: ("account", "old_state", "new_state"),
     EventName.INVALID_TRANSITION: ("account", "old_state", "new_state"),
     EventName.ACCOUNT_CRASH: ("account", "reason", "reason_msg"),
@@ -33,7 +34,7 @@ EVENT_CONTRACTS: Dict[str, Tuple[str, ...]] = {
     EventName.NETWORK_LOST_ACCOUNT: ("account",),
 }
 
-CRITICAL_EVENT_NAMES: Set[str] = {
+CRITICAL_EVENT_NAMES: set[str] = {
     EventName.STATE_CHANGE,
     EventName.INVALID_TRANSITION,
     EventName.ACCOUNT_CRASH,
@@ -53,11 +54,11 @@ CRITICAL_EVENT_NAMES: Set[str] = {
 
 class EventBus:
     def __init__(self, workers: int = 4, max_pending: int = 128):
-        self._handlers: Dict[str, List[Callable]] = {}
+        self._handlers: dict[str, list[Callable]] = {}
         self._lock = threading.Lock()
         self._tasks: queue.Queue = queue.Queue(maxsize=max(1, int(max_pending or 128)))
         self._slow_handler_sec = 2.0
-        self._workers: List[threading.Thread] = []
+        self._workers: list[threading.Thread] = []
         for idx in range(max(1, int(workers or 4))):
             thread = threading.Thread(
                 target=self._run_worker,
@@ -79,7 +80,7 @@ class EventBus:
             finally:
                 self._tasks.task_done()
 
-    def _invoke_handler(self, event: str, handler: Callable, kwargs: Dict[str, Any], inline: bool = False):
+    def _invoke_handler(self, event: str, handler: Callable, kwargs: dict[str, Any], inline: bool = False):
         started = time.time()
         try:
             handler(**kwargs)

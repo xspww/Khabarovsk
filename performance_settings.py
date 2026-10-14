@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 import stat
-from typing import Any, Dict, Optional
+from typing import Any
 
 DEFAULT_ROBLOX_SETTINGS_PATH = os.path.join(
     os.path.expandvars(r"%LOCALAPPDATA%"),
@@ -94,7 +94,7 @@ def volume_level_to_file_value(level: int, muted: bool = False) -> str:
     return text or "0"
 
 
-def volume_file_value_to_level(raw: Any) -> Optional[int]:
+def volume_file_value_to_level(raw: Any) -> int | None:
     try:
         value = float(str(raw or "").strip())
     except Exception:
@@ -117,7 +117,7 @@ def is_readonly(path: str) -> bool:
         return False
 
 
-def _resolve_roblox_settings_path(path: Optional[str] = None) -> str:
+def _resolve_roblox_settings_path(path: str | None = None) -> str:
     """Resolve and validate the Roblox settings file path.
 
     Only the official ``GlobalBasicSettings_13.xml`` inside
@@ -141,10 +141,10 @@ def _resolve_roblox_settings_path(path: Optional[str] = None) -> str:
         return os.path.abspath(str(target))
 
 
-def roblox_settings_status(path: Optional[str] = None) -> Dict[str, Any]:
+def roblox_settings_status(path: str | None = None) -> dict[str, Any]:
     target = _resolve_roblox_settings_path(path)
     exists = os.path.exists(target)
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "ok": True,
         "path": target,
         "exists": exists,
@@ -160,7 +160,7 @@ def roblox_settings_status(path: Optional[str] = None) -> Dict[str, Any]:
     return payload
 
 
-def delete_roblox_settings_file(path: Optional[str] = None) -> Dict[str, Any]:
+def delete_roblox_settings_file(path: str | None = None) -> dict[str, Any]:
     """Delete GlobalBasicSettings_13.xml so Roblox recreates it on next launch."""
     import ctypes
 
@@ -198,7 +198,7 @@ def set_readonly(path: str, readonly: bool) -> None:
         os.chmod(path, mode | stat.S_IWRITE)
 
 
-def _read_named_setting(text: str, tag: str, name: str) -> Optional[str]:
+def _read_named_setting(text: str, tag: str, name: str) -> str | None:
     pattern = re.compile(rf'<{tag}\s+name="{re.escape(name)}"\s*>(.*?)</{tag}>', re.IGNORECASE | re.DOTALL)
     match = pattern.search(text)
     return match.group(1).strip() if match else None
@@ -209,7 +209,7 @@ def _replace_named_setting(text: str, tag: str, name: str, value: Any) -> tuple[
     return pattern.subn(rf"\g<1>{value}\g<3>", text, count=1)
 
 
-def _graphics_low_values(quality_level: Any = GRAPHICS_LOW_DEFAULT_LEVEL) -> Dict[str, str]:
+def _graphics_low_values(quality_level: Any = GRAPHICS_LOW_DEFAULT_LEVEL) -> dict[str, str]:
     quality = normalize_graphics_quality(quality_level)
     value = str(quality)
     return {
@@ -221,7 +221,7 @@ def _graphics_low_values(quality_level: Any = GRAPHICS_LOW_DEFAULT_LEVEL) -> Dic
     }
 
 
-def _apply_named_settings(text: str, values: Dict[str, str]) -> tuple[str, int]:
+def _apply_named_settings(text: str, values: dict[str, str]) -> tuple[str, int]:
     changed_total = 0
     for key, expected in values.items():
         tag, name = _SETTING_PATTERNS[key]
@@ -230,9 +230,9 @@ def _apply_named_settings(text: str, values: Dict[str, str]) -> tuple[str, int]:
     return text, changed_total
 
 
-def read_fps_settings(path: Optional[str] = None) -> Dict[str, Any]:
+def read_fps_settings(path: str | None = None) -> dict[str, Any]:
     target = path or DEFAULT_ROBLOX_SETTINGS_PATH
-    payload: Dict[str, Any] = {
+    payload: dict[str, Any] = {
         "path": target,
         "exists": os.path.exists(target),
         "read_only": False,
@@ -284,12 +284,12 @@ def read_fps_settings(path: Optional[str] = None) -> Dict[str, Any]:
 
 def apply_graphics_settings_file(
     graphics_low_enabled: bool,
-    path: Optional[str] = None,
-    readonly_after: Optional[bool] = None,
+    path: str | None = None,
+    readonly_after: bool | None = None,
     quality_level: Any = GRAPHICS_LOW_DEFAULT_LEVEL,
-    volume_muted: Optional[bool] = None,
+    volume_muted: bool | None = None,
     volume_level: Any = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     target = path or DEFAULT_ROBLOX_SETTINGS_PATH
     if not os.path.exists(target):
         raise FileNotFoundError(
@@ -298,8 +298,8 @@ def apply_graphics_settings_file(
     original_readonly = is_readonly(target)
     quality = normalize_graphics_quality(quality_level)
     volume_touched = volume_muted is not None or volume_level is not None
-    resolved_volume_muted: Optional[bool] = None
-    resolved_volume_level: Optional[int] = None
+    resolved_volume_muted: bool | None = None
+    resolved_volume_level: int | None = None
     if volume_touched:
         resolved_volume_muted = bool(volume_muted) if volume_muted is not None else False
         resolved_volume_level = normalize_roblox_volume(
@@ -358,9 +358,9 @@ def apply_graphics_settings_file(
 def apply_volume_settings_file(
     volume_muted: bool = False,
     volume_level: Any = VOLUME_DEFAULT_LEVEL,
-    path: Optional[str] = None,
-    readonly_after: Optional[bool] = None,
-) -> Dict[str, Any]:
+    path: str | None = None,
+    readonly_after: bool | None = None,
+) -> dict[str, Any]:
     target = path or DEFAULT_ROBLOX_SETTINGS_PATH
     if not os.path.exists(target):
         raise FileNotFoundError(
@@ -402,17 +402,17 @@ def apply_performance_settings_file(
     fps_enabled: bool,
     fps_limit: Any,
     graphics_auto_enabled: bool = False,
-    path: Optional[str] = None,
+    path: str | None = None,
     graphics_quality_level: Any = GRAPHICS_LOW_DEFAULT_LEVEL,
-    volume_muted: Optional[bool] = None,
+    volume_muted: bool | None = None,
     volume_level: Any = None,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     target = path or DEFAULT_ROBLOX_SETTINGS_PATH
     fps = normalize_fps_limit(fps_limit)
     quality = normalize_graphics_quality(graphics_quality_level)
     volume_touched = volume_muted is not None or volume_level is not None
     resolved_volume_muted = bool(volume_muted) if volume_muted is not None else False
-    resolved_volume_level: Optional[int] = None
+    resolved_volume_level: int | None = None
     if volume_touched:
         resolved_volume_level = normalize_roblox_volume(
             VOLUME_DEFAULT_LEVEL if volume_level is None else volume_level
@@ -496,7 +496,7 @@ def priority_to_psutil_value(priority: Any) -> int:
     return int(mapping[normalized])
 
 
-def apply_process_priority_to_roblox(priority: Any) -> Dict[str, Any]:
+def apply_process_priority_to_roblox(priority: Any) -> dict[str, Any]:
     normalized = normalize_process_priority(priority)
     value = priority_to_psutil_value(normalized)
     results = []

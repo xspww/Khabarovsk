@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 from core import AccountState, flog_kv
 from runtime.lua_liveness_policy import account_lua_online, lua_liveness_required, lua_wait_timeout_seconds
@@ -62,7 +62,7 @@ def emit_lua_wait_timeout_recovery(
     return True
 
 
-def handle_in_game_lua_wait_timeout(owner: Any, acc: Any, cfg: Dict[str, Any], now: float) -> bool:
+def handle_in_game_lua_wait_timeout(owner: Any, acc: Any, cfg: dict[str, Any], now: float) -> bool:
     if not lua_liveness_required(cfg):
         return False
 

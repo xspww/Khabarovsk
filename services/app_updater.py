@@ -38,7 +38,8 @@ import tempfile
 import threading
 import time
 import urllib.request
-from typing import Any, Callable, Dict, List, Optional
+from collections.abc import Callable
+from typing import Any
 from urllib.parse import urlparse
 
 import app_paths
@@ -61,7 +62,7 @@ _GITHUB_RELEASE_HOST = "github.com"
 _PYI_ENV_PREFIXES = ("_PYI_", "PYINSTALLER_", "_MEIPASS")
 
 
-def _clean_env_for_updater() -> Dict[str, str]:
+def _clean_env_for_updater() -> dict[str, str]:
     """Environment for the updater child, minus PyInstaller runtime state.
 
     This app is itself a PyInstaller onefile child, so os.environ carries
@@ -72,7 +73,7 @@ def _clean_env_for_updater() -> Dict[str, str]:
     instead of extracting its own. Reproduced directly: with exactly those
     three variables set, the child dies with "Failed to load Python DLL".
     """
-    clean: Dict[str, str] = {}
+    clean: dict[str, str] = {}
     for key, value in os.environ.items():
         upper = key.upper()
         if upper.startswith(_PYI_ENV_PREFIXES):
@@ -100,14 +101,14 @@ class _HttpsOnlyRedirectHandler(urllib.request.HTTPRedirectHandler):
         return super().redirect_request(req, fp, code, msg, headers, newurl)
 
 
-def _release_assets(snapshot: Dict[str, Any]) -> List[Dict[str, Any]]:
+def _release_assets(snapshot: dict[str, Any]) -> list[dict[str, Any]]:
     assets = snapshot.get("assets")
     if not isinstance(assets, list):
         return []
     return [dict(item) for item in assets if isinstance(item, dict)]
 
 
-def pick_exe_asset(snapshot: Dict[str, Any], version: str) -> str:
+def pick_exe_asset(snapshot: dict[str, Any], version: str) -> str:
     """Return the download URL of the versioned exe asset, or ''."""
     wanted = f"{EXE_ASSET_PREFIX}{version}{EXE_ASSET_SUFFIX}".lower()
     for item in _release_assets(snapshot):
@@ -118,7 +119,7 @@ def pick_exe_asset(snapshot: Dict[str, Any], version: str) -> str:
     return ""
 
 
-def pick_checksums_asset(snapshot: Dict[str, Any]) -> str:
+def pick_checksums_asset(snapshot: dict[str, Any]) -> str:
     for item in _release_assets(snapshot):
         name = str(item.get("name") or "")
         url = str(item.get("browser_download_url") or item.get("url") or "")
@@ -127,7 +128,7 @@ def pick_checksums_asset(snapshot: Dict[str, Any]) -> str:
     return ""
 
 
-def pick_signature_asset(snapshot: Dict[str, Any], version: str) -> str:
+def pick_signature_asset(snapshot: dict[str, Any], version: str) -> str:
     wanted = f"{EXE_ASSET_PREFIX}{version}{EXE_ASSET_SUFFIX}.sig".lower()
     for item in _release_assets(snapshot):
         if str(item.get("name") or "").lower() == wanted:
@@ -136,7 +137,7 @@ def pick_signature_asset(snapshot: Dict[str, Any], version: str) -> str:
     return ""
 
 
-def asset_size(snapshot: Dict[str, Any], filename: str) -> int:
+def asset_size(snapshot: dict[str, Any], filename: str) -> int:
     wanted = str(filename or "").lower()
     for item in _release_assets(snapshot):
         if str(item.get("name") or "").lower() == wanted:
@@ -177,7 +178,7 @@ DOWNLOAD_RETRIES = 3
 def _download_once(
     url: str,
     dest: str,
-    progress: Optional[Callable[[int, int], None]] = None,
+    progress: Callable[[int, int], None] | None = None,
     *,
     expected_size: int = 0,
     max_size: int = 0,
@@ -239,13 +240,13 @@ def _download_once(
 def _download(
     url: str,
     dest: str,
-    progress: Optional[Callable[[int, int], None]] = None,
+    progress: Callable[[int, int], None] | None = None,
     *,
     expected_size: int = 0,
     max_size: int = 0,
 ) -> None:
     """Download with retries: a 200MB+ exe over a flaky link often drops once."""
-    last_exc: Optional[BaseException] = None
+    last_exc: BaseException | None = None
     try:
         part = dest + ".part"
         if os.path.exists(part):
@@ -695,14 +696,14 @@ try {
 class AppUpdater:
     """Small interface, deep implementation: start_update() + status()."""
 
-    def __init__(self, farm: Any, logger: Optional[Callable[..., None]] = None):
+    def __init__(self, farm: Any, logger: Callable[..., None] | None = None):
         self._farm = farm
         self._log = logger or (lambda *args, **kwargs: None)
         self._lock = threading.RLock()
         self._job = self._new_job("idle")
 
     @staticmethod
-    def _new_job(state: str, **extra: Any) -> Dict[str, Any]:
+    def _new_job(state: str, **extra: Any) -> dict[str, Any]:
         payload = {
             "active": False,
             "state": state,
@@ -718,12 +719,12 @@ class AppUpdater:
         payload.update(extra)
         return payload
 
-    def _set_job(self, **values: Any) -> Dict[str, Any]:
+    def _set_job(self, **values: Any) -> dict[str, Any]:
         with self._lock:
             self._job.update(values)
             return dict(self._job)
 
-    def status(self) -> Dict[str, Any]:
+    def status(self) -> dict[str, Any]:
         with self._lock:
             job = dict(self._job)
         snap = check_app_update()
@@ -734,7 +735,7 @@ class AppUpdater:
         job["compiled"] = bool(app_paths.IS_COMPILED)
         return {"ok": True, "job": job}
 
-    def start_update(self, confirm_stop_farm: bool = False) -> Dict[str, Any]:
+    def start_update(self, confirm_stop_farm: bool = False) -> dict[str, Any]:
         if not app_paths.IS_COMPILED:
             return {"ok": False, "accepted": False, "msg": "Source run: pull the latest code instead"}
         with self._lock:
@@ -905,7 +906,7 @@ class AppUpdater:
             # the script proves it started via its first log marker.
             marker = f"waiting for PID {os.getpid()}"
             script_started = False
-            script_exit: Optional[int] = None
+            script_exit: int | None = None
             deadline = time.time() + 15.0
             while time.time() < deadline:
                 script_exit = proc.poll() if proc is not None else None

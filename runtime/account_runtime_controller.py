@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import threading
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 from domain.states import RuntimeSignal
 from runtime.runtime_state_manager import RuntimeStateManager
@@ -20,8 +21,8 @@ class AccountRuntimeController:
     def __init__(
         self,
         state_manager: RuntimeStateManager,
-        recovery: Optional[Any] = None,
-        logger: Optional[Logger] = None,
+        recovery: Any | None = None,
+        logger: Logger | None = None,
     ):
         self._state_manager = state_manager
         self._recovery = recovery
@@ -31,7 +32,7 @@ class AccountRuntimeController:
         self._recovery = recovery
 
     @property
-    def recovery(self) -> Optional[Any]:
+    def recovery(self) -> Any | None:
         return self._recovery
 
     def _emit(self, event: str, level: str = "info", **fields: Any) -> None:
@@ -48,10 +49,10 @@ class AccountRuntimeController:
     def _account_key(self, acc: Any) -> str:
         return str(getattr(acc, "_config_username", "") or getattr(acc, "username", "") or "")
 
-    def capture_owner(self, acc: Any) -> Dict[str, Any]:
+    def capture_owner(self, acc: Any) -> dict[str, Any]:
         lock = getattr(acc, "_lock", None)
 
-        def _capture() -> Dict[str, Any]:
+        def _capture() -> dict[str, Any]:
             return {
                 "runtime_generation": int(getattr(acc, "runtime_generation", 0) or 0),
                 "recovery_generation": int(getattr(acc, "recovery_generation", 0) or 0),

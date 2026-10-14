@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Tuple
+from typing import Any
 
 LUA_EVENT_PAYLOAD_MAX_BYTES = 32 * 1024
 LUA_EVENT_STRING_MAX_CHARS = 512
@@ -9,7 +9,7 @@ LUA_EVENT_MAX_DEPTH = 6
 LUA_EVENT_MAX_LIST_LENGTH = 100
 
 
-def validate_lua_event_payload(payload: Any) -> Tuple[bool, str]:
+def validate_lua_event_payload(payload: Any) -> tuple[bool, str]:
     if not isinstance(payload, dict):
         return False, "Expected Lua event object"
     try:
@@ -19,7 +19,7 @@ def validate_lua_event_payload(payload: Any) -> Tuple[bool, str]:
     if len(encoded) > LUA_EVENT_PAYLOAD_MAX_BYTES:
         return False, f"Lua event payload exceeds {LUA_EVENT_PAYLOAD_MAX_BYTES} bytes"
 
-    def check(value: Any, depth: int, path: str) -> Tuple[bool, str]:
+    def check(value: Any, depth: int, path: str) -> tuple[bool, str]:
         if depth > LUA_EVENT_MAX_DEPTH:
             return False, "Lua event payload exceeds nesting depth limit"
         if isinstance(value, str):
@@ -47,7 +47,7 @@ def validate_lua_event_payload(payload: Any) -> Tuple[bool, str]:
     return check(payload, 0, "payload")
 
 
-def lua_event_handler_error_response(acc: Any, event_name: str) -> Dict[str, Any]:
+def lua_event_handler_error_response(acc: Any, event_name: str) -> dict[str, Any]:
     return {
         "ok": False,
         "status_code": 500,

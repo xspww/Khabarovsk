@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core import Account, AccountState, flog_kv
 from services.auth_gate import (
@@ -41,7 +41,7 @@ class AccountReconciliationError(ValueError):
 COOKIE_INVALID_IMPORT_STATUS = "cookie_invalid"
 
 
-def mark_banned_cookie_record(account_store: Any, record: Dict[str, Any], detail: str = "") -> Dict[str, Any]:
+def mark_banned_cookie_record(account_store: Any, record: dict[str, Any], detail: str = "") -> dict[str, Any]:
     from services.ban_guard import (
         BANNED_BLOCK_REASON,
         BANNED_IMPORT_STATUS,
@@ -63,7 +63,7 @@ def mark_banned_cookie_record(account_store: Any, record: Dict[str, Any], detail
     return normalized
 
 
-def mark_invalid_cookie_record(account_store: Any, record: Dict[str, Any], reason: str) -> Dict[str, Any]:
+def mark_invalid_cookie_record(account_store: Any, record: dict[str, Any], reason: str) -> dict[str, Any]:
     normalized = account_store.normalize_record(record)
     normalized["manual_status"] = f"Invalid Cookie: {reason or 'invalid cookie'}"
     normalized["import_status"] = COOKIE_INVALID_IMPORT_STATUS
@@ -73,7 +73,7 @@ def mark_invalid_cookie_record(account_store: Any, record: Dict[str, Any], reaso
     return normalized
 
 
-def load_accounts_from_store(account_store: Any) -> List[Account]:
+def load_accounts_from_store(account_store: Any) -> list[Account]:
     return [Account.from_dict(item) for item in account_store.to_cronus_accounts()]
 
 
@@ -81,7 +81,7 @@ def _runtime_account_key(account: Account) -> str:
     return str(account._config_username or account.username or "").strip().lower()
 
 
-def _find_runtime_account(farm: Any, username: str) -> Optional[Account]:
+def _find_runtime_account(farm: Any, username: str) -> Account | None:
     wanted = str(username or "").strip().lower()
     if not wanted:
         return None
@@ -97,9 +97,9 @@ def _find_runtime_account(farm: Any, username: str) -> Optional[Account]:
     return None
 
 
-def _validated_replacement_accounts(accounts: List[Account]) -> List[Account]:
-    seen: Dict[str, str] = {}
-    validated: List[Account] = []
+def _validated_replacement_accounts(accounts: list[Account]) -> list[Account]:
+    seen: dict[str, str] = {}
+    validated: list[Account] = []
     for index, account in enumerate(accounts):
         key = _runtime_account_key(account)
         label = str(getattr(account, "username", "") or getattr(account, "_config_username", "") or "").strip()
@@ -114,7 +114,7 @@ def _validated_replacement_accounts(accounts: List[Account]) -> List[Account]:
     return validated
 
 
-def emit_reload_cookie_events(farm: Any, validation: Dict[str, Any]) -> None:
+def emit_reload_cookie_events(farm: Any, validation: dict[str, Any]) -> None:
     valid_accounts = list(validation.get("valid_accounts") or [])
     captcha_accounts = list(validation.get("captcha_accounts") or [])
     banned_accounts = list(validation.get("banned_accounts") or [])
@@ -397,7 +397,7 @@ def _start_added_worker(farm: Any, account: Account) -> bool:
         return False
 
 
-def _sync_running_farm_accounts(farm: Any, cfg_mgr: Any, new_accounts: List[Account]) -> int:
+def _sync_running_farm_accounts(farm: Any, cfg_mgr: Any, new_accounts: list[Account]) -> int:
     runtime_accounts = {
         _runtime_account_key(account): account
         for account in farm._accounts
@@ -416,7 +416,7 @@ def _sync_running_farm_accounts(farm: Any, cfg_mgr: Any, new_accounts: List[Acco
     banned_synced = 0
     verify_synced = 0
     resumed = 0
-    reconciled: List[Account] = []
+    reconciled: list[Account] = []
 
     for account in list(farm._accounts):
         key = _runtime_account_key(account)
@@ -619,7 +619,7 @@ def _sync_running_farm_accounts(farm: Any, cfg_mgr: Any, new_accounts: List[Acco
     return len(new_accounts)
 
 
-def replace_farm_accounts(farm: Any, cfg_mgr: Any, new_accounts: List[Account]) -> int:
+def replace_farm_accounts(farm: Any, cfg_mgr: Any, new_accounts: list[Account]) -> int:
     new_accounts = _validated_replacement_accounts(new_accounts)
     if farm.running:
         return _sync_running_farm_accounts(farm, cfg_mgr, new_accounts)

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app_paths import APP_DATA_DIR
 from core import account_launch_block_reason, flog_kv
@@ -22,7 +22,7 @@ from services.account_hybrid import redact_secret
 WATCHDOG_STATUS_CACHE = "watchdog_task_last.json"
 
 
-def _read_cached_json(path: Path) -> Dict[str, Any]:
+def _read_cached_json(path: Path) -> dict[str, Any]:
     if not path.exists():
         return {}
     try:
@@ -32,7 +32,7 @@ def _read_cached_json(path: Path) -> Dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def load_cached_operator_health(data_dir: str | Path = APP_DATA_DIR) -> Dict[str, Any]:
+def load_cached_operator_health(data_dir: str | Path = APP_DATA_DIR) -> dict[str, Any]:
     root = Path(data_dir)
     return {
         "watchdog_task": _read_cached_json(root / WATCHDOG_STATUS_CACHE),
@@ -43,19 +43,19 @@ def build_farm_status(farm: Any, include_diagnostics: bool = False) -> dict:
     return RuntimeViewModelBuilder(farm, include_diagnostics=include_diagnostics).build_status()
 
 
-def build_farm_health_account_rows(farm: Any, now: float) -> List[Dict[str, Any]]:
+def build_farm_health_account_rows(farm: Any, now: float) -> list[dict[str, Any]]:
     try:
         cfg_snapshot = farm.cfg_mgr.snapshot()
     except Exception:
         cfg_snapshot = {}
-    rows: List[Dict[str, Any]] = []
+    rows: list[dict[str, Any]] = []
     for acc in farm._accounts:
         runtime_snapshot = farm._runtime_state.snapshot(acc)
         state = str(runtime_snapshot.get("public_state") or getattr(getattr(acc, "state", None), "name", "IDLE"))
         desired_state = str(runtime_snapshot.get("desired_public_state") or getattr(getattr(acc, "desired_state", None), "name", "IN_GAME"))
         cooldown_until = float(runtime_snapshot.get("cooldown_until", getattr(acc, "cooldown_until", 0.0)) or 0.0)
         blocked_reason = account_launch_block_reason(acc) or runtime_account_filter_reason(acc, cfg_snapshot)
-        row: Dict[str, Any] = {
+        row: dict[str, Any] = {
             "account_id": str(getattr(acc, "_config_username", "") or getattr(acc, "username", "") or ""),
             "state": state,
             "public_state": state,
@@ -86,7 +86,7 @@ def build_farm_health_account_rows(farm: Any, now: float) -> List[Dict[str, Any]
     return rows
 
 
-def build_thread_health(farm: Any, thread_obj: Any, now: float) -> Dict[str, Any]:
+def build_thread_health(farm: Any, thread_obj: Any, now: float) -> dict[str, Any]:
     configured = thread_obj is not None
     alive = bool(configured and thread_obj.is_alive())
     dead_for = max(0.0, now - float(farm.start_ts or now)) if farm.running and configured and not alive else 0.0
@@ -98,7 +98,7 @@ def build_thread_health(farm: Any, thread_obj: Any, now: float) -> Dict[str, Any
     }
 
 
-def build_worker_health(farm: Any, now: float) -> Dict[str, Any]:
+def build_worker_health(farm: Any, now: float) -> dict[str, Any]:
     items = []
     for account_id, worker in sorted(farm._workers.items()):
         acc = getattr(worker, "acc", None)
@@ -118,7 +118,7 @@ def build_worker_health(farm: Any, now: float) -> Dict[str, Any]:
     }
 
 
-def build_farm_health_snapshot(farm: Any) -> Dict[str, Any]:
+def build_farm_health_snapshot(farm: Any) -> dict[str, Any]:
     now = time.time()
     queue_snapshot = farm._queue.snapshot() if farm._queue else {
         "size": 0,
@@ -260,7 +260,7 @@ def get_runtime_diagnostics(
     )
 
 
-def get_account(farm: Any, username: str) -> Optional[dict]:
+def get_account(farm: Any, username: str) -> dict | None:
     status = build_farm_status(farm, include_diagnostics=True)
     for item in status["accounts"]:
         if item["username"] == username:

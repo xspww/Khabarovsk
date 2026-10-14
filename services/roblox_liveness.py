@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, Optional
+from typing import Any
 
 from core import Account, flog_kv
 from runtime.runtime_state_manager import RuntimeStateManager
@@ -14,7 +14,7 @@ _POPUP_LOG_EVIDENCE_CACHE_SECONDS = 2.0
 _LOG_EVIDENCE_CACHE = CachedLogEvidenceCollector(ttl_seconds=_POPUP_LOG_EVIDENCE_CACHE_SECONDS)
 
 
-def _text_hint_from_log_evidence(evidence: Dict[str, Any]) -> list[str]:
+def _text_hint_from_log_evidence(evidence: dict[str, Any]) -> list[str]:
     code = str(evidence.get("error_code") or "").strip()
     keyword = str(evidence.get("keyword") or "").strip()
     line = str(evidence.get("line") or "").strip()
@@ -28,7 +28,7 @@ def _text_hint_from_log_evidence(evidence: Dict[str, Any]) -> list[str]:
     return texts
 
 
-def _merge_log_evidence_into_dialog(cls, dialog: Dict[str, Any], evidence: Dict[str, Any]) -> Dict[str, Any]:
+def _merge_log_evidence_into_dialog(cls, dialog: dict[str, Any], evidence: dict[str, Any]) -> dict[str, Any]:
     if not dialog or not dialog.get("matched"):
         return dialog
     if dialog.get("error_code") or not evidence.get("matched") or not evidence.get("error_code"):
@@ -65,7 +65,7 @@ def _merge_log_evidence_into_dialog(cls, dialog: Dict[str, Any], evidence: Dict[
     return merged
 
 
-def _collect_popup_log_evidence(now: Optional[float] = None, force_refresh: bool = False) -> Dict[str, Any]:
+def _collect_popup_log_evidence(now: float | None = None, force_refresh: bool = False) -> dict[str, Any]:
     return _LOG_EVIDENCE_CACHE.collect(
         collector=collect_recent_log_evidence,
         since_seconds=_POPUP_LOG_EVIDENCE_WINDOW_SECONDS,
@@ -77,13 +77,13 @@ def _collect_popup_log_evidence(now: Optional[float] = None, force_refresh: bool
 
 def multi_signal_validate(
     cls,
-    preferred_pid: Optional[int] = None,
-    launched_after: Optional[float] = None,
+    preferred_pid: int | None = None,
+    launched_after: float | None = None,
     owner_key: str = "",
     expected_identity: str = "",
     expected_browser_tracker_id: str = "",
-) -> Dict[str, Any]:
-    result: Dict[str, Any] = {
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
         "pid": None,
         "name": "",
         "identity": "",
@@ -204,9 +204,9 @@ def multi_signal_validate(
 def staged_orphan_reconcile(
     cls,
     acc: Account,
-    launched_after: Optional[float] = None,
+    launched_after: float | None = None,
     quarantine_seconds: float = 20.0,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     validation = cls.multi_signal_validate(
         preferred_pid=acc.pid,
         launched_after=launched_after,
@@ -281,7 +281,7 @@ def staged_orphan_reconcile(
 
 def assess_liveness(
     cls,
-    pid: Optional[int],
+    pid: int | None,
     previous_cpu: float = 0.0,
     previous_ram_mb: float = 0.0,
     net_online: bool = True,
@@ -291,8 +291,8 @@ def assess_liveness(
     cpu_threshold: float = 0.9,
     ram_delta_threshold: float = 8.0,
     inspect_ui: bool = False,
-    ui_sample_count: Optional[int] = None,
-) -> Dict[str, Any]:
+    ui_sample_count: int | None = None,
+) -> dict[str, Any]:
     validation = cls.validate_game_process(pid, min_ram_mb=0.0)
     if not validation.get("ok"):
         return {
@@ -326,8 +326,8 @@ def assess_liveness(
     if recovery_inflight:
         score -= 1.0
 
-    dialog: Dict[str, Any] = {}
-    log_evidence: Dict[str, Any] = {}
+    dialog: dict[str, Any] = {}
+    log_evidence: dict[str, Any] = {}
     state = "alive"
     reason_key = ""
     if inspect_ui or (windows > 0 and score <= 4.0):

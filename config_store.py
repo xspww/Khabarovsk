@@ -5,7 +5,7 @@ import os
 import shutil
 import threading
 import time
-from typing import TYPE_CHECKING, Any, Dict, List
+from typing import TYPE_CHECKING, Any
 
 from app_paths import APP_DATA_DIR
 from config_validation import CONFIG_SCHEMA_VERSION, validate_config_payload
@@ -31,7 +31,7 @@ CONFIG_FILE = os.path.join(APP_DATA_DIR, "cronus_rt1_config.json")
 ACCOUNTS_TEXT_FILE = os.path.join(APP_DATA_DIR, "cronus_rt12_accounts.txt")
 RUNTIME_TEXT_FILE = os.path.join(APP_DATA_DIR, "cronus_rt12_runtime.txt")
 
-DEFAULTS: Dict[str, Any] = {
+DEFAULTS: dict[str, Any] = {
     "auto_rejoin":              True,
     "executor_monitor_enabled": False,
     "executor_selected":        "",
@@ -191,7 +191,7 @@ DEFAULTS: Dict[str, Any] = {
 
 class ConfigManager:
     def __init__(self):
-        self._cfg: Dict[str, Any] = {}
+        self._cfg: dict[str, Any] = {}
         self._lock = threading.Lock()
         self._io_lock = threading.RLock()
         self.load()
@@ -254,11 +254,11 @@ class ConfigManager:
         with self._lock:
             return self._cfg.get(key, default if default is not None else DEFAULTS.get(key))
 
-    def update(self, updates: Dict[str, Any]):
+    def update(self, updates: dict[str, Any]):
         with self._lock:
             self._cfg = validate_config_payload({**self._cfg, **updates}, DEFAULTS)
 
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._cfg)
     def _read_text_json(self, path: str, fallback):
@@ -311,7 +311,7 @@ class ConfigManager:
                     os.remove(tmp_path)
             except Exception:
                 pass
-    def get_accounts(self) -> List[Account]:
+    def get_accounts(self) -> list[Account]:
         from core import Account
 
         raw = self._read_text_json(ACCOUNTS_TEXT_FILE, None)
@@ -329,7 +329,7 @@ class ConfigManager:
                 _flog(f"Account parse error: {e}", "warning")
         return accounts
 
-    def save_accounts(self, accounts: List[Account]):
+    def save_accounts(self, accounts: list[Account]):
         payload = []
         for a in accounts:
             item = a.to_dict()
@@ -340,12 +340,12 @@ class ConfigManager:
         self.save()
         self._write_text_json(ACCOUNTS_TEXT_FILE, payload)
 
-    def save_runtime(self, accounts: List[Account]):
+    def save_runtime(self, accounts: list[Account]):
         state = {"__schema_version": 1, "__saved_at": time.time()}
         saved_at = time.time()
         for a in accounts:
             runtime_snapshot = a.runtime_snapshot()
-            entry: Dict[str, Any] = {
+            entry: dict[str, Any] = {
                 "runtime": runtime_snapshot,
                 "runtime_state": runtime_snapshot.get("runtime_state", RuntimeState.STOPPED.value),
                 "runtime_generation": runtime_snapshot.get("runtime_generation", 0),
@@ -414,7 +414,7 @@ class ConfigManager:
         self._write_text_json(RUNTIME_TEXT_FILE, state)
         _flog_kv("RUNTIME", "saved", accounts=len(accounts), saved_at=f"{saved_at:.3f}")
 
-    def restore_runtime(self, accounts: List[Account]):
+    def restore_runtime(self, accounts: list[Account]):
         state = self._read_text_json(RUNTIME_TEXT_FILE, None)
         if state is None:
             state = self.get("runtime_state", {})

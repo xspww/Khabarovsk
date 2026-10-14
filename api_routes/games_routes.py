@@ -9,7 +9,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 from fastapi import HTTPException, Request
 
@@ -19,7 +19,7 @@ from .context import ApiContext
 from .settings_state import _apply_game_defaults, persist_config
 
 
-def _games_snapshot(ctx: ApiContext) -> List[Dict[str, Any]]:
+def _games_snapshot(ctx: ApiContext) -> list[dict[str, Any]]:
     try:
         from domain.games import ensure_games_migrated
     except Exception:
@@ -36,7 +36,7 @@ def _games_snapshot(ctx: ApiContext) -> List[Dict[str, Any]]:
         return []
 
 
-def _save_games(ctx: ApiContext, games: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def _save_games(ctx: ApiContext, games: list[dict[str, Any]]) -> list[dict[str, Any]]:
     try:
         from domain.games import normalize_games
     except Exception:
@@ -86,7 +86,7 @@ def register(app, ctx: ApiContext) -> None:
         game_id = str(raw.get("id") or raw.get("game_id") or "").strip()
         if game_id:
             found = False
-            updated: List[Dict[str, Any]] = []
+            updated: list[dict[str, Any]] = []
             for item in games:
                 if str(item.get("id") or "").strip().lower() == game_id.lower():
                     merged = dict(item)
@@ -144,7 +144,7 @@ def register(app, ctx: ApiContext) -> None:
         ]
         if len(remaining) == len(games):
             raise HTTPException(404, f"Game not found: {game_id}")
-        assigned: List[str] = []
+        assigned: list[str] = []
         try:
             for record in ACCOUNT_STORE.read_records(include_cookies=False):
                 if str(record.get("game_id") or "").strip().lower() == game_id.lower():
@@ -185,7 +185,7 @@ def register(app, ctx: ApiContext) -> None:
             "game_defaults_applied": applied,
         }
 
-    def _assign_usernames(usernames: Any, game_id: str) -> Dict[str, Any]:
+    def _assign_usernames(usernames: Any, game_id: str) -> dict[str, Any]:
         wanted = str(game_id or "").strip()
         target_place = ""
         if wanted:

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterable
+from typing import Any
 
 from runtime.popup_detector.popup_confidence import popup_confidence_score
 from runtime.popup_detector.popup_text_detector import detect_text_features
@@ -24,7 +25,7 @@ class PopupClassification:
     detail: str = ""
     error_code: str = ""
     confidence: float = 0.0
-    confidence_breakdown: Dict[str, float] = field(default_factory=dict)
+    confidence_breakdown: dict[str, float] = field(default_factory=dict)
     visual_disconnect: bool = False
     recovery_allowed: bool = False
     evidence_source: str = ""
@@ -39,7 +40,7 @@ class PopupClassification:
     structural_score: float = 0.0
     text_code_confirmed: bool = False
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "matched": self.matched,
             "action": self.action,
@@ -68,7 +69,7 @@ class PopupClassification:
 
 def classify_popup_observation(
     texts: Iterable[Any],
-    visual_features: Dict[str, Any] | None = None,
+    visual_features: dict[str, Any] | None = None,
     *,
     process_idle: bool = False,
     threshold: float = 1.0,
@@ -202,5 +203,5 @@ def classify_popup_observation(
     return PopupClassification(True, "rejoin", "connection_error", NETWORK_DISCONNECT, detail or "Disconnected", code, score, dict(confidence["breakdown"]), False, True, evidence_source, visual_strength, **visual_meta)
 
 
-def classify_texts(texts: Iterable[Any]) -> Dict[str, Any]:
+def classify_texts(texts: Iterable[Any]) -> dict[str, Any]:
     return classify_popup_observation(texts, threshold=0.75).to_dict()

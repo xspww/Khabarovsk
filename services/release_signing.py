@@ -15,7 +15,7 @@ import os
 import re
 import sys
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, serialization
@@ -87,7 +87,7 @@ def verify_signature_manifest(path: str, manifest_data: bytes, version: str, fil
     if not os.path.isfile(path) or len(manifest_data) > _MAX_SIGNATURE_MANIFEST_BYTES:
         return False
     try:
-        manifest: Dict[str, Any] = json.loads(manifest_data.decode("ascii"))
+        manifest: dict[str, Any] = json.loads(manifest_data.decode("ascii"))
         if not isinstance(manifest, dict) or type(manifest.get("schema")) is not int or manifest["schema"] != 1:
             return False
         if manifest.get("product") != "CronusLauncher":

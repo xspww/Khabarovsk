@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import os
 import threading
-from typing import Dict, Optional, Tuple
 
 from core import flog
 
@@ -23,11 +22,11 @@ class RealtimeResourceMonitor:
 
     def __init__(self):
         self._lock    = threading.Lock()
-        self._pids:   Dict[int, object]  = {}  # pid → psutil.Process
-        self._cpu:    Dict[int, float]   = {}  # pid → cpu%
-        self._ram:    Dict[int, float]   = {}  # pid → MB
+        self._pids:   dict[int, object]  = {}  # pid → psutil.Process
+        self._cpu:    dict[int, float]   = {}  # pid → cpu%
+        self._ram:    dict[int, float]   = {}  # pid → MB
         self._stop    = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._logical_cpus = max(1, int(os.cpu_count() or 1))
 
     def start(self):
@@ -76,7 +75,7 @@ class RealtimeResourceMonitor:
             self._ram.pop(pid, None)
         flog(f"[RT_MON] unregister PID {pid}")
 
-    def get(self, pid: int) -> Tuple[float, float]:
+    def get(self, pid: int) -> tuple[float, float]:
         """คืน (cpu%, ram_mb) ล่าสุด"""
         with self._lock:
             return self._cpu.get(pid, 0.0), self._ram.get(pid, 0.0)

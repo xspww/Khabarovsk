@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from collections import deque
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
 STRUCTURAL_ANALYSIS_SIZE = (160, 120)
 MODAL_ANALYSIS_SIZE = (320, 240)
@@ -17,7 +17,7 @@ def _as_luma(screenshot: Any):
         return screenshot
 
 
-def _resize_luma(screenshot: Any, size: Tuple[int, int]):
+def _resize_luma(screenshot: Any, size: tuple[int, int]):
     image = _as_luma(screenshot)
     try:
         from PIL import Image
@@ -34,13 +34,13 @@ def _scaled_min(total: int, ratio: float, floor: int = 1) -> int:
     return max(int(floor), int(round(max(1, int(total or 0)) * float(ratio))))
 
 
-def _binary_components(mask: List[List[bool]]) -> List[Dict[str, int]]:
+def _binary_components(mask: list[list[bool]]) -> list[dict[str, int]]:
     if not mask or not mask[0]:
         return []
     height = len(mask)
     width = len(mask[0])
     seen = [[False] * width for _ in range(height)]
-    components: List[Dict[str, int]] = []
+    components: list[dict[str, int]] = []
     for y in range(height):
         for x in range(width):
             if seen[y][x] or not mask[y][x]:
@@ -75,12 +75,12 @@ def _binary_components(mask: List[List[bool]]) -> List[Dict[str, int]]:
     return components
 
 
-def _overlay_features(screenshot: Any) -> Dict[str, Any]:
+def _overlay_features(screenshot: Any) -> dict[str, Any]:
     try:
         small = _resize_luma(screenshot, STRUCTURAL_ANALYSIS_SIZE)
         pixels = small.load()
         width, height = small.size
-        values: List[int] = []
+        values: list[int] = []
         edge_total = 0
         edge_count = 0
         for y in range(0, height, 2):
@@ -106,7 +106,7 @@ def _overlay_features(screenshot: Any) -> Dict[str, Any]:
         mid_ratio = sum(1 for value in values if 55 <= value <= 175) / float(len(values))
         dim_ratio = sum(1 for value in values if value <= 165) / float(len(values))
 
-        breakdown: Dict[str, float] = {}
+        breakdown: dict[str, float] = {}
         if dim_ratio >= 0.52:
             breakdown["dim_background"] = 0.18
         if dark_ratio >= 0.25:
@@ -133,7 +133,7 @@ def _overlay_features(screenshot: Any) -> Dict[str, Any]:
         return {"matched": False, "score": 0.0, "reason": f"overlay:{exc}"}
 
 
-def _structural_popup_features(screenshot: Any) -> Dict[str, Any]:
+def _structural_popup_features(screenshot: Any) -> dict[str, Any]:
     try:
         small = _resize_luma(screenshot, STRUCTURAL_ANALYSIS_SIZE)
         pixels = small.load()
@@ -143,11 +143,11 @@ def _structural_popup_features(screenshot: Any) -> Dict[str, Any]:
         min_button_w = _scaled_min(width, 0.088, 8)
         min_button_h = _scaled_min(height, 0.033, 3)
 
-        dark_mask: List[List[bool]] = []
-        bright_mask: List[List[bool]] = []
+        dark_mask: list[list[bool]] = []
+        bright_mask: list[list[bool]] = []
         for y in range(height):
-            dark_row: List[bool] = []
-            bright_row: List[bool] = []
+            dark_row: list[bool] = []
+            bright_row: list[bool] = []
             for x in range(width):
                 value = int(pixels[x, y])
                 dark_row.append(35 <= value <= 100)
@@ -203,7 +203,7 @@ def _structural_popup_features(screenshot: Any) -> Dict[str, Any]:
                 separator = True
                 break
 
-        breakdown: Dict[str, float] = {}
+        breakdown: dict[str, float] = {}
         if modal:
             breakdown["modal"] = 0.30
         if button:
@@ -230,7 +230,7 @@ def _structural_popup_features(screenshot: Any) -> Dict[str, Any]:
         return {"matched": False, "score": 0.0, "reason": f"structural:{exc}"}
 
 
-def _center_modal_features(screenshot: Any) -> Dict[str, Any]:
+def _center_modal_features(screenshot: Any) -> dict[str, Any]:
     try:
         small = _resize_luma(screenshot, MODAL_ANALYSIS_SIZE)
         pixels = small.load()
@@ -241,9 +241,9 @@ def _center_modal_features(screenshot: Any) -> Dict[str, Any]:
         x_min, x_max = int(width * 0.08), int(width * 0.92)
         y_min, y_max = int(height * 0.10), int(height * 0.90)
 
-        row_spans: List[Tuple[int, int, float, int]] = []
+        row_spans: list[tuple[int, int, float, int]] = []
         start = None
-        values: List[float] = []
+        values: list[float] = []
         for y in range(y_min, y_max):
             hits = sum(1 for x in range(x_min, x_max) if 35 <= int(pixels[x, y]) <= 105)
             ratio = hits / float(max(1, x_max - x_min))
@@ -263,7 +263,7 @@ def _center_modal_features(screenshot: Any) -> Dict[str, Any]:
             return {"matched": False, "score": 0.0, "reason": "no_center_body"}
         body_top, body_bottom, body_density, body_rows = body
 
-        col_spans: List[Tuple[int, int, float, int]] = []
+        col_spans: list[tuple[int, int, float, int]] = []
         start = None
         values = []
         for x in range(x_min, x_max):
@@ -323,7 +323,7 @@ def _center_modal_features(screenshot: Any) -> Dict[str, Any]:
         button_matched = button_rows >= min_button_rows and button_strength >= 0.18
         controls = separator_matched and button_matched
 
-        breakdown: Dict[str, float] = {}
+        breakdown: dict[str, float] = {}
         if centered:
             breakdown["centered_modal"] = 0.20
         if modal_shape:
@@ -365,7 +365,7 @@ def _center_modal_features(screenshot: Any) -> Dict[str, Any]:
         return {"matched": False, "score": 0.0, "reason": f"center_modal:{exc}"}
 
 
-def _button_layout_features(screenshot: Any, modal_rect: Dict[str, Any] | None = None) -> Dict[str, Any]:
+def _button_layout_features(screenshot: Any, modal_rect: dict[str, Any] | None = None) -> dict[str, Any]:
     try:
         small = _resize_luma(screenshot, MODAL_ANALYSIS_SIZE)
         pixels = small.load()
@@ -387,9 +387,9 @@ def _button_layout_features(screenshot: Any, modal_rect: Dict[str, Any] | None =
         rect_height = max(1, bottom - top)
         search_top = int(top + rect_height * 0.52)
         search_bottom = min(height, int(bottom + rect_height * 0.45))
-        mask: List[List[bool]] = []
+        mask: list[list[bool]] = []
         for y in range(search_top, search_bottom):
-            row: List[bool] = []
+            row: list[bool] = []
             for x in range(left, right):
                 row.append(int(pixels[x, y]) >= 205)
             mask.append(row)
@@ -446,7 +446,7 @@ def _button_layout_features(screenshot: Any, modal_rect: Dict[str, Any] | None =
         return {"matched": False, "score": 0.0, "pattern": "none", "reason": f"button:{exc}"}
 
 
-def _small_disconnect_panel_features(screenshot: Any) -> Dict[str, Any]:
+def _small_disconnect_panel_features(screenshot: Any) -> dict[str, Any]:
     try:
         small = _resize_luma(screenshot, MODAL_ANALYSIS_SIZE)
         pixels = small.load()
@@ -457,9 +457,9 @@ def _small_disconnect_panel_features(screenshot: Any) -> Dict[str, Any]:
         min_panel_width = _scaled_min(width, 0.55, 120)
         min_button_rows = _scaled_min(height, 0.04, 7)
 
-        spans: List[Tuple[int, int, float, int]] = []
+        spans: list[tuple[int, int, float, int]] = []
         start = None
-        values: List[float] = []
+        values: list[float] = []
         for y in range(y_min, y_max):
             hits = sum(1 for x in range(x_min, x_max) if 38 <= int(pixels[x, y]) <= 115)
             ratio = hits / float(max(1, x_max - x_min))
@@ -479,7 +479,7 @@ def _small_disconnect_panel_features(screenshot: Any) -> Dict[str, Any]:
             return {"matched": False, "score": 0.0, "source": "small_panel", "reason": "no_dark_panel"}
         body_top, body_bottom, body_density, body_rows = body
 
-        col_spans: List[Tuple[int, int, float, int]] = []
+        col_spans: list[tuple[int, int, float, int]] = []
         start = None
         values = []
         for x in range(x_min, x_max):
@@ -543,7 +543,7 @@ def _small_disconnect_panel_features(screenshot: Any) -> Dict[str, Any]:
         )
         button_matched = bool(button_span and button_rows >= min_button_rows and button_strength >= 0.48)
         text_matched = text_rows >= _scaled_min(height, 0.018, 3)
-        breakdown: Dict[str, float] = {}
+        breakdown: dict[str, float] = {}
         if panel_shape:
             breakdown["wide_disconnect_panel"] = 0.42
         if text_matched:
@@ -581,7 +581,7 @@ def _small_disconnect_panel_features(screenshot: Any) -> Dict[str, Any]:
         return {"matched": False, "score": 0.0, "source": "small_panel", "reason": f"small_panel:{exc}"}
 
 
-def _puzzle_frame_features(screenshot: Any) -> Dict[str, Any]:
+def _puzzle_frame_features(screenshot: Any) -> dict[str, Any]:
     """Detect a large centered dark puzzle frame, the signature of an
     Arkose/FunCaptcha challenge. Roblox's auto-passing "Security Verification"
     page is just text + a button on a white page and must NOT match."""
@@ -589,9 +589,9 @@ def _puzzle_frame_features(screenshot: Any) -> Dict[str, Any]:
         small = _resize_luma(screenshot, MODAL_ANALYSIS_SIZE)
         pixels = small.load()
         width, height = small.size
-        dark_mask: List[List[bool]] = []
+        dark_mask: list[list[bool]] = []
         for y in range(height):
-            row: List[bool] = []
+            row: list[bool] = []
             for x in range(width):
                 row.append(int(pixels[x, y]) <= 100)
             dark_mask.append(row)
@@ -626,7 +626,7 @@ def _puzzle_frame_features(screenshot: Any) -> Dict[str, Any]:
         return {"matched": False, "reason": f"puzzle_frame:{exc}"}
 
 
-def _captcha_challenge_features(screenshot: Any) -> Dict[str, Any]:
+def _captcha_challenge_features(screenshot: Any) -> dict[str, Any]:
     try:
         small = _resize_luma(screenshot, MODAL_ANALYSIS_SIZE)
         pixels = small.load()
@@ -643,9 +643,9 @@ def _captcha_challenge_features(screenshot: Any) -> Dict[str, Any]:
         x_min, x_max = int(width * 0.24), int(width * 0.76)
         y_min, y_max = int(height * 0.26), int(height * 0.86)
 
-        button_mask: List[List[bool]] = []
+        button_mask: list[list[bool]] = []
         for y in range(y_min, y_max):
-            row: List[bool] = []
+            row: list[bool] = []
             for x in range(x_min, x_max):
                 value = int(pixels[x, y])
                 row.append(100 <= value <= 215)
@@ -668,7 +668,7 @@ def _captcha_challenge_features(screenshot: Any) -> Dict[str, Any]:
                 break
 
         frame = _puzzle_frame_features(screenshot)
-        breakdown: Dict[str, float] = {}
+        breakdown: dict[str, float] = {}
         if white_ratio >= 0.70:
             breakdown["white_security_page"] = 0.30
         if frame.get("matched"):
@@ -695,7 +695,7 @@ def _captcha_challenge_features(screenshot: Any) -> Dict[str, Any]:
         return {"matched": False, "score": 0.0, "source": "captcha_challenge", "reason": f"captcha:{exc}"}
 
 
-def detect_visual_features(screenshot: Any) -> Dict[str, Any]:
+def detect_visual_features(screenshot: Any) -> dict[str, Any]:
     if screenshot is None:
         return {"matched": False, "score": 0.0, "reason": "no_screenshot"}
 

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-from typing import Any, Dict, Mapping, Tuple
+from collections.abc import Mapping
+from typing import Any
 
 CONFIG_SCHEMA_VERSION = 2
 
-_INT_RANGES: Dict[str, Tuple[int, int]] = {
+_INT_RANGES: dict[str, tuple[int, int]] = {
     "max_retry": (1, 100),
     "max_fail_count": (1, 100),
     "crash_timeout": (1, 3600),
@@ -45,7 +46,7 @@ _INT_RANGES: Dict[str, Tuple[int, int]] = {
     "virtual_memory_size_gb": (1, 64),
 }
 
-_FLOAT_RANGES: Dict[str, Tuple[float, float]] = {
+_FLOAT_RANGES: dict[str, tuple[float, float]] = {
     "recovery_confidence_threshold": (0.0, 100.0),
     "machine_supervisor_cpu_high_percent": (1.0, 100.0),
     "machine_supervisor_memory_high_percent": (1.0, 100.0),
@@ -87,7 +88,7 @@ _REMOVED_CONFIG_KEYS = {
 }
 
 
-def _clamp(value: float, bounds: Tuple[float, float]) -> float:
+def _clamp(value: float, bounds: tuple[float, float]) -> float:
     return max(bounds[0], min(bounds[1], value))
 
 
@@ -105,7 +106,7 @@ def _bool(value: Any, default: bool) -> bool:
     return bool(default)
 
 
-def _int(value: Any, default: int, bounds: Tuple[int, int] | None = None) -> int:
+def _int(value: Any, default: int, bounds: tuple[int, int] | None = None) -> int:
     try:
         parsed = int(float(value))
     except Exception:
@@ -115,7 +116,7 @@ def _int(value: Any, default: int, bounds: Tuple[int, int] | None = None) -> int
     return parsed
 
 
-def _float(value: Any, default: float, bounds: Tuple[float, float] | None = None) -> float:
+def _float(value: Any, default: float, bounds: tuple[float, float] | None = None) -> float:
     try:
         parsed = float(value)
     except Exception:
@@ -125,9 +126,9 @@ def _float(value: Any, default: float, bounds: Tuple[float, float] | None = None
     return parsed
 
 
-def validate_config_payload(raw: Any, defaults: Mapping[str, Any]) -> Dict[str, Any]:
+def validate_config_payload(raw: Any, defaults: Mapping[str, Any]) -> dict[str, Any]:
     source = raw if isinstance(raw, dict) else {}
-    clean: Dict[str, Any] = {}
+    clean: dict[str, Any] = {}
     for key, default in defaults.items():
         value = source.get(key, default)
         if isinstance(default, bool):

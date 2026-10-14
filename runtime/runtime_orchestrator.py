@@ -3,8 +3,9 @@ from __future__ import annotations
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
 from domain.states import RuntimeSignal
 from runtime.account_runtime_controller import AccountRuntimeController
@@ -19,7 +20,7 @@ class RuntimeCommand:
     action: str
     account_id: str = ""
     reason: str = ""
-    payload: Dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] = field(default_factory=dict)
     runtime_generation: int = 0
     recovery_generation: int = 0
     command_generation: int = 0
@@ -36,7 +37,7 @@ class RuntimeEvent:
     account_id: str = ""
     reason: str = ""
     severity: str = "info"
-    payload: Dict[str, Any] = field(default_factory=dict)
+    payload: dict[str, Any] = field(default_factory=dict)
     runtime_generation: int = 0
     recovery_generation: int = 0
     command_generation: int = 0
@@ -57,9 +58,9 @@ class RuntimeOrchestrator:
     def __init__(
         self,
         state_manager: RuntimeStateManager,
-        recovery: Optional[Any] = None,
-        timeline: Optional[Any] = None,
-        logger: Optional[Logger] = None,
+        recovery: Any | None = None,
+        timeline: Any | None = None,
+        logger: Logger | None = None,
     ):
         self._state_manager = state_manager
         self._timeline = timeline
@@ -76,10 +77,10 @@ class RuntimeOrchestrator:
     def _account_key(self, acc: Any) -> str:
         return str(getattr(acc, "_config_username", "") or getattr(acc, "username", "") or "")
 
-    def capture_owner(self, acc: Any) -> Dict[str, Any]:
+    def capture_owner(self, acc: Any) -> dict[str, Any]:
         return self._account_runtime.capture_owner(acc)
 
-    def _snapshot(self, acc: Any) -> Dict[str, Any]:
+    def _snapshot(self, acc: Any) -> dict[str, Any]:
         try:
             return dict(acc.runtime_snapshot())
         except Exception:
@@ -94,7 +95,7 @@ class RuntimeOrchestrator:
             except TypeError:
                 self._log("RUNTIME", name, **fields)
 
-    def emit_event(self, event: RuntimeEvent, acc: Optional[Any] = None) -> Dict[str, Any]:
+    def emit_event(self, event: RuntimeEvent, acc: Any | None = None) -> dict[str, Any]:
         item = asdict(event)
         payload = item.pop("payload", {}) or {}
         item.update(payload)
@@ -110,7 +111,7 @@ class RuntimeOrchestrator:
         self._emit_log(event.event_type, event.severity, account=event.account_id, reason=event.reason, **payload)
         return item
 
-    def _command(self, acc: Any, action: str, reason: str = "", payload: Optional[Dict[str, Any]] = None) -> RuntimeCommand:
+    def _command(self, acc: Any, action: str, reason: str = "", payload: dict[str, Any] | None = None) -> RuntimeCommand:
         owner = self.capture_owner(acc)
         return RuntimeCommand(
             action=action,
@@ -188,7 +189,7 @@ class RuntimeOrchestrator:
         )
         return int(generation)
 
-    def request_network_lost(self, acc: Any, reason: str = "network_drop", payload: Optional[Dict[str, Any]] = None) -> bool:
+    def request_network_lost(self, acc: Any, reason: str = "network_drop", payload: dict[str, Any] | None = None) -> bool:
         return self.handle_runtime_signal(
             acc,
             "network_lost",
@@ -201,8 +202,8 @@ class RuntimeOrchestrator:
         acc: Any,
         signal: str,
         reason: str = "",
-        payload: Optional[Dict[str, Any]] = None,
-        expected_runtime_generation: Optional[int] = None,
+        payload: dict[str, Any] | None = None,
+        expected_runtime_generation: int | None = None,
         expected_session_id: str = "",
         expected_launch_nonce: str = "",
         expected_transaction_id: str = "",
@@ -245,7 +246,7 @@ class RuntimeOrchestrator:
         )
         return accepted
 
-    def set_recovery_status(self, acc: Any, status: str = "", reason: str = "", inflight: Optional[bool] = None) -> None:
+    def set_recovery_status(self, acc: Any, status: str = "", reason: str = "", inflight: bool | None = None) -> None:
         with acc._lock:
             self._state_manager.set_recovery(acc, status=status, reason=reason, inflight=inflight)
             acc.sync_runtime(reason or status or "orchestrator_recovery_status")
@@ -270,7 +271,7 @@ class RuntimeOrchestrator:
     def reconcile_all(self, accounts, trigger: str, force_restart: bool = False):
         return self.request_reconcile_all(accounts, trigger=trigger, force_restart=force_restart)
 
-    def request_kill_account_pid(self, acc: Any, state_manager: Any = None, reason: str = "api_kill_pid") -> Dict[str, Any]:
+    def request_kill_account_pid(self, acc: Any, state_manager: Any = None, reason: str = "api_kill_pid") -> dict[str, Any]:
         with acc._lock:
             pid = acc.pid
             runtime_generation = acc.runtime_generation
@@ -312,7 +313,7 @@ class RuntimeOrchestrator:
     def request_close_all_roblox(
         self,
         wait_seconds: float = 4.0,
-        exclude_pids: Optional[list[int]] = None,
+        exclude_pids: list[int] | None = None,
         reason: str = "api_close_all_roblox",
         idempotency_key: str = "",
         command_id: str = "",

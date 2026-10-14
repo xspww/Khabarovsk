@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Dict, Set
 
 from .states import AccountState, RuntimeState
 
@@ -19,7 +18,7 @@ class RuntimeLifecycleState(StrEnum):
     STOPPED = "STOPPED"
 
 
-LIFECYCLE_ALLOWED_TRANSITIONS: Dict[RuntimeLifecycleState, Set[RuntimeLifecycleState]] = {
+LIFECYCLE_ALLOWED_TRANSITIONS: dict[RuntimeLifecycleState, set[RuntimeLifecycleState]] = {
     RuntimeLifecycleState.STOPPED: {
         RuntimeLifecycleState.IDLE,
         RuntimeLifecycleState.QUEUED,
@@ -82,7 +81,7 @@ LIFECYCLE_ALLOWED_TRANSITIONS: Dict[RuntimeLifecycleState, Set[RuntimeLifecycleS
 }
 
 
-PUBLIC_TO_LIFECYCLE: Dict[AccountState, RuntimeLifecycleState] = {
+PUBLIC_TO_LIFECYCLE: dict[AccountState, RuntimeLifecycleState] = {
     AccountState.IDLE: RuntimeLifecycleState.IDLE,
     AccountState.READY: RuntimeLifecycleState.IDLE,
     AccountState.QUEUED: RuntimeLifecycleState.QUEUED,
@@ -96,7 +95,7 @@ PUBLIC_TO_LIFECYCLE: Dict[AccountState, RuntimeLifecycleState] = {
 }
 
 
-RUNTIME_TO_LIFECYCLE: Dict[RuntimeState, RuntimeLifecycleState] = {
+RUNTIME_TO_LIFECYCLE: dict[RuntimeState, RuntimeLifecycleState] = {
     RuntimeState.STOPPED: RuntimeLifecycleState.STOPPED,
     RuntimeState.STARTING: RuntimeLifecycleState.STARTING,
     RuntimeState.JOINING: RuntimeLifecycleState.JOINING,

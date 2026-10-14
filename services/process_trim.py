@@ -19,8 +19,9 @@ import ctypes
 import os
 import threading
 import time
+from collections.abc import Iterable
 from ctypes import wintypes
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any
 
 try:
     import psutil  # type: ignore
@@ -55,7 +56,7 @@ def _num(value: Any, default: float) -> float:
         return default
 
 
-def normalize_process_trim_settings(source: Dict[str, Any]) -> Dict[str, Any]:
+def normalize_process_trim_settings(source: dict[str, Any]) -> dict[str, Any]:
     threshold = _num(
         source.get("process_trim_threshold_mb", source.get("threshold_mb", TRIM_THRESHOLD_MB_DEFAULT)),
         TRIM_THRESHOLD_MB_DEFAULT,
@@ -154,11 +155,11 @@ class ProcessTrimService:
 
     def __init__(self) -> None:
         self._lock = threading.RLock()
-        self._last_trim_at: Dict[int, float] = {}
+        self._last_trim_at: dict[int, float] = {}
         self._last_cycle_at = 0.0
         self._total_trimmed = 0
         self._total_freed_mb = 0.0
-        self._last_result: Dict[str, Any] = {}
+        self._last_result: dict[str, Any] = {}
 
     def _global_clean_recent(self, now: float) -> float:
         try:
@@ -171,7 +172,7 @@ class ProcessTrimService:
             pass
         return 0.0
 
-    def snapshot(self, cfg: Dict[str, Any]) -> Dict[str, Any]:
+    def snapshot(self, cfg: dict[str, Any]) -> dict[str, Any]:
         settings = normalize_process_trim_settings(cfg)
         with self._lock:
             last_cycle = self._last_cycle_at
@@ -191,8 +192,8 @@ class ProcessTrimService:
             "last": last,
         }
 
-    def apply(self, accounts: Iterable[Any], cfg: Dict[str, Any], now: Optional[float] = None,
-              bypass_throttle: bool = False) -> Dict[str, Any]:
+    def apply(self, accounts: Iterable[Any], cfg: dict[str, Any], now: float | None = None,
+              bypass_throttle: bool = False) -> dict[str, Any]:
         settings = normalize_process_trim_settings(cfg)
         now = now if now is not None else time.time()
         if not settings["enabled"]:
@@ -214,7 +215,7 @@ class ProcessTrimService:
 
         threshold = float(settings["threshold_mb"])
         cooldown = float(settings["cooldown_sec"])
-        candidates: List[Dict[str, Any]] = []
+        candidates: list[dict[str, Any]] = []
         skipped = 0
         for account in list(accounts or []):
             pid = _account_pid(account)
@@ -244,7 +245,7 @@ class ProcessTrimService:
         candidates.sort(key=lambda r: float(r.get("rss_mb") or 0.0), reverse=True)
         targets = candidates[: int(settings["max_per_cycle"])]
 
-        rows: List[Dict[str, Any]] = []
+        rows: list[dict[str, Any]] = []
         for item in targets:
             pid = int(item["pid"])
             before = get_pid_rss_mb(pid)
@@ -290,7 +291,7 @@ class ProcessTrimService:
             self._last_result = dict(result)
         return result
 
-    def trim_now(self, pid: int) -> Dict[str, Any]:
+    def trim_now(self, pid: int) -> dict[str, Any]:
         pid = int(pid or 0)
         if not pid:
             return {"ok": False, "reason": "missing_pid"}
@@ -303,7 +304,7 @@ class ProcessTrimService:
         time.sleep(0.3)
         after = get_pid_rss_mb(pid)
         freed = max(0.0, before - after) if ok else 0.0
-        result: Dict[str, Any] = {"ok": bool(ok), "pid": pid, "before_mb": round(before, 1),
+        result: dict[str, Any] = {"ok": bool(ok), "pid": pid, "before_mb": round(before, 1),
                 "after_mb": round(after, 1), "freed_mb": round(freed, 1)}
         if not ok:
             result["reason"] = "trim_failed"

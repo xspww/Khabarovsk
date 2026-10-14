@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import time
-from typing import List, Optional, Tuple
 
 from core import Account, flog_kv
 from services.process_service import ProcessService
@@ -16,7 +15,7 @@ def _num_cfg(value, default: float) -> float:
         return default
 
 
-def _window_size_target_from_config(cfg: dict) -> Tuple[int, int]:
+def _window_size_target_from_config(cfg: dict) -> tuple[int, int]:
     try:
         width = int(float(cfg.get("roblox_window_width", 200) or 200))
     except Exception:
@@ -29,12 +28,12 @@ def _window_size_target_from_config(cfg: dict) -> Tuple[int, int]:
     height = max(60, min(height, 1080))
     return width, height
 
-def _window_resize_target_from_config(cfg: dict) -> Optional[Tuple[int, int]]:
+def _window_resize_target_from_config(cfg: dict) -> tuple[int, int] | None:
     if not bool(cfg.get("roblox_window_resize_enabled", False)):
         return None
     return _window_size_target_from_config(cfg)
 
-def _window_arrange_settings_from_config(cfg: dict) -> Optional[Tuple[int, int, int, int, int, int]]:
+def _window_arrange_settings_from_config(cfg: dict) -> tuple[int, int, int, int, int, int] | None:
     if not bool(cfg.get("roblox_window_arrange_enabled", False)):
         return None
     width, height = _window_size_target_from_config(cfg)
@@ -57,10 +56,10 @@ def _window_arrange_settings_from_config(cfg: dict) -> Optional[Tuple[int, int, 
     return width, height, columns, rows, gap, margin
 
 def _apply_cpu_limiter_for_bound_process(
-    accounts: List[Account],
+    accounts: list[Account],
     cfg: dict,
     reason: str,
-    account: Optional[Account] = None,
+    account: Account | None = None,
 ) -> None:
     try:
         from services.cpu_limiter import CPU_LIMITER, normalize_cpu_limiter_settings

@@ -9,7 +9,7 @@ import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import Any
 
 TOKEN_VERSION = "lua1"
 # Farm sessions routinely run for hours in the same server without refetching
@@ -61,7 +61,7 @@ def issue_lua_session_token(
     session_id: str,
     launch_nonce: str,
     ttl_seconds: int = DEFAULT_LUA_SESSION_TOKEN_TTL_SECONDS,
-    now: Optional[float] = None,
+    now: float | None = None,
 ) -> str:
     issued_at = int(now if now is not None else time.time())
     ttl = max(30, int(ttl_seconds or DEFAULT_LUA_SESSION_TOKEN_TTL_SECONDS))
@@ -85,7 +85,7 @@ def validate_lua_session_token(
     account: str,
     session_id: str,
     launch_nonce: str,
-    now: Optional[float] = None,
+    now: float | None = None,
 ) -> LuaSessionTokenValidation:
     def reject(reason: str, expires_at: int = 0) -> LuaSessionTokenValidation:
         return LuaSessionTokenValidation(False, reason, expires_at=expires_at)
@@ -172,7 +172,7 @@ class LuaEventReplayCache:
         self._max_clock_skew_seconds = max(1, int(max_clock_skew_seconds or 120))
         self._max_events_per_account = max(8, int(max_events_per_account or 256))
         self._lock = threading.Lock()
-        self._events: Dict[str, OrderedDict[str, float]] = {}
+        self._events: dict[str, OrderedDict[str, float]] = {}
 
     def check_and_record(
         self,
@@ -180,7 +180,7 @@ class LuaEventReplayCache:
         event_id: str,
         timestamp: Any,
         *,
-        now: Optional[float] = None,
+        now: float | None = None,
     ) -> LuaEventReplayResult:
         account_key = _text(account)
         event_key = _text(event_id)

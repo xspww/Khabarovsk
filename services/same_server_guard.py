@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 _SAME_SERVER_HOP_COOLDOWN = 60.0
 
@@ -10,7 +10,7 @@ def _text(value: Any) -> str:
     return str(value or "").strip()
 
 
-def find_same_server_conflicts(accounts: List[Any], current: Any) -> List[Dict[str, str]]:
+def find_same_server_conflicts(accounts: list[Any], current: Any) -> list[dict[str, str]]:
     """Return other accounts sharing the same JobId + PlaceId as current."""
     try:
         cur_job = _text(getattr(current, "observed_job_id", ""))
@@ -20,7 +20,7 @@ def find_same_server_conflicts(accounts: List[Any], current: Any) -> List[Dict[s
     if not cur_job:
         return []
     cur_key = _text(getattr(current, "_config_username", "") or getattr(current, "username", "")).lower()
-    conflicts: List[Dict[str, str]] = []
+    conflicts: list[dict[str, str]] = []
     for other in accounts or []:
         try:
             if other is current:
@@ -83,7 +83,7 @@ def mark_same_server_hop(acc: Any) -> None:
         pass
 
 
-def check_and_hop_same_server(farm: Any, acc: Any, detection_job_id: str = "", detection_place_id: str = "") -> Optional[Dict[str, Any]]:
+def check_and_hop_same_server(farm: Any, acc: Any, detection_job_id: str = "", detection_place_id: str = "") -> dict[str, Any] | None:
     """Enforce block_same_server_enabled. Returns conflict info if hopped."""
     try:
         cfg = farm.cfg_mgr.snapshot() if hasattr(farm, "cfg_mgr") else {}

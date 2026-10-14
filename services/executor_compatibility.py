@@ -4,7 +4,8 @@ import json
 import threading
 import time
 import urllib.request
-from typing import Any, Callable, Dict, Iterable, Optional
+from collections.abc import Callable, Iterable
+from typing import Any
 
 import net_tls
 
@@ -21,15 +22,15 @@ ALLOWED_EXECUTORS = ("Volt", "Potassium", "Real", "Madium")
 class ExecutorCompatibilityService:
     """Poll executor status (WEAO) + official Roblox version for compatibility decisions."""
 
-    def __init__(self, cfg_mgr: Any, *, on_transition: Optional[Callable[[str, Dict[str, Any]], None]] = None, get_installed_versions: Optional[Callable[[], Iterable[str]]] = None, logger: Optional[Callable[..., Any]] = None):
+    def __init__(self, cfg_mgr: Any, *, on_transition: Callable[[str, dict[str, Any]], None] | None = None, get_installed_versions: Callable[[], Iterable[str]] | None = None, logger: Callable[..., Any] | None = None):
         self.cfg_mgr = cfg_mgr
         self.on_transition = on_transition or (lambda _event, _payload: None)
         self.logger = logger or (lambda *_args, **_kwargs: None)
         self.get_installed_versions = get_installed_versions or (list)
         self._lock = threading.RLock()
-        self._status: Dict[str, Any] = {"state": "disabled", "executors": [], "latest_version": "", "error": ""}
+        self._status: dict[str, Any] = {"state": "disabled", "executors": [], "latest_version": "", "error": ""}
         self._last_signature = ""
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._stop = threading.Event()
 
     def _cfg(self, key: str, default: Any = None) -> Any:
@@ -64,7 +65,7 @@ class ExecutorCompatibilityService:
             raise RuntimeError("Official Roblox version missing")
         return version
 
-    def refresh(self) -> Dict[str, Any]:
+    def refresh(self) -> dict[str, Any]:
         if not self.enabled():
             payload = {"ok": True, "state": "disabled", "executors": [], "latest_version": "", "error": ""}
             with self._lock:
@@ -121,7 +122,7 @@ class ExecutorCompatibilityService:
             self.on_transition(str(payload.get("state") or "unknown"), dict(payload))
         return dict(payload)
 
-    def status(self) -> Dict[str, Any]:
+    def status(self) -> dict[str, Any]:
         with self._lock:
             return dict(self._status)
 

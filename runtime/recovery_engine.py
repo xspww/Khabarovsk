@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from core import Account, AccountState, EventBus, EventName, SmartQueue, StateManager, flog, flog_kv
 from runtime.lua_liveness_policy import lua_liveness_required, mark_waiting_for_lua
@@ -57,12 +57,12 @@ class RecoveryCoordinator:
         net: NetworkMonitor,
         stop: threading.Event,
         cfg: dict,
-        accounts: Optional[List[Account]] = None,
+        accounts: list[Account] | None = None,
         persist_callback=None,
         timeline=None,
-        runtime_state: Optional[RuntimeStateManager] = None,
-        runtime_orchestrator: Optional[RuntimeOrchestrator] = None,
-        scheduler: Optional[RuntimeScheduler] = None,
+        runtime_state: RuntimeStateManager | None = None,
+        runtime_orchestrator: RuntimeOrchestrator | None = None,
+        scheduler: RuntimeScheduler | None = None,
     ):
         self._queue = queue
         self._state_mgr = state_mgr
@@ -113,7 +113,7 @@ class RecoveryCoordinator:
         self._guard_recovery_attempt = 0
         self._guard_recovery_last_at = 0.0
 
-    def update_config(self, cfg: dict, accounts: Optional[List[Account]] = None) -> None:
+    def update_config(self, cfg: dict, accounts: list[Account] | None = None) -> None:
         with self._lock:
             self._cfg = cfg
             if accounts is not None:
@@ -183,7 +183,7 @@ class RecoveryCoordinator:
         except Exception:
             return 15.0
 
-    def _active_slot_count(self, excluding: Optional[Account] = None) -> int:
+    def _active_slot_count(self, excluding: Account | None = None) -> int:
         count = 0
         for item in self._accounts:
             if item is excluding:
@@ -223,7 +223,7 @@ class RecoveryCoordinator:
             )
         self._state_mgr.transition(acc, AccountState.COOLDOWN, reason="multi_roblox_guard_self_heal", force=True)
 
-    def _schedule_multi_roblox_guard_recovery(self, acc: Account, reason_msg: str = "", retry_delay: Optional[float] = None) -> bool:
+    def _schedule_multi_roblox_guard_recovery(self, acc: Account, reason_msg: str = "", retry_delay: float | None = None) -> bool:
         if not self._cfg_bool("multi_roblox_guard_self_heal_enabled", True):
             return False
         if self._closed or self._stop.is_set():
@@ -380,8 +380,8 @@ class RecoveryCoordinator:
         acc: Account,
         signal: str,
         reason: str = "",
-        payload: Optional[Dict[str, Any]] = None,
-        expected_runtime_generation: Optional[int] = None,
+        payload: dict[str, Any] | None = None,
+        expected_runtime_generation: int | None = None,
         expected_session_id: str = "",
         expected_launch_nonce: str = "",
         expected_transaction_id: str = "",
@@ -446,8 +446,8 @@ class RecoveryCoordinator:
         count_retry: bool = True,
         count_crash: bool = True,
         count_fail: bool = True,
-        context: Optional[RecoveryAttemptContext] = None,
-    ) -> Optional[Dict[str, Any]]:
+        context: RecoveryAttemptContext | None = None,
+    ) -> dict[str, Any] | None:
         now = time.time()
         budget_reason = ""
         with acc._lock:
@@ -592,8 +592,8 @@ class RecoveryCoordinator:
     def _release_recovery_owner(
         self,
         account_key: str,
-        runtime_generation: Optional[int],
-        recovery_generation: Optional[int],
+        runtime_generation: int | None,
+        recovery_generation: int | None,
         reason: str,
     ) -> None:
         result = self._owner_registry.release(account_key, runtime_generation, recovery_generation, reason)
@@ -630,7 +630,7 @@ class RecoveryCoordinator:
         )
         self._schedule_recovery(acc, delay, transition_reason)
 
-    def _detect_relaunch_loop(self, acc: Account, reason_key: str) -> Optional[str]:
+    def _detect_relaunch_loop(self, acc: Account, reason_key: str) -> str | None:
         cfg = self._cfg
         canonical = canonical_reason(reason_key)
         fast_crash_reasons = {"process_crash", "watchdog_timeout", "loading_freeze"}
@@ -687,7 +687,7 @@ class RecoveryCoordinator:
     def request_rejoin(self, acc: Account, reason: str = "force_rejoin") -> bool:
         return self._runtime_orchestrator.request_rejoin(acc, reason=reason, bump_runtime_generation=True)
 
-    def _retry_bucket_exceeded(self, acc: Account) -> Optional[str]:
+    def _retry_bucket_exceeded(self, acc: Account) -> str | None:
         max_retry = max(1, int(self._cfg.get("max_retry", 10) or 10))
         buckets = {
             "crash_retry": acc.crash_retry_count,
@@ -700,7 +700,7 @@ class RecoveryCoordinator:
                 return f"{label} reached max retry ({max_retry})"
         return None
 
-    def _adaptive_recovery_delay(self, acc: Account, reason_key: str, cooldown: Optional[float] = None) -> float:
+    def _adaptive_recovery_delay(self, acc: Account, reason_key: str, cooldown: float | None = None) -> float:
         attempts = self._session_conflicts.count(
             acc._config_username,
             float(self._cfg.get("session_conflict_window_seconds", 90) or 90),
@@ -712,8 +712,8 @@ class RecoveryCoordinator:
         acc: Account,
         trigger: str = "evaluate",
         force_restart: bool = False,
-        expected_runtime_generation: Optional[int] = None,
-        expected_recovery_generation: Optional[int] = None,
+        expected_runtime_generation: int | None = None,
+        expected_recovery_generation: int | None = None,
         expected_session_id: str = "",
         expected_launch_nonce: str = "",
         expected_transaction_id: str = "",
@@ -729,7 +729,7 @@ class RecoveryCoordinator:
             expected_transaction_id=expected_transaction_id,
         )
 
-    def reconcile_all(self, accounts: List[Account], trigger: str = "reconcile_all", force_restart: bool = False):
+    def reconcile_all(self, accounts: list[Account], trigger: str = "reconcile_all", force_restart: bool = False):
         for acc in accounts:
             self.evaluate(acc, trigger=trigger, force_restart=force_restart)
 
@@ -738,8 +738,8 @@ class RecoveryCoordinator:
         acc: Account,
         reason_key: str,
         reason_msg: str,
-        cooldown: Optional[float] = None,
-        context: Optional[RecoveryAttemptContext] = None,
+        cooldown: float | None = None,
+        context: RecoveryAttemptContext | None = None,
     ):
         canonical = _canonical_recovery_reason(reason_key, context)
         detail_text = " ".join(
@@ -968,7 +968,7 @@ class RecoveryCoordinator:
         self._release_recovery_owner(acc._config_username, runtime_generation, recovery_generation, "waiting_for_lua")
         self._persist_runtime()
 
-    def report_launch_success(self, acc: Account, trigger: str = "launch_success", count_rejoin: Optional[bool] = None, lua_confirmed: bool = False):
+    def report_launch_success(self, acc: Account, trigger: str = "launch_success", count_rejoin: bool | None = None, lua_confirmed: bool = False):
         auth_gate = evaluate_account_auth_gate(acc)
         if auth_gate.blocked:
             mark_account_auth_quarantined(acc, auth_gate, source="launch_success", runtime_writer=self._runtime_state)
@@ -1191,7 +1191,7 @@ class RecoveryCoordinator:
         )
         self._persist_runtime()
 
-    def on_network_restored(self, accounts: List[Account]):
+    def on_network_restored(self, accounts: list[Account]):
         if not self._cfg.get("auto_rejoin", True):
             flog("[RECOVERY] Auto rejoin disabled - skip reconcile on network restore", "warning")
             return

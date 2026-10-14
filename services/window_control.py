@@ -2,12 +2,12 @@ from __future__ import annotations
 
 import ctypes
 import math
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from core import flog_kv
 
 
-def primary_monitor_work_area() -> Dict[str, int]:
+def primary_monitor_work_area() -> dict[str, int]:
     try:
         user32 = ctypes.windll.user32
 
@@ -39,7 +39,7 @@ def _window_long_api(user32: Any):
     return user32.GetWindowLongW, user32.SetWindowLongW
 
 
-def _window_rect(user32: Any, hwnd: int) -> Tuple[int, int]:
+def _window_rect(user32: Any, hwnd: int) -> tuple[int, int]:
     class RECT(ctypes.Structure):
         _fields_ = [
             ("left", ctypes.c_long),
@@ -54,13 +54,13 @@ def _window_rect(user32: Any, hwnd: int) -> Tuple[int, int]:
     return max(0, int(rect.right - rect.left)), max(0, int(rect.bottom - rect.top))
 
 
-def minimize_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
+def minimize_windows(windows: list[dict[str, Any]]) -> dict[str, Any]:
     if not windows:
         return {"ok": True, "count": 0, "minimized": 0, "windows": []}
     try:
         user32 = ctypes.windll.user32
         SW_MINIMIZE = 6
-        minimized: List[Dict[str, Any]] = []
+        minimized: list[dict[str, Any]] = []
         skipped_minimized = 0
         for item in windows:
             hwnd = int(item.get("hwnd") or 0)
@@ -89,7 +89,7 @@ def minimize_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
         return {"ok": False, "count": len(windows), "minimized": 0, "error": str(exc), "windows": windows}
 
 
-def unminimize_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
+def unminimize_windows(windows: list[dict[str, Any]]) -> dict[str, Any]:
     """Manual-action helper: restore minimized windows before arrange/resize.
 
     Never call from auto cycles (would flicker + defeat auto-minimize).
@@ -99,7 +99,7 @@ def unminimize_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
     try:
         user32 = ctypes.windll.user32
         SW_RESTORE = 9
-        restored: List[Dict[str, Any]] = []
+        restored: list[dict[str, Any]] = []
         for item in windows:
             hwnd = int(item.get("hwnd") or 0)
             if not hwnd:
@@ -158,7 +158,7 @@ def _unmark_taskbar_hidden(user32: Any, hwnd: int) -> None:
         pass
 
 
-def _acquire_taskbar() -> Optional[Dict[str, Any]]:
+def _acquire_taskbar() -> dict[str, Any] | None:
     """Create an ITaskbarList instance for AddTab/DeleteTab. Returns None on failure."""
     try:
         ole32 = ctypes.windll.ole32
@@ -211,7 +211,7 @@ def _acquire_taskbar() -> Optional[Dict[str, Any]]:
         return None
 
 
-def _taskbar_vfunc(acq: Dict[str, Any], index: int, hwnd: int = 0, no_hwnd: bool = False) -> bool:
+def _taskbar_vfunc(acq: dict[str, Any], index: int, hwnd: int = 0, no_hwnd: bool = False) -> bool:
     try:
         ptrsize = ctypes.sizeof(ctypes.c_void_p)
         func_addr = ctypes.cast(
@@ -229,7 +229,7 @@ def _taskbar_vfunc(acq: Dict[str, Any], index: int, hwnd: int = 0, no_hwnd: bool
         return False
 
 
-def _release_taskbar(acq: Optional[Dict[str, Any]]) -> None:
+def _release_taskbar(acq: dict[str, Any] | None) -> None:
     if not acq:
         return
     try:
@@ -245,7 +245,7 @@ def _release_taskbar(acq: Optional[Dict[str, Any]]) -> None:
         pass
 
 
-def hide_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
+def hide_windows(windows: list[dict[str, Any]]) -> dict[str, Any]:
     """Minimize + ITaskbarList::DeleteTab: off screen, no taskbar button.
 
     Window stays IsWindowVisible=True so Task Manager keeps listing it as
@@ -258,7 +258,7 @@ def hide_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
         user32 = ctypes.windll.user32
         SW_MINIMIZE = 6
         SW_RESTORE = 9
-        hidden: List[Dict[str, Any]] = []
+        hidden: list[dict[str, Any]] = []
         skipped_hidden = 0
         acq = _acquire_taskbar()
         if acq:
@@ -312,14 +312,14 @@ def hide_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
         return {"ok": False, "count": len(windows), "hidden": 0, "error": str(exc), "windows": windows}
 
 
-def show_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
+def show_windows(windows: list[dict[str, Any]]) -> dict[str, Any]:
     """AddTab + SW_RESTORE. Handles new minimize+DeleteTab hides and legacy SW_HIDE."""
     if not windows:
         return {"ok": True, "count": 0, "shown": 0, "windows": []}
     try:
         user32 = ctypes.windll.user32
         SW_RESTORE = 9
-        shown: List[Dict[str, Any]] = []
+        shown: list[dict[str, Any]] = []
         acq = _acquire_taskbar()
         if acq:
             _taskbar_vfunc(acq, 3, no_hwnd=True)
@@ -358,7 +358,7 @@ def show_windows(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
         return {"ok": False, "count": len(windows), "shown": 0, "error": str(exc), "windows": windows}
 
 
-def resize_windows(windows: List[Dict[str, Any]], width: int, height: int, unlock_size: bool = True) -> Dict[str, Any]:
+def resize_windows(windows: list[dict[str, Any]], width: int, height: int, unlock_size: bool = True) -> dict[str, Any]:
     min_width = 80 if unlock_size else 320
     min_height = 60 if unlock_size else 240
     width = max(min_width, min(int(width or 200), 1920))
@@ -385,8 +385,8 @@ def resize_windows(windows: List[Dict[str, Any]], width: int, height: int, unloc
         SWP_SHOWWINDOW = 0x0040
         compact_required = bool(unlock_size) and (width < 816 or height < 638)
 
-        resized: List[Dict[str, Any]] = []
-        failed: List[Dict[str, Any]] = []
+        resized: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
         skipped = 0
         skipped_minimized = 0
         for item in windows:
@@ -506,7 +506,7 @@ def _auto_arrange_gap(
 
 
 def arrange_windows(
-    windows: List[Dict[str, Any]],
+    windows: list[dict[str, Any]],
     width: int,
     height: int,
     columns: int = 6,
@@ -514,8 +514,8 @@ def arrange_windows(
     margin: int = 0,
     unlock_size: bool = True,
     resize: bool = True,
-    rows: Optional[int] = None,
-) -> Dict[str, Any]:
+    rows: int | None = None,
+) -> dict[str, Any]:
     min_width = 80 if unlock_size else 320
     min_height = 60 if unlock_size else 240
     target_width = max(min_width, min(int(width or 200), 1920))
@@ -566,8 +566,8 @@ def arrange_windows(
         tile_height = max(60, int(target_height * scale))
         compact_required = bool(resize) and bool(unlock_size) and (tile_width < 816 or tile_height < 638)
 
-        arranged: List[Dict[str, Any]] = []
-        failed: List[Dict[str, Any]] = []
+        arranged: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
         skipped_minimized = 0
         for index, item in enumerate(windows):
             hwnd = int(item.get("hwnd") or 0)
@@ -662,7 +662,7 @@ def arrange_windows(
         return {"ok": False, "count": len(windows), "arranged": 0, "failed": len(windows), "width": target_width, "height": target_height, "columns": columns, "gap": gap, "gap_auto": auto_gap, "margin": margin, "unlock_size": bool(unlock_size), "resize": bool(resize), "error": str(exc), "windows": windows}
 
 
-def restore_window_styles(windows: List[Dict[str, Any]]) -> Dict[str, Any]:
+def restore_window_styles(windows: list[dict[str, Any]]) -> dict[str, Any]:
     if not windows:
         return {"ok": True, "count": 0, "restored": 0, "windows": []}
     try:

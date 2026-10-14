@@ -17,7 +17,8 @@ import socket
 import struct
 import threading
 import time
-from typing import Any, Callable, Dict, Optional
+from collections.abc import Callable
+from typing import Any
 
 _OP_HANDSHAKE = 0
 _OP_FRAME = 1
@@ -55,8 +56,8 @@ class _DiscordIpc:
 
     def __init__(self, client_id: str):
         self.client_id = str(client_id or "").strip()
-        self._sock: Optional[Any] = None
-        self._pipe_file: Optional[Any] = None
+        self._sock: Any | None = None
+        self._pipe_file: Any | None = None
 
     def close(self) -> None:
         try:
@@ -76,7 +77,7 @@ class _DiscordIpc:
         finally:
             self._sock = None
 
-    def _send(self, op: int, payload: Dict[str, Any]) -> None:
+    def _send(self, op: int, payload: dict[str, Any]) -> None:
         data = json.dumps(payload).encode("utf-8")
         header = struct.pack("<II", op, len(data))
         blob = header + data
@@ -89,7 +90,7 @@ class _DiscordIpc:
             return
         raise OSError("not connected")
 
-    def _recv(self, timeout: float = 5.0) -> Dict[str, Any]:
+    def _recv(self, timeout: float = 5.0) -> dict[str, Any]:
         raw_header = self._recv_exact(8, timeout)
         if len(raw_header) < 8:
             raise OSError("short ipc header")
@@ -133,7 +134,7 @@ class _DiscordIpc:
         if not self.client_id:
             raise ValueError("missing client_id")
         handshake = {"v": 1, "client_id": self.client_id}
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
         # Windows: try discord-ipc-0..9 named pipes.
         if os.name == "nt":
             for i in range(10):
@@ -172,7 +173,7 @@ class _DiscordIpc:
                     continue
         raise OSError(f"Discord IPC unavailable: {last_error}")
 
-    def set_activity(self, activity: Dict[str, Any], pid: int) -> Dict[str, Any]:
+    def set_activity(self, activity: dict[str, Any], pid: int) -> dict[str, Any]:
         payload = {
             "cmd": "SET_ACTIVITY",
             "args": {"pid": int(pid or os.getpid()), "activity": activity},
@@ -203,18 +204,18 @@ class DiscordPresenceService:
 
     def __init__(
         self,
-        cfg_getter: Optional[Callable[[str, Any], Any]] = None,
-        status_getter: Optional[Callable[[], Dict[str, Any]]] = None,
+        cfg_getter: Callable[[str, Any], Any] | None = None,
+        status_getter: Callable[[], dict[str, Any]] | None = None,
     ):
         self._cfg_getter = cfg_getter
         self._status_getter = status_getter
         self._lock = threading.RLock()
         self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
-        self._ipc: Optional[_DiscordIpc] = None
+        self._thread: threading.Thread | None = None
+        self._ipc: _DiscordIpc | None = None
         self._activity_start: int = 0
         self._last_push_at: float = 0.0
-        self._state: Dict[str, Any] = {
+        self._state: dict[str, Any] = {
             "enabled": False,
             "connected": False,
             "client_id": "",
@@ -227,7 +228,7 @@ class DiscordPresenceService:
     def configure(
         self,
         cfg_getter: Callable[[str, Any], Any],
-        status_getter: Callable[[], Dict[str, Any]],
+        status_getter: Callable[[], dict[str, Any]],
     ) -> None:
         with self._lock:
             self._cfg_getter = cfg_getter
@@ -260,7 +261,7 @@ class DiscordPresenceService:
             self._state["connected"] = False
 
     # -- public snapshot -------------------------------------------------
-    def snapshot(self) -> Dict[str, Any]:
+    def snapshot(self) -> dict[str, Any]:
         with self._lock:
             snap = dict(self._state)
         try:
@@ -271,7 +272,7 @@ class DiscordPresenceService:
             snap["has_app"] = False
         return snap
 
-    def test(self, client_id: str = "") -> Dict[str, Any]:
+    def test(self, client_id: str = "") -> dict[str, Any]:
         """One-shot connect + sample activity. Used by the Test button."""
         cid = str(client_id or "").strip() or self._current_client_id()
         if not cid:
@@ -323,7 +324,7 @@ class DiscordPresenceService:
         place_id: str,
         show_accounts: bool,
         show_game: bool,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         # Stable session timer: set once per enable-session so Discord counts
         # up instead of resetting on every update.
         if not self._activity_start:

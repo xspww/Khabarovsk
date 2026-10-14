@@ -10,9 +10,9 @@ import time
 import urllib.request
 from typing import Any
 
-from app_paths import APP_DATA_DIR, APP_ROOT_DIR, IS_COMPILED, path_targets_current_exe
 from core import flog_kv
 from desktop.constants import APP_USER_AGENT, DEFAULT_PORT, INSTANCE_LOCK_PORT, LOOPBACK_HOST, PORT_SCAN_COUNT
+from infra.app_paths import APP_DATA_DIR, APP_ROOT_DIR, IS_COMPILED, path_targets_current_exe
 
 BASE_DIR = APP_ROOT_DIR
 HOST = LOOPBACK_HOST

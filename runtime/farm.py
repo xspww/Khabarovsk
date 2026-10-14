@@ -137,7 +137,7 @@ class FarmController:
         self._supervisor = SupervisorRuntime(store=self._runtime_store, logger=flog_kv)
         self._machine_supervisor = MachineSupervisor(cfg_mgr.snapshot(), self._accounts)
         try:
-            from console_activity import set_lua_liveness_required
+            from infra.console_activity import set_lua_liveness_required
 
             set_lua_liveness_required(lua_liveness_required(cfg_mgr.snapshot()))
         except Exception:
@@ -617,7 +617,7 @@ class FarmController:
     def set_accounts(self, accounts: list[Account]):
         self._accounts = accounts
         try:
-            from console_activity import set_total_accounts
+            from infra.console_activity import set_total_accounts
 
             set_total_accounts(len(self._accounts))
         except Exception:
@@ -634,7 +634,7 @@ class FarmController:
     def apply_config_snapshot(self):
         cfg = self.cfg_mgr.snapshot()
         try:
-            from console_activity import set_lua_liveness_required
+            from infra.console_activity import set_lua_liveness_required
 
             set_lua_liveness_required(lua_liveness_required(cfg))
         except Exception:

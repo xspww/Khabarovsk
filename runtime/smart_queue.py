@@ -4,7 +4,7 @@ import threading
 import time
 from typing import Any
 
-from core_logging import flog_kv
+from infra.core_logging import flog_kv
 
 
 class SmartQueue:

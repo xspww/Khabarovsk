@@ -16,7 +16,7 @@ from collections.abc import Callable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-import net_tls
+from infra import net_tls
 
 VERSION_RE = re.compile(r"^(?:version-)?[0-9a-fA-F]{16,64}$")
 # Official Roblox endpoints only. Do NOT use third-party version trackers

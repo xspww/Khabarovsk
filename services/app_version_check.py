@@ -15,7 +15,7 @@ import shutil
 import urllib.request
 from typing import Any
 
-import net_tls
+from infra import net_tls
 from version import (
     app_display_version,
     compare_versions,
@@ -253,7 +253,7 @@ def check_app_update() -> dict[str, Any]:
 def cleanup_legacy_update_stage() -> None:
     """One-way removal of leftovers from the deleted (<1.2.0) self-updater."""
     try:
-        from app_paths import APP_DATA_DIR
+        from infra.app_paths import APP_DATA_DIR
 
         stage = os.path.join(APP_DATA_DIR, LEGACY_STAGE_DIRNAME)
         if os.path.isdir(stage):

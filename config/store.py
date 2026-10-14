@@ -7,9 +7,9 @@ import threading
 import time
 from typing import TYPE_CHECKING, Any
 
-from app_paths import APP_DATA_DIR
-from config_validation import CONFIG_SCHEMA_VERSION, validate_config_payload
+from config.validation import CONFIG_SCHEMA_VERSION, validate_config_payload
 from domain.states import RuntimeState
+from infra.app_paths import APP_DATA_DIR
 
 if TYPE_CHECKING:
     from domain.account_model import Account

@@ -12,7 +12,7 @@ from collections.abc import Iterable
 from ctypes import wintypes
 from typing import Any
 
-from app_paths import APP_DATA_DIR, LOG_DIR, move_app_data_file
+from infra.app_paths import APP_DATA_DIR, LOG_DIR, move_app_data_file
 
 ACCOUNT_DATA_FILE = os.path.join(APP_DATA_DIR, "AccountData.json")
 move_app_data_file("account_tools_audit.jsonl", os.path.join("logs", "account_tools_audit.jsonl"))

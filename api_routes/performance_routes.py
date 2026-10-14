@@ -3,7 +3,9 @@ from __future__ import annotations
 from fastapi import HTTPException, Request
 
 from core import flog_kv
-from performance_settings import (
+from services.account_hybrid import audit_event
+from services.cpu_limiter import CPU_LIMITER
+from services.performance_settings import (
     apply_volume_settings_file,
     delete_roblox_settings_file,
     normalize_fps_limit,
@@ -12,8 +14,6 @@ from performance_settings import (
     normalize_roblox_volume,
     roblox_settings_status,
 )
-from services.account_hybrid import audit_event
-from services.cpu_limiter import CPU_LIMITER
 from services.process_service import ProcessService
 
 from .context import ApiContext
@@ -162,8 +162,8 @@ def register(app, ctx: ApiContext) -> None:
             # Enforce readonly when FPS is on, graphics is on, or volume is
             # non-default — otherwise Roblox reverts the file on exit.
             if volume_touched and volume_muted is not None and volume_level is not None:
-                from performance_settings import is_readonly as _is_ro
-                from performance_settings import set_readonly as _set_ro
+                from services.performance_settings import is_readonly as _is_ro
+                from services.performance_settings import set_readonly as _set_ro
                 try:
                     want_ro = bool(cfg_mgr.get("fps_limiter_enabled", False) or enabled or volume_muted or int(volume_level) < 10)
                     _set_ro(str(payload.get("path") or ""), want_ro)

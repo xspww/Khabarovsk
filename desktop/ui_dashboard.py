@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from app_paths import resource_path
+from infra.app_paths import resource_path
 
 _STATIC_SCRIPTS = (
     '<script src="/ui/runtime/zoomLock.js?v=1"></script>'

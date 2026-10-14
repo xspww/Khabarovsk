@@ -7,9 +7,9 @@ import sys
 from collections.abc import Callable
 from typing import Any
 
-from app_paths import APP_DATA_DIR, APP_NAME, APP_ROOT_DIR, CACHE_DIR, resource_path
 from core import flog_kv
 from desktop.console_icon import APP_ICON_FILE
+from infra.app_paths import APP_DATA_DIR, APP_NAME, APP_ROOT_DIR, CACHE_DIR, resource_path
 from version import app_display_version
 
 # Evergreen WebView2 bootstrapper (~2MB downloader, Microsoft official).

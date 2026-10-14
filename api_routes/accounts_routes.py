@@ -13,8 +13,8 @@ from typing import Any
 
 from fastapi import HTTPException, Request
 
-import net_tls
 from core import banned_block_reason, cookie_identity_block_reason, cookie_invalid_block_reason, suspended_block_reason
+from infra import net_tls
 from services.account_hybrid import ACCOUNT_STORE, audit_event
 from services.account_reload import emit_reload_cookie_events
 from services.ban_guard import (

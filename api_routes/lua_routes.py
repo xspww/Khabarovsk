@@ -9,8 +9,8 @@ from urllib.parse import quote
 from fastapi import HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
-from app_paths import resource_path
 from core import flog_kv
+from infra.app_paths import resource_path
 from runtime.lua_identity import resolve_lua_account
 from services.lua_session_tokens import (
     DEFAULT_LUA_SESSION_TOKEN_TTL_SECONDS,

@@ -7,7 +7,7 @@ import threading
 import time
 from typing import Any
 
-from app_paths import APP_DATA_DIR
+from infra.app_paths import APP_DATA_DIR
 
 COOKIE_ARTIFACT_LEDGER_FILE = os.path.join(APP_DATA_DIR, "cronus_cookie_artifacts.json")
 COOKIE_ARTIFACT_LEDGER_SCHEMA = "cronus.cookie_artifacts.v1"

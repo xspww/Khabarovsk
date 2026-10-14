@@ -15,8 +15,6 @@ import urllib.request
 from datetime import UTC, datetime
 from typing import Any
 
-import net_tls
-from app_paths import APP_ROOT_DIR, EXECUTABLE_PATH, IS_COMPILED
 from domain.roblox_private_servers import (
     _safe_hash,
     build_owned_private_server_link,
@@ -37,6 +35,8 @@ from domain.roblox_private_servers import (
 from domain.roblox_private_servers import (
     ensure_owned_private_server as _ensure_owned_private_server,
 )
+from infra import net_tls
+from infra.app_paths import APP_ROOT_DIR, EXECUTABLE_PATH, IS_COMPILED
 from services.account_hybrid import ACCOUNT_STORE, decrypt_cookie
 from services.captcha_guard import CAPTCHA_BLOCK_REASON, CAPTCHA_REASON, captcha_detail, is_captcha_text
 
@@ -1194,7 +1194,7 @@ def ensure_multi_roblox_guard(timeout: float = 6.0) -> tuple[bool, str]:
             guard_path = EXECUTABLE_PATH or sys.executable or "CronusLauncher.exe"
             cmd = [guard_path, "--multi-roblox-guard", _MULTI_ROBLOX_GUARD_MODE, "--parent-pid", str(os.getpid())]
         else:
-            guard_path = os.path.join(APP_ROOT_DIR, "multi_roblox_guard.py")
+            guard_path = os.path.join(APP_ROOT_DIR, "services", "multi_roblox_guard.py")
             cmd = [
                 sys.executable or "python",
                 guard_path,
@@ -1257,7 +1257,7 @@ def release_multi_roblox_guard() -> None:
         _terminate_multi_roblox_helper_locked("release")
         try:
             if _MULTI_ROBLOX_HANDLES:
-                from multi_roblox_guard import close_handles
+                from services.multi_roblox_guard import close_handles
 
                 close_handles(_MULTI_ROBLOX_HANDLES)
         finally:

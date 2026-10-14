@@ -7,7 +7,7 @@ import urllib.request
 from collections.abc import Callable, Iterable
 from typing import Any
 
-import net_tls
+from infra import net_tls
 
 WEAO_BASE = "https://weao.xyz/api"
 WEAO_USER_AGENT = "WEAO-3PService"

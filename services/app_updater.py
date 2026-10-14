@@ -42,8 +42,7 @@ from collections.abc import Callable
 from typing import Any
 from urllib.parse import urlparse
 
-import app_paths
-import net_tls
+from infra import app_paths, net_tls
 from services.app_version_check import HTTP_TIMEOUT_SECONDS, UPDATE_USER_AGENT, check_app_update
 from services.release_signing import verify_signature_manifest
 

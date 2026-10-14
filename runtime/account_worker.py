@@ -6,7 +6,6 @@ import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING, Any
 
-import net_tls
 from core import (
     Account,
     AccountState,
@@ -16,6 +15,7 @@ from core import (
     flog,
     flog_kv,
 )
+from infra import net_tls
 from runtime.account_worker_disconnects import handle_disconnect_checks
 from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
 from runtime.recovery_support import RECOVERY_REASON_MESSAGES, _set_account_cookie_block, compute_backoff

@@ -150,7 +150,21 @@ GitHub Actions builds releases the same way when a `v*` tag is pushed. The tag m
 
 ### Documentation
 
-For version checks, local API routes, and service layout, start from `main.py`, `api_routes/`, `services/`, and `ui/`.
+Root stays clean: entry is `main.py`, public facade is `core.py`, version single-source is `version.py`.
+
+| Layer | Folder | README |
+| ----- | ------ | ------ |
+| Foundation | `infra/` (paths, logging, console, TLS) | [infra/README.md](infra/README.md) |
+| Config | `config/` (validation + JSON store) | [config/README.md](config/README.md) |
+| Models | `domain/` (pure account/state models) | [domain/README.md](domain/README.md) |
+| Integrations | `services/` (Roblox, executor, OS, updater) | [services/README.md](services/README.md) |
+| Orchestration | `runtime/` (farm, launch, recovery) | [runtime/README.md](runtime/README.md) |
+| HTTP | `api_routes/` (localhost FastAPI) | [api_routes/README.md](api_routes/README.md) |
+| Shell | `desktop/` (WebView2, tray, single-instance) | [desktop/README.md](desktop/README.md) |
+| Frontend | `ui/` (dashboard ESM, no build) | [ui/README.md](ui/README.md) |
+| Tests | `tests/` (no Windows/network/browser) | [tests/README.md](tests/README.md) |
+| In-game | `lua/` (executor loader) | [lua/README.md](lua/README.md) |
+| Binary | `assets/` (icon, fonts) | [assets/README.md](assets/README.md) |
 
 ### Contributing
 

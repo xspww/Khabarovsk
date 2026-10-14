@@ -28,7 +28,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-import net_tls
+from infra import net_tls
 
 LOGIN_URL = "https://auth.roblox.com/v2/login"
 

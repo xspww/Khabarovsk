@@ -9,8 +9,8 @@ import sqlite3
 import time
 from ctypes import wintypes
 
-from app_paths import USER_DATA_ROOT
 from core import flog
+from infra.app_paths import USER_DATA_ROOT
 from services.cookie_artifact_ledger import CookieArtifactLedger
 
 

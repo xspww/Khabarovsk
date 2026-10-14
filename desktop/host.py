@@ -10,8 +10,6 @@ import urllib.request
 import webbrowser
 from typing import Any
 
-from app_paths import APP_NAME, APP_ROOT_DIR, IS_COMPILED
-from console_activity import format_console_line
 from core import LOG_FILE, flog, flog_kv
 from desktop import console_output
 from desktop.backend_host import BackendHost
@@ -33,6 +31,8 @@ from desktop.instance_guard import (
     clear_instance_state as clear_instance_state,
 )
 from desktop.webview_window import DesktopWindow
+from infra.app_paths import APP_NAME, APP_ROOT_DIR, IS_COMPILED
+from infra.console_activity import format_console_line
 
 BASE_DIR = APP_ROOT_DIR
 HOST = "127.0.0.1"
@@ -338,7 +338,7 @@ def _run_autostart_chain() -> None:
         return
     if bool(cfg.get("start_on_boot", False)):
         try:
-            import app_paths
+            from infra import app_paths
             from services import startup_manager
 
             res = startup_manager.heal_shortcut(str(app_paths.EXECUTABLE_PATH or ""))
@@ -396,7 +396,7 @@ def _maybe_prompt_startup_update() -> bool:
     # Source checkouts cannot replace their running Python files. Keep the
     # update notice in the dashboard instead of prompting at every startup.
     try:
-        import app_paths
+        from infra import app_paths
 
         if not app_paths.IS_COMPILED:
             return False

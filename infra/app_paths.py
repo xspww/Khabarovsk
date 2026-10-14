@@ -6,7 +6,11 @@ import sys
 
 APP_NAME = "Cronus Launcher"
 APP_FOLDER_NAME = "Cronus Launcher"
-APP_ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
+# This module lives in infra/ (one level below the repo root), so the
+# project root is the parent of this file's directory. In a frozen
+# onefile build __file__ is <_MEIPASS>/infra/app_paths.py, whose parent
+# is likewise the bundle root (<_MEIPASS>).
+APP_ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _is_compiled_runtime() -> bool:

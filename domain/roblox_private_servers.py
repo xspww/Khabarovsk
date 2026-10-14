@@ -9,7 +9,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
-import net_tls
+from infra import net_tls
 
 USER_AGENT = "CronusLauncherHybrid/1.0"
 ROBLOX_HOME = "https://www.roblox.com/"

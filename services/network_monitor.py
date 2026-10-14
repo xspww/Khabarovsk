@@ -4,8 +4,8 @@ import threading
 import time
 import urllib.request
 
-import net_tls
 from core import EventBus, flog
+from infra import net_tls
 
 NET_ONLINE   = "ONLINE"
 NET_DEGRADED = "DEGRADED"

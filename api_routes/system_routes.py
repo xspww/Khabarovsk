@@ -77,7 +77,7 @@ def register(app, ctx: ApiContext) -> None:
 
     @app.get("/api/startup/status")
     def api_startup_status():
-        import app_paths
+        from infra import app_paths
         exe = str(app_paths.EXECUTABLE_PATH or "")
         status = startup_manager.shortcut_status(exe)
         status["enabled"] = bool(ctx.cfg_mgr.get("start_on_boot", False))
@@ -86,7 +86,7 @@ def register(app, ctx: ApiContext) -> None:
 
     @app.post("/api/startup/apply")
     async def api_startup_apply(request: Request):
-        import app_paths
+        from infra import app_paths
         try:
             body = await request.json()
         except Exception:
@@ -107,7 +107,7 @@ def register(app, ctx: ApiContext) -> None:
         # Notify-only (opencode-style): just report, never download/install.
         # The UI must not offer an in-app update for a source checkout;
         # only a packaged executable can replace itself safely.
-        import app_paths
+        from infra import app_paths
 
         return {**check_app_update(), "compiled": bool(app_paths.IS_COMPILED)}
 

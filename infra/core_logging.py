@@ -9,9 +9,9 @@ import time
 from enum import Enum
 from typing import Any
 
-from app_paths import LOG_DIR, ensure_log_dir, move_app_data_file
-from console_activity import emit_structured as emit_console_activity
-from console_activity import emit_text as emit_console_text
+from infra.app_paths import LOG_DIR, ensure_log_dir, move_app_data_file
+from infra.console_activity import emit_structured as emit_console_activity
+from infra.console_activity import emit_text as emit_console_text
 from services.safe_rotating_log import ProcessSafeRotatingFileHandler
 
 

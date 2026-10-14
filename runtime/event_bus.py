@@ -6,7 +6,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from core_logging import flog_kv
+from infra.core_logging import flog_kv
 
 
 class EventName:

@@ -150,7 +150,21 @@ pyinstaller cronus_launcher.spec
 
 ### เอกสารอ้างอิง
 
-ถ้าจะไล่การเช็กเวอร์ชัน เส้น API ในเครื่อง กับโครง service เริ่มที่ `main.py`, `api_routes/`, `services/` และ `ui/` ได้เลย
+Root เหลือแค่ `main.py` (ทางเข้า), `core.py` (facade รวม export), `version.py` (เวอร์ชัน single-source)
+
+| ชั้น | โฟลเดอร์ | README |
+| ----- | ------ | ------ |
+| Foundation | `infra/` (path, log, console, TLS) | [infra/README.md](infra/README.md) |
+| Config | `config/` (validate + JSON store) | [config/README.md](config/README.md) |
+| Models | `domain/` (โมเดลล้วน) | [domain/README.md](domain/README.md) |
+| Integrations | `services/` (Roblox, executor, OS, updater) | [services/README.md](services/README.md) |
+| Orchestration | `runtime/` (farm, launch, recovery) | [runtime/README.md](runtime/README.md) |
+| HTTP | `api_routes/` (FastAPI localhost) | [api_routes/README.md](api_routes/README.md) |
+| Shell | `desktop/` (WebView2, tray, single-instance) | [desktop/README.md](desktop/README.md) |
+| Frontend | `ui/` (dashboard ESM) | [ui/README.md](ui/README.md) |
+| Tests | `tests/` | [tests/README.md](tests/README.md) |
+| In-game | `lua/` (executor loader) | [lua/README.md](lua/README.md) |
+| Binary | `assets/` (icon, font) | [assets/README.md](assets/README.md) |
 
 ### ร่วมพัฒนา
 

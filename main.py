@@ -12,8 +12,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 if BASE_DIR not in sys.path:
     sys.path.insert(0, BASE_DIR)
 
-from app_paths import APP_NAME, IS_COMPILED, resource_path
 from desktop import console_output
+from infra.app_paths import APP_NAME, IS_COMPILED, resource_path
 
 REQUIREMENTS_FILE = os.path.join(BASE_DIR, "requirements.txt")
 _STARTUP_COLOR_SUPPORT: bool | None = None
@@ -175,18 +175,13 @@ except ImportError:
 
 from api_routes import ApiContext, register_api_routes
 from core import LOG_FILE, Account, ConfigManager, flog, flog_kv
-from desktop.ui_dashboard import get_html_ui
-from desktop_host import (
+from desktop.host import (
     INSTANCE_TOKEN,
     SHUTDOWN_REQUESTED,
     clear_instance_state,
     run_desktop,
 )
-from performance_settings import (
-    apply_graphics_settings_file,
-    apply_performance_settings_file,
-    apply_process_priority_to_roblox,
-)
+from desktop.ui_dashboard import get_html_ui
 from runtime.farm import FarmController
 from services.account_hybrid import ACCOUNT_STORE
 from services.app_updater import AppUpdater
@@ -194,6 +189,11 @@ from services.app_version_check import cleanup_legacy_update_stage
 from services.discord_presence import DISCORD_PRESENCE
 from services.executor_compatibility import ExecutorCompatibilityService
 from services.executor_relauncher import ExecutorRelaunchService
+from services.performance_settings import (
+    apply_graphics_settings_file,
+    apply_performance_settings_file,
+    apply_process_priority_to_roblox,
+)
 from services.process_service import ProcessManager
 from services.roblox_install_manager import RobloxInstallManager
 
@@ -596,7 +596,7 @@ register_api_routes(app, api_context)
 
 if __name__ == "__main__":
     if "--multi-roblox-guard" in sys.argv:
-        import multi_roblox_guard
+        from services import multi_roblox_guard
 
         idx = sys.argv.index("--multi-roblox-guard")
         sys.argv = [sys.argv[0], *sys.argv[idx + 1:]]

@@ -105,7 +105,7 @@ class MaintenancePerformanceMixin:
             return
         self._last_priority_apply_at = now
         try:
-            from performance_settings import apply_process_priority_to_roblox
+            from services.performance_settings import apply_process_priority_to_roblox
 
             result = apply_process_priority_to_roblox(self._cfg.get("process_priority", "low"))
             if int(result.get("applied") or 0) > 0:

@@ -154,17 +154,17 @@ Root เหลือแค่ `main.py` (ทางเข้า), `core.py` (faca
 
 | ชั้น | โฟลเดอร์ | README |
 | ----- | ------ | ------ |
-| Foundation | `infra/` (path, log, console, TLS) | [infra/README.md](infra/README.md) |
-| Config | `config/` (validate + JSON store) | [config/README.md](config/README.md) |
-| Models | `domain/` (โมเดลล้วน) | [domain/README.md](domain/README.md) |
-| Integrations | `services/` (Roblox, executor, OS, updater) | [services/README.md](services/README.md) |
-| Orchestration | `runtime/` (farm, launch, recovery) | [runtime/README.md](runtime/README.md) |
-| HTTP | `api_routes/` (FastAPI localhost) | [api_routes/README.md](api_routes/README.md) |
-| Shell | `desktop/` (WebView2, tray, single-instance) | [desktop/README.md](desktop/README.md) |
-| Frontend | `ui/` (dashboard ESM) | [ui/README.md](ui/README.md) |
-| Tests | `tests/` | [tests/README.md](tests/README.md) |
-| In-game | `lua/` (executor loader) | [lua/README.md](lua/README.md) |
-| Binary | `assets/` (icon, font) | [assets/README.md](assets/README.md) |
+| Foundation | `infra/` (path, log, console, TLS) | [infra/README.th.md](infra/README.th.md) |
+| Config | `config/` (validate + JSON store) | [config/README.th.md](config/README.th.md) |
+| Models | `domain/` (โมเดลล้วน) | [domain/README.th.md](domain/README.th.md) |
+| Integrations | `services/` (Roblox, executor, OS, updater) | [services/README.th.md](services/README.th.md) |
+| Orchestration | `runtime/` (farm, launch, recovery) | [runtime/README.th.md](runtime/README.th.md) |
+| HTTP | `api_routes/` (FastAPI localhost) | [api_routes/README.th.md](api_routes/README.th.md) |
+| Shell | `desktop/` (WebView2, tray, single-instance) | [desktop/README.th.md](desktop/README.th.md) |
+| Frontend | `ui/` (dashboard ESM) | [ui/README.th.md](ui/README.th.md) |
+| Tests | `tests/` | [tests/README.th.md](tests/README.th.md) |
+| In-game | `lua/` (executor loader) | [lua/README.th.md](lua/README.th.md) |
+| Binary | `assets/` (icon, font) | [assets/README.th.md](assets/README.th.md) |
 
 ### ร่วมพัฒนา
 

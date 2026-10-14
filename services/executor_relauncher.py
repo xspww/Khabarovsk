@@ -396,6 +396,21 @@ class ExecutorRelaunchService:
 
     def ensure_started(self) -> bool:
         """Ensure the configured Executor is running before Farm Start."""
+        try:
+            _tracker_state = str((self.tracker.status() or {}).get("state") or "")
+        except Exception:
+            _tracker_state = ""
+        if _tracker_state == "incompatible":
+            # Farm is starting while the executor is already unusable: no
+            # transition fires (the state did not change), so arm the
+            # Wait-for-patch hold here, otherwise launches proceed with
+            # no executor support and no Wait status on the dashboard.
+            try:
+                _arm = getattr(self.farm, "set_executor_hold", None)
+                if callable(_arm):
+                    _arm(True, reason="wait_exploit_patch", detail="executor_incompatible_at_start")
+            except Exception:
+                pass
         if not self._lua_enabled():
             return True
         if not bool(self._cfg("executor_relaunch_enabled", False)):

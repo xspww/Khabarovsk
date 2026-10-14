@@ -168,6 +168,7 @@ function isNetworkIssue(e) {
 }
 function luaWaiting(e) { return !!e?.lua_required && !e?.lua_online }
 function isGameClosed(e) { return statusText(e).includes("game_unavailable") }
+function isWaitExploitPatch(e) { const n = statusText(e); return n.includes("wait_exploit_patch") || n.includes("wait for exploit patch") || lower(e?.state_label).includes("wait for exploit"); }
 function queuedLabel(e) { return "Queued" }
 function isStableInGame(e) {
   const n = String(e?.public_state || e?.state || "").toUpperCase(), t = String(e?.runtime_state || "").toUpperCase(), i = lower(e?.command_inflight?.action || e?.command_inflight || "");
@@ -183,6 +184,7 @@ export function bucket(e) {
   if (isInvalid(e)) return "invalid";
   if (isBlocked(e)) return "blocked";
   if (isGameClosed(e)) return "blocked";
+  if (isWaitExploitPatch(e)) return "cooldown";
   const n = String(e.public_state || e.state || "").toUpperCase(), t = String(e.runtime_state || "").toUpperCase();
   return "QUEUED" === n ? "queued" : luaWaiting(e) && (e.pid || "IN_GAME" === n || "RUNNING" === t) ? "recovery" : isStableInGame(e) ? "online" : isRuntimeSuspect(e) ? "recovery" : isNetworkIssue(e) ? "network" : !luaWaiting(e) && ("IN_GAME" === n || "RUNNING" === t && e.pid) ? "online" : "IDLE" === n || "READY" === n || "STOPPED" === t ? "idled" : "COOLDOWN" === n ? "cooldown" : "FAILED" === n || "CRASH" === n ? "recovery" : ["LAUNCHING", "VERIFY", "NETWORK_LOST"].includes(n) || lower(e.recovery_status).includes("recover") ? "recovery" : "queued";
 }
@@ -199,6 +201,7 @@ export function rowStatusLabel(e, n) {
   if (isInvalid(e)) return "Invalid";
   if (isBlocked(e)) return blockedStatusLabel(e);
   if (isGameClosed(e)) return "Game Close";
+  if (isWaitExploitPatch(e)) return "Wait for exploit patch";
   const t = String(e.public_state || e.state || "").toUpperCase(), i = String(e.runtime_state || "").toUpperCase(), s = lower(e.command_inflight?.action || e.command_inflight || ""), o = statusText(e), r = String(e.state_label || "").trim();
   if ("Locked" === r) return "Locked";
   if ("Recovery" === r) return "Recovery";

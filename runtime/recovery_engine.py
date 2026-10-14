@@ -108,6 +108,7 @@ class RecoveryCoordinator:
         )
         self._evaluator = RecoveryEvaluator(self)
         self._storm = RecoveryStormController(cfg, self._accounts)
+        self._executor_hold_check = lambda: False
         self._guard_recovery_lock = threading.Lock()
         self._guard_recovery_scheduled = False
         self._guard_recovery_attempt = 0
@@ -125,6 +126,89 @@ class RecoveryCoordinator:
     @property
     def runtime_orchestrator(self) -> RuntimeOrchestrator:
         return self._runtime_orchestrator
+
+    def set_executor_hold_check(self, fn) -> None:
+        """Live predicate polled before any new launch/rejoin is scheduled."""
+        try:
+            self._executor_hold_check = fn if callable(fn) else (lambda: False)
+        except Exception:
+            self._executor_hold_check = lambda: False
+
+    def _executor_held(self) -> bool:
+        try:
+            check = getattr(self, "_executor_hold_check", None)
+            return bool(check() if callable(check) else False)
+        except Exception:
+            return False
+
+    def _park_for_executor_hold(self, acc: Account, trigger: str) -> None:
+        """Park an account as Wait-for-patch. Dashboard-only, no terminal spam.
+
+        Sets recovery_status=wait_exploit_patch plus a 60s recheck timer.
+        Re-parking is skipped while a fresh timer is pending so repeated
+        evaluate ticks stay quiet.
+        """
+        now = time.time()
+        try:
+            if str(getattr(acc, "recovery_status", "") or "") == "wait_exploit_patch":
+                try:
+                    remaining = float(getattr(acc, "cooldown_until", 0.0) or 0.0) - now
+                except Exception:
+                    remaining = 0.0
+                if remaining > 30.0:
+                    return
+        except Exception:
+            pass
+        delay = 60.0
+        due = now + delay
+        key = f"recovery:{acc._config_username}"
+        try:
+            with acc._lock:
+                if self._closed or self._stop.is_set():
+                    return
+                generation = acc.recovery_generation
+                runtime_generation = acc.runtime_generation
+                command_generation = acc.command_generation
+                self._state_mgr.set_cooldown(acc, due, reason=f"executor_hold:{trigger}")
+                self._state_mgr.set_recovery(acc, status="wait_exploit_patch", reason=trigger, inflight=True)
+                try:
+                    self._state_mgr.transition(acc, AccountState.COOLDOWN, reason=f"executor_hold:{trigger}")
+                except Exception:
+                    pass
+                acc.recovery_scheduled_at = due
+                acc.scheduler_slot = key
+        except Exception:
+            return
+        try:
+            current = self._scheduler.get(key)
+            if (
+                current
+                and current.due_at <= due
+                and current.recovery_generation == generation
+                and current.runtime_generation == runtime_generation
+                and current.command_generation == command_generation
+            ):
+                return
+        except Exception:
+            pass
+        try:
+            self._scheduler.schedule_once(
+                key,
+                self._run_scheduled_recovery,
+                due_at=due,
+                reason=f"executor_hold:{trigger}",
+                account=acc,
+                runtime_generation=runtime_generation,
+                recovery_generation=generation,
+                command_generation=command_generation,
+                payload={"scheduler_slot": "recovery", "allow_runtime_generation_drift": True},
+            )
+        except Exception:
+            pass
+        try:
+            self._persist_runtime()
+        except Exception:
+            pass
     def _is_closed(self) -> bool:
         with self._lock:
             return self._closed or self._stop.is_set()
@@ -867,6 +951,10 @@ class RecoveryCoordinator:
             self._persist_runtime()
             return
 
+        if self._executor_held():
+            self._park_for_executor_hold(acc, canonical)
+            return
+
         wait_for = self._adaptive_recovery_delay(acc, canonical, cooldown=cooldown)
         flog_kv(
             "RECOVERY",
@@ -945,6 +1033,9 @@ class RecoveryCoordinator:
             self._clear_recovery(acc, status="disabled", reason=canonical, inflight=False)
             flog(f"[RECOVERY] Auto rejoin disabled - not scheduling launch retry for {acc.display_name}", "warning")
             self._persist_runtime()
+            return
+        if self._executor_held():
+            self._park_for_executor_hold(acc, canonical)
             return
         if active_vip and acc._vip_tracker and not is_game_down:
             # Game-down is not the link's fault — do not blacklist it.
@@ -1218,6 +1309,9 @@ class RecoveryCoordinator:
             self.request_evaluate(acc, trigger="network_restored", force_restart=True)
 
     def force_rejoin(self, acc: Account):
+        if self._executor_held():
+            self._park_for_executor_hold(acc, "force_rejoin")
+            return
         with acc._lock:
             acc.retry_count = 0
             acc.fail_count = 0

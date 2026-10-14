@@ -171,8 +171,20 @@ class ExecutorRelaunchService:
                 return candidate, True
         return configured, False
 
+    def _lua_enabled(self) -> bool:
+        try:
+            if hasattr(self.cfg_mgr, "snapshot"):
+                data = self.cfg_mgr.snapshot()
+                if isinstance(data, dict) and "lua_enabled" in data:
+                    return bool(data.get("lua_enabled", True))
+        except Exception:
+            pass
+        return bool(self._cfg("lua_enabled", self._cfg("use_lua", True)))
+
     def relaunch_support(self) -> tuple[bool, str]:
         """Return whether the selected executor can be relaunched safely."""
+        if not self._lua_enabled():
+            return False, "Enable Use Lua to use Roblox Executor"
         selected = str(self._cfg("executor_selected", "") or "").strip()
         if selected not in EXECUTOR_NAMES:
             return False, "Selected Executor is not supported"
@@ -384,6 +396,8 @@ class ExecutorRelaunchService:
 
     def ensure_started(self) -> bool:
         """Ensure the configured Executor is running before Farm Start."""
+        if not self._lua_enabled():
+            return True
         if not bool(self._cfg("executor_relaunch_enabled", False)):
             return True
         selected = str(self._cfg("executor_selected", "") or "").strip()
@@ -416,6 +430,41 @@ class ExecutorRelaunchService:
             self._status.update(state="started", attempt=0, message=f"Started {selected}")
             return True
 
+    def restart_executor_only(self, reason: str = "executor_hold_resume") -> bool:
+        """Restart only the Executor process, keeping Roblox/farm untouched.
+
+        Used when resuming from the Wait-for-patch hold: the farm kept
+        running, so a full relaunch (which kills all Roblox clients)
+        would throw away the sessions we deliberately preserved.
+        Returns True when the executor was (re)started or already running.
+        """
+        if not self._lua_enabled():
+            return True
+        if not bool(self._cfg("executor_relaunch_enabled", False)):
+            return True
+        selected = str(self._cfg("executor_selected", "") or "").strip()
+        path, _fallback = self.resolve_launch_path()
+        if not selected or not path or not os.path.isfile(path) or not path.lower().endswith(".exe"):
+            return False
+        try:
+            if self._selected_process_count(path) > 0:
+                self._kill_selected_processes(path)
+                time.sleep(1.0)
+            subprocess.Popen([path], cwd=os.path.dirname(path), close_fds=True)
+        except Exception as exc:
+            self._set_status(state="error", message=f"Failed to restart {selected}: {exc}")
+            try:
+                self.logger("EXECUTOR", "hold_restart_failed", "warning", error=exc, executor=selected, reason=reason)
+            except Exception:
+                pass
+            return False
+        self._set_status(state="started", attempt=0, message=f"Restarted {selected} ({reason})")
+        try:
+            self.logger("EXECUTOR", "hold_restarted", executor=selected, reason=reason)
+        except Exception:
+            pass
+        return True
+
     def _loader_ready(self, started_at: float) -> bool:
         for account in list(getattr(self.farm, "_accounts", []) or []):
             try:
@@ -427,6 +476,8 @@ class ExecutorRelaunchService:
 
     def request_relaunch(self, reason: str = "executor_version_changed", allow_stopped_farm: bool = False) -> bool:
         with self._lock:
+            if not self._lua_enabled():
+                return False
             if self._running or not bool(self._cfg("executor_relaunch_enabled", False)):
                 return False
             if not bool(self._cfg("auto_rejoin", True)):

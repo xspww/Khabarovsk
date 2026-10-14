@@ -103,6 +103,22 @@ class RecoveryEvaluator:
             r._log_hold(acc, trigger, "retry_limits_reset_keep_active")
             return
 
+        try:
+            _held = bool(r._executor_held()) if hasattr(r, "_executor_held") else False
+        except Exception:
+            _held = False
+        if _held:
+            # Executor waits for a patch: keep live sessions untouched,
+            # park anything needing a new launch as Wait for exploit patch.
+            # Stays quiet (no terminal log); the Dashboard reads the status.
+            if current in (AccountState.IN_GAME, AccountState.LAUNCHING, AccountState.VERIFY):
+                return
+            try:
+                r._park_for_executor_hold(acc, trigger)
+            except Exception:
+                pass
+            return
+
         if has_cookie and not session_checked:
             now = time.time()
             with acc._lock:

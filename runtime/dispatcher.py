@@ -339,6 +339,18 @@ class Dispatcher(threading.Thread):
                 flog(f"[DISPATCHER] skip {acc.display_name} (state={acc.state.name})")
                 continue
 
+            try:
+                _rec = getattr(self, "_recovery", None)
+                _held = bool(_rec._executor_held()) if hasattr(_rec, "_executor_held") else False
+            except Exception:
+                _held = False
+            if _held:
+                try:
+                    self._recovery._park_for_executor_hold(acc, "dispatcher_hold")
+                except Exception:
+                    pass
+                continue
+
             if self._machine_supervisor:
                 self._machine_supervisor.set_accounts(self._accounts)
                 decision = self._machine_supervisor.launch_decision(acc)

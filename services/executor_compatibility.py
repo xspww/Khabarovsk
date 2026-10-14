@@ -39,7 +39,18 @@ class ExecutorCompatibilityService:
         except Exception:
             return default
 
+    def _lua_enabled(self) -> bool:
+        try:
+            data = self.cfg_mgr.snapshot() if hasattr(self.cfg_mgr, "snapshot") else {}
+        except Exception:
+            data = {}
+        if isinstance(data, dict) and "lua_enabled" in data:
+            return bool(data.get("lua_enabled", True))
+        return bool(self._cfg("lua_enabled", self._cfg("use_lua", True)))
+
     def enabled(self) -> bool:
+        if not self._lua_enabled():
+            return False
         return bool(self._cfg("executor_monitor_enabled", False) or self._cfg("roblox_auto_update_enabled", False))
 
     def selected_name(self) -> str:
@@ -66,6 +77,19 @@ class ExecutorCompatibilityService:
         return version
 
     def refresh(self) -> dict[str, Any]:
+        if not self._lua_enabled():
+            payload = {
+                "ok": True,
+                "state": "disabled",
+                "executors": [],
+                "selected": self.selected_name(),
+                "latest_version": "",
+                "error": "Enable Use Lua to use Roblox Executor",
+                "lua_disabled": True,
+            }
+            with self._lock:
+                self._status = payload
+            return dict(payload)
         if not self.enabled():
             payload = {"ok": True, "state": "disabled", "executors": [], "latest_version": "", "error": ""}
             with self._lock:
@@ -124,7 +148,18 @@ class ExecutorCompatibilityService:
 
     def status(self) -> dict[str, Any]:
         with self._lock:
-            return dict(self._status)
+            cached = dict(self._status)
+        if not self._lua_enabled() and cached.get("state") != "disabled":
+            return {
+                "ok": True,
+                "state": "disabled",
+                "executors": [],
+                "selected": self.selected_name(),
+                "latest_version": "",
+                "error": "Enable Use Lua to use Roblox Executor",
+                "lua_disabled": True,
+            }
+        return cached
 
     def start(self) -> None:
         if self._thread and self._thread.is_alive():

@@ -83,6 +83,10 @@ class FarmController:
         self.running = False
         self.start_ts: float | None = None
         self._executor_start_guard = None
+        self._executor_hold = False
+        self._executor_hold_reason = ""
+        self._executor_hold_detail = ""
+        self._executor_hold_lock = threading.RLock()
 
         self._accounts: list[Account] = []
         self._workers: dict[str, AccountWorker] = {}
@@ -556,10 +560,58 @@ class FarmController:
     def set_executor_start_guard(self, guard):
         self._executor_start_guard = guard
 
+    def set_executor_hold(self, active: bool, reason: str = "", detail: str = "") -> None:
+        """Hold new launches/rejoins while the executor waits for a patch.
+
+        Keeps farm.running True so in-game clients stay alive; only new
+        launch/rejoin scheduling is parked with reason wait_exploit_patch.
+        """
+        with self._executor_hold_lock:
+            self._executor_hold = bool(active)
+            self._executor_hold_reason = str(reason or "")
+            self._executor_hold_detail = str(detail or "")
+        try:
+            recovery = getattr(self, "_recovery", None)
+            check_setter = getattr(recovery, "set_executor_hold_check", None)
+            if callable(check_setter):
+                check_setter(self.is_executor_hold)
+        except Exception:
+            pass
+        try:
+            self._bump_status_revision()
+        except Exception:
+            pass
+
+    def is_executor_hold(self) -> bool:
+        try:
+            with self._executor_hold_lock:
+                return bool(self._executor_hold)
+        except Exception:
+            return False
+
+    def get_executor_hold(self) -> dict[str, Any]:
+        try:
+            with self._executor_hold_lock:
+                return {
+                    "active": bool(self._executor_hold),
+                    "reason": str(self._executor_hold_reason or ""),
+                    "detail": str(self._executor_hold_detail or ""),
+                }
+        except Exception:
+            return {"active": False, "reason": "", "detail": ""}
+
     def stop(self):
+        try:
+            self.set_executor_hold(False)
+        except Exception:
+            pass
         return self._lifecycle.stop()
 
     def stop_fast(self):
+        try:
+            self.set_executor_hold(False)
+        except Exception:
+            pass
         return self._lifecycle.stop_fast()
 
     def set_accounts(self, accounts: list[Account]):

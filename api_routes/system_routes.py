@@ -160,12 +160,23 @@ def register(app, ctx: ApiContext) -> None:
     def api_roblox_install_status():
         return roblox_installer.status()
 
+    def _lua_enabled_for_executor() -> bool:
+        try:
+            cfg = ctx.cfg_mgr.snapshot() if hasattr(ctx.cfg_mgr, "snapshot") else {}
+            if isinstance(cfg, dict) and "lua_enabled" in cfg:
+                return bool(cfg.get("lua_enabled", True))
+            return bool(ctx.cfg_mgr.get("lua_enabled", True))
+        except Exception:
+            return True
+
     @app.get("/api/troubleshoot/executor")
     def api_executor_status():
         return ctx.executor_tracker.status()
 
     @app.post("/api/troubleshoot/executor/check")
     def api_executor_check():
+        if not _lua_enabled_for_executor():
+            raise HTTPException(409, "Enable Use Lua before using Roblox Executor")
         return ctx.executor_tracker.refresh()
 
     @app.get("/api/troubleshoot/executor/relaunch")
@@ -174,10 +185,14 @@ def register(app, ctx: ApiContext) -> None:
 
     @app.post("/api/troubleshoot/executor/relaunch")
     def api_executor_relaunch():
+        if not _lua_enabled_for_executor():
+            raise HTTPException(409, "Enable Use Lua before using Roblox Executor")
         return {"ok": ctx.executor_relauncher.retry(), **ctx.executor_relauncher.status()}
 
     @app.post("/api/troubleshoot/executor/browse")
     def api_executor_browse(request: Request):
+        if not _lua_enabled_for_executor():
+            raise HTTPException(409, "Enable Use Lua before using Roblox Executor")
         if getattr(ctx.farm, "running", False):
             raise HTTPException(409, "Stop Auto Rejoin before changing Executor path")
         # FastAPI executes sync endpoints in a worker thread. tkinter requires

@@ -225,6 +225,62 @@ def _executor_auto_rejoin_wanted() -> bool:
         return True
 
 
+def _executor_hold_on(detail: str = "") -> None:
+    try:
+        farm.set_executor_hold(True, reason="wait_exploit_patch", detail=detail)
+    except Exception:
+        pass
+    try:
+        flog_kv("EXECUTOR", "hold_wait_exploit_patch", detail=str(detail or ""))
+    except Exception:
+        pass
+
+
+def _executor_hold_resume(reason: str, restart_executor: bool = False) -> bool:
+    """Clear the Wait-for-patch hold and let parked accounts requeue.
+
+    Keeps Roblox clients alive: never stops the farm here. Optionally
+    restarts only the Executor process to pick up a new build.
+    """
+    global _EXECUTOR_RESUME_AFTER_UPDATE
+    try:
+        was_held = bool(farm.is_executor_hold())
+    except Exception:
+        was_held = False
+    try:
+        farm.set_executor_hold(False)
+    except Exception:
+        pass
+    _EXECUTOR_RESUME_AFTER_UPDATE = False
+    if not _executor_auto_rejoin_wanted():
+        return False
+    if not bool(getattr(farm, "running", False)):
+        # Hold resume must never start a stopped farm on its own
+        # (a manual stop stays stopped). The auto-update path resumes
+        # via _executor_resume_farm directly.
+        try:
+            farm.set_executor_hold(False)
+        except Exception:
+            pass
+        return False
+    try:
+        if restart_executor:
+            EXECUTOR_RELAUNCHER.restart_executor_only(reason)
+        else:
+            EXECUTOR_RELAUNCHER.ensure_started()
+    except Exception as exc:
+        flog_kv("EXECUTOR", "hold_resume_executor_warning", "warning", error=exc, reason=reason)
+    try:
+        farm._runtime_orchestrator.request_reconcile_all(
+            list(getattr(farm, "_accounts", []) or []), trigger=f"executor_hold_resume:{reason}"
+        )
+    except Exception as exc:
+        flog_kv("EXECUTOR", "hold_reconcile_failed", "warning", error=exc, reason=reason)
+        return False
+    flog_kv("EXECUTOR", "hold_resumed", reason=reason, was_held=was_held, restart_executor=restart_executor)
+    return True
+
+
 def _executor_wait_roblox_gone(timeout_seconds: float = 30.0) -> bool:
     deadline = time.time() + max(1.0, float(timeout_seconds or 30.0))
     while time.time() < deadline:
@@ -416,25 +472,40 @@ def _executor_base_transition(event: str, payload: dict) -> None:
         ).start()
         return
     if event == "incompatible":
-        # Remember to rejoin once the selected Executor is usable again.
-        # (Previously this flag was only set on the update path, so an
-        # incompatible -> compatible cycle never rejoined.)
-        if bool(getattr(farm, "running", False)):
-            _EXECUTOR_RESUME_AFTER_UPDATE = bool(_executor_auto_rejoin_wanted())
+        # Wait-for-patch hold: keep the farm running so in-game clients
+        # stay alive; only new launches/rejoins are parked as
+        # "Wait for exploit patch" until the executor is usable again.
+        # (The Roblox auto-update path above still stops to install the
+        # new client when the installed version is outdated.)
+        # A stopped farm stays stopped: never arm the hold while idle,
+        # otherwise a later compatible poll could start it on its own.
+        _EXECUTOR_RESUME_AFTER_UPDATE = False
+        if not bool(getattr(farm, "running", False)):
+            try:
+                farm.set_executor_hold(False)
+            except Exception:
+                pass
+            return
         try:
-            if farm.running:
-                farm.stop()
-            try:
-                farm.close_all_roblox(reason="executor_incompatible")
-            except Exception:
-                pass
-            try:
-                ProcessManager.kill_all_roblox_clients(wait_seconds=4.0)
-            except Exception:
-                pass
+            selected = str(cfg_mgr.get("executor_selected", "") or "").strip()
+            latest_v = str(payload.get("latest_version") or "").strip()
+            detail = f"{selected} {latest_v}".strip()
+        except Exception:
+            detail = ""
+        try:
+            _executor_hold_on(detail)
         except Exception as exc:
-            flog_kv("EXECUTOR", "incompatible_shutdown_failed", "warning", error=exc)
-    elif event == "compatible" and _EXECUTOR_RESUME_AFTER_UPDATE:
+            flog_kv("EXECUTOR", "hold_failed", "warning", error=exc)
+    elif event == "compatible":
+        try:
+            _held_now = bool(farm.is_executor_hold())
+        except Exception:
+            _held_now = False
+        if _held_now and not bool(payload.get("became_compatible")) and not bool(payload.get("executor_version_changed")):
+            _executor_hold_resume("executor_became_compatible", restart_executor=False)
+            return
+        if not _EXECUTOR_RESUME_AFTER_UPDATE:
+            return
         # Plain resume (no executor version change). Version-change resumes
         # go through the relaunch flow in _executor_transition below.
         if not bool(payload.get("became_compatible")) and not bool(payload.get("executor_version_changed")):
@@ -445,6 +516,20 @@ def _executor_transition(event: str, payload: dict) -> None:
     global _EXECUTOR_RESUME_AFTER_UPDATE
     _executor_base_transition(event, payload)
     if event == "compatible" and (payload.get("became_compatible") or payload.get("executor_version_changed")):
+        # Hold resume: the farm kept running through the patch wait, so
+        # just clear the hold and requeue — never kill Roblox here.
+        # Only the Executor process itself is restarted on a version
+        # change to pick up the new build.
+        try:
+            _held_now = bool(farm.is_executor_hold())
+        except Exception:
+            _held_now = False
+        if _held_now:
+            _executor_hold_resume(
+                "weao_compatibility_or_executor_version_changed",
+                restart_executor=bool(payload.get("executor_version_changed")),
+            )
+            return
         # Selected Executor is usable again (Roblox updated and/or executor
         # updated): close Roblox + Executor, reopen, verify Lua loader, rejoin.
         # Mid-session this relaunches in place; after an update/pause resume

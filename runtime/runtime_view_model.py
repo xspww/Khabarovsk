@@ -255,7 +255,14 @@ class RuntimeViewModelBuilder:
                 or "game_unavailable" in str(acc.last_recovery_reason or "").lower()
                 or "game_unavailable" in str(acc.last_crash_reason or "").lower()
             )
-            if game_closed and display_state != AccountState.IN_GAME:
+            waiting_patch = (
+                str(acc.recovery_status or "").strip().lower() == "wait_exploit_patch"
+                or "wait_exploit_patch" in str(acc.last_recovery_reason or "").lower()
+            )
+            if waiting_patch and not (display_state == AccountState.IN_GAME and pid_alive):
+                state_label = "Wait for exploit patch"
+                state_color = "#f0c76f"
+            elif game_closed and display_state != AccountState.IN_GAME:
                 state_label = "Game Close"
                 state_color = "#fcd34d"
             elif recovery_step == "Rejoining" and (active_runtime_action or display_state != AccountState.IN_GAME):
@@ -508,6 +515,9 @@ class RuntimeViewModelBuilder:
             "running": farm.running,
             "status_revision": status_revision,
             "status_updated_at": time.time(),
+            "executor_hold": bool(getattr(farm, "is_executor_hold", lambda: False)()),
+            "executor_hold_reason": str((getattr(farm, "get_executor_hold", dict)() or {}).get("reason") or ""),
+            "executor_hold_detail": str((getattr(farm, "get_executor_hold", dict)() or {}).get("detail") or ""),
             "app_version": app_display_version(),
             "uptime": f"{h:02d}:{m:02d}:{s:02d}",
             "total_accounts": len(farm._accounts),

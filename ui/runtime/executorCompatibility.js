@@ -17,7 +17,10 @@
   const show = (message, error = false) => {
     const node = $("executor-monitor-notice");
     if (!node) return;
-    if (!message) { node.innerHTML = ""; node.className = "notice"; return; }
+    if (!message) {
+      if (node.dataset.showKey === "clear") return;
+      node.innerHTML = ""; node.className = "notice"; node.dataset.showKey = "clear"; return;
+    }
     const lower = String(message || "").toLowerCase();
     let kind = error ? "error" : "warning";
     if (!error && (lower.includes("saved") || lower.includes("complete"))) kind = "success";
@@ -25,6 +28,9 @@
     if (lower.includes("close roblox") || lower.includes("stop auto rejoin") || lower.includes("stop guard")) title = "Roblox is running";
     if (lower.includes("browse") || lower.includes("relaunch")) title = kind === "error" ? "Executor setup needed" : title;
     const icon = NOTICE_ICONS[kind] || NOTICE_ICONS.warning;
+    const key = kind + "|" + title + "|" + String(message || "");
+    if (node.dataset.showKey === key) return;
+    node.dataset.showKey = key;
     node.innerHTML = `<span class="notice-icon">${icon}</span><span class="notice-copy"><span class="notice-title">${esc(title)}</span><span class="notice-desc">${esc(message)}</span></span>`;
     node.className = "notice show" + (kind === "error" ? " notice-error" : kind === "success" ? " notice-success" : "");
   };
@@ -33,6 +39,51 @@
     const payload = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(payload.detail || payload.msg || response.statusText);
     return payload;
+  }
+  const LUA_DISABLED_MSG = "Enable Use Lua to use Roblox Executor";
+  let luaEnabledCache = true;
+  let lastGateState = null;
+  function isLuaEnabled(config) {
+    if (config && typeof config === "object" && "lua_enabled" in config) return !!config.lua_enabled;
+    if (typeof config === "boolean") return config;
+    return true;
+  }
+  function applyLuaGate(config) {
+    luaEnabledCache = isLuaEnabled(config);
+    const card = $("executor-compatibility-card");
+    if (!card) return luaEnabledCache;
+    const enabled = luaEnabledCache;
+    // Guard: gating writes to the DOM (disabled flags, labels, notice),
+    // which retriggers the MutationObserver below. Without this check the
+    // observer -> gate -> DOM write -> observer chain never settles and
+    // starves the main thread (total UI freeze). Only touch DOM on change.
+    if (lastGateState === enabled && card.dataset.luaGate === String(enabled)) return luaEnabledCache;
+    lastGateState = enabled;
+    card.dataset.luaGate = String(enabled);
+    card.classList.toggle("gated-off", !enabled);
+    card.querySelectorAll("input,select,textarea,button").forEach((el) => {
+      if (el.classList && el.classList.contains("queue-collapse-btn")) return;
+      el.disabled = !enabled;
+    });
+    if (!enabled) {
+      const state = $("executor-compatibility-state");
+      if (state) state.textContent = "Disabled";
+      const latest = $("executor-latest-version");
+      if (latest) latest.textContent = "-";
+      const relaunchState = $("executor-relaunch-state");
+      if (relaunchState) relaunchState.textContent = "idle";
+      const retry = $("executor-retry");
+      if (retry) retry.hidden = true;
+      show(LUA_DISABLED_MSG, true);
+      try {
+        document.querySelectorAll("#executor-compatibility-card .toggle-row span").forEach((label) => {
+          label.textContent = "Disabled";
+          label.classList.toggle("enabled", false);
+          label.classList.toggle("disabled", true);
+        });
+      } catch (_) {}
+    }
+    return luaEnabledCache;
   }
   function buildCard() {
     const view = $("view-troubleshoot");
@@ -63,16 +114,17 @@
     if (status.error) show(`${status.error}`, true);
   }
   function renderRelaunch(status, config) {
+    const luaEnabled = isLuaEnabled(config) && luaEnabledCache !== false;
     const selected = String(config.executor_selected || "").trim().toLowerCase();
     const paths = status?.paths || {};
     const path = paths[selected[0]?.toUpperCase() + selected.slice(1)] || paths[selected] || "";
     const input = $("executor-path"); if (input) input.value = path;
     const relaunch = $("executor-relaunch-enabled");
-    const supported = status?.relaunch_supported === true;
+    const supported = luaEnabled && status?.relaunch_supported === true;
     if (relaunch) {
-      relaunch.disabled = !supported;
+      relaunch.disabled = !supported || !luaEnabled;
       if (!supported) relaunch.checked = false;
-      relaunch.title = supported ? "Auto Relaunch is available" : (status?.relaunch_support_reason || "Selected Executor is not supported");
+      relaunch.title = !luaEnabled ? LUA_DISABLED_MSG : supported ? "Auto Relaunch is available" : (status?.relaunch_support_reason || "Selected Executor is not supported");
       const label = relaunch.parentElement?.querySelector("span");
       if (label) {
         label.textContent = relaunch.checked ? "Enabled" : "Disabled";
@@ -99,12 +151,19 @@
   async function load() {
     try {
       const config = await api("/config");
+      const luaEnabled = applyLuaGate(config);
       const enabled = $("executor-monitor-enabled");
       const update = $("roblox-auto-update-enabled");
-      if (enabled) enabled.checked = !!config.executor_monitor_enabled;
-      if (update) update.checked = !!config.roblox_auto_update_enabled;
+      if (enabled) { enabled.checked = !!config.executor_monitor_enabled; enabled.disabled = !luaEnabled; }
+      if (update) { update.checked = !!config.roblox_auto_update_enabled; update.disabled = !luaEnabled; }
       const relaunch = $("executor-relaunch-enabled");
       if (relaunch) relaunch.checked = !!config.executor_relaunch_enabled;
+      if (!luaEnabled) {
+        const status = await api("/troubleshoot/executor");
+        renderStatus(status);
+        renderRelaunch(await api("/troubleshoot/executor/relaunch"), config);
+        return;
+      }
       const status = await api("/troubleshoot/executor");
       renderStatus(status);
       renderRelaunch(await api("/troubleshoot/executor/relaunch"), config);
@@ -119,6 +178,7 @@
     } catch (error) { show(error.message, true); }
   }
   async function save(patch) {
+    if (!luaEnabledCache) { show(LUA_DISABLED_MSG, true); return; }
     try {
       await api("/config", "POST", patch);
       const status = await api("/troubleshoot/executor/check", "POST", {});
@@ -132,11 +192,34 @@
     $("roblox-auto-update-enabled")?.addEventListener("change", (event) => save({ roblox_auto_update_enabled: !!event.target.checked }));
     $("executor-relaunch-enabled")?.addEventListener("change", (event) => save({ executor_relaunch_enabled: !!event.target.checked }));
     $("executor-selected")?.addEventListener("change", (event) => save({ executor_selected: event.target.value }));
-    $("executor-browse")?.addEventListener("click", async () => { try { const picked = await api("/troubleshoot/executor/browse", "POST", {}); if (picked.path) { const name = $("executor-selected")?.value || ""; const input = $("executor-path"); if (input) input.value = picked.path; await save({ [`executor_path_${name.toLowerCase()}`]: picked.path }); } } catch (error) { show(error.message, true); } });
-    $("executor-retry")?.addEventListener("click", async () => { try { renderRelaunch(await api("/troubleshoot/executor/relaunch", "POST", {}), await api("/config")); } catch (error) { show(error.message, true); } });
-    $("executor-check-now")?.addEventListener("click", async () => { try { renderStatus(await api("/troubleshoot/executor/check", "POST", {})); show("Compatibility check complete"); } catch (error) { show(error.message, true); } });
+    $("executor-browse")?.addEventListener("click", async () => { try { if (!luaEnabledCache) { show(LUA_DISABLED_MSG, true); return; } const picked = await api("/troubleshoot/executor/browse", "POST", {}); if (picked.path) { const name = $("executor-selected")?.value || ""; const input = $("executor-path"); if (input) input.value = picked.path; await save({ [`executor_path_${name.toLowerCase()}`]: picked.path }); } } catch (error) { show(error.message, true); } });
+    $("executor-retry")?.addEventListener("click", async () => { try { if (!luaEnabledCache) { show(LUA_DISABLED_MSG, true); return; } renderRelaunch(await api("/troubleshoot/executor/relaunch", "POST", {}), await api("/config")); } catch (error) { show(error.message, true); } });
+    $("executor-check-now")?.addEventListener("click", async () => { try { if (!luaEnabledCache) { show(LUA_DISABLED_MSG, true); return; } renderStatus(await api("/troubleshoot/executor/check", "POST", {})); show("Compatibility check complete"); } catch (error) { show(error.message, true); } });
   }
-  const observer = new MutationObserver(() => { if (!document.hidden) buildCard(); });
+  document.addEventListener("change", (event) => {
+    try {
+      if (event.target && event.target.id === "dev-lua-enabled") {
+        applyLuaGate(!!event.target.checked);
+        if (!event.target.checked) show(LUA_DISABLED_MSG, true);
+      }
+    } catch (_) {}
+  });
+  document.addEventListener("cronus:lua-enabled", (event) => {
+    try { applyLuaGate(event?.detail?.enabled); } catch (_) {}
+  });
+  document.addEventListener("click", (event) => {
+    try {
+      const nav = event.target?.closest?.('#nav button[data-view="troubleshoot"]');
+      if (nav) setTimeout(() => { if (!document.hidden) load(); }, 300);
+    } catch (_) {}
+  });
+  const observer = new MutationObserver(() => {
+    if (!document.hidden) {
+      const had = !!$("executor-compatibility-card");
+      buildCard();
+      if (!had && $("executor-compatibility-card")) load();
+    }
+  });
   observer.observe(document.documentElement, { childList: true, subtree: true });
   buildCard();
   setTimeout(load, 500);

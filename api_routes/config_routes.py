@@ -95,8 +95,18 @@ def register(app, ctx: ApiContext) -> None:
             "ui_col_widths",
         }
         updates = {k: v for k, v in body.items() if k in allowed}
+        # Effective Lua state for this write (request value wins, else saved).
+        try:
+            if "lua_enabled" in updates:
+                _effective_lua_early = bool(updates["lua_enabled"])
+            else:
+                _effective_lua_early = bool(cfg_mgr.get("lua_enabled", True))
+        except Exception:
+            _effective_lua_early = True
         if "executor_monitor_enabled" in updates:
             updates["executor_monitor_enabled"] = bool(updates["executor_monitor_enabled"])
+            if updates["executor_monitor_enabled"] and not _effective_lua_early:
+                raise HTTPException(400, "Enable Use Lua before using Roblox Executor")
         if "executor_selected" in updates:
             selected = str(updates["executor_selected"] or "").strip()
             allowed_executors = {"", "Volt", "Potassium", "Real", "Madium"}
@@ -107,6 +117,8 @@ def register(app, ctx: ApiContext) -> None:
             updates["executor_check_interval_seconds"] = _int_setting(updates["executor_check_interval_seconds"], 30, 30, 3600)
         if "roblox_auto_update_enabled" in updates:
             updates["roblox_auto_update_enabled"] = bool(updates["roblox_auto_update_enabled"])
+            if updates["roblox_auto_update_enabled"] and not _effective_lua_early:
+                raise HTTPException(400, "Enable Use Lua before using Roblox Executor")
         for _boot_key in ("start_on_boot", "start_farming_on_boot", "auto_update_on_boot"):
             if _boot_key in updates:
                 updates[_boot_key] = bool(updates[_boot_key])
@@ -123,6 +135,8 @@ def register(app, ctx: ApiContext) -> None:
             updates["discord_client_id"] = _cid
         if "executor_relaunch_enabled" in updates:
             updates["executor_relaunch_enabled"] = bool(updates["executor_relaunch_enabled"])
+            if updates["executor_relaunch_enabled"] and not _effective_lua_early:
+                raise HTTPException(400, "Enable Use Lua before using Roblox Executor")
             if updates["executor_relaunch_enabled"]:
                 selected = str(updates.get("executor_selected", cfg_mgr.get("executor_selected", "")) or "").strip()
                 path_key = f"executor_path_{selected.lower()}"
@@ -156,6 +170,33 @@ def register(app, ctx: ApiContext) -> None:
             updates["lua_enabled"] = bool(updates["lua_enabled"])
         if "lua_timeout_seconds" in updates:
             updates["lua_timeout_seconds"] = _int_setting(updates["lua_timeout_seconds"], 60, 1, 300)
+        # Lua OFF disables the whole Roblox Executor card: monitor, relaunch
+        # and auto-update all require the Lua loader verification path.
+        try:
+            _effective_lua = updates.get("lua_enabled", cfg_mgr.get("lua_enabled", True))
+            if "lua_enabled" not in updates:
+                try:
+                    _snap = cfg_mgr.snapshot()
+                    if isinstance(_snap, dict) and "lua_enabled" in _snap:
+                        _effective_lua = _snap.get("lua_enabled", True)
+                except Exception:
+                    pass
+            _effective_lua = bool(_effective_lua)
+        except Exception:
+            _effective_lua = True
+        if not _effective_lua:
+            if updates.get("executor_monitor_enabled") is True:
+                raise HTTPException(400, "Enable Use Lua before using Roblox Executor")
+            if updates.get("executor_relaunch_enabled") is True:
+                raise HTTPException(400, "Enable Use Lua before using Roblox Executor")
+            if updates.get("roblox_auto_update_enabled") is True:
+                raise HTTPException(400, "Enable Use Lua before using Roblox Executor")
+            # Turning Lua off forces executor features off in the same write
+            # so background monitor/relaunch stops immediately.
+            if updates.get("lua_enabled") is False:
+                updates["executor_monitor_enabled"] = False
+                updates["executor_relaunch_enabled"] = False
+                updates["roblox_auto_update_enabled"] = False
         if "auto_close_minutes" in updates:
             updates["auto_close_minutes"] = _int_setting(updates["auto_close_minutes"], 0, 0, 1440)
         if "auto_close_enabled" in updates:

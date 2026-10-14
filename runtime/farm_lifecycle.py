@@ -192,6 +192,12 @@ class FarmLifecycleService:
             runtime_orchestrator=farm._runtime_orchestrator,
             scheduler=farm._runtime_scheduler,
         )
+        try:
+            setter = getattr(farm._recovery, "set_executor_hold_check", None)
+            if callable(setter):
+                setter(farm.is_executor_hold)
+        except Exception:
+            pass
         blocked_accounts = set(farm._preflight_cookie_blocks())
         blocked_accounts.update(runtime_account_filter_blocked_keys(farm._accounts, cfg))
         if runtime_filter_active:

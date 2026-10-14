@@ -51,6 +51,7 @@ build_info.py
 
 # Temporary and editor files
 replacing
+.lint/
 .vscode/
 .idea/
 *.code-workspace

@@ -12,7 +12,8 @@
 
 /* Overlay scrollbars: sidebar nav + main. Native scrollbars take zero
    space (no gutter, no layout shift); hoverScrollbar.js draws a floating
-   thumb visible only at the scrollbar edge or while scrolling. */
+   thumb visible only at the scrollbar edge or while dragging. Scrolling
+   with the wheel alone never shows it. */
 .nav,
 .main {
   scrollbar-width: none;
@@ -35,8 +36,7 @@
   z-index: 5;
   pointer-events: none;
 }
-.edge-scroll-track.show-edge,
-.edge-scroll-track.show-scroll {
+.edge-scroll-track.show-edge {
   opacity: 1;
 }
 .edge-scroll-thumb {
@@ -88,6 +88,115 @@
 html, body {
   touch-action: pan-x pan-y;
   overscroll-behavior: none;
+}
+
+/* Hover-only scrollbars (all inner scroll areas): hidden by default, visible
+   only while the mouse is at the scrollbar edge (JS toggles .show-bar).
+   :hover ทั้งกล่องไม่พอ — เพราะตอนเลื่อนเมาส์ยังค้างในกล่อง thumb เลยค้าง.
+   Layout width/gutter is unchanged, so no content shift. */
+.table-wrap,
+.custom-select-menu,
+.modal-body,
+.lua-copy-box,
+.lua-code-box,
+#view-developer .lua-copy-box,
+#view-developer .lua-code-box,
+.online-popover,
+.manual-progress-list,
+.selected-close-list,
+.account-filters {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+.table-wrap.show-bar,
+.custom-select-menu.show-bar,
+.modal-body.show-bar,
+.lua-copy-box.show-bar,
+.lua-code-box.show-bar,
+#view-developer .lua-copy-box.show-bar,
+#view-developer .lua-code-box.show-bar,
+.online-popover.show-bar,
+.manual-progress-list.show-bar,
+.selected-close-list.show-bar,
+.account-filters.show-bar {
+  scrollbar-color: #282a31 transparent;
+}
+.table-wrap::-webkit-scrollbar,
+.custom-select-menu::-webkit-scrollbar,
+.modal-body::-webkit-scrollbar,
+.lua-copy-box::-webkit-scrollbar,
+.lua-code-box::-webkit-scrollbar,
+#view-developer .lua-copy-box::-webkit-scrollbar,
+#view-developer .lua-code-box::-webkit-scrollbar,
+.online-popover::-webkit-scrollbar,
+.manual-progress-list::-webkit-scrollbar,
+.selected-close-list::-webkit-scrollbar,
+.account-filters::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+  background: transparent;
+}
+.table-wrap::-webkit-scrollbar-track,
+.custom-select-menu::-webkit-scrollbar-track,
+.modal-body::-webkit-scrollbar-track,
+.lua-copy-box::-webkit-scrollbar-track,
+.lua-code-box::-webkit-scrollbar-track,
+#view-developer .lua-copy-box::-webkit-scrollbar-track,
+#view-developer .lua-code-box::-webkit-scrollbar-track,
+.online-popover::-webkit-scrollbar-track,
+.manual-progress-list::-webkit-scrollbar-track,
+.selected-close-list::-webkit-scrollbar-track,
+.account-filters::-webkit-scrollbar-track {
+  background: transparent;
+}
+.table-wrap::-webkit-scrollbar-thumb,
+.custom-select-menu::-webkit-scrollbar-thumb,
+.modal-body::-webkit-scrollbar-thumb,
+.lua-copy-box::-webkit-scrollbar-thumb,
+.lua-code-box::-webkit-scrollbar-thumb,
+#view-developer .lua-copy-box::-webkit-scrollbar-thumb,
+#view-developer .lua-code-box::-webkit-scrollbar-thumb,
+.online-popover::-webkit-scrollbar-thumb,
+.manual-progress-list::-webkit-scrollbar-thumb,
+.selected-close-list::-webkit-scrollbar-thumb,
+.account-filters::-webkit-scrollbar-thumb {
+  background: transparent;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+.table-wrap.show-bar::-webkit-scrollbar-thumb,
+.custom-select-menu.show-bar::-webkit-scrollbar-thumb,
+.modal-body.show-bar::-webkit-scrollbar-thumb,
+.lua-copy-box.show-bar::-webkit-scrollbar-thumb,
+.lua-code-box.show-bar::-webkit-scrollbar-thumb,
+#view-developer .lua-copy-box.show-bar::-webkit-scrollbar-thumb,
+#view-developer .lua-code-box.show-bar::-webkit-scrollbar-thumb,
+.online-popover.show-bar::-webkit-scrollbar-thumb,
+.manual-progress-list.show-bar::-webkit-scrollbar-thumb,
+.selected-close-list.show-bar::-webkit-scrollbar-thumb,
+.account-filters.show-bar::-webkit-scrollbar-thumb {
+  background: #282a31;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+}
+.account-filters.show-bar::-webkit-scrollbar { height: 8px; }
+.table-wrap.show-bar::-webkit-scrollbar-thumb:hover,
+.custom-select-menu.show-bar::-webkit-scrollbar-thumb:hover,
+.modal-body.show-bar::-webkit-scrollbar-thumb:hover,
+.lua-copy-box.show-bar::-webkit-scrollbar-thumb:hover,
+.lua-code-box.show-bar::-webkit-scrollbar-thumb:hover,
+#view-developer .lua-copy-box.show-bar::-webkit-scrollbar-thumb:hover,
+#view-developer .lua-code-box.show-bar::-webkit-scrollbar-thumb:hover,
+.online-popover.show-bar::-webkit-scrollbar-thumb:hover,
+.manual-progress-list.show-bar::-webkit-scrollbar-thumb:hover,
+.selected-close-list.show-bar::-webkit-scrollbar-thumb:hover,
+.account-filters.show-bar::-webkit-scrollbar-thumb:hover {
+  background: #3e4152;
+  border: 3px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
 }
 
 /* Sidebar status: 2-col compact card grid (ref image 2), never show "...". */

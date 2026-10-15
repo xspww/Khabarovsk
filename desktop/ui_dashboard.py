@@ -10,7 +10,7 @@ _STATIC_SCRIPTS = (
     '<script src="/ui/runtime/gamesManager.js?v=15"></script>'
     '<script src="/ui/runtime/customUi.js?v=16"></script>'
     '<script src="/ui/runtime/cronusManager.js?v=7"></script>'
-    '<script src="/ui/runtime/hoverScrollbar.js?v=2"></script>'
+    '<script src="/ui/runtime/hoverScrollbar.js?v=4"></script>'
     '<script src="/ui/runtime/updateNotice.js?v=6"></script>'
 )
 

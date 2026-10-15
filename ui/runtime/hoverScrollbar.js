@@ -1,14 +1,31 @@
 /* Cronus overlay scrollbars (no build step).
  * Native scrollbars are fully hidden (zero layout space, zero gutter).
- * This draws a floating thumb at the pane's right edge, shown only when
- * the cursor is at that edge, while scrolling, or while dragging it.
- * Targets: sidebar .nav and .main. Thumb is draggable.
+ * .nav/.main: draws a floating thumb at the pane's right edge, shown only
+ *   when the cursor is at that edge or while dragging it. Scroll events
+ *   only reposition the thumb, they never show or hide it.
+ * Inner panes (.table-wrap, .modal-body, ...): native scrollbar kept for
+ *   layout, but thumb is transparent until JS adds .show-bar when the cursor
+ *   is at the scrollbar edge. So it shows only on edge-hover, never on
+ *   plain pane-hover and never while scrolling elsewhere.
+ * Thumb is draggable (for .nav/.main).
  */
 (function () {
   "use strict";
   var EDGE_PX = 14;
-  var SCROLL_HIDE_MS = 900;
   var SELECTORS = [".nav", ".main"];
+  // Inner scroll areas: show native thumb only when cursor is at the
+  // vertical (right 14px) or horizontal (bottom 14px) scrollbar edge.
+  var INNER_SELECTORS = [
+    ".table-wrap",
+    ".custom-select-menu",
+    ".modal-body",
+    ".lua-copy-box",
+    ".lua-code-box",
+    ".online-popover",
+    ".manual-progress-list",
+    ".selected-close-list",
+    ".account-filters"
+  ];
   var instances = [];
 
   function mount(el) {
@@ -27,18 +44,11 @@
     track.appendChild(thumb);
     parent.appendChild(track);
 
-    var inst = { el: el, track: track, thumb: thumb, hideTimer: 0, dragging: false, dragStartY: 0, dragStartTop: 0 };
+    var inst = { el: el, track: track, thumb: thumb, dragging: false, dragStartY: 0, dragStartTop: 0 };
     instances.push(inst);
 
     function showEdge(on) {
       try { track.classList.toggle("show-edge", !!on); } catch (e) {}
-    }
-    function pokeScroll() {
-      try {
-        track.classList.add("show-scroll");
-        clearTimeout(inst.hideTimer);
-        inst.hideTimer = setTimeout(function () { track.classList.remove("show-scroll"); }, SCROLL_HIDE_MS);
-      } catch (e) {}
     }
 
     function place() {
@@ -79,7 +89,7 @@
     el.addEventListener("mouseleave", function () {
       if (!inst.dragging) showEdge(false);
     });
-    el.addEventListener("scroll", function () { refresh(); pokeScroll(); }, { passive: true });
+    el.addEventListener("scroll", function () { refresh(); }, { passive: true });
 
     thumb.addEventListener("mouseenter", function () { showEdge(true); });
     thumb.addEventListener("mouseleave", function () { if (!inst.dragging) showEdge(false); });
@@ -89,7 +99,7 @@
         inst.dragging = true;
         inst.dragStartY = e.clientY;
         inst.dragStartTop = parseFloat(thumb.style.top) || 0;
-        pokeScroll();
+        showEdge(true);
         document.addEventListener("mousemove", onDrag);
         document.addEventListener("mouseup", endDrag);
       } catch (err) {}
@@ -111,7 +121,6 @@
         document.removeEventListener("mousemove", onDrag);
         document.removeEventListener("mouseup", endDrag);
         showEdge(false);
-        pokeScroll();
       } catch (err) {}
     }
 
@@ -136,6 +145,60 @@
     for (var k = 0; k < instances.length; k++) {
       try { instances[k].refresh(); } catch (err) {}
     }
+    bindInner();
+  }
+
+  function bindInner() {
+    for (var i = 0; i < INNER_SELECTORS.length; i++) {
+      var nodes;
+      try { nodes = document.querySelectorAll(INNER_SELECTORS[i]); } catch (err) { continue; }
+      for (var j = 0; j < nodes.length; j++) mountInner(nodes[j]);
+    }
+  }
+
+  function atScrollEdge(el, e) {
+    try {
+      var r = el.getBoundingClientRect();
+      var nearRight = e.clientX >= r.right - EDGE_PX && e.clientX <= r.right + 2;
+      var nearBottom = e.clientY >= r.bottom - EDGE_PX && e.clientY <= r.bottom + 2;
+      var inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+      return inside && (nearRight || nearBottom);
+    } catch (err) { return false; }
+  }
+
+  function hasOverflow(el) {
+    try {
+      var cs = getComputedStyle(el);
+      var oy = cs.overflowY, ox = cs.overflowX;
+      var needY = (oy === "auto" || oy === "scroll") && el.scrollHeight > el.clientHeight + 1;
+      var needX = (ox === "auto" || ox === "scroll") && el.scrollWidth > el.clientWidth + 1;
+      // overflow:auto shorthand case
+      if (cs.overflow === "auto" || cs.overflow === "scroll") {
+        needY = needY || (el.scrollHeight > el.clientHeight + 1);
+        needX = needX || (el.scrollWidth > el.clientWidth + 1);
+      }
+      return needY || needX;
+    } catch (err) { return true; }
+  }
+
+  function mountInner(el) {
+    if (!el || el.__edgeBarBound) return;
+    // Skip panes already handled by the overlay thumb (.nav/.main).
+    try {
+      if (el.matches && (el.matches(".nav") || el.matches(".main"))) return;
+    } catch (err) {}
+    el.__edgeBarBound = true;
+    el.addEventListener("mousemove", function (e) {
+      try {
+        var show = hasOverflow(el) && atScrollEdge(el, e);
+        el.classList.toggle("show-bar", show);
+      } catch (err) {}
+    });
+    el.addEventListener("mouseleave", function () {
+      try { el.classList.remove("show-bar"); } catch (err) {}
+    });
+    // NOTE: no scroll listener here on purpose — scrolling with the wheel
+    // while the cursor sits in the middle of the pane must NOT show the bar.
   }
 
   bindAll();

@@ -447,7 +447,7 @@ class AccountWorker(threading.Thread):
         if guard_failed:
             msg = self.REASON_MESSAGES["multi_roblox_guard_failed"]
             try:
-                from services.roblox_hybrid import record_multi_roblox_guard_failure
+                from services.roblox_multibox import record_multi_roblox_guard_failure
 
                 record_multi_roblox_guard_failure(f"{acc.display_name}: {extra}")
             except Exception:
@@ -580,8 +580,8 @@ class AccountWorker(threading.Thread):
                     # Bare "User is moderated" wording may be a lock, not a
                     # ban. Resolve it with the account name before holding.
                     try:
-                        from services.roblox_hybrid import moderated_only_detail as _mod_only_run
-                        from services.roblox_hybrid import resolve_moderated_dead_cookie as _resolve_mod_run
+                        from services.roblox_identity import moderated_only_detail as _mod_only_run
+                        from services.roblox_identity import resolve_moderated_dead_cookie as _resolve_mod_run
 
                         _mod_hit_run = bool(_mod_only_run(detail))
                     except Exception:
@@ -788,7 +788,7 @@ class AccountWorker(threading.Thread):
             # Authenticated OK — check live moderation first (temporary
             # suspension is invisible to isBanned), then permanent ban.
             try:
-                from services.roblox_hybrid import fetch_moderation_status
+                from services.roblox_moderation import fetch_moderation_status
 
                 mod_banned, mod_detail, _mod_payload = fetch_moderation_status(cookie.strip())
             except Exception:
@@ -798,7 +798,7 @@ class AccountWorker(threading.Thread):
             # Authenticated OK — check account-level ban (banned cookies still 200).
             if user_id:
                 try:
-                    from services.roblox_hybrid import fetch_user_ban_status
+                    from services.roblox_moderation import fetch_user_ban_status
 
                     banned, ban_detail = fetch_user_ban_status(user_id)
                 except Exception:
@@ -824,7 +824,7 @@ class AccountWorker(threading.Thread):
             try:
                 lowered_body = f"HTTP {e.code} {body}".lower()
                 if e.code == 403 and ("moderated" in lowered_body or "banned" in lowered_body):
-                    from services.roblox_hybrid import fetch_moderation_status as _fetch_mod
+                    from services.roblox_moderation import fetch_moderation_status as _fetch_mod
 
                     _mb, _md, _mp = _fetch_mod(cookie.strip())
                     if _mb is True and _md:

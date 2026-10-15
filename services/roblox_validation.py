@@ -14,6 +14,73 @@ from services.roblox_identity import (
 )
 from services.roblox_moderation import fetch_moderation_status, fetch_user_ban_status
 
+try:
+    from services.ban_guard import BANNED_BLOCK_REASON as _BANNED_MSG
+    from services.ban_guard import BANNED_IMPORT_STATUS as _BANNED_STATUS
+except Exception:
+    _BANNED_MSG = "Account banned (Roblox). Unmark to allow rejoin."
+    _BANNED_STATUS = "banned"
+try:
+    from services.verify_guard import LOCKED_BLOCK_REASON as _LOCKED_MSG
+    from services.verify_guard import LOCKED_REASON as _LOCKED_STATUS
+    from services.verify_guard import RECOVERY_BLOCK_REASON as _RECOVERY_MSG
+    from services.verify_guard import RECOVERY_REASON as _RECOVERY_STATUS
+except Exception:
+    _LOCKED_MSG = "Account locked - face/ID verification required. Verify manually, then click Resume."
+    _LOCKED_STATUS = "identity_locked"
+    _RECOVERY_MSG = "Account recovery - passkey/2FA required. Complete recovery manually, then click Resume."
+    _RECOVERY_STATUS = "account_recovery"
+
+
+def cookie_verdict_updates(
+    kind: str,
+    *,
+    cookie_username: str = "",
+    cookie_user_id: str = "",
+    **fields: Any,
+) -> dict[str, Any]:
+    """Single owner for the cookie-verdict → store-write mapping.
+
+    Validation used to build these dicts inline at seven sites; every
+    verdict decision now leverages this one. Pure: callers still gate on
+    `update_store and username` and write via persist_cookie_verdict.
+    """
+    if kind == "cleared_ban":
+        return {"manual_status": "", "import_status": ""}
+    if kind == "banned":
+        return {
+            "manual_status": _BANNED_MSG,
+            "import_status": _BANNED_STATUS,
+            "cookie_username": str(cookie_username or ""),
+            "cookie_user_id": str(cookie_user_id or ""),
+            "cookie_mismatch": False,
+        }
+    if kind == "locked":
+        return {"manual_status": _LOCKED_MSG, "import_status": _LOCKED_STATUS}
+    if kind == "recovery":
+        return {"manual_status": _RECOVERY_MSG, "import_status": _RECOVERY_STATUS}
+    if kind == "captcha":
+        return {"manual_status": CAPTCHA_BLOCK_REASON, "import_status": CAPTCHA_REASON}
+    if kind == "invalid":
+        return {"cookie_mismatch": True, "import_status": "cookie_invalid"}
+    if kind == "identity":
+        mismatch = bool(fields.get("mismatch", False))
+        return {
+            "cookie_username": str(cookie_username or ""),
+            "cookie_user_id": str(cookie_user_id or ""),
+            "cookie_mismatch": mismatch,
+            "import_status": "cookie_mismatch" if mismatch else "",
+        }
+    raise ValueError(f"unknown cookie verdict: {kind}")
+
+
+def persist_cookie_verdict(username: str, kind: str, **fields: Any) -> bool:
+    """Write one cookie verdict to the store. No-op on empty username."""
+    if not str(username or "").strip():
+        return False
+    ACCOUNT_STORE.update_record(str(username), cookie_verdict_updates(kind, **fields))
+    return True
+
 
 def validate_cookie_details(cookie: str) -> tuple[bool, str, str, dict[str, Any]]:
     ok, data, detail = RobloxHTTP(cookie).authenticated_user()
@@ -263,7 +330,7 @@ def validate_record_cookie_identity(record: dict[str, Any], cookie: str, update_
                     record["manual_status"] = ""
                     record["import_status"] = ""
                     if update_store and username:
-                        ACCOUNT_STORE.update_record(username, {"manual_status": "", "import_status": ""})
+                        persist_cookie_verdict(username, "cleared_ban")
                 else:
                     is_banned = True
                     if not detail:
@@ -296,40 +363,27 @@ def validate_record_cookie_identity(record: dict[str, Any], cookie: str, update_
     if not ok:
         if update_store and username:
             if is_banned:
-                ACCOUNT_STORE.update_record(
+                persist_cookie_verdict(
                     username,
-                    {
-                        "manual_status": _BANNED_MSG,
-                        "import_status": _BANNED_STATUS,
-                        "cookie_username": str(
-                            cookie_username
-                            or (meta or {}).get("username")
-                            or (record or {}).get("cookie_username")
-                            or ""
-                        ),
-                        "cookie_user_id": str(
-                            (meta or {}).get("user_id") or (record or {}).get("cookie_user_id") or ""
-                        ),
-                        "cookie_mismatch": False,
-                    },
+                    "banned",
+                    cookie_username=str(
+                        cookie_username
+                        or (meta or {}).get("username")
+                        or (record or {}).get("cookie_username")
+                        or ""
+                    ),
+                    cookie_user_id=str(
+                        (meta or {}).get("user_id") or (record or {}).get("cookie_user_id") or ""
+                    ),
                 )
             elif is_locked:
-                ACCOUNT_STORE.update_record(
-                    username,
-                    {"manual_status": _LOCKED_MSG, "import_status": _LOCKED_STATUS},
-                )
+                persist_cookie_verdict(username, "locked")
             elif is_recovery:
-                ACCOUNT_STORE.update_record(
-                    username,
-                    {"manual_status": _RECOVERY_MSG, "import_status": _RECOVERY_STATUS},
-                )
+                persist_cookie_verdict(username, "recovery")
             elif is_captcha_text(detail):
-                ACCOUNT_STORE.update_record(
-                    username,
-                    {"manual_status": CAPTCHA_BLOCK_REASON, "import_status": CAPTCHA_REASON},
-                )
+                persist_cookie_verdict(username, "captcha")
             else:
-                ACCOUNT_STORE.update_record(username, {"cookie_mismatch": True, "import_status": "cookie_invalid"})
+                persist_cookie_verdict(username, "invalid")
         if is_banned:
             return {
                 "ok": False,
@@ -380,12 +434,12 @@ def validate_record_cookie_identity(record: dict[str, Any], cookie: str, update_
         return {"ok": False, "msg": detail, "cookie_username": "", "cookie_user_id": ""}
     cookie_user_id = str(meta.get("user_id") or "")
     mismatch = bool(username and cookie_username and username.lower() != cookie_username.lower())
-    updates = {
-        "cookie_username": cookie_username,
-        "cookie_user_id": cookie_user_id,
-        "cookie_mismatch": mismatch,
-        "import_status": "cookie_mismatch" if mismatch else "",
-    }
+    updates = cookie_verdict_updates(
+        "identity",
+        cookie_username=cookie_username,
+        cookie_user_id=cookie_user_id,
+        mismatch=mismatch,
+    )
     if not mismatch:
         # Cookie is valid and not banned â€” clear a stale banned mark so an
         # unbanned / replaced cookie rejoins again without manual unmark.
@@ -419,8 +473,3 @@ def validate_record_cookie_identity(record: dict[str, Any], cookie: str, update_
             "cookie_mismatch": True,
         }
     return {"ok": True, "msg": "ok", "cookie_username": cookie_username, "cookie_user_id": cookie_user_id, "cookie_mismatch": False}
-
-
-def validate_cookie(cookie: str) -> tuple[bool, str, str]:
-    ok, username, detail, _meta = validate_cookie_details(cookie)
-    return ok, username, detail

@@ -171,6 +171,29 @@ def _ensure_webview2_runtime() -> str:
     return version
 
 
+def _resolve_stdlib_executors() -> None:
+    """Force-resolve PEP 810 lazy stdlib executors before Qt gets involved.
+
+    Python 3.15 declares ThreadPoolExecutor/ProcessPoolExecutor as
+    `lazy from` names. Once shiboken6 (pulled in by any PySide6 import) is
+    loaded, touching those names returns a dead `lazy_import` placeholder
+    instead of resolving -- so `QtWebView2Widget(...)` dies in its
+    constructor with `TypeError: 'lazy_import' object is not callable`
+    and the app silently falls back to the system browser. Importing the
+    real submodules and rebinding the names up-front avoids the trap.
+    Never raises.
+    """
+    try:
+        import concurrent.futures as _cf
+        import concurrent.futures.process as _process_mod
+        import concurrent.futures.thread as _thread_mod
+
+        _cf.ThreadPoolExecutor = _thread_mod.ThreadPoolExecutor
+        _cf.ProcessPoolExecutor = _process_mod.ProcessPoolExecutor
+    except Exception as exc:
+        flog_kv("MAIN", "desktop_executors_preresolve_failed", "warning", error=str(exc))
+
+
 def _webview_data_dir() -> str:
     path = os.path.join(CACHE_DIR, "webview2")
     try:
@@ -291,6 +314,8 @@ class DesktopWindow:
         shutdown_event: Any,
         on_first_show: Callable[[], None] | None = None,
     ) -> bool:
+        # Must run before any widget construction: see _resolve_stdlib_executors.
+        _resolve_stdlib_executors()
         runtime_version = _ensure_webview2_runtime()
         if not runtime_version:
             # Clean machine where the user declined / is offline / install

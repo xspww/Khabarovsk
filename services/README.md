@@ -26,7 +26,7 @@ to avoid cycles. `main.py` wires singletons (`EXECUTOR_TRACKER`,
 
 | File | Does what | Connects to |
 | ---- | --------- | ----------- |
-| `roblox_hybrid.py` | Facade บางๆ re-export จาก 6 โมดูลล่าง (ห้ามใส่ logic) | ~20 จุด `from services.roblox_hybrid import …` ยังใช้ได้เหมือนเดิม |
+| `roblox_hybrid.py` | Thin facade re-exporting the 6 modules below (no logic allowed) | Fully migrated — every site imports from the owning module; the facade stays for compat only. |
 | `roblox_http.py` | `RobloxHTTP` (cookie+CSRF ผ่าน `infra/net_tls`), header browser-like, endpoint base, `open_roblox_uri` + version pin | `roblox_moderation.py`, `roblox_identity.py`, `roblox_validation.py`, `roblox_launcher.py`, `services/private_server_preflight.py` |
 | `roblox_moderation.py` | live moderation/ban (`fetch_moderation_status`, `fetch_user_ban_status`, `fetch_ban_status_by_username`) | `roblox_identity.py`, `roblox_validation.py`, `services/credential_check.py` |
 | `roblox_identity.py` | identity ออฟไลน์ (`cookie_embedded_identity`, `username_for_cookie_in_store`) + แยก dead-cookie (`resolve_ban/moderated_dead_cookie`, `reprobe`) | `roblox_validation.py`, `services/account_hybrid.py`, `api_routes/accounts_routes.py`, `api_routes/account_records.py` |

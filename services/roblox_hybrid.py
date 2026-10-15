@@ -78,7 +78,6 @@ from services.roblox_multibox import (
     release_multi_roblox_guard,
 )
 from services.roblox_validation import (
-    validate_cookie,
     validate_cookie_details,
     validate_record_cookie_identity,
 )
@@ -132,7 +131,6 @@ __all__ = [
     "set_selected_roblox_version",
     "universe_id_for_place",
     "username_for_cookie_in_store",
-    "validate_cookie",
     "validate_cookie_details",
     "validate_record_cookie_identity",
     "vip_unavailable_permanently",

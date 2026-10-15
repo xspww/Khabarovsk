@@ -145,7 +145,8 @@ def _run(cfg, accounts, games, game_mode, cfg_mgr, outcome):
 
     try:
         from domain.roblox_private_servers import ensure_owned_private_server
-        from services.roblox_hybrid import RobloxHTTP, validate_record_cookie_identity
+        from services.roblox_http import RobloxHTTP
+        from services.roblox_validation import validate_record_cookie_identity
     except Exception as exc:
         for place, slot in needed.items():
             outcome["failures"].append({

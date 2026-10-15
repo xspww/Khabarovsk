@@ -7,7 +7,6 @@ from typing import Any
 
 from core import flog_kv
 from runtime.runtime_state_manager import RuntimeStateManager
-from services.browser_tracker import tracker_matches
 from services.process_proof_policy import (
     PROOF_STRONG,
     PROOF_UNTRUSTED,
@@ -121,28 +120,6 @@ def quarantine_process_match(account: Any, reason: str, validation: dict[str, An
             _write()
     else:
         _write()
-
-
-def has_binding_evidence(
-    validation: dict[str, Any],
-    owner_key: str,
-    expected_identity: str,
-    launched_after: float | None,
-    expected_browser_tracker_id: str = "",
-) -> bool:
-    owner = str(validation.get("owner") or "")
-    identity = str(validation.get("identity") or "")
-    created = float(validation.get("created") or 0.0)
-    observed_tracker = str(validation.get("browser_tracker_id") or "")
-    if tracker_matches(expected_browser_tracker_id, observed_tracker):
-        return True
-    if expected_identity and identity and identity == str(expected_identity):
-        return True
-    if owner_key and owner and owner == owner_key:
-        return True
-    if launched_after is not None and created and created >= (float(launched_after) - 3.0):
-        return True
-    return False
 
 
 def set_adopt_diagnostics(

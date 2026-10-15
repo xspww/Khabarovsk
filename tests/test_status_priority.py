@@ -340,13 +340,13 @@ class PreviewApiTests(unittest.TestCase):
 
     def test_moderated_with_username_previews_locked(self):
         import api_routes.accounts_routes as routes
-        import services.roblox_hybrid as roblox_hybrid
+        import services.roblox_identity as roblox_identity
 
         routes.validate_cookie_details = lambda cookie: (
             False, "", 'HTTP 403 {"errors":[{"code":0,"message":"User is moderated"}]}',
             {"username": "", "user_id": "", "is_banned": True, "banned": True},
         )
-        roblox_hybrid.resolve_moderated_dead_cookie = lambda *a, **k: (
+        roblox_identity.resolve_moderated_dead_cookie = lambda *a, **k: (
             "locked", LOCKED_BLOCK_REASON, "x1MiuytAi0", "4373927375",
         )
         try:
@@ -364,13 +364,13 @@ class PreviewApiTests(unittest.TestCase):
 
     def test_confirmed_ban_still_previews_banned(self):
         import api_routes.accounts_routes as routes
-        import services.roblox_hybrid as roblox_hybrid
+        import services.roblox_identity as roblox_identity
 
         routes.validate_cookie_details = lambda cookie: (
             False, "", 'HTTP 403 {"errors":[{"code":0,"message":"User is moderated"}]}',
             {"username": "", "user_id": "", "is_banned": True, "banned": True},
         )
-        roblox_hybrid.resolve_moderated_dead_cookie = lambda *a, **k: (
+        roblox_identity.resolve_moderated_dead_cookie = lambda *a, **k: (
             "banned", "Account banned (Roblox isBanned=true)", "someuser", "123",
         )
         try:
@@ -410,7 +410,7 @@ class EmbeddedIdentityTests(unittest.TestCase):
     """
 
     def test_reads_name_and_uid(self):
-        from services.roblox_hybrid import cookie_embedded_identity
+        from services.roblox_identity import cookie_embedded_identity
 
         self.assertEqual(
             cookie_embedded_identity(_synthetic_cookie()),
@@ -419,14 +419,14 @@ class EmbeddedIdentityTests(unittest.TestCase):
 
     def test_ignores_device_id(self):
         # `duid` also contains "uid" — the device id must never win.
-        from services.roblox_hybrid import cookie_embedded_identity
+        from services.roblox_identity import cookie_embedded_identity
 
         _name, uid = cookie_embedded_identity(_synthetic_cookie())
         self.assertEqual(uid, "4373927375")
         self.assertNotEqual(uid, "14153082429918207610")
 
     def test_rejects_garbage(self):
-        from services.roblox_hybrid import cookie_embedded_identity
+        from services.roblox_identity import cookie_embedded_identity
 
         self.assertEqual(cookie_embedded_identity(""), ("", ""))
         self.assertEqual(cookie_embedded_identity("not-a-cookie"), ("", ""))
@@ -455,7 +455,7 @@ class EmbeddedIdentityTests(unittest.TestCase):
 
     def test_preview_cookie_only_moderated_shows_locked(self):
         import api_routes.accounts_routes as routes
-        import services.roblox_hybrid as roblox_hybrid
+        import services.roblox_identity as roblox_identity
 
         seen = {}
         routes.validate_cookie_details = lambda cookie: (
@@ -469,7 +469,7 @@ class EmbeddedIdentityTests(unittest.TestCase):
             seen["hint"] = hint
             return ("locked", LOCKED_BLOCK_REASON, "x1MiuytAi0", "4373927375")
 
-        roblox_hybrid.resolve_moderated_dead_cookie = fake_resolve
+        roblox_identity.resolve_moderated_dead_cookie = fake_resolve
         try:
             result = _run_test_cookie_preview({"cookie": _synthetic_cookie(), "username": "", "password": ""})
         finally:
@@ -480,11 +480,11 @@ class EmbeddedIdentityTests(unittest.TestCase):
         self.assertEqual(result.get("username"), "x1MiuytAi0")
 
     def test_import_cookie_only_moderated_marks_locked(self):
-        import services.roblox_hybrid as roblox_hybrid
+        import services.roblox_identity as roblox_identity
         from services.account_hybrid import AccountDataStore
 
-        original_resolve = roblox_hybrid.resolve_moderated_dead_cookie
-        roblox_hybrid.resolve_moderated_dead_cookie = lambda *a, **k: (
+        original_resolve = roblox_identity.resolve_moderated_dead_cookie
+        roblox_identity.resolve_moderated_dead_cookie = lambda *a, **k: (
             "locked", LOCKED_BLOCK_REASON, "x1MiuytAi0", "4373927375",
         )
         store = AccountDataStore.__new__(AccountDataStore)
@@ -501,7 +501,7 @@ class EmbeddedIdentityTests(unittest.TestCase):
         try:
             result = store.import_cookie_lines([_synthetic_cookie()], validator=validator)
         finally:
-            roblox_hybrid.resolve_moderated_dead_cookie = original_resolve
+            roblox_identity.resolve_moderated_dead_cookie = original_resolve
         self.assertEqual(result.get("locked"), 1)
         record = captured["records"][0]
         self.assertEqual(record["username"], "x1MiuytAi0")

@@ -116,7 +116,7 @@ def probe_cookie_captcha(
         }
     try:
         if validator is None:
-            from services.roblox_hybrid import validate_cookie_details as validator  # lazy: heavy deps
+            from services.roblox_validation import validate_cookie_details as validator  # lazy: heavy deps
         _ok, _username, detail, _meta = validator(token)
     except Exception as exc:
         return {

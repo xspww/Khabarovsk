@@ -4,8 +4,9 @@ import random
 import sys
 from typing import Any
 
-from core import Account, flog_kv
+from core import Account, flog, flog_kv
 from runtime.recovery_context import SESSION_CONFLICT
+from runtime.recovery_policy import build_recovery_log_payload
 from services.roblox_log_evidence import collect_recent_log_evidence
 
 RECOVERY_REASON_MESSAGES = {
@@ -86,6 +87,44 @@ def compute_backoff(attempt: int, base: int = 5, cap: int = 120) -> float:
     exp = base * (2 ** max(0, attempt - 1))
     jitter = random.uniform(0, 3)
     return min(exp + jitter, float(cap))
+
+
+def log_hold(acc: Account, trigger: str, reason: str) -> None:
+    """Single owner for hold logging.
+
+    The evaluator used to reach this through the coordinator; it now
+    leverages this leaf directly.
+    """
+    flog(f"[RECOVERY] hold {acc.display_name}: trigger={trigger} reason={reason}")
+
+
+def log_recovery_decision(event: str, acc: Account, reason: str, **fields: Any) -> None:
+    """Single owner for recovery decision logging (leaf, no coordinator state)."""
+    flog_kv("RECOVERY", event, **build_recovery_log_payload(event, acc, reason, fields))
+
+
+def should_suppress_recovery_schedule(
+    current: Any,
+    due: float,
+    generation: Any,
+    runtime_generation: Any,
+    command_generation: Any,
+) -> bool:
+    """Single owner for the schedule-dedupe predicate.
+
+    Both the executor-hold park path and the normal schedule path used to
+    repeat this check inline; the recovery decision now leverages this one.
+    """
+    try:
+        return bool(
+            current
+            and current.due_at <= due
+            and current.recovery_generation == generation
+            and current.runtime_generation == runtime_generation
+            and current.command_generation == command_generation
+        )
+    except Exception:
+        return False
 
 
 def _persist_cookie_identity_status(

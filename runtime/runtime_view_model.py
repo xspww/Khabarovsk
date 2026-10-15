@@ -168,7 +168,7 @@ class RuntimeViewModelBuilder:
         mon = get_rt_monitor() if include_diagnostics else None
         accounts_data = []
         try:
-            from services.roblox_hybrid import multi_roblox_guard_status
+            from services.roblox_multibox import multi_roblox_guard_status
 
             multi_guard = multi_roblox_guard_status()
         except Exception as exc:

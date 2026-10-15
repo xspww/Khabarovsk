@@ -7,7 +7,9 @@ from core import Account, AccountState, EventName, flog, flog_kv
 from runtime.lua_liveness_policy import lua_liveness_required, mark_waiting_for_lua
 from runtime.recovery_context import RecoveryAttemptContext
 from runtime.recovery_policy import (
+    canonical_launch_failure_reason,
     canonical_reason,
+    is_transient_recovery_mark,
     kill_local_duplicate_for_session_conflict,
     policy_for,
 )
@@ -26,7 +28,9 @@ from services.process_service import ProcessManager, ProcessService
 
 
 class RecoveryReportsMixin:
-    """Central recovery/rejoin controller. Every path that wants recovery reports here."""
+    """Crash/launch/fail reporters. Owns the report_* entries the router
+    invokes through the RouterRecoveryActions seam; launch classification
+    and revive markers live in recovery_policy."""
 
     def _kill_local_duplicate_for_session_conflict(self, acc: Account, ctx: RecoveryAttemptContext) -> int:
         try:
@@ -239,21 +243,11 @@ class RecoveryReportsMixin:
 
 
     def report_launch_failure(self, acc: Account, reason: str):
-        reason_l = str(reason or "").lower()
-        if is_captcha_status_text(reason_l):
+        canonical = canonical_launch_failure_reason(reason)
+        if canonical == "captcha_required":
             set_account_captcha_hold(acc, reason, source="launch_failure", runtime_writer=self._runtime_state)
             self.fail_account(acc, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
             return
-        if _is_game_unavailable_detail(reason):
-            canonical = "game_unavailable"
-        elif "server full" in reason_l or "experience is full" in reason_l:
-            canonical = "server_full"
-        elif "cookie" in reason_l or "auth" in reason_l or "login" in reason_l:
-            canonical = "auth_failure"
-        elif "verify_timeout" in reason_l or "pid not detected" in reason_l:
-            canonical = "watchdog_timeout"
-        else:
-            canonical = "launch_fail"
         policy = policy_for(canonical)
         bucket = str(policy.get("bucket") or "launch")
         is_game_down = canonical == "game_unavailable"
@@ -448,18 +442,7 @@ class RecoveryReportsMixin:
                 float(acc.last_state_change_at or 0.0),
             )
             age = (now - last_at) if last_at else 1e9
-        transient_markers = (
-            "recovery_budget_exceeded",
-            "launch_fail",
-            "game_unavailable",
-            "launch_backoff",
-            "vip invite did not expose accesscode",
-            "joinprivategame",
-            "unauthorized",
-            "teleport failed",
-        )
-        haystack = f"{crash_reason} {recovery_reason}"
-        if not any(marker in haystack for marker in transient_markers):
+        if not is_transient_recovery_mark(crash_reason, recovery_reason):
             return False
         # Auth blocks are terminal — never auto-revive (evaluator re-fails them).
         try:

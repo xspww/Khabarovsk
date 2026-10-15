@@ -2,7 +2,10 @@
 import unittest
 
 from services.roblox_windows import (
+    _EnumRect,
+    _collect_roblox_proc_meta,
     _dedupe_largest_per_pid,
+    _measure_window_rect,
     _passes_window_size_filter,
 )
 
@@ -42,6 +45,71 @@ class TestDedupeLargestPerPid(unittest.TestCase):
 
     def test_empty(self):
         self.assertEqual(_dedupe_largest_per_pid([]), [])
+
+
+class _FakeProc:
+    def __init__(self, pid, created=0.0, name="RobloxPlayerBeta.exe", broken=False):
+        self.pid = pid
+        self._created = created
+        self._name = name
+        self._broken = broken
+
+    def create_time(self):
+        if self._broken:
+            raise OSError("gone")
+        return self._created
+
+    def name(self):
+        if self._broken:
+            raise OSError("gone")
+        return self._name
+
+
+class TestCollectProcMeta(unittest.TestCase):
+    def test_snapshot(self):
+        meta = _collect_roblox_proc_meta(
+            lambda game_only=True: [_FakeProc(11, 7.5), _FakeProc(12, 8.5, "other.exe")]
+        )
+        self.assertEqual(meta[11], {"created": 7.5, "name": "RobloxPlayerBeta.exe"})
+        self.assertEqual(meta[12]["name"], "other.exe")
+
+    def test_broken_proc_skipped(self):
+        meta = _collect_roblox_proc_meta(
+            lambda game_only=True: [_FakeProc(11), _FakeProc("x", broken=True)]
+        )
+        self.assertEqual(list(meta), [11])
+
+    def test_empty(self):
+        self.assertEqual(_collect_roblox_proc_meta(lambda game_only=True: []), {})
+
+
+class _FakeUser32:
+    def __init__(self, ok=True, fail=False):
+        self._ok = ok
+        self._fail = fail
+
+    def GetWindowRect(self, hwnd, rect):
+        if self._fail:
+            raise OSError("win32 gone")
+        return self._ok
+
+
+def _rect(left=10, top=20, right=810, bottom=620):
+    rect = _EnumRect()
+    rect.left, rect.top, rect.right, rect.bottom = left, top, right, bottom
+    return rect
+
+
+class TestMeasureWindowRect(unittest.TestCase):
+    def test_measures(self):
+        out = _measure_window_rect(_FakeUser32(ok=True), _rect(), 5, False)
+        self.assertEqual(out, (10, 20, 810, 620, 800, 600))
+
+    def test_false_skipped(self):
+        self.assertIsNone(_measure_window_rect(_FakeUser32(ok=False), _rect(), 5, False))
+
+    def test_exception_skipped(self):
+        self.assertIsNone(_measure_window_rect(_FakeUser32(fail=True), _rect(), 5, False))
 
 
 if __name__ == "__main__":

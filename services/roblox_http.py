@@ -10,6 +10,7 @@ from typing import Any
 
 from infra import net_tls
 from services.captcha_guard import captcha_detail
+from services.roblox_install_manager import ROBLOX_EXE, _roblox_roots
 
 USER_AGENT = "CronusLauncherHybrid/1.0"
 # Public (no-cookie) Roblox lookups get empty/filtered responses with a
@@ -46,14 +47,9 @@ def _roblox_version_exe(version: str) -> str:
     name = str(version or "").strip()
     if not name:
         return ""
-    roots = []
-    for env_name in ("LOCALAPPDATA", "ProgramFiles(x86)", "ProgramFiles"):
-        value = os.environ.get(env_name, "").strip()
-        if value:
-            roots.append(os.path.join(value, "Roblox"))
     target_l = name.lower()
-    for root in roots:
-        versions_dir = os.path.join(root, "Versions")
+    for root in _roblox_roots():
+        versions_dir = os.path.join(str(root), "Versions")
         if not os.path.isdir(versions_dir):
             continue
         try:
@@ -63,7 +59,7 @@ def _roblox_version_exe(version: str) -> str:
         for entry in entries:
             if entry.lower() != target_l:
                 continue
-            exe = os.path.join(versions_dir, entry, "RobloxPlayerBeta.exe")
+            exe = os.path.join(versions_dir, entry, ROBLOX_EXE)
             if os.path.isfile(exe):
                 return exe
     return ""

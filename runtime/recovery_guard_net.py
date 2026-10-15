@@ -10,7 +10,8 @@ from services.process_service import ProcessService
 
 
 class RecoveryGuardNetMixin:
-    """Central recovery/rejoin controller. Every path that wants recovery reports here."""
+    """Guard self-heal and network hold. Owns mark_network_lost and
+    on_network_restored, which the router also invokes through the seam."""
 
     def _mark_guard_recovering(self, acc: Account, reason_msg: str, delay: float) -> None:
         with acc._lock:
@@ -99,7 +100,7 @@ class RecoveryGuardNetMixin:
                     wait_seconds=4.0,
                     reason="multi_roblox_guard_self_heal",
                 )
-            from services.roblox_hybrid import ensure_multi_roblox_guard, release_multi_roblox_guard
+            from services.roblox_multibox import ensure_multi_roblox_guard, release_multi_roblox_guard
 
             release_multi_roblox_guard()
             time.sleep(1.0)
@@ -181,10 +182,6 @@ class RecoveryGuardNetMixin:
             self._queue_account(acc, "multi_roblox_guard_self_heal_requeue")
             requeued += 1
         return requeued
-
-
-    def _log_hold(self, acc: Account, trigger: str, reason: str):
-        flog(f"[RECOVERY] hold {acc.display_name}: trigger={trigger} reason={reason}")
 
 
     def mark_network_lost(self, acc: Account, trigger: str = "network_lost"):

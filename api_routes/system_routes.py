@@ -14,7 +14,7 @@ from core import flog_kv
 from services import startup_manager
 from services.account_hybrid import audit_event
 from services.app_version_check import check_app_update
-from services.roblox_hybrid import release_multi_roblox_guard
+from services.roblox_multibox import release_multi_roblox_guard
 
 from .auth import require_api_token
 from .context import ApiContext

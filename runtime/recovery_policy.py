@@ -156,6 +156,51 @@ def is_game_unavailable_detail(text: str) -> bool:
     return any(sig in lowered for sig in signatures)
 
 
+TRANSIENT_RECOVERY_MARKERS = (
+    "recovery_budget_exceeded",
+    "launch_fail",
+    "game_unavailable",
+    "launch_backoff",
+    "vip invite did not expose accesscode",
+    "joinprivategame",
+    "unauthorized",
+    "teleport failed",
+)
+
+
+def canonical_launch_failure_reason(detail: str) -> str:
+    """Single owner for launch-failure classification.
+
+    The launch reporter used to run this chain inline; every launch-failure
+    decision now leverages this one. Order matters: captcha first, then
+    game-down (whose "unauthorized" contains "auth"), then the rest.
+    """
+    from services.captcha_guard import is_captcha_status_text
+
+    reason_l = str(detail or "").lower()
+    if is_captcha_status_text(reason_l):
+        return "captcha_required"
+    if is_game_unavailable_detail(detail):
+        return "game_unavailable"
+    if "server full" in reason_l or "experience is full" in reason_l:
+        return "server_full"
+    if "cookie" in reason_l or "auth" in reason_l or "login" in reason_l:
+        return "auth_failure"
+    if "verify_timeout" in reason_l or "pid not detected" in reason_l:
+        return "watchdog_timeout"
+    return "launch_fail"
+
+
+def is_transient_recovery_mark(crash_reason: str, recovery_reason: str) -> bool:
+    """Single owner for the revive-marker check.
+
+    The transient-failed reviver used to inline this tuple; the revive
+    decision now leverages this one.
+    """
+    haystack = f"{str(crash_reason or '').strip().lower()} {str(recovery_reason or '').strip().lower()}"
+    return any(marker in haystack for marker in TRANSIENT_RECOVERY_MARKERS)
+
+
 def policy_for(reason_key: str) -> dict[str, Any]:
     return dict(RECOVERY_POLICIES.get(canonical_reason(reason_key), {"bucket": "crash", "cap": 30.0, "fatal": False}))
 

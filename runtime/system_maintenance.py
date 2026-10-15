@@ -113,10 +113,7 @@ class SystemMaintenance(
         return self._clamped_interval(key, default, minimum, maximum)
 
     def _reconcile_interval(self) -> float:
-        try:
-            return max(self._base_interval(), float(self._cfg.get("periodic_reconcile_interval", 15) or 15))
-        except Exception:
-            return max(self._base_interval(), 15.0)
+        return self._clamped_interval("periodic_reconcile_interval", 15.0, 1.0, 3600.0)
 
     def _register_periodic_jobs(self) -> None:
         base = self._base_interval()

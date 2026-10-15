@@ -9,6 +9,15 @@ from services import roblox_processes as _processes
 from services import roblox_windows as _windows
 
 # Internal process backend used by process services.
+#
+# Ownership map — fragments live in four modules, they run here:
+# - process identity / ownership / validation (pid owner dict, pid caches,
+#   confidence thresholds): services.roblox_processes
+# - window enumeration / arrange / hide / screenshots: services.roblox_windows
+# - liveness scoring / orphan reconcile: services.roblox_liveness
+# - VIP-aware launch URL + launch: services.roblox_launch_service
+# Every fragment takes cls and reads the ClassVar state below; the binder
+# lines that follow are the only seam — see tests/test_process_backend_wiring.py.
 from services.resource_monitor import get_rt_monitor
 
 ROBLOX_GAME_NAMES = _processes.ROBLOX_GAME_NAMES
@@ -63,7 +72,6 @@ class ProcessManager:
     classify_disconnect_dialog_texts = classmethod(_windows.classify_disconnect_dialog_texts)
 
     _same_windows_user = staticmethod(_processes._same_windows_user)
-    extract_browser_tracker_id_from_cmdline = staticmethod(_processes.extract_browser_tracker_id)
     get_process_identity = classmethod(_processes.get_process_identity)
     claim_pid_owner = classmethod(_processes.claim_pid_owner)
     release_pid_owner = classmethod(_processes.release_pid_owner)

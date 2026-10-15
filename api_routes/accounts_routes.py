@@ -33,7 +33,8 @@ from services.captcha_guard import (
     is_captcha_status_text,
     set_account_captcha_hold,
 )
-from services.roblox_hybrid import resolve_vip_access_code, validate_cookie_details
+from domain.roblox_private_servers import resolve_vip_access_code
+from services.roblox_validation import validate_cookie_details
 from services.roblox_launch_service import AccountLaunchService, parse_vip_link
 from services.verify_guard import (
     LOCKED_BLOCK_REASON,
@@ -658,7 +659,7 @@ def register(app, ctx: ApiContext) -> None:
             # Cookie-only paste: the token embeds its owner, so the preview
             # can name the account (and resolve a 403) with no prefix typed.
             try:
-                from services.roblox_hybrid import cookie_embedded_identity as _emb_identity_t
+                from services.roblox_identity import cookie_embedded_identity as _emb_identity_t
 
                 _emb_name_t, _emb_uid_t = _emb_identity_t(cookie)
             except Exception:
@@ -674,8 +675,8 @@ def register(app, ctx: ApiContext) -> None:
         moderated_resolved = False
         if not ok and not bool(is_suspended_text(detail)):
             try:
-                from services.roblox_hybrid import moderated_only_detail as _mod_only_t
-                from services.roblox_hybrid import resolve_moderated_dead_cookie as _resolve_mod_t
+                from services.roblox_identity import moderated_only_detail as _mod_only_t
+                from services.roblox_identity import resolve_moderated_dead_cookie as _resolve_mod_t
             except Exception:
                 _mod_only_t = lambda *a, **k: False  # type: ignore
                 _resolve_mod_t = lambda *a, **k: (None, "", "", "")  # type: ignore
@@ -713,7 +714,7 @@ def register(app, ctx: ApiContext) -> None:
             # "username:" prefix, recover the owner from the stored records so
             # a cookie-only paste still gets a real answer.
             try:
-                from services.roblox_hybrid import resolve_ban_for_dead_cookie as _resolve_dead
+                from services.roblox_identity import resolve_ban_for_dead_cookie as _resolve_dead
 
                 _b, _name, _uid = _resolve_dead(cookie, username_hint)
             except Exception:
@@ -760,8 +761,8 @@ def register(app, ctx: ApiContext) -> None:
                         # Login gated by a challenge: re-ask the cookie a few
                         # times, a moderation answer classifies the hold.
                         try:
-                            from services.roblox_hybrid import reprobe_moderation_response as _reprobe_t
-                            from services.roblox_hybrid import resolve_moderated_dead_cookie as _resolve_mod_t2
+                            from services.roblox_identity import reprobe_moderation_response as _reprobe_t
+                            from services.roblox_identity import resolve_moderated_dead_cookie as _resolve_mod_t2
                         except Exception:
                             _reprobe_t = lambda *a, **k: (0, "")  # type: ignore
                             _resolve_mod_t2 = lambda *a, **k: (None, "", "", "")  # type: ignore

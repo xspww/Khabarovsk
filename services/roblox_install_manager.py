@@ -68,6 +68,30 @@ def normalize_roblox_version(value: str) -> str:
     return raw if raw.lower().startswith("version-") else f"version-{raw}"
 
 
+def _roblox_roots() -> list[Path]:
+    """Single owner for Roblox installation root enumeration.
+
+    The version-pinned launch path in roblox_http used to repeat this env
+    scan inline; it now leverages this one.
+    """
+    roots: list[Path] = []
+    local = os.environ.get("LOCALAPPDATA", "").strip()
+    if local:
+        roots.append(Path(local) / "Roblox")
+    for env_name in ("ProgramFiles(x86)", "ProgramFiles"):
+        value = os.environ.get(env_name, "").strip()
+        if value:
+            roots.append(Path(value) / "Roblox")
+    unique: list[Path] = []
+    seen = set()
+    for root in roots:
+        key = str(root).lower()
+        if key not in seen:
+            seen.add(key)
+            unique.append(root)
+    return unique
+
+
 class RobloxInstallManager:
     def __init__(
         self,
@@ -252,25 +276,7 @@ class RobloxInstallManager:
         # Keep the previous client until the new manifest has downloaded and
         # passed validation. Only then remove older version
         # directories (Auto update deletes old versions).
-        removed = 0
-        cleanup_roots: list[Path] = list(self.roblox_roots())
-        for root in cleanup_roots:
-            versions_dir = root / "Versions"
-            if not versions_dir.is_dir():
-                continue
-            is_roblox_root = root.name.lower() == "roblox" and self._safe_roblox_root(root)
-            if not is_roblox_root:
-                continue
-            for child in versions_dir.iterdir():
-                if not child.is_dir() or not child.name.lower().startswith("version-"):
-                    continue
-                if child.name.lower() == normalized.lower():
-                    continue
-                try:
-                    shutil.rmtree(child, ignore_errors=False)
-                    removed += 1
-                except Exception as exc:
-                    self.logger(f"[ROBLOX_INSTALL] remove old version failed: {child} ({exc})")
+        removed = self.remove_old_versions(normalized)
         self._set_job("Done", version=normalized, removed_old_versions=removed, msg=f"Updated Roblox to {normalized} (removed {removed} old)", progress="Done")
 
     def _run_install_version(self, version: str) -> None:
@@ -283,39 +289,39 @@ class RobloxInstallManager:
         self.validate_install(install_path, require_protocol=True)
         # Keep the previous client until the new manifest has downloaded and
         # passed validation. Only then remove older version directories.
+        removed = self.remove_old_versions(normalized)
+        self._set_job("Done", version=normalized, removed_old_versions=removed, msg=f"Installed {normalized}", progress="Done")
+
+    def remove_old_versions(self, version: str, roots: list[Path] | None = None) -> int:
+        """Single owner for old-version cleanup.
+
+        Both the update and the install paths used to repeat this loop
+        inline with slightly different error handling; the install decision
+        now leverages this one. Keeps the current version, removes older
+        version-* directories, skips anything else. Never raises.
+        """
+        normalized = str(version or "")
         removed = 0
-        for root in self.roblox_roots():
+        for root in list(roots) if roots is not None else list(self.roblox_roots()):
             versions_dir = root / "Versions"
             if not versions_dir.is_dir():
+                continue
+            if not (root.name.lower() == "roblox" and self._safe_roblox_root(root)):
                 continue
             for child in versions_dir.iterdir():
                 if not child.is_dir() or not child.name.lower().startswith("version-"):
                     continue
                 if child.name.lower() == normalized.lower():
                     continue
-                if not self._safe_roblox_root(root):
-                    continue
-                shutil.rmtree(child, ignore_errors=False)
-                removed += 1
-        self._set_job("Done", version=normalized, removed_old_versions=removed, msg=f"Installed {normalized}", progress="Done")
+                try:
+                    shutil.rmtree(child, ignore_errors=False)
+                    removed += 1
+                except Exception as exc:
+                    self.logger(f"[ROBLOX_INSTALL] remove old version failed: {child} ({exc})")
+        return removed
 
     def roblox_roots(self) -> list[Path]:
-        roots: list[Path] = []
-        local = os.environ.get("LOCALAPPDATA", "").strip()
-        if local:
-            roots.append(Path(local) / "Roblox")
-        for env_name in ("ProgramFiles(x86)", "ProgramFiles"):
-            value = os.environ.get(env_name, "").strip()
-            if value:
-                roots.append(Path(value) / "Roblox")
-        unique: list[Path] = []
-        seen = set()
-        for root in roots:
-            key = str(root).lower()
-            if key not in seen:
-                seen.add(key)
-                unique.append(root)
-        return unique
+        return _roblox_roots()
 
     def list_installed(self) -> list[dict[str, Any]]:
         """Return every installed Roblox player version, newest-modified first.

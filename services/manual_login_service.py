@@ -215,7 +215,7 @@ class ManualLoginManager:
     @property
     def validator(self) -> Callable[[str], Any]:
         if self._validator is None:
-            from services.roblox_hybrid import validate_cookie_details as _validate
+            from services.roblox_validation import validate_cookie_details as _validate
 
             self._validator = _validate
         return self._validator

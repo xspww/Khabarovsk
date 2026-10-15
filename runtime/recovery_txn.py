@@ -10,12 +10,14 @@ from runtime.recovery_policy import (
     adaptive_recovery_delay,
     policy_for,
 )
-from runtime.recovery_support import compute_backoff
+from runtime.recovery_support import compute_backoff, should_suppress_recovery_schedule
 from runtime.runtime_scheduler import RuntimeScheduledJob
 
 
 class RecoveryTxnMixin:
-    """Central recovery/rejoin controller. Every path that wants recovery reports here."""
+    """Budget, begin/clear, cooldown and scheduling. Called by the reports
+    mixin on the same coordinator; the schedule-dedupe verdict it shares
+    with core lives in recovery_support.should_suppress_recovery_schedule."""
 
     def _record_recovery_budget_attempt(self, acc: Account, canonical: str, bucket: str, now: float) -> str:
         cfg = self._cfg
@@ -329,12 +331,8 @@ class RecoveryTxnMixin:
             else:
                 self._runtime_state.set_recovery(acc, reason="", inflight=True)
         current = self._scheduler.get(key)
-        if (
-            current
-            and current.due_at <= due
-            and current.recovery_generation == generation
-            and current.runtime_generation == runtime_generation
-            and current.command_generation == command_generation
+        if should_suppress_recovery_schedule(
+            current, due, generation, runtime_generation, command_generation
         ):
             self._log_recovery_decision(
                 "schedule_suppressed",
@@ -402,7 +400,7 @@ class RecoveryTxnMixin:
             acc.recovery_scheduled_at = 0.0
             acc.scheduler_slot = ""
         self._persist_runtime()
-        self.evaluate(
+        self._evaluator.evaluate(
             acc,
             trigger=reason,
             expected_runtime_generation=runtime_generation,

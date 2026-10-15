@@ -134,26 +134,27 @@ def unminimize_windows(windows: list[dict[str, Any]]) -> dict[str, Any]:
         return {"ok": False, "count": len(windows), "restored": 0, "error": str(exc), "windows": windows}
 
 
-_TASKBAR_HIDDEN_PROP = "CronusTaskbarHidden"
+TASKBAR_HIDDEN_PROP = "CronusTaskbarHidden"
+_TASKBAR_HIDDEN_PROP = TASKBAR_HIDDEN_PROP
 
 
 def _is_taskbar_hidden(user32: Any, hwnd: int) -> bool:
     try:
-        return bool(user32.GetPropW(ctypes.c_void_p(hwnd), _TASKBAR_HIDDEN_PROP))
+        return bool(user32.GetPropW(ctypes.c_void_p(hwnd), TASKBAR_HIDDEN_PROP))
     except Exception:
         return False
 
 
 def _mark_taskbar_hidden(user32: Any, hwnd: int) -> None:
     try:
-        user32.SetPropW(ctypes.c_void_p(hwnd), _TASKBAR_HIDDEN_PROP, ctypes.c_void_p(1))
+        user32.SetPropW(ctypes.c_void_p(hwnd), TASKBAR_HIDDEN_PROP, ctypes.c_void_p(1))
     except Exception:
         pass
 
 
 def _unmark_taskbar_hidden(user32: Any, hwnd: int) -> None:
     try:
-        user32.RemovePropW(ctypes.c_void_p(hwnd), _TASKBAR_HIDDEN_PROP)
+        user32.RemovePropW(ctypes.c_void_p(hwnd), TASKBAR_HIDDEN_PROP)
     except Exception:
         pass
 

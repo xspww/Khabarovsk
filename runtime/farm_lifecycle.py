@@ -46,7 +46,7 @@ class FarmLifecycleService:
         farm._shutting_down = False
         farm._stop = threading.Event()
         if bool(cfg.get("multi_roblox_enabled", True)):
-            from services.roblox_hybrid import ensure_multi_roblox_guard, multi_roblox_guard_status
+            from services.roblox_multibox import ensure_multi_roblox_guard, multi_roblox_guard_status
 
             guard_ok, guard_detail = ensure_multi_roblox_guard()
             guard_status = multi_roblox_guard_status()
@@ -60,7 +60,7 @@ class FarmLifecycleService:
                 detail=guard_detail,
             )
         else:
-            from services.roblox_hybrid import release_multi_roblox_guard
+            from services.roblox_multibox import release_multi_roblox_guard
 
             release_multi_roblox_guard()
         farm.running = True
@@ -337,7 +337,7 @@ class FarmLifecycleService:
         except Exception:
             pass
         try:
-            from services.roblox_hybrid import release_multi_roblox_guard
+            from services.roblox_multibox import release_multi_roblox_guard
 
             release_multi_roblox_guard()
         except Exception:
@@ -397,7 +397,7 @@ class FarmLifecycleService:
         farm.cfg_mgr.save_runtime(farm._accounts)
         get_rt_monitor().stop()
         try:
-            from services.roblox_hybrid import release_multi_roblox_guard
+            from services.roblox_multibox import release_multi_roblox_guard
 
             release_multi_roblox_guard()
         except Exception as exc:

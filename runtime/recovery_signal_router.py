@@ -7,6 +7,7 @@ from domain.states import RuntimeSignal, is_recovery_signal, normalize_runtime_s
 from runtime.lua_liveness_policy import lua_event_source
 from runtime.recovery_context import SESSION_CONFLICT
 from runtime.recovery_policy import context_from_signal
+from runtime.recovery_seam import RouterRecoveryActions
 from runtime.recovery_support import _enrich_visual_disconnect_payload_with_log
 from runtime.runtime_state_manager import RuntimeStateManager
 from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
@@ -33,12 +34,39 @@ class RecoverySignalRouter:
         self._log_decision = log_decision
         self._recovery_gate = recovery_gate
 
+    @staticmethod
+    def _is_captcha_hold(
+        signal_name: str,
+        reason_key: str,
+        payload: dict[str, Any],
+        captcha_resume_reason: bool,
+    ) -> bool:
+        """Single owner for the captcha-detect predicate.
+
+        Both the route path and the dispatch path used to repeat this
+        check inline; the recovery decision now leverages this one.
+        """
+        if captcha_resume_reason:
+            return False
+        if signal_name == RuntimeSignal.LAUNCH_SUCCESS.value:
+            return False
+        return bool(
+            is_captcha_status_text(
+                signal_name,
+                reason_key,
+                payload.get("reason_msg"),
+                payload.get("detail"),
+                payload.get("msg"),
+                payload.get("error"),
+            )
+        )
+
     def clear(self) -> None:
         self._recovery_gate.clear()
 
     def route(
         self,
-        recovery: Any,
+        recovery: RouterRecoveryActions,
         acc: Any,
         signal: str,
         reason: str = "",
@@ -62,15 +90,7 @@ class RecoverySignalRouter:
             payload.setdefault("reason_key", reason_key)
             payload.setdefault("disconnect_category", SESSION_CONFLICT)
         captcha_resume_reason = str(reason_key or "").strip().lower() == "captcha_resume"
-        captcha_detection_allowed = signal_name != RuntimeSignal.LAUNCH_SUCCESS.value
-        captcha_detected = captcha_detection_allowed and (not captcha_resume_reason) and is_captcha_status_text(
-            signal_name,
-            reason_key,
-            payload.get("reason_msg"),
-            payload.get("detail"),
-            payload.get("msg"),
-            payload.get("error"),
-        )
+        captcha_detected = self._is_captcha_hold(signal_name, reason_key, payload, captcha_resume_reason)
 
         if self._is_closed():
             self._log_decision(
@@ -165,7 +185,7 @@ class RecoverySignalRouter:
 
     def _dispatch(
         self,
-        recovery: Any,
+        recovery: RouterRecoveryActions,
         acc: Any,
         signal_name: str,
         reason_key: str,
@@ -177,14 +197,7 @@ class RecoverySignalRouter:
         expected_transaction_id: str,
     ) -> bool:
         captcha_resume_reason = str(reason_key or "").strip().lower() == "captcha_resume"
-        if signal_name != RuntimeSignal.LAUNCH_SUCCESS.value and (not captcha_resume_reason) and is_captcha_status_text(
-            signal_name,
-            reason_key,
-            payload.get("reason_msg"),
-            payload.get("detail"),
-            payload.get("msg"),
-            payload.get("error"),
-        ):
+        if self._is_captcha_hold(signal_name, reason_key, payload, captcha_resume_reason):
             detail = str(payload.get("detail") or payload.get("reason_msg") or reason_key or CAPTCHA_REASON)
             set_account_captcha_hold(acc, detail, source=f"runtime_signal:{signal_name}", runtime_writer=self._runtime_state)
             recovery.fail_account(acc, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)

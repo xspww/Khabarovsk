@@ -7,7 +7,10 @@ import urllib.parse
 from typing import Any
 
 from core import Account, ServerType, account_launch_block_reason, flog, flog_kv
+from domain.roblox_private_servers import shared_direct_vip_link, vip_links_for_place
 from services.browser_tracker import tracker_label
+from services.roblox_http import open_roblox_uri
+from services.roblox_launcher import HybridLauncher
 
 
 def parse_vip_link(vip_url: str) -> tuple[str, str]:
@@ -41,6 +44,45 @@ def parse_vip_link(vip_url: str) -> tuple[str, str]:
     except Exception as e:
         flog(f"[VIP] parse error: {e}", "warning")
         return "", ""
+
+
+def _checked_global_vip_link(global_vip: str, place_id: str) -> str:
+    """Single owner for the shared-global VIP place check.
+
+    The two shared/legacy target branches used to repeat this inline; the
+    launch-target decision now leverages this one. A global link naming a
+    different place is dropped, otherwise it passes through.
+    """
+    link = str(global_vip or "").strip()
+    if not link:
+        return ""
+    place = str(place_id or "").strip()
+    link_place = parse_vip_link(link)[0] if link else ""
+    return link if (not place or not link_place or link_place == place) else ""
+
+
+def _finish_shared_target(
+    target: dict[str, Any],
+    place_id: str,
+    vip_links: list[str],
+    cfg_mgr: Any,
+) -> dict[str, Any]:
+    """Single owner for the shared/legacy target tail.
+
+    Both non-assigned branches resolve the place differently but finish the
+    same way: filtered VIP links, place-checked global link, dashboard
+    defaults. Only the assigned-game branch above stays separate — the
+    game's own VIP/flags overwrite instead of setdefault there.
+    """
+    target.setdefault("vip_links", vip_links)
+    target["place_id"] = place_id
+    target.setdefault(
+        "global_vip_link",
+        _checked_global_vip_link(str(cfg_mgr.get("game_private_server_url", "") or ""), place_id),
+    )
+    target.setdefault("auto_create_private_server_enabled", cfg_mgr.get("auto_create_private_server_enabled", False))
+    target.setdefault("auto_create_private_server_free_only", cfg_mgr.get("auto_create_private_server_free_only", True))
+    return target
 
 
 class AccountLaunchService:
@@ -106,13 +148,7 @@ class AccountLaunchService:
                 target.get("place_id")
                 or effective_place(record.get("place_id"), game, "")
             ).strip()
-            vip_links = list(record.get("vip_links") or [])
-            if place_id:
-                vip_links = [
-                    link for link in vip_links
-                    if not parse_vip_link(str(link or "").strip())[0]
-                    or parse_vip_link(str(link or "").strip())[0] == place_id
-                ]
+            vip_links = vip_links_for_place(list(record.get("vip_links") or []), place_id)
             target.setdefault("vip_links", vip_links)
             target["place_id"] = place_id
             flags = effective_auto_flags(
@@ -150,37 +186,11 @@ class AccountLaunchService:
                 or cfg_mgr.get("game_place_id", "")
                 or ""
             ).strip()
-            vip_links = list(record.get("vip_links") or [])
-            if place_id:
-                vip_links = [
-                    link for link in vip_links
-                    if not parse_vip_link(str(link or "").strip())[0]
-                    or parse_vip_link(str(link or "").strip())[0] == place_id
-                ]
-            target.setdefault("vip_links", vip_links)
-            target["place_id"] = place_id
-            global_vip = str(cfg_mgr.get("game_private_server_url", "") or "").strip()
-            global_place = parse_vip_link(global_vip)[0] if global_vip else ""
-            target.setdefault("global_vip_link", global_vip if (not place_id or not global_place or global_place == place_id) else "")
-            target.setdefault("auto_create_private_server_enabled", cfg_mgr.get("auto_create_private_server_enabled", False))
-            target.setdefault("auto_create_private_server_free_only", cfg_mgr.get("auto_create_private_server_free_only", True))
-            return target
+            vip_links = vip_links_for_place(list(record.get("vip_links") or []), place_id)
+            return _finish_shared_target(target, place_id, vip_links, cfg_mgr)
         place_id = str(target.get("place_id") or cfg_mgr.get("game_place_id", "") or record.get("place_id") or "").strip()
-        vip_links = list(record.get("vip_links") or [])
-        if place_id:
-            vip_links = [
-                link for link in vip_links
-                if not parse_vip_link(str(link or "").strip())[0]
-                or parse_vip_link(str(link or "").strip())[0] == place_id
-            ]
-        target.setdefault("vip_links", vip_links)
-        target["place_id"] = place_id
-        global_vip = str(cfg_mgr.get("game_private_server_url", "") or "").strip()
-        global_place = parse_vip_link(global_vip)[0] if global_vip else ""
-        target.setdefault("global_vip_link", global_vip if (not place_id or not global_place or global_place == place_id) else "")
-        target.setdefault("auto_create_private_server_enabled", cfg_mgr.get("auto_create_private_server_enabled", False))
-        target.setdefault("auto_create_private_server_free_only", cfg_mgr.get("auto_create_private_server_free_only", True))
-        return target
+        vip_links = vip_links_for_place(list(record.get("vip_links") or []), place_id)
+        return _finish_shared_target(target, place_id, vip_links, cfg_mgr)
 
     @staticmethod
     def launch_record(
@@ -191,8 +201,6 @@ class AccountLaunchService:
         idempotency_key: str = "",
         body_hash: str = "",
     ) -> dict[str, Any]:
-        from services.roblox_hybrid import HybridLauncher
-
         username = str(record.get("username") or "")
         multi_roblox = bool(body.get("multi_roblox", cfg_mgr.get("multi_roblox_enabled", True)))
         result = HybridLauncher.launch_record(
@@ -213,6 +221,8 @@ class AccountLaunchService:
         )
         if result.get("ok") and window_settings and (window_settings.get("enabled") or window_settings.get("arrange_enabled")):
             try:
+                # Stays lazy on purpose: process_service → process_backend →
+                # launch_service → hybrid forms a cycle at import time.
                 from services.process_service import ProcessService
 
                 if window_settings.get("arrange_enabled"):
@@ -254,8 +264,6 @@ class AccountLaunchService:
         idempotency_key: str = "",
         body_hash: str = "",
     ) -> dict[str, Any]:
-        from services.roblox_hybrid import HybridLauncher
-
         username = str(record.get("username") or "")
         tracker = str(record.get("browser_tracker_id") or "")
         result = HybridLauncher.kill_duplicate_instances(tracker)
@@ -352,7 +360,6 @@ def launch(cls, acc: Account) -> tuple[bool, str, str]:
                 game_for_account,
                 normalize_game_mode,
             )
-            from services.roblox_hybrid import HybridLauncher
 
             game = None
             try:
@@ -394,13 +401,7 @@ def launch(cls, acc: Account) -> tuple[bool, str, str]:
                 active_place, _active_code = cls.parse_vip_link(active_vip)
                 if active_place and active_place != target_place:
                     active_vip = ""
-            vip_links = list(acc.vip_links or []) if auto_private_enabled else []
-            if target_place:
-                vip_links = [
-                    link for link in vip_links
-                    if not cls.parse_vip_link(str(link or "").strip())[0]
-                    or cls.parse_vip_link(str(link or "").strip())[0] == target_place
-                ]
+            vip_links = vip_links_for_place(list(acc.vip_links or []), target_place) if auto_private_enabled else []
             global_vip = ""
             if auto_private_enabled:
                 if game is not None:
@@ -423,16 +424,7 @@ def launch(cls, acc: Account) -> tuple[bool, str, str]:
             # for every account, regardless of the auto-create toggle.
             shared_direct_vip = ""
             if game is None:
-                try:
-                    from domain.roblox_private_servers import parse_vip_components as _parse_shared_vip
-                    _candidate = str(cls.GLOBAL_VIP_LINK or "").strip()
-                    _comp = _parse_shared_vip(_candidate) if _candidate else {}
-                    _cplace = str(_comp.get("place_id") or "").strip()
-                    _ccode = str(_comp.get("link_code") or "").strip() or str(_comp.get("access_code") or "").strip()
-                    if _cplace and _ccode and (not target_place or _cplace == target_place):
-                        shared_direct_vip = _candidate
-                except Exception:
-                    shared_direct_vip = ""
+                shared_direct_vip = shared_direct_vip_link(str(cls.GLOBAL_VIP_LINK or ""), target_place)
             target = {
                 "place_id": target_place,
                 "vip_links": vip_links,
@@ -497,8 +489,6 @@ def launch(cls, acc: Account) -> tuple[bool, str, str]:
         flags=re.IGNORECASE,
     )
     flog(f"[LAUNCH] {acc.display_name} → {safe_url[:120]}")
-
-    from services.roblox_hybrid import open_roblox_uri
 
     try:
         open_roblox_uri(cls.LOGIN_WARMUP_URL)

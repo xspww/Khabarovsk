@@ -180,8 +180,8 @@ def validate_cookie_records_from_store(store: Any, validate_cookie: Any, audit: 
             # Same disambiguation as the identity path: a bare
             # "User is moderated" must not label a locked account banned.
             try:
-                from services.roblox_hybrid import moderated_only_detail as _mod_only
-                from services.roblox_hybrid import resolve_moderated_dead_cookie as _resolve_mod
+                from services.roblox_identity import moderated_only_detail as _mod_only
+                from services.roblox_identity import resolve_moderated_dead_cookie as _resolve_mod
             except Exception:
                 _mod_only = lambda *a, **k: False  # type: ignore
                 _resolve_mod = lambda *a, **k: (None, "", "", "")  # type: ignore
@@ -256,7 +256,7 @@ def validate_cookie_records_from_store(store: Any, validate_cookie: Any, audit: 
             if is_banned_status_text(record.get("manual_status"), record.get("import_status")):
                 _recheck = None
                 try:
-                    from services.roblox_hybrid import resolve_ban_for_dead_cookie as _resolve_keep
+                    from services.roblox_identity import resolve_ban_for_dead_cookie as _resolve_keep
 
                     _rb, _rn, _ru = _resolve_keep(cookie, username)
                     _recheck = _rb
@@ -301,7 +301,7 @@ def validate_cookie_records_from_store(store: Any, validate_cookie: Any, audit: 
             ban_detail = ""
             if username:
                 try:
-                    from services.roblox_hybrid import resolve_ban_for_dead_cookie as _resolve_dead
+                    from services.roblox_identity import resolve_ban_for_dead_cookie as _resolve_dead
 
                     _b, _name, _uid = _resolve_dead(cookie, username)
                     if _b is True:

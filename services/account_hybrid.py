@@ -519,14 +519,14 @@ class AccountDataStore:
                 # embeds its owner (uname/uid fields), so identity — and the
                 # ban-by-name check — still work instead of skipping the line.
                 try:
-                    from services.roblox_hybrid import username_for_cookie_in_store as _owner_for_cookie
+                    from services.roblox_identity import username_for_cookie_in_store as _owner_for_cookie
 
                     username = _owner_for_cookie(cookie)
                 except Exception:
                     username = ""
                 if not username:
                     try:
-                        from services.roblox_hybrid import cookie_embedded_identity as _embedded_identity
+                        from services.roblox_identity import cookie_embedded_identity as _embedded_identity
 
                         username = _embedded_identity(cookie)[0]
                     except Exception:
@@ -555,8 +555,8 @@ class AccountDataStore:
                         # a ban. Resolve it before the banned branch below so
                         # a locked account is not imported as Banned.
                         try:
-                            from services.roblox_hybrid import moderated_only_detail as _mod_only_v
-                            from services.roblox_hybrid import resolve_moderated_dead_cookie as _resolve_mod_v
+                            from services.roblox_identity import moderated_only_detail as _mod_only_v
+                            from services.roblox_identity import resolve_moderated_dead_cookie as _resolve_mod_v
                             from services.verify_guard import LOCKED_BLOCK_REASON as _LM_V
                             from services.verify_guard import LOCKED_REASON as _LR_V
                         except Exception:
@@ -835,8 +835,8 @@ class AccountDataStore:
                             # between plain 401 and 403-moderated: re-ask a
                             # few times and classify a moderation hit.
                             try:
-                                from services.roblox_hybrid import reprobe_moderation_response as _reprobe
-                                from services.roblox_hybrid import resolve_moderated_dead_cookie as _resolve_re
+                                from services.roblox_identity import reprobe_moderation_response as _reprobe
+                                from services.roblox_identity import resolve_moderated_dead_cookie as _resolve_re
                             except Exception:
                                 _reprobe = lambda *a, **k: (0, "")  # type: ignore
                                 _resolve_re = lambda *a, **k: (None, "", "", "")  # type: ignore
@@ -881,8 +881,8 @@ class AccountDataStore:
                         # before the ban check below so a locked account is
                         # imported as Locked instead of Banned.
                         try:
-                            from services.roblox_hybrid import moderated_only_detail as _mod_only_i
-                            from services.roblox_hybrid import resolve_moderated_dead_cookie as _resolve_mod_i
+                            from services.roblox_identity import moderated_only_detail as _mod_only_i
+                            from services.roblox_identity import resolve_moderated_dead_cookie as _resolve_mod_i
                         except Exception:
                             _mod_only_i = lambda *a, **k: False  # type: ignore
                             _resolve_mod_i = lambda *a, **k: (None, "", "", "")  # type: ignore
@@ -927,7 +927,7 @@ class AccountDataStore:
                         ban_uid = ""
                         if username or cookie:
                             try:
-                                from services.roblox_hybrid import resolve_ban_for_dead_cookie as _resolve_dead
+                                from services.roblox_identity import resolve_ban_for_dead_cookie as _resolve_dead
 
                                 _b, _name, _uid = _resolve_dead(cookie, username)
                                 resolved_name = str(_name or "")

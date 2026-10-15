@@ -9,11 +9,13 @@ from runtime.recovery_context import RecoveryAttemptContext
 from runtime.recovery_policy import (
     RecoveryDedupeTracker,
     RecoveryGate,
+    canonical_launch_failure_reason,
     canonical_reason,
     canonical_recovery_reason,
     display_recovery_reason,
     duplicate_signal_key,
     is_game_unavailable_detail,
+    is_transient_recovery_mark,
     policy_for,
 )
 
@@ -256,6 +258,63 @@ class TestRecoveryGate(unittest.TestCase):
         self.assertEqual(
             low["fields"]["ignore"], "lower_priority_than_active_recovery"
         )
+
+
+class TestLaunchFailureClassification(unittest.TestCase):
+    def test_captcha_first(self):
+        self.assertEqual(
+            canonical_launch_failure_reason("captcha required, please solve"),
+            "captcha_required",
+        )
+
+    def test_game_down_before_auth_substring(self):
+        self.assertEqual(
+            canonical_launch_failure_reason("Teleport failed: Enum.TeleportResult.Unauthorized"),
+            "game_unavailable",
+        )
+        self.assertEqual(
+            canonical_launch_failure_reason("VIP invite did not expose accessCode (200)"),
+            "game_unavailable",
+        )
+
+    def test_server_full(self):
+        self.assertEqual(
+            canonical_launch_failure_reason("This experience is full"),
+            "server_full",
+        )
+
+    def test_auth_failure(self):
+        self.assertEqual(
+            canonical_launch_failure_reason("cookie invalid .roblosecurity"),
+            "auth_failure",
+        )
+
+    def test_watchdog_timeout(self):
+        self.assertEqual(
+            canonical_launch_failure_reason("verify_timeout waiting for pid"),
+            "watchdog_timeout",
+        )
+        self.assertEqual(
+            canonical_launch_failure_reason("pid not detected after launch"),
+            "watchdog_timeout",
+        )
+
+    def test_fallback_launch_fail(self):
+        self.assertEqual(
+            canonical_launch_failure_reason("some weird launcher error"),
+            "launch_fail",
+        )
+
+
+class TestTransientRecoveryMark(unittest.TestCase):
+    def test_transient_marks(self):
+        self.assertTrue(is_transient_recovery_mark("launch_fail", ""))
+        self.assertTrue(is_transient_recovery_mark("", "game_unavailable"))
+        self.assertTrue(is_transient_recovery_mark("teleport failed: unauthorized", ""))
+
+    def test_non_transient(self):
+        self.assertFalse(is_transient_recovery_mark("process_crash", "session_retry"))
+        self.assertFalse(is_transient_recovery_mark("", ""))
 
 
 if __name__ == "__main__":

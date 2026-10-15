@@ -12,7 +12,7 @@ from services.performance_settings import (
     normalize_process_priority,
     normalize_roblox_volume,
 )
-from services.roblox_hybrid import release_multi_roblox_guard
+from services.roblox_multibox import release_multi_roblox_guard
 
 from .context import ApiContext
 from .settings_state import (

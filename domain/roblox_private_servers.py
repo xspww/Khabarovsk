@@ -47,6 +47,51 @@ def parse_vip_link(value: str) -> tuple[str, str]:
     return str(place_id or ""), str(link_code or "")
 
 
+def vip_links_for_place(vip_links: list[str], place_id: str) -> list[str]:
+    """Single owner for the per-place VIP filter.
+
+    Four launch-target builders used to repeat this comprehension inline
+    (parsing every link twice); the launch decision now leverages this one.
+    Links without a place keep passing through; only a link naming a
+    *different* place is dropped. Total: never raises.
+    """
+    place = str(place_id or "").strip()
+    if not place:
+        return list(vip_links or [])
+    kept: list[str] = []
+    for link in vip_links or []:
+        text = str(link or "").strip()
+        try:
+            link_place, _ = parse_vip_link(text)
+        except Exception:
+            link_place = ""
+        if not link_place or link_place == place:
+            kept.append(link)
+    return kept
+
+
+def shared_direct_vip_link(candidate: str, place_id: str) -> str:
+    """Single owner for the shared-direct VIP rule.
+
+    Shared mode with a complete shared link (place + link/access code)
+    joins that exact room for every account. Returns the candidate when it
+    qualifies, else "". Total: never raises.
+    """
+    text = str(candidate or "").strip()
+    if not text:
+        return ""
+    try:
+        comp = parse_vip_components(text)
+    except Exception:
+        return ""
+    comp_place = str((comp or {}).get("place_id") or "").strip()
+    code = str((comp or {}).get("link_code") or "").strip() or str((comp or {}).get("access_code") or "").strip()
+    place = str(place_id or "").strip()
+    if comp_place and code and (not place or comp_place == place):
+        return text
+    return ""
+
+
 def parse_vip_components(value: str) -> dict[str, str]:
     text = str(value or "").strip()
     if not text:

@@ -4,7 +4,8 @@ import time
 from typing import Any
 
 from core import AccountState
-from runtime.recovery_support import RECOVERY_REASON_MESSAGES, compute_backoff
+from runtime.recovery_seam import EvaluatorRecovery
+from runtime.recovery_support import RECOVERY_REASON_MESSAGES, compute_backoff, log_hold, log_recovery_decision
 from services.auth_gate import evaluate_account_auth_gate, mark_account_auth_quarantined
 from services.process_service import ProcessService
 
@@ -12,8 +13,8 @@ from services.process_service import ProcessService
 class RecoveryEvaluator:
     """Evaluates whether an account should queue, wait, fail, or recover."""
 
-    def __init__(self, recovery: Any):
-        self._recovery = recovery
+    def __init__(self, recovery: EvaluatorRecovery):
+        self._recovery: EvaluatorRecovery = recovery
 
     def evaluate(
         self,
@@ -36,7 +37,7 @@ class RecoveryEvaluator:
                 expected_transaction_id=expected_transaction_id,
                 reason=f"evaluate:{trigger}",
             ):
-                r._log_recovery_decision(
+                log_recovery_decision(
                     "evaluate_rejected",
                     acc,
                     trigger,
@@ -51,7 +52,7 @@ class RecoveryEvaluator:
                 expected_recovery_generation,
                 reason=f"evaluate:{trigger}",
             ):
-                r._log_recovery_decision(
+                log_recovery_decision(
                     "evaluate_rejected",
                     acc,
                     trigger,
@@ -71,7 +72,7 @@ class RecoveryEvaluator:
             session_wait_started_at = acc.session_wait_started_at
 
         if r._stop.is_set() or desired != AccountState.IN_GAME:
-            r._log_hold(acc, trigger, "stopped_or_not_desired")
+            log_hold(acc, trigger, "stopped_or_not_desired")
             return
         if current == AccountState.FAILED:
             try:
@@ -80,12 +81,12 @@ class RecoveryEvaluator:
                     return
             except Exception:
                 pass
-            r._log_hold(acc, trigger, "already_failed")
+            log_hold(acc, trigger, "already_failed")
             return
         auth_gate = evaluate_account_auth_gate(acc)
         if auth_gate.blocked:
             mark_account_auth_quarantined(acc, auth_gate, source=f"evaluate:{trigger}", runtime_writer=r._runtime_state)
-            r._log_hold(acc, trigger, auth_gate.reason_key)
+            log_hold(acc, trigger, auth_gate.reason_key)
             r.fail_account(acc, auth_gate.reason_key, auth_gate.reason)
             return
 
@@ -100,7 +101,7 @@ class RecoveryEvaluator:
                 acc.launch_fail_count = 0
                 acc.network_retry_count = 0
                 acc.session_retry_count = 0
-            r._log_hold(acc, trigger, "retry_limits_reset_keep_active")
+            log_hold(acc, trigger, "retry_limits_reset_keep_active")
             return
 
         try:
@@ -126,7 +127,7 @@ class RecoveryEvaluator:
                     acc.session_wait_started_at = now
                     session_wait_started_at = now
             wait_age = max(0.0, now - (session_wait_started_at or now))
-            r._log_hold(acc, trigger, f"waiting_session_check age={wait_age:.1f}s")
+            log_hold(acc, trigger, f"waiting_session_check age={wait_age:.1f}s")
             delay = min(5.0, max(2.0, float(r._cfg.get("network_check_interval", 5) or 5)))
             r._schedule(acc, delay, "wait_session_check")
             return
@@ -144,7 +145,7 @@ class RecoveryEvaluator:
                 r.fail_account(acc, "cookie_invalid", RECOVERY_REASON_MESSAGES["cookie_invalid"])
                 return
             delay = compute_backoff(session_retry_count, base=3, cap=30)
-            r._log_hold(acc, trigger, f"session_unverified_retry delay={delay:.1f}s")
+            log_hold(acc, trigger, f"session_unverified_retry delay={delay:.1f}s")
             r._schedule_cooldown(acc, delay, "session_retry", "session_retry")
             return
 
@@ -170,29 +171,29 @@ class RecoveryEvaluator:
             if callable(queue_has_fresh_entry):
                 has_fresh_queue_entry = bool(queue_has_fresh_entry(acc))
             if has_fresh_queue_entry:
-                r._log_hold(acc, trigger, "active_state=QUEUED")
+                log_hold(acc, trigger, "active_state=QUEUED")
                 return
-            r._log_recovery_decision("queue_repair", acc, trigger, reason_detail="queued_state_without_queue_entry")
+            log_recovery_decision("queue_repair", acc, trigger, reason_detail="queued_state_without_queue_entry")
             r._queue_account(acc, f"{trigger}:queue_repair")
             return
 
         if current in (AccountState.IN_GAME, AccountState.LAUNCHING, AccountState.VERIFY):
-            r._log_hold(acc, trigger, f"active_state={current.name}")
+            log_hold(acc, trigger, f"active_state={current.name}")
             return
 
         remaining = cooldown_until - time.time()
         if remaining > 0:
             r._state_mgr.transition(acc, AccountState.COOLDOWN, reason=trigger)
-            r._log_hold(acc, trigger, f"cooldown remaining={remaining:.1f}s")
+            log_hold(acc, trigger, f"cooldown remaining={remaining:.1f}s")
             r._schedule(acc, remaining, f"{trigger}:cooldown")
             return
 
-        if not r._queue_slot_available(acc):
-            delay = r._queue_delay_seconds()
-            r._log_hold(
+        if not r.slot_policy.slot_available(acc):
+            delay = r.slot_policy.queue_delay_seconds()
+            log_hold(
                 acc,
                 trigger,
-                f"queue_slot_full active={r._active_slot_count(excluding=acc)} max={r._max_concurrent_accounts()}",
+                f"queue_slot_full active={r.slot_policy.active_slot_count(excluding=acc)} max={r.slot_policy.max_concurrent_accounts()}",
             )
             r._schedule(acc, delay, "queue_slot_wait")
             return

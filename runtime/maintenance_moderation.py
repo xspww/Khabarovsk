@@ -124,7 +124,7 @@ class MaintenanceModerationMixin:
             return False
         try:
             from services.ban_guard import is_banned_text, is_suspended_text
-            from services.roblox_hybrid import validate_cookie_details
+            from services.roblox_validation import validate_cookie_details
         except Exception as exc:
             flog_kv("MODERATION", "unavailable", "warning", account=getattr(acc, "display_name", "?"), error=str(exc))
             return False
@@ -183,7 +183,7 @@ class MaintenanceModerationMixin:
             self._moderation_state()[key] = now
             return False
         try:
-            from services.roblox_hybrid import resolve_ban_for_dead_cookie as _resolve_dead
+            from services.roblox_identity import resolve_ban_for_dead_cookie as _resolve_dead
 
             username_hint = str(getattr(acc, "username", "") or getattr(acc, "_config_username", "") or "")
             _b, _name, _uid = _resolve_dead(cookie, username_hint)

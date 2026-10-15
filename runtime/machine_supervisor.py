@@ -139,7 +139,7 @@ class MachineSupervisor:
         if not _cfg_bool(self._cfg, "multi_roblox_enabled", True):
             return {"state": "disabled", "pid": 0}
         try:
-            from services.roblox_hybrid import multi_roblox_guard_status
+            from services.roblox_multibox import multi_roblox_guard_status
 
             return multi_roblox_guard_status()
         except Exception as exc:

@@ -8,13 +8,14 @@ from typing import Any
 from core import Account, AccountState, EventBus, SmartQueue, StateManager, flog_kv
 from runtime.recovery_evaluator import RecoveryEvaluator
 from runtime.recovery_owner import RecoveryOwnerRegistry
+from runtime.recovery_support import should_suppress_recovery_schedule
 from runtime.recovery_policy import (
     RecoveryDedupeTracker,
     RecoveryGate,
     SessionConflictTracker,
-    build_recovery_log_payload,
 )
 from runtime.recovery_signal_router import RecoverySignalRouter
+from runtime.recovery_slots import RecoverySlotPolicy
 from runtime.recovery_storm import RecoveryStormController
 from runtime.runtime_orchestrator import RuntimeOrchestrator
 from runtime.runtime_scheduler import RuntimeScheduler
@@ -30,7 +31,9 @@ ACTIVE_SLOT_STATES = {
 
 
 class RecoveryCoreMixin:
-    """Central recovery/rejoin controller. Every path that wants recovery reports here."""
+    """Wiring and lifecycle: owns construction, config fan-out, slots via
+    slot_policy, executor-hold park, and the public signal/evaluate entries
+    that delegate into the router and evaluator collaborator objects."""
 
     def __init__(
         self,
@@ -88,6 +91,10 @@ class RecoveryCoreMixin:
             timeline=timeline,
             logger=flog_kv,
             name="RecoveryScheduler",
+        )
+        self.slot_policy = RecoverySlotPolicy(
+            cfg_getter=lambda: self._cfg,
+            accounts_getter=lambda: self._accounts,
         )
         self._evaluator = RecoveryEvaluator(self)
         self._storm = RecoveryStormController(cfg, self._accounts)
@@ -169,12 +176,8 @@ class RecoveryCoreMixin:
             return
         try:
             current = self._scheduler.get(key)
-            if (
-                current
-                and current.due_at <= due
-                and current.recovery_generation == generation
-                and current.runtime_generation == runtime_generation
-                and current.command_generation == command_generation
+            if should_suppress_recovery_schedule(
+                current, due, generation, runtime_generation, command_generation
             ):
                 return
         except Exception:
@@ -234,36 +237,25 @@ class RecoveryCoreMixin:
 
 
     def _log_recovery_decision(self, event: str, acc: Account, reason: str, **fields):
-        flog_kv("RECOVERY", event, **build_recovery_log_payload(event, acc, reason, fields))
+        from runtime.recovery_support import log_recovery_decision
+
+        log_recovery_decision(event, acc, reason, **fields)
 
 
     def _max_concurrent_accounts(self) -> int:
-        try:
-            return max(1, int(float(self._cfg.get("max_concurrent_accounts", 40) or 40)))
-        except Exception:
-            return 40
+        return self.slot_policy.max_concurrent_accounts()
 
 
     def _queue_delay_seconds(self) -> float:
-        try:
-            return max(1.0, float(self._cfg.get("queue_delay_seconds", self._cfg.get("launch_rate_interval", 15)) or 15))
-        except Exception:
-            return 15.0
+        return self.slot_policy.queue_delay_seconds()
 
 
     def _active_slot_count(self, excluding: Account | None = None) -> int:
-        count = 0
-        for item in self._accounts:
-            if item is excluding:
-                continue
-            with item._lock:
-                if item.desired_state == AccountState.IN_GAME and item.state in ACTIVE_SLOT_STATES:
-                    count += 1
-        return count
+        return self.slot_policy.active_slot_count(excluding=excluding)
 
 
     def _queue_slot_available(self, acc: Account) -> bool:
-        return self._active_slot_count(excluding=acc) < self._max_concurrent_accounts()
+        return self.slot_policy.slot_available(acc)
 
 
     def _cfg_bool(self, key: str, default: bool) -> bool:

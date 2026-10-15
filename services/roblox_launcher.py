@@ -20,6 +20,7 @@ from domain.roblox_private_servers import (
     private_servers_enabled_for_universe,
     remembered_vip_unavailable,
     resolve_vip_access_code,
+    shared_direct_vip_link,
     universe_id_for_place,
     vip_unavailable_permanently,
 )
@@ -39,6 +40,9 @@ def ensure_owned_private_server(
     free_only: bool = True,
     known_servers: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """Launch-side adapter over the domain helper: injects the six call-site
+    arguments so callers pass five. Kept on purpose — deleting it pushes the
+    wiring out to every caller instead of concentrating it here."""
     return _ensure_owned_private_server(
         client,
         owner_user_id,
@@ -108,6 +112,9 @@ class HybridLauncher:
         if not browser_tracker_id:
             return []
         try:
+            # Stays lazy on purpose: launcher → process_service →
+            # process_backend → launch_service → hybrid → launcher is a
+            # cycle at import time.
             from services.process_service import ProcessManager
         except Exception:
             return []
@@ -122,6 +129,7 @@ class HybridLauncher:
     @classmethod
     def kill_duplicate_instances(cls, browser_tracker_id: str) -> dict[str, Any]:
         try:
+            # Stays lazy on purpose: see duplicate_pids_for_tracker above.
             from services.process_service import ProcessManager
         except Exception as exc:
             return {"ok": False, "killed": [], "msg": str(exc)}
@@ -179,6 +187,7 @@ class HybridLauncher:
             close_result = cls.kill_duplicate_instances(browser_tracker_id)
         else:
             release_multi_roblox_guard()
+            # Stays lazy on purpose: see duplicate_pids_for_tracker above.
             from services.process_service import ProcessManager
 
             killed_count = ProcessManager.kill_all_roblox_clients(wait_seconds=2.5)
@@ -215,15 +224,10 @@ class HybridLauncher:
         # Validated again here so a stale/mismatched value can never sneak in.
         shared_direct = str(target.get("shared_direct_vip") or data.get("shared_direct_vip") or "").strip()
         if shared_direct:
-            try:
-                _scomp = parse_vip_components(shared_direct)
-            except Exception:
-                _scomp = {}
-            _splace = str((_scomp or {}).get("place_id") or "").strip()
-            _scode = str((_scomp or {}).get("link_code") or "").strip() or str((_scomp or {}).get("access_code") or "").strip()
-            if _splace and _scode and (not place_id or _splace == place_id):
-                place_id = place_id or _splace
-                vip_link = shared_direct
+            qualified = shared_direct_vip_link(shared_direct, place_id)
+            if qualified:
+                place_id = place_id or parse_vip_components(qualified).get("place_id", "")
+                vip_link = qualified
                 vip_resolved = False
                 vip_resolution = {}
                 auto_private_enabled = False

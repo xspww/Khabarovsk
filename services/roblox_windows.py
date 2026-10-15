@@ -8,6 +8,7 @@ from typing import Any
 from core import flog, flog_kv
 from runtime.popup_detector import DEFAULT_POPUP_OBSERVER, classify_texts, is_inspection_held
 from services.window_control import (
+    TASKBAR_HIDDEN_PROP,
     arrange_windows,
     minimize_windows,
     primary_monitor_work_area,
@@ -17,6 +18,8 @@ from services.window_control import (
 
 
 def classify_disconnect_dialog_texts(cls, texts: list[str]) -> dict[str, Any]:
+    """Seam keeper: routes the cls-bound world to the popup detector so
+    callers import one place. Deleting it spreads popup imports instead."""
     return classify_texts(texts)
 
 def _window_snapshot_for_pid(cls, pid: int | None) -> dict[str, Any]:
@@ -120,32 +123,67 @@ def _dedupe_largest_per_pid(windows: list[dict[str, Any]]) -> list[dict[str, Any
     return sorted(by_pid.values(), key=lambda item: (float(item.get("created") or 0.0), int(item.get("pid") or 0)))
 
 
+class _EnumRect(ctypes.Structure):
+    _fields_ = [
+        ("left", ctypes.c_long),
+        ("top", ctypes.c_long),
+        ("right", ctypes.c_long),
+        ("bottom", ctypes.c_long),
+    ]
+
+
+def _collect_roblox_proc_meta(iter_roblox_processes: Any) -> dict[int, dict[str, Any]]:
+    """Single owner for the pid → created/name snapshot both enumerations need."""
+    proc_meta: dict[int, dict[str, Any]] = {}
+    for proc in iter_roblox_processes(game_only=True):
+        try:
+            proc_meta[int(proc.pid)] = {
+                "created": float(proc.create_time() or 0.0),
+                "name": str(proc.name() or ""),
+            }
+        except Exception:
+            continue
+    return proc_meta
+
+
+def _measure_window_rect(user32: Any, rect: Any, hwnd: int, iconic: bool) -> tuple[int, int, int, int, int, int] | None:
+    """Single owner for per-window rect extraction.
+
+    Both enumerations used to repeat this inline with slightly different
+    error handling; the visible path now also skips a failing window
+    instead of aborting the whole scan.
+    """
+    try:
+        if iconic:
+            # Minimized windows report a 160x28 off-screen rect via
+            # GetWindowRect, so use the restored (normal) rect instead.
+            normal = _placement_normal_rect(user32, int(hwnd))
+            if not normal:
+                return None
+            left, top, right, bottom = normal
+        else:
+            try:
+                if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                    return None
+            except Exception:
+                return None
+            left, top, right, bottom = int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)
+        width = max(0, right - left)
+        height = max(0, bottom - top)
+        return left, top, right, bottom, width, height
+    except Exception:
+        return None
+
+
 def _visible_roblox_windows(cls, include_minimized: bool = True) -> list[dict[str, Any]]:
     windows: list[dict[str, Any]] = []
     try:
-        proc_meta: dict[int, dict[str, Any]] = {}
-        for proc in cls._iter_roblox_processes(game_only=True):
-            try:
-                proc_meta[int(proc.pid)] = {
-                    "created": float(proc.create_time() or 0.0),
-                    "name": str(proc.name() or ""),
-                }
-            except Exception:
-                continue
-
+        proc_meta = _collect_roblox_proc_meta(cls._iter_roblox_processes)
         if not proc_meta:
             return []
 
         user32 = ctypes.windll.user32
         WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_long)
-
-        class RECT(ctypes.Structure):
-            _fields_ = [
-                ("left", ctypes.c_long),
-                ("top", ctypes.c_long),
-                ("right", ctypes.c_long),
-                ("bottom", ctypes.c_long),
-            ]
 
         def _enum_callback(hwnd, lparam):
             if not user32.IsWindowVisible(hwnd):
@@ -157,27 +195,17 @@ def _visible_roblox_windows(cls, include_minimized: bool = True) -> list[dict[st
             if not meta:
                 return True
             try:
-                if bool(user32.GetPropW(ctypes.c_void_p(int(hwnd)), "CronusTaskbarHidden")):
+                if bool(user32.GetPropW(ctypes.c_void_p(int(hwnd)), TASKBAR_HIDDEN_PROP)):
                     return True
             except Exception:
                 pass
             iconic = bool(user32.IsIconic(hwnd))
             if iconic and not include_minimized:
                 return True
-            if iconic:
-                normal = _placement_normal_rect(user32, hwnd)
-                if not normal:
-                    return True
-                left, top, right, bottom = normal
-                width = max(0, right - left)
-                height = max(0, bottom - top)
-            else:
-                rect = RECT()
-                if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-                    return True
-                left, top, right, bottom = int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)
-                width = max(0, right - left)
-                height = max(0, bottom - top)
+            measured = _measure_window_rect(user32, _EnumRect(), hwnd, iconic)
+            if measured is None:
+                return True
+            left, top, right, bottom, width, height = measured
             area = width * height
             if not _passes_window_size_filter(width, height):
                 return True
@@ -259,27 +287,11 @@ def _hidden_roblox_windows(cls) -> list[dict[str, Any]]:
     """
     windows: list[dict[str, Any]] = []
     try:
-        proc_meta: dict[int, dict[str, Any]] = {}
-        for proc in cls._iter_roblox_processes(game_only=True):
-            try:
-                proc_meta[int(proc.pid)] = {
-                    "created": float(proc.create_time() or 0.0),
-                    "name": str(proc.name() or ""),
-                }
-            except Exception:
-                continue
+        proc_meta = _collect_roblox_proc_meta(cls._iter_roblox_processes)
         if not proc_meta:
             return []
         user32 = ctypes.windll.user32
         WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_long)
-
-        class RECT(ctypes.Structure):
-            _fields_ = [
-                ("left", ctypes.c_long),
-                ("top", ctypes.c_long),
-                ("right", ctypes.c_long),
-                ("bottom", ctypes.c_long),
-            ]
 
         def _enum_callback(hwnd, lparam):
             try:
@@ -287,7 +299,7 @@ def _hidden_roblox_windows(cls) -> list[dict[str, Any]]:
             except Exception:
                 return True
             try:
-                taskbar_hidden = bool(user32.GetPropW(ctypes.c_void_p(int(hwnd)), "CronusTaskbarHidden"))
+                taskbar_hidden = bool(user32.GetPropW(ctypes.c_void_p(int(hwnd)), TASKBAR_HIDDEN_PROP))
             except Exception:
                 taskbar_hidden = False
             if visible and not taskbar_hidden:
@@ -305,25 +317,10 @@ def _hidden_roblox_windows(cls) -> list[dict[str, Any]]:
                 iconic = bool(user32.IsIconic(hwnd))
             except Exception:
                 iconic = False
-            if iconic:
-                # Minimized windows report a 160x28 off-screen rect via
-                # GetWindowRect, so use the restored (normal) rect instead.
-                normal = _placement_normal_rect(user32, int(hwnd))
-                if not normal:
-                    return True
-                left, top, right, bottom = normal
-                width = max(0, right - left)
-                height = max(0, bottom - top)
-            else:
-                rect = RECT()
-                try:
-                    if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
-                        return True
-                except Exception:
-                    return True
-                left, top, right, bottom = int(rect.left), int(rect.top), int(rect.right), int(rect.bottom)
-                width = max(0, right - left)
-                height = max(0, bottom - top)
+            measured = _measure_window_rect(user32, _EnumRect(), hwnd, iconic)
+            if measured is None:
+                return True
+            left, top, right, bottom, width, height = measured
             area = width * height
             if not _passes_window_size_filter(width, height):
                 return True

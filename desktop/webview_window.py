@@ -378,10 +378,24 @@ class DesktopWindow:
 
         class RoundedMainWindow(QMainWindow):
             # NOTE: no QBitmap mask here. WebView2 is a native HWND child and
-            # cannot be clipped by a Qt mask (airspace). Rounding comes from
-            # DWM (DwmSetWindowAttribute 33) + CSS radius. This also removes
-            # a full-mask repaint on every resize (CPU win).
-            pass
+            # cannot be clipped by a Qt mask (airspace). Window is square
+            # (no rounding): DWM DONOTROUND + Qt radius 0. The visible 1px
+            # border is drawn by the Qt shell only. The web `.app` stays flat
+            # (border 0 / radius 0) so there is exactly one outer edge.
+            # This also removes a full-mask repaint on every resize (CPU win).
+            def changeEvent(self, event):  # noqa: N802 (Qt override)
+                try:
+                    from PySide6.QtCore import QEvent
+                except Exception:
+                    QEvent = None
+                try:
+                    if QEvent is not None and event.type() == QEvent.Type.WindowStateChange:
+                        sync = getattr(self, "_cronus_sync_chrome", None)
+                        if callable(sync):
+                            sync(bool(self.isMaximized()))
+                except Exception:
+                    pass
+                super().changeEvent(event)
 
         class TitleBar(QFrame):
             def __init__(self, parent, title: str = APP_NAME):
@@ -520,12 +534,16 @@ background-color: #26161b;
                     self._toggle_maximized()
                     event.accept()
 
-        def _apply_windows_rounded_corners(qwindow):
+        def _apply_windows_rounded_corners(qwindow, maximized: bool = False):
             if os.name != "nt":
                 return
             try:
                 hwnd = int(qwindow.winId())
-                preference = ctypes.c_int(2)
+                # Square window: DONOTROUND (1) in both states. Maximized
+                # frameless windows must not round either, otherwise DWM
+                # leaves a gap / cut border at the screen edges.
+                _ = maximized
+                preference = ctypes.c_int(1)
                 ctypes.windll.dwmapi.DwmSetWindowAttribute(
                     ctypes.c_void_p(hwnd),
                     ctypes.c_uint(33),
@@ -561,33 +579,68 @@ background-color: #26161b;
         # clipped by a translucent Qt mask (airspace). Translucency caused
         # the buggy fringe/black corners. Outer rounding comes from DWM only.
         window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
-        window.setStyleSheet("QMainWindow { background: #0a0b10; }")
+        window.setStyleSheet("QMainWindow { background: #0b0c10; }")
         if not icon.isNull():
             window.setWindowIcon(icon)
         # Opaque WebView2 view: no translucency, no alpha compositing.
         # This is the main RAM/CPU win vs the old transparent QWebEngineView.
         view = QtWebView2Widget(parent=window, url=str(url or ""))
         view.setObjectName("CronusWebView")
-        view.setStyleSheet("#CronusWebView { background: #0a0b10; border: 0; }")
+        view.setStyleSheet("#CronusWebView { background: #0b0c10; border: 0; }")
         container = QWidget(window)
         container.setObjectName("CronusWindowShell")
         container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        container.setStyleSheet(
-            """
-            QWidget#CronusWindowShell {
-                background: #0a0b10;
-                border: 1px solid #20232c;
-                border-radius: 0px;
-            }
-            """
+        # Single outer edge: Qt draws the 1px border, square corners.
+        # The web `.app` is flat (no border / radius / inset ring).
+        _SHELL_QSS_NORMAL = (
+            "QWidget#CronusWindowShell {"
+            " background: #0b0c10;"
+            " border: 1px solid #20232c;"
+            " border-radius: 0px;"
+            "}"
+            "#CronusWebView { background: #0b0c10; border: 0; }"
         )
+        _SHELL_QSS_MAXIMIZED = (
+            "QWidget#CronusWindowShell {"
+            " background: #0b0c10;"
+            " border: 0px;"
+            " border-radius: 0px;"
+            "}"
+            "#CronusWebView { background: #0b0c10; border: 0; }"
+        )
+        container.setStyleSheet(_SHELL_QSS_NORMAL)
+
+        def _sync_chrome(maximized: bool):
+            try:
+                container.setStyleSheet(_SHELL_QSS_MAXIMIZED if maximized else _SHELL_QSS_NORMAL)
+            except Exception:
+                pass
+            _apply_windows_rounded_corners(window, maximized=maximized)
+            # WebView2 JS bridge: only evaluate_js exists (ExecuteScriptAsync
+            # queued pre-init). Guard is_ready so a pre-init call is skipped
+            # instead of raising inside the bridge.
+            try:
+                if bool(getattr(view, "is_ready", False)):
+                    view.evaluate_js(
+                        "try{document.documentElement.classList.toggle"
+                        "('cronus-maximized', %s)}catch(e){}"
+                        % ("true" if maximized else "false")
+                    )
+            except Exception:
+                pass
+
+        window._cronus_sync_chrome = _sync_chrome
+        # NOTE: children are inset by 1px so they never paint over the outer
+        # ring. QSS border-radius does not clip child widgets, so without
+        # this the square titlebar/web corners cover the rounded border.
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(1, 1, 1, 1)
         layout.setSpacing(0)
         title_bar = TitleBar(window)
         layout.addWidget(title_bar)
         layout.addWidget(view, 1)
         window.setCentralWidget(container)
+        _sync_chrome(bool(window.isMaximized()))
         # Initial size matched to the Storm Launcher reference screenshot
         # (compact ~4:3 login window, not wide 1280x820).
         window.resize(1124, 843)

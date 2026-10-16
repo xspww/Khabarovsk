@@ -383,7 +383,7 @@ class DesktopWindow:
             # border is drawn by the Qt shell only. The web `.app` stays flat
             # (border 0 / radius 0) so there is exactly one outer edge.
             # This also removes a full-mask repaint on every resize (CPU win).
-            def changeEvent(self, event):  # noqa: N802 (Qt override)
+            def changeEvent(self, event):
                 try:
                     from PySide6.QtCore import QEvent
                 except Exception:

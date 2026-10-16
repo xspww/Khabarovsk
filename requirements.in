@@ -1,0 +1,11 @@
+# Source pins (lower bounds). CI installs from requirements-lock.txt.
+# Edit here, then regenerate lock with: pip-compile requirements.in -o requirements-lock.txt
+fastapi>=0.110
+uvicorn[standard]>=0.29
+psutil>=5.9
+pillow>=10.0
+PySide6>=6.6
+qtwebview2>=0.5
+cryptography>=42.0
+certifi>=2024.2.2
+playwright>=1.44

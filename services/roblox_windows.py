@@ -6,7 +6,6 @@ from ctypes import wintypes
 from typing import Any
 
 from core import flog, flog_kv
-from runtime.popup_detector import DEFAULT_POPUP_OBSERVER, classify_texts, is_inspection_held
 from services.window_control import (
     TASKBAR_HIDDEN_PROP,
     arrange_windows,
@@ -17,10 +16,21 @@ from services.window_control import (
 )
 
 
+def _popups() -> Any:
+    """Lazy runtime.popup_detector without a top-level services->runtime import.
+
+    No fallback: popup detection is required, so a missing module must fail
+    loud at call time instead of silently degrading.
+    """
+    from runtime import popup_detector as _pd
+
+    return _pd
+
+
 def classify_disconnect_dialog_texts(cls, texts: list[str]) -> dict[str, Any]:
     """Seam keeper: routes the cls-bound world to the popup detector so
     callers import one place. Deleting it spreads popup imports instead."""
-    return classify_texts(texts)
+    return _popups().classify_texts(texts)
 
 def _window_snapshot_for_pid(cls, pid: int | None) -> dict[str, Any]:
     snapshot = {"count": 0, "hwnd": 0, "responsive": False, "hung": False}
@@ -232,7 +242,7 @@ def _visible_roblox_windows(cls, include_minimized: bool = True) -> list[dict[st
 
     eligible = [
         item for item in windows
-        if not is_inspection_held(int(item.get("pid") or 0))
+        if not _popups().is_inspection_held(int(item.get("pid") or 0))
     ]
     return _dedupe_largest_per_pid(eligible)
 
@@ -431,7 +441,7 @@ def inspect_disconnect_dialog(
     if pid is None:
         return {"matched": False, "action": "", "reason_key": "", "detail": "", "error_code": ""}
     try:
-        return DEFAULT_POPUP_OBSERVER.inspect_pid(
+        return _popups().DEFAULT_POPUP_OBSERVER.inspect_pid(
             pid,
             prepare=prepare,
             process_idle=process_idle,
@@ -581,7 +591,7 @@ def _capture_pid_window_image(cls, pid: int | None):
 
 def _inspect_disconnect_dialog_visual(cls, pid: int | None) -> dict[str, Any]:
     try:
-        return DEFAULT_POPUP_OBSERVER.inspect_pid(pid, prepare=False, sample_count=2)
+        return _popups().DEFAULT_POPUP_OBSERVER.inspect_pid(pid, prepare=False, sample_count=2)
     except Exception as e:
         flog(f"[PROC] visual disconnect inspect error for PID {pid}: {e}", "warning")
     return {"matched": False, "action": "", "reason_key": "", "detail": "", "error_code": ""}

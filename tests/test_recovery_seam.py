@@ -5,13 +5,13 @@ test surface — deleting the coordinator still leaves a usable contract.
 """
 import threading
 import unittest
+from types import SimpleNamespace
 
 from runtime.recovery_seam import EvaluatorRecovery, RouterRecoveryActions
 from runtime.recovery_signal_router import RecoverySignalRouter
 from runtime.recovery_support import should_suppress_recovery_schedule
 from runtime.runtime_state_manager import RuntimeStateManager
 from services.captcha_guard import CAPTCHA_REASON
-from types import SimpleNamespace
 
 
 class _FakeRecovery:

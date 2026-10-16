@@ -7,7 +7,35 @@ import threading
 import time
 from typing import Any
 
-from desktop import console_output
+
+def _console() -> Any:
+    """Lazy desktop.console_output without an infra->desktop import.
+
+    Falls back to a no-color stub so infra/ stays foundation-only.
+    """
+    try:
+        from desktop import console_output as _co
+
+        return _co
+    except ImportError:  # pragma: no cover - import fallback
+        class _Stub:
+            @staticmethod
+            def enable_virtual_terminal(stream: Any = None) -> bool:
+                return False
+
+            @staticmethod
+            def color_requested() -> bool:
+                return False
+
+            @staticmethod
+            def paint(text: str, color: str = "", enabled: bool = False) -> str:
+                return str(text)
+
+            @staticmethod
+            def write_line(line: Any) -> None:
+                return None
+
+        return _Stub()
 
 _LOCK = threading.Lock()
 _ACTIVE_ACCOUNTS: set[str] = set()
@@ -112,12 +140,12 @@ def set_lua_liveness_required(enabled: bool) -> None:
 
 
 def _enable_virtual_terminal() -> bool:
-    return console_output.enable_virtual_terminal(sys.stdout)
+    return _console().enable_virtual_terminal(sys.stdout)
 
 
 def _colors_enabled() -> bool:
     global _COLOR_SUPPORT
-    if not console_output.color_requested():
+    if not _console().color_requested():
         return False
     if _COLOR_SUPPORT is None:
         _COLOR_SUPPORT = _enable_virtual_terminal()
@@ -125,7 +153,7 @@ def _colors_enabled() -> bool:
 
 
 def _paint(text: str, color: str = "") -> str:
-    return console_output.paint(text, color, enabled=_colors_enabled())
+    return _console().paint(text, color, enabled=_colors_enabled())
 
 
 def _text(value: Any, default: str = "") -> str:
@@ -557,7 +585,7 @@ def _captcha_line(account: str, pid: str = "") -> str | None:
 
 
 def _print_line(line: str) -> None:
-    console_output.write_line(line)
+    _console().write_line(line)
 
 
 def _emit_suspect_process_check(fields: dict[str, Any]) -> None:

@@ -62,7 +62,7 @@ git clone https://github.com/xspww/Khabarovsk.git
 cd Khabarovsk
 
 # ลงของที่ต้องใช้
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-lock.txt
 
 # รัน (แบบใดแบบหนึ่ง)
 .\Run.cmd
@@ -155,6 +155,16 @@ pyinstaller cronus_launcher.spec
 
 Root เหลือแค่ `main.py` (ทางเข้า), `core.py` (facade รวม export), `version.py` (เวอร์ชัน single-source)
 
+```mermaid
+flowchart LR
+  main[main.py] --> desk[desktop/WebView2]
+  desk --> api[api_routes/FastAPI]
+  api --> farm[runtime/FarmController]
+  farm --> svc[services/Roblox-OS]
+  farm --> dom[domain/pure-models]
+  svc --> dom
+```
+
 | ชั้น | โฟลเดอร์ | README |
 | ----- | ------ | ------ |
 | Foundation | `infra/` (path, log, console, TLS) | [infra/README.th.md](infra/README.th.md) |
@@ -171,7 +181,7 @@ Root เหลือแค่ `main.py` (ทางเข้า), `core.py` (faca
 
 ### ร่วมพัฒนา
 
-ถ้าอยากช่วยทำ เปิด issue หรือ pull request มาที่ `main` ได้ อย่าใส่ cookie บัญชี ข้อมูลในเครื่อง กับไฟล์เซ็น release ลงคอมมิต
+ถ้าอยากช่วยทำ อ่าน [CONTRIBUTING.md](CONTRIBUTING.md) (Conventional Commits + squash-merge) แล้วเปิด pull request มาที่ `main` ดูประวัติได้ที่ [CHANGELOG.md](CHANGELOG.md) อย่าใส่ cookie บัญชี ข้อมูลในเครื่อง กับไฟล์เซ็น release ลงคอมมิต
 
 ### สัญญาอนุญาต
 

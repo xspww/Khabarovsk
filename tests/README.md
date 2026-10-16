@@ -1,6 +1,6 @@
 # tests/ — Unit tests (no Windows, no network, no browser)
 
-Run: `python -m unittest discover -s tests` (CI: `compileall` then this).
+Run: `python -m unittest discover -s tests` (CI: `compileall` + `ruff check` + coverage `--fail-under=60`).
 No `__init__.py`; each file is hermetic with pure dicts/fixtures.
 Covers pure helpers across `domain/` + `runtime/` (plus pure `services/`/`desktop/` fragments) — live Roblox
 calls and WebView2 windows stay out of scope.
@@ -23,6 +23,13 @@ calls and WebView2 windows stay out of scope.
 | `test_process_backend_wiring.py` | Binder seam: every bound name resolves (AST + import). | `services/process_backend.py`. |
 | `test_recovery_seam.py` | Recovery seam narrowness (router works through 7 actions). | `runtime/recovery_seam.py`, `runtime/recovery_signal_router.py`. |
 | `test_vip_links.py` | VIP link helpers (per-place filter, shared-direct). | `domain/roblox_private_servers.py`. |
+| `test_layering.py` | Layering guard (top-level only, allowlist empty 2026-10-16). | `domain/`, `config/`, `infra/`, `services/`, `runtime/`, `api_routes/`, `desktop/`. |
+| `test_version_compare.py` | Version compare/tag contract. | `version.py`. |
+| `test_session_identity.py` | Session identity + launch intent. | `domain/session_identity.py`. |
+| `test_browser_tracker.py` | Tracker extract/match/label. | `services/browser_tracker.py`. |
+| `test_config_validation.py` | Config clamp/coerce/removed-keys. | `config/validation.py`. |
+| `test_moderation_guards.py` | Ban/suspend/captcha/lock/recovery predicates. | `services/ban_guard.py`, `services/verify_guard.py`, `services/captcha_guard.py`. |
+| `test_proof_verdict.py` | Proof rank/classify + cookie verdict map. | `services/process_proof_policy.py`, `services/roblox_validation.py`. |
 
 ### Summary
 

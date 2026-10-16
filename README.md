@@ -62,7 +62,7 @@ git clone https://github.com/xspww/Khabarovsk.git
 cd Khabarovsk
 
 # Install
-python -m pip install -r requirements.txt
+python -m pip install -r requirements-lock.txt
 
 # Run (either one)
 .\Run.cmd
@@ -155,6 +155,16 @@ GitHub Actions builds releases the same way when a `v*` tag is pushed. The tag m
 
 Root stays clean: entry is `main.py`, public facade is `core.py`, version single-source is `version.py`.
 
+```mermaid
+flowchart LR
+  main[main.py] --> desk[desktop/WebView2]
+  desk --> api[api_routes/FastAPI]
+  api --> farm[runtime/FarmController]
+  farm --> svc[services/Roblox-OS]
+  farm --> dom[domain/pure-models]
+  svc --> dom
+```
+
 | Layer | Folder | README |
 | ----- | ------ | ------ |
 | Foundation | `infra/` (paths, logging, console, TLS) | [infra/README.md](infra/README.md) |
@@ -171,7 +181,7 @@ Root stays clean: entry is `main.py`, public facade is `core.py`, version single
 
 ### Contributing
 
-If you're interested in contributing, open an issue or pull request against `main`. Keep account cookies, local data, and signed artifacts out of commits.
+If you're interested in contributing, read [CONTRIBUTING.md](CONTRIBUTING.md) (Conventional Commits, squash-merge) and open a PR with the template checklist. See [CHANGELOG.md](CHANGELOG.md) for release history. Keep account cookies, local data, and signed artifacts out of commits.
 
 ### License
 

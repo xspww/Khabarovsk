@@ -2,9 +2,9 @@
 import unittest
 
 from services.roblox_windows import (
-    _EnumRect,
     _collect_roblox_proc_meta,
     _dedupe_largest_per_pid,
+    _EnumRect,
     _measure_window_rect,
     _passes_window_size_filter,
 )

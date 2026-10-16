@@ -43,8 +43,8 @@
 
 | File | Description |
 | ---- | ----------- |
-| `CronusLauncher-<version>.exe` | Standalone launcher, stable file name for in-place updates |
-| `CronusLauncher-<version>-portable.zip` | `CronusLauncher.exe` + `Api.lua` (executor loader script) |
+| `CronusLauncher-<version>.exe` | Versioned download artifact (the updater downloads this exact name) |
+| `CronusLauncher-<version>-portable.zip` | `CronusLauncher.exe` (stable name, keeps shortcuts working across in-place updates) + `Api.lua` (executor loader script) |
 
 #### Updates and signatures
 
@@ -82,14 +82,14 @@ The screenshot above is the home screen: live resource graphs, account search, a
 - **Search accounts... + Set game** — filter by username and assign the target Place ID to selected accounts
 - **All / Online / Queued + Reset columns** — quick filters plus one-click column reset
 - **Account table** — `# / STATUS / USERNAME / GAME / DESCRIPTION`, empty state reads `No accounts match the current filter`
-- **Status pills (bottom-left)** — `Online / Queued / Finished / Captcha / Banned / Suspended / Locked / Invalid` + `Running: 0s` timer
+- **Status pills (bottom-left)** — `Online / Queued / Finished / Captcha / Banned / Suspended / Locked / Recovery / Invalid` + `Running: 0s` timer
 - **Top actions** — `START`, `Close Roblox`, `Add Accounts`, `Reload Cookies`
 
 ### Launcher
 
 Queue and launch multiple accounts from one place, with automatic rejoin on disconnect.
 
-- **Add Accounts** — popup-browser sign-in, `Single` or `Multi` (one `user:pass` per line). 2FA, captcha, and passkey are completed by you in the popup; the cookie is captured automatically. Uses installed Chrome/Edge, otherwise downloads Chromium once.
+- **Add Accounts** — popup-browser sign-in, `Single` or `Multi` (one `user:pass` per line, up to 50 entries). 2FA, captcha, and passkey are completed by you in the popup; the cookie is captured automatically. Uses installed Chrome/Edge; source runs download Chromium once when neither is found (compiled `.exe` builds require Chrome/Edge).
 - **Queue / Game** — stage accounts, set the target game/server, then `START` them together
 - **Automatic rejoin** — detects disconnects/kicks and rejoins the configured server without manual clicks
 - **Close Roblox / Reload Cookies** — kill all clients at once or refresh stored sessions
@@ -127,6 +127,8 @@ Runtime config and account state stay local-first:
 2. Cookies are never sent to external servers and never committed to the repo
 3. Updates leave the data directory untouched — the launcher only opens the Releases page / replaces the `.exe`
 
+Override the location with the `CRONUS_USER_ROOT` env var; without `%LOCALAPPDATA%` it falls back to `~/.cronus_launcher`.
+
 ### Requirements
 
 | Component | Requirement |
@@ -135,6 +137,7 @@ Runtime config and account state stay local-first:
 | Runtime (release build) | None — `.exe` from Releases is standalone |
 | Runtime (from source) | Python 3.11+ (`pip install -r requirements.txt`) |
 | Game client | Roblox Player installed on the host |
+| WebView2 | Evergreen Runtime (auto-prompted/downloaded if missing) |
 
 ### Build from source
 
@@ -175,6 +178,10 @@ If you're interested in contributing, open an issue or pull request against `mai
 GPLv3 — see [LICENSE](LICENSE) and [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt).
 
 Corresponding Source for release binaries is the tagged source on the [Releases page](https://github.com/xspww/Khabarovsk/releases) (tag matching `APP_VERSION` in `version.py`).
+
+### Summary
+
+Cronus Launcher is a local-first, multi-account Roblox launcher for Windows: one dashboard drives queueing, launching, auto-rejoin, and performance controls, with cookies encrypted on the host and updates verified by signature + SHA256 before install.
 
 ---
 

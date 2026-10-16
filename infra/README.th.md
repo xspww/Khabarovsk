@@ -9,3 +9,7 @@
 | `core_logging.py` | `flog` / `flog_kv` / `flog_struct` + หมุนไฟล์ล็อกผ่าน `services.safe_rotating_log` ย้ายไฟล์ล็อกเก่าเข้า `LOG_DIR` | `core.py` re-export (facade สาธารณะ) ใช้โดย `runtime/event_bus.py`, `runtime/state_machine.py`, `runtime/smart_queue.py` |
 | `console_activity.py` | State หน้าคอนโซลในหน่วยความจำ: บัญชีที่ active, hold captcha/verify, flag Lua-liveness จัดรูปบรรทัดให้หน้าต่างคอนโซลของ `desktop/host.py` | ใช้โดย `infra/core_logging.py` (emit), `desktop/host.py` (`format_console_line`), `runtime/farm.py` (`set_total_accounts`, `set_lua_liveness_required`) |
 | `net_tls.py` | TLS context กลางอันเดียว: bundle `certifi` + Windows CA/ROOT store `default_context()` สำหรับทุก HTTPS ขาออก | ถูก import 10 โมดูล: `services/roblox_hybrid.py`, `services/roblox_install_manager.py`, `services/credential_check.py`, `services/network_monitor.py`, `services/executor_compatibility.py`, `services/app_version_check.py`, `services/app_updater.py`, `domain/roblox_private_servers.py`, `api_routes/accounts_routes.py`, `runtime/account_worker.py` |
+
+### สรุป
+
+ชั้นล่างสุด มีแค่ path, ล็อก, สถานะ console และ TLS context กลาง ห้าม import ชั้นแอป เลเยอร์ด้านบนทุกตัวเลยพึ่งชั้นนี้ได้อย่างปลอดภัย

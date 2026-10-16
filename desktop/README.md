@@ -14,3 +14,7 @@ localhost FastAPI (`main.py` → `run_desktop(app, farm)`).
 | `console_output.py` | Console capture (`write_line`, `paint`, VT enable). | `main.py` startup banner, `infra/console_activity.py`, `host.py`. |
 | `console_icon.py` | Console/tray icon from `assets/cronus_icon.png`. | `host.py`. |
 | `constants.py` | Loopback constants (`DEFAULT_PORT`, host). | `backend_host.py`, `webview_window.py`. |
+
+### Summary
+
+The native Windows shell: single-instance guard, backend serve loop, WebView2 window (with browser fallback), and console/tray presence.

@@ -1,6 +1,6 @@
 # runtime/ — Farm orchestration (control plane)
 
-Biggest package (~62 modules). Owns START/STOP, queue, launch, recovery,
+Biggest package (~67 modules). Owns START/STOP, queue, launch, recovery,
 and all watchdog loops. Depends on `domain/`, `services/`, `core.py`;
 exposes `FarmController` (`farm.py`) to `main.py` and `api_routes/`.
 Sub-package `popup_detector/` isolates popup CV/OCR rules.
@@ -43,6 +43,8 @@ Sub-package `popup_detector/` isolates popup CV/OCR rules.
 | `recovery_guard_net.py` | Multi-roblox self-heal loop, `mark_network_lost/on_network_restored`. | `services/multi_roblox_guard.py`, `services/network_monitor.py`. |
 | `recovery_policy.py` | Single-owner policy predicates. Tested. | `tests/test_recovery_policy.py`. |
 | `recovery_evaluator.py` + `recovery_context.py` + `recovery_support.py` | Score signals → verdict + context. | `recovery_engine.py`. |
+| `recovery_seam.py` | Narrow seam: `RouterRecoveryActions` (7 actions) + `EvaluatorRecovery` protocols. | `recovery_signal_router.py`, `recovery_evaluator.py`, tested by `tests/test_recovery_seam.py`. |
+| `recovery_slots.py` | Slot policy: active-slot count, `max_concurrent_accounts`, queue delay. | `recovery_evaluator.py`, `recovery_core.py`. |
 | `recovery_signal_router.py` + `recovery_storm.py` + `recovery_owner.py` | Route signals, suppress storms, single owner. | `event_bus.py`. |
 | `recovery_view.py` | UI projection of recovery state. | `runtime_view_model.py`. |
 | `orphan_sweeper.py` | Reaps ownerless Roblox PIDs. | `machine_supervisor.py`. |
@@ -88,3 +90,7 @@ Sub-package `popup_detector/` isolates popup CV/OCR rules.
 | `runtime_view_model.py` | UI view model (status pills, Running timer). | `api_routes/runtime_routes.py`, `ui/runtime/status.js`. |
 | `telemetry_view.py` + `runtime_timeline.py` + `runtime_state_observability.py` | Graphs, timeline, state-change log. | `api_routes/system_routes.py`, `ui` live graphs. |
 | `diagnostic_bundle.py` | One-click diagnostics zip (logs + config snapshot). | `api_routes/system_routes.py`. |
+
+### Summary
+
+The control plane: START/STOP, queue, launch, recovery, and watchdog loops (~67 modules). It orchestrates through `services/` and projects read-only views for the UI/API.

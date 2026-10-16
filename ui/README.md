@@ -30,3 +30,7 @@ No `__init__.py` (web assets, not a Python package).
 | `runtime/hoverScrollbar.js`, `runtime/zoomLock.js` | Scroll/zoom polish. |  |
 | `styles/*.css` (11) | Split theme: `base-layout`, `navigation`, `controls-tables`, `accounts-dashboard`, `cards-modals-responsive`, etc. |  |
 | `fonts/` | `woff2` webfonts (sources: `assets/fonts/` + `OFL.txt`). |  |
+
+### Summary
+
+Dashboard frontend as plain ESM + CSS with no build step, served at `/` and `/ui/` with `no-store` headers; all data comes from `api_routes/*` via `runtime/api.js`.

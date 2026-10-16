@@ -9,7 +9,7 @@ set CRONUS_CONSOLE_COLOR=1
 cd /d "%~dp0"
 where python >nul 2>nul
 if errorlevel 1 (
-  echo Python not found in PATH. Install Python 3.10+ and retry.
+  echo Python not found in PATH. Install Python 3.11+ and retry.
   pause
   exit /b 1
 )

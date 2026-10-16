@@ -21,3 +21,7 @@ UI calls these from `ui/runtime/api.js`.
 | `discord_routes.py` | Presence toggle/status. | `services/discord_presence.py`. |
 | `system_routes.py` | Health/version/Cronus Manager/update (uses `infra/app_paths`, `version.py`). | `services/roblox_install_manager.py`, `services/app_updater.py`, `services/app_version_check.py`, `runtime/diagnostic_bundle.py`. |
 | `idempotency.py` | Idempotency-Key guard for retries. | `runtime_routes.py`, `accounts_routes.py`. |
+
+### Summary
+
+Thin FastAPI adapters for the localhost boundary: parse HTTP, call into `runtime/`/`services/`/`config/`, return JSON. No business logic lives here.

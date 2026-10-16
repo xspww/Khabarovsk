@@ -2,8 +2,9 @@
 
 รัน: `python -m unittest discover -s tests` (CI: `compileall` แล้วรันคำสั่งนี้)
 ไม่มี `__init__.py` แต่ละไฟล์ปิดในตัวเองด้วย dict/fixture ล้วน
-คลุม helper ใน `domain/` + `runtime/` — การเรียก Roblox จริงใน
-`services/` กับ WebView2 ใน `desktop/` ตั้งใจไม่เทส
+คลุม helper ล้วนใน `domain/` + `runtime/` (+ ส่วนล้วนของ
+`services/`/`desktop/`) — การเรียก Roblox จริงกับหน้าต่าง WebView2
+ตั้งใจไม่เทส
 
 | ไฟล์ | คลุม | เชื่อมกับ |
 | ---- | ------ | ----------- |
@@ -16,3 +17,14 @@
 | `test_roblox_windows.py` | กฎแจกแจงหน้าต่าง (ไม่มี Win32) | `services/roblox_windows.py` |
 | `test_manual_login.py` | เซสชัน Manual Login (ไม่มีเบราว์เซอร์/เน็ตเวิร์ก) | `services/manual_login_service.py` |
 | `test_lua_hardening.py` | ความเปราะของ path ตัวช่วย Lua | `lua/run_in_executor.lua`, `api_routes/lua_routes.py` |
+| `test_cookie_verdict.py` | mapping คำตัดสิน cookie (ล้วน ไม่มี store) | `services/roblox_validation.py` |
+| `test_desktop_executors.py` | กันถดถอย lazy-import ของ executor มาตรฐาน (Qt/shiboken) | `desktop/webview_window.py` |
+| `test_install_cleanup.py` | ล้างเวอร์ชันเก่า (ไฟล์ล้วน ไม่ต้องมี Roblox) | `services/roblox_install_manager.py` |
+| `test_launch_target.py` | แตกแขนงตัวประกอบ launch-target | `services/roblox_launch_service.py` |
+| `test_process_backend_wiring.py` | เส้น binder: ทุกชื่อที่ผูกไว้ต้อง resolve ได้ (AST + import) | `services/process_backend.py` |
+| `test_recovery_seam.py` | ความแคบของ recovery seam (router ผ่าน 7 แอ็กชันเท่านั้น) | `runtime/recovery_seam.py`, `runtime/recovery_signal_router.py` |
+| `test_vip_links.py` | helper ลิงก์ VIP (กรองราย place, shared-direct) | `domain/roblox_private_servers.py` |
+
+### สรุป
+
+ยูนิตเทสต์แบบปิดในตัวเอง (`python -m unittest discover -s tests`, CI รันด้วย) ใช้ dict/fixture ล้วนคลุม logic ใน domain/runtime กับส่วนล้วนของ services/desktop ไม่มี Windows ไม่มีเน็ตเวิร์ก ไม่มีเบราว์เซอร์

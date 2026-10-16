@@ -9,3 +9,7 @@
 หมายเหตุบิลด์: `cronus_launcher.spec` bundle `assets/` → `sys._MEIPASS/assets`
 แก้ผ่าน `infra/app_paths.resource_path()` ห้ามโหลดด้วย relative path
 ดิบๆ ไม่งั้น exe จะหาไม่เจอ
+
+### สรุป
+
+มีแค่ asset ไบนารี (ไอคอน ฟอนต์ ไลเซนส์ฟอนต์) `cronus_launcher.spec` แพ็กเข้า `sys._MEIPASS` แล้วอ้างผ่าน `infra/app_paths.resource_path()`

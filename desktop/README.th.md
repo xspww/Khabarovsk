@@ -14,3 +14,7 @@ FastAPI localhost (`main.py` → `run_desktop(app, farm)`)
 | `console_output.py` | จับคอนโซล (`write_line`, `paint`, เปิด VT) | แบนเนอร์ตอนเริ่มใน `main.py`, `infra/console_activity.py`, `host.py` |
 | `console_icon.py` | ไอคอนคอนโซล/tray จาก `assets/cronus_icon.png` | `host.py` |
 | `constants.py` | ค่าคงที่ loopback (`DEFAULT_PORT`, host) | `backend_host.py`, `webview_window.py` |
+
+### สรุป
+
+เชลล์ Windows แบบ native ทั้งการ์ด single-instance, loop เสิร์ฟ backend, หน้าต่าง WebView2 (มี browser fallback) และ console/tray

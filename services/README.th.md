@@ -33,6 +33,7 @@
 | `roblox_validation.py` | `validate_cookie_details`, `validate_record_cookie_identity`, `validate_cookie` | `runtime/account_worker.py`, `runtime/captcha_detector.py`, `runtime/verify_detector.py`, `runtime/maintenance_moderation.py`, `services/manual_login_service.py`, `services/roblox_launcher.py` |
 | `roblox_multibox.py` | guard subprocess (`ensure/release/status`, spawn `services/multi_roblox_guard.py`, `atexit`) | `runtime/farm_lifecycle.py`, `runtime/recovery_engine.py`, `runtime/machine_supervisor.py`, `services/roblox_launcher.py` |
 | `roblox_launch_service.py` | บริการเปิดเกม: ประกอบ deeplink / join private-server | `runtime/launch_attempt.py`, `runtime/account_worker.py` |
+| `roblox_launcher.py` | `HybridLauncher`: คุมขั้นตอน validate → guard → VIP → ticket → เปิดเกม | `services/roblox_launch_service.py`, `services/roblox_hybrid.py` (facade), `services/roblox_http.py`, `services/roblox_multibox.py` |
 | `roblox_install_manager.py` | ตัวติดตั้ง/อัปเดตจาก official endpoint เท่านั้น + ล้างเวอร์ชันเก่า | `main.py` (`ROBLOX_INSTALLER`), `api_routes/system_routes.py` (Cronus Manager) |
 | `roblox_processes.py` | แจกแจง/ผูกโปรเซส (PID ↔ บัญชี) | `services/process_service.py`, เทสโดย `tests/test_process_binding.py` |
 | `roblox_liveness.py` | probe ความมีชีวิตของไคลเอนต์ (หน้าต่าง + heartbeat) | `runtime/maintenance_liveness.py` |
@@ -84,3 +85,7 @@
 | ---- | --------- | ----------- |
 | `safe_rotating_log.py` | file handler หมุนไฟล์แบบกันพัง | `infra/core_logging.py` |
 | `log_rate_limiter.py` | จำกัดความถี่ล็อกราย scope | `infra/core_logging.py`, loop ร้อนใน `runtime/*` |
+
+### สรุป
+
+ไฟล์ละหนึ่งขอบเขตภายนอก (Roblox, OS, เบราว์เซอร์, updater, Discord) พึ่งแค่ `infra/`/`config/`/`domain/` ด้านล่าง `runtime/` เรียกเข้ามาได้อย่างเดียว ห้ามเรียกกลับ

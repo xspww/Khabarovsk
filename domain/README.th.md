@@ -12,3 +12,7 @@ dataclass, enum, และ predicate ล้วน import จากที่ไ�
 | `session_identity.py` | ตัวตน session / launch-nonce (ผูก Lua heartbeat กับบัญชี) | ใช้โดย `runtime/lua_identity.py`, `services/lua_session_tokens.py`, `api_routes/lua_routes.py` |
 | `games.py` | คลังหลายเกม: รายชื่อประสบการณ์ Roblox ที่บัญชีเข้าร่วมได้ | เสิร์ฟโดย `api_routes/games_routes.py`, ใช้โดย `ui/runtime/gamesManager.js` |
 | `roblox_private_servers.py` | แก้ VIP/private-server + verdict cache (ใช้ `infra/net_tls`) | ใช้โดย `services/private_server_preflight.py`, `services/vip_tracker.py` |
+
+### สรุป
+
+dataclass, enum และ predicate ล้วน ไม่มี I/O import จากที่ไหนก็ปลอดภัย รวมทั้งยูนิตเทสต์แบบปิดในตัวเอง

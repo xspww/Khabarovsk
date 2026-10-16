@@ -12,3 +12,7 @@ including `tests/` without Windows APIs or network.
 | `session_identity.py` | Session / launch-nonce identity (binds Lua heartbeat to account). | Used by `runtime/lua_identity.py`, `services/lua_session_tokens.py`, `api_routes/lua_routes.py`. |
 | `games.py` | Multi-game library: named Roblox experiences accounts can join. | Served by `api_routes/games_routes.py`, consumed by `ui/runtime/gamesManager.js`. |
 | `roblox_private_servers.py` | VIP/private-server resolve + verdict cache (uses `infra/net_tls`). | Used by `services/private_server_preflight.py`, `services/vip_tracker.py`. |
+
+### Summary
+
+Pure dataclasses, enums, and predicates with no I/O — safe to import from anywhere, including hermetic unit tests.

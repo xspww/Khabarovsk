@@ -21,3 +21,7 @@ UI เรียกผ่าน `ui/runtime/api.js`
 | `discord_routes.py` | เปิด/ปิด presence + สถานะ | `services/discord_presence.py` |
 | `system_routes.py` | health/เวอร์ชัน/Cronus Manager/update (ใช้ `infra/app_paths`, `version.py`) | `services/roblox_install_manager.py`, `services/app_updater.py`, `services/app_version_check.py`, `runtime/diagnostic_bundle.py` |
 | `idempotency.py` | การ์ด Idempotency-Key กันยิงซ้ำ | `runtime_routes.py`, `accounts_routes.py` |
+
+### สรุป
+
+อะแดปเตอร์ FastAPI บางๆ ตรงขอบ localhost รับ HTTP แล้วเรียก `runtime/`/`services/`/`config/` ส่ง JSON กลับ ไม่มี business logic ตรงนี้

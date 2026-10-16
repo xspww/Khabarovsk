@@ -30,3 +30,7 @@
 | `runtime/hoverScrollbar.js`, `runtime/zoomLock.js` | เก็บงาน scroll/zoom |  |
 | `styles/*.css` (11) | ธีมแยกส่วน: `base-layout`, `navigation`, `controls-tables`, `accounts-dashboard`, `cards-modals-responsive` ฯลฯ |  |
 | `fonts/` | เว็บฟอนต์ `woff2` (ต้นฉบับ: `assets/fonts/` + `OFL.txt`) |  |
+
+### สรุป
+
+ฟรอนต์แดชบอร์ดเป็น ESM + CSS ล้วน ไม่มี build step เสิร์ฟที่ `/` กับ `/ui/` พร้อม header `no-store` ข้อมูลทั้งหมดมาจาก `api_routes/*` ผ่าน `runtime/api.js`

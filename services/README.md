@@ -33,6 +33,7 @@ to avoid cycles. `main.py` wires singletons (`EXECUTOR_TRACKER`,
 | `roblox_validation.py` | `validate_cookie_details`, `validate_record_cookie_identity`, `validate_cookie` | `runtime/account_worker.py`, `runtime/captcha_detector.py`, `runtime/verify_detector.py`, `runtime/maintenance_moderation.py`, `services/manual_login_service.py`, `services/roblox_launcher.py` |
 | `roblox_multibox.py` | guard subprocess (`ensure/release/status`, spawn `services/multi_roblox_guard.py`, `atexit`) | `runtime/farm_lifecycle.py`, `runtime/recovery_engine.py`, `runtime/machine_supervisor.py`, `services/roblox_launcher.py` |
 | `roblox_launch_service.py` | Launch service: builds deeplink/private-server join args. | `runtime/launch_attempt.py`, `runtime/account_worker.py`. |
+| `roblox_launcher.py` | `HybridLauncher`: validate → guard → VIP → ticket → launch orchestration. | `services/roblox_launch_service.py`, `services/roblox_hybrid.py` (facade), `services/roblox_http.py`, `services/roblox_multibox.py`. |
 | `roblox_install_manager.py` | Official-endpoints-only installer/updater + old-version cleanup. | `main.py` (`ROBLOX_INSTALLER`), `api_routes/system_routes.py` (Cronus Manager). |
 | `roblox_processes.py` | Process enumeration/binding (PID ↔ account). | `services/process_service.py`, tested by `tests/test_process_binding.py`. |
 | `roblox_liveness.py` | Client liveness probes (window + heartbeat). | `runtime/maintenance_liveness.py`. |
@@ -84,3 +85,7 @@ to avoid cycles. `main.py` wires singletons (`EXECUTOR_TRACKER`,
 | ---- | --------- | ----------- |
 | `safe_rotating_log.py` | Crash-safe rotating file handler. | `infra/core_logging.py`. |
 | `log_rate_limiter.py` | Per-scope spam throttle. | `infra/core_logging.py`, `runtime/*` hot loops. |
+
+### Summary
+
+One module per external boundary (Roblox, OS, browser, updater, Discord). Depends downward on `infra/`/`config/`/`domain/` only; `runtime/` calls into it, never the reverse.

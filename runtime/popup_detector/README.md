@@ -10,3 +10,7 @@ stays thin. Pure functions over sampled frames; no farm imports.
 | `popup_sampler.py` | Frame sampling + dedup. | `popup_text_detector.py`, `popup_visual_detector.py`. |
 | `popup_text_detector.py` | OCR/text rules. | `popup_classifier.py`. |
 | `popup_visual_detector.py` | Template/visual rules. | `popup_classifier.py`. |
+
+### Summary
+
+Pure screenshot → popup-verdict rules kept separate so the account worker stays thin; no farm imports.

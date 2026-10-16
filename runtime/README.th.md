@@ -1,6 +1,6 @@
 # runtime/ — คนคุม farm (control plane)
 
-แพ็กเกจใหญ่สุด (~62 โมดูล) เป็นเจ้าของ START/STOP, คิว, การเปิดเกม,
+แพ็กเกจใหญ่สุด (~67 โมดูล) เป็นเจ้าของ START/STOP, คิว, การเปิดเกม,
 recovery และ watchdog loop ทั้งหมด พึ่ง `domain/`, `services/`,
 `core.py` เปิด `FarmController` (`farm.py`) ให้ `main.py` กับ
 `api_routes/` ซับแพ็กเกจ `popup_detector/` แยกกฎ CV/OCR ของ popup
@@ -42,6 +42,8 @@ recovery และ watchdog loop ทั้งหมด พึ่ง `domain/`, `
 | `recovery_guard_net.py` | loop self-heal multi-roblox, `mark_network_lost/on_network_restored` | `services/multi_roblox_guard.py`, `services/network_monitor.py` |
 | `recovery_policy.py` | predicate นโยบายแบบ single-owner มีเทส | `tests/test_recovery_policy.py` |
 | `recovery_evaluator.py` + `recovery_context.py` + `recovery_support.py` | ให้คะแนนสัญญาณ → คำตัดสิน + บริบท | `recovery_engine.py` |
+| `recovery_seam.py` | เส้นแบ่งแคบ: protocol `RouterRecoveryActions` (7 แอ็กชัน) + `EvaluatorRecovery` | `recovery_signal_router.py`, `recovery_evaluator.py`, เทสโดย `tests/test_recovery_seam.py` |
+| `recovery_slots.py` | นโยบาย slot: นับ slot ที่ครองอยู่, `max_concurrent_accounts`, หน่วงคิว | `recovery_evaluator.py`, `recovery_core.py` |
 | `recovery_signal_router.py` + `recovery_storm.py` + `recovery_owner.py` | เส้นทางสัญญาณ, กัน storm, เจ้าของเดียว | `event_bus.py` |
 | `recovery_view.py` | ภาพ recovery สำหรับ UI | `runtime_view_model.py` |
 | `orphan_sweeper.py` | เก็บ PID Roblox ไร้เจ้าของ | `machine_supervisor.py` |
@@ -87,3 +89,7 @@ recovery และ watchdog loop ทั้งหมด พึ่ง `domain/`, `
 | `runtime_view_model.py` | view model ของ UI (เม็ดสถานะ, timer Running) | `api_routes/runtime_routes.py`, `ui/runtime/status.js` |
 | `telemetry_view.py` + `runtime_timeline.py` + `runtime_state_observability.py` | กราฟ, ไทม์ไลน์, ล็อกเปลี่ยน state | `api_routes/system_routes.py`, กราฟสดใน `ui` |
 | `diagnostic_bundle.py` | zip วินิจฉัยคลิกเดียว (ล็อก + snapshot ตั้งค่า) | `api_routes/system_routes.py` |
+
+### สรุป
+
+control plane คุม START/STOP, คิว, เปิดเกม, recovery และ watchdog loop (~67 โมดูล) สั่งงานผ่าน `services/` แล้วฉายภาพ read-only ให้ UI/API

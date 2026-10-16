@@ -10,3 +10,7 @@
 | `popup_sampler.py` | sample + dedup เฟรม | `popup_text_detector.py`, `popup_visual_detector.py` |
 | `popup_text_detector.py` | กฎ OCR/ข้อความ | `popup_classifier.py` |
 | `popup_visual_detector.py` | กฎ template/ภาพ | `popup_classifier.py` |
+
+### สรุป
+
+กฎ screenshot → คำตัดสิน popup แบบฟังก์ชันล้วน แยกไว้ต่างหากให้ account worker บางลง ไม่ import farm

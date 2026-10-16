@@ -43,8 +43,8 @@
 
 | ไฟล์ | คำอธิบาย |
 | ---- | ----------- |
-| `CronusLauncher-<version>.exe` | ลอนเชอร์ตัวเดียว ชื่อไฟล์คงเดิม อัปเดตแบบแทนที่ไฟล์ได้ |
-| `CronusLauncher-<version>-portable.zip` | `CronusLauncher.exe` + `Api.lua` (สคริปต์ loader สำหรับ executor) |
+| `CronusLauncher-<version>.exe` | ไฟล์ดาวน์โหลดตามเวอร์ชัน (ตัวอัปเดตโหลดชื่อนี้ตรงตัว) |
+| `CronusLauncher-<version>-portable.zip` | `CronusLauncher.exe` (ชื่อคงเดิม ชอร์ตคัตไม่หลุดตอนอัปเดตแบบแทนที่ไฟล์) + `Api.lua` (สคริปต์ loader สำหรับ executor) |
 
 #### อัปเดตและลายเซ็น
 
@@ -82,14 +82,14 @@ python main.py
 - **Search accounts... + Set game** — พิมพ์ชื่อเพื่อกรอง แล้วปัก Place ID ให้บัญชีที่เลือก
 - **All / Online / Queued + Reset columns** — ปุ่มกรองด่วนกับปุ่มล้างค่าคอลัมน์ในคลิกเดียว
 - **ตารางบัญชี** — `# / STATUS / USERNAME / GAME / DESCRIPTION` ถ้าไม่ตรงเงื่อนไขจะขึ้น `No accounts match the current filter`
-- **ป้ายสถานะ (มุมซ้ายล่าง)** — `Online / Queued / Finished / Captcha / Banned / Suspended / Locked / Invalid` พร้อมตัวจับเวลา `Running: 0s`
+- **ป้ายสถานะ (มุมซ้ายล่าง)** — `Online / Queued / Finished / Captcha / Banned / Suspended / Locked / Recovery / Invalid` พร้อมตัวจับเวลา `Running: 0s`
 - **ปุ่มด้านบน** — `START`, `Close Roblox`, `Add Accounts`, `Reload Cookies`
 
 ### เปิดเกมหลายบัญชี
 
 คุมคิวกับเปิดหลายบัญชีจากที่เดียว พอเน็ตหลุดหรือโดนเตะก็พากลับเข้าเซิร์ฟเวอร์เดิมให้เอง
 
-- **Add Accounts** — ล็อกอินผ่านป๊อปอัพเบราว์เซอร์ มีแบบ `Single` กับ `Multi` (วาง `user:pass` บรรทัดละคู่) ส่วน 2FA กับ captcha กับ passkey กดเองในป๊อปอัพได้เลย แล้วโปรแกรมดึง cookie ให้อัตโนมัติ ถ้ามี Chrome หรือ Edge อยู่แล้วก็ใช้ได้เลย ถ้าไม่มีจะโหลด Chromium ให้ครั้งเดียว
+- **Add Accounts** — ล็อกอินผ่านป๊อปอัพเบราว์เซอร์ มีแบบ `Single` กับ `Multi` (วาง `user:pass` บรรทัดละคู่ สูงสุด 50 บัญชี) ส่วน 2FA กับ captcha กับ passkey กดเองในป๊อปอัพได้เลย แล้วโปรแกรมดึง cookie ให้อัตโนมัติ ใช้ Chrome หรือ Edge ที่ลงไว้อยู่แล้ว ถ้าไม่มีและรันจากซอร์สจะโหลด Chromium ให้ครั้งเดียว (ตัว `.exe` ต้องมี Chrome/Edge)
 - **Queue / Game** — จัดคิวบัญชี ปักเกมกับเซิร์ฟเวอร์ปลายทาง แล้วกด `START` พร้อมกัน
 - **รีจอยอัตโนมัติ** — พอหลุดหรือโดนเตะก็กลับเข้าเกมที่ตั้งไว้ให้ ไม่ต้องกดเอง
 - **Close Roblox / Reload Cookies** — ปิดทุกจอในคลิกเดียว หรือรีเฟรชเซสชันที่เก็บไว้
@@ -127,6 +127,8 @@ config กับสถานะบัญชีเก็บไว้ในเค�
 2. ไม่ส่ง cookie ออกไปเซิร์ฟเวอร์ภายนอก และไม่คอมมิตลง repo
 3. อัปเดตแล้วโฟลเดอร์นี้อยู่ครบเหมือนเดิม ลอนเชอร์แค่เปิดหน้า Releases หรือแทนที่ไฟล์ `.exe` ให้
 
+เปลี่ยนที่เก็บได้ด้วย env `CRONUS_USER_ROOT` ถ้าไม่มี `%LOCALAPPDATA%` จะใช้ `~/.cronus_launcher` แทน
+
 ### สิ่งที่ต้องมี
 
 | องค์ประกอบ | ความต้องการ |
@@ -135,6 +137,7 @@ config กับสถานะบัญชีเก็บไว้ในเค�
 | รันไทม์ (ตัว release) | ไม่ต้องลงเพิ่ม ไฟล์ `.exe` จากหน้า Releases พร้อมใช้ |
 | รันไทม์ (รันจากซอร์ส) | Python 3.11 ขึ้นไป (`pip install -r requirements.txt`) |
 | ตัวเกม | ลง Roblox Player ไว้บนเครื่องแล้ว |
+| WebView2 | Evergreen Runtime (ถ้ายังไม่มี แอปจะถามก่อนแล้วโหลดให้เอง) |
 
 ### สร้างจากซอร์ส
 
@@ -175,6 +178,10 @@ Root เหลือแค่ `main.py` (ทางเข้า), `core.py` (faca
 GPLv3 — ดู [LICENSE](LICENSE) และ [THIRD_PARTY_NOTICES.txt](THIRD_PARTY_NOTICES.txt)
 
 ซอร์สของไฟล์ release คือแท็กบนหน้า [Releases](https://github.com/xspww/Khabarovsk/releases) ที่ตรงกับ `APP_VERSION` ใน `version.py`
+
+### สรุป
+
+Cronus Launcher คือลอนเชอร์ Roblox หลายบัญชีแบบ local-first บน Windows แดชบอร์ดเดียวคุมทั้งจัดคิว เปิดเกม รีจอยอัตโนมัติ และคุมประสิทธิภาพ cookie เข้ารหัสเก็บไว้บนเครื่อง อัปเดตตรวจลายเซ็นกับ SHA256 ก่อนติดตั้งทุกครั้ง
 
 ---
 

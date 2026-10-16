@@ -8,15 +8,7 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-
-def _tracker_label(value: Any) -> str:
-    # Local copy of services.browser_tracker.tracker_label (kept here so
-    # domain/ stays pure and never imports services/). Behavior identical:
-    # "" when empty, full when <=8 chars, else "...last8".
-    tracker = str(value or "").strip()
-    if not tracker:
-        return ""
-    return tracker if len(tracker) <= 8 else f"...{tracker[-8:]}"
+from services.browser_tracker import tracker_label
 
 
 def _new_id(prefix: str) -> str:
@@ -221,7 +213,7 @@ def build_launch_intent(account: Any, reason: str = "") -> dict[str, Any]:
         "private_server_intent": private_server_intent,
         "active_vip_hash": str(parsed_active.get("url_hash", "") or ""),
         "active_private_link_code_hash": active_private_hash,
-        "browser_tracker_id": _tracker_label(browser_tracker_id),
+        "browser_tracker_id": tracker_label(browser_tracker_id),
     }
     return {
         "reason": str(reason or ""),
@@ -239,6 +231,6 @@ def build_launch_intent(account: Any, reason: str = "") -> dict[str, Any]:
         "active_job_id_hash": str(parsed_active.get("job_id_hash", "") or ""),
         "configured_vip_place_ids": configured_place_ids,
         "configured_private_link_code_hashes": configured_private_hashes,
-        "browser_tracker_id": _tracker_label(browser_tracker_id),
+        "browser_tracker_id": tracker_label(browser_tracker_id),
         "launch_intent_summary": launch_intent_summary,
     }

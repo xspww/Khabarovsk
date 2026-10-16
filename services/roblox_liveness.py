@@ -1,35 +1,14 @@
 from __future__ import annotations
 
-import threading
 import time
 from typing import Any
 
 from core import Account, flog_kv
+from runtime.runtime_state_manager import RuntimeStateManager
 from services.process_proof_policy import score_resource_signals
 from services.roblox_log_evidence import CachedLogEvidenceCollector, collect_recent_log_evidence
 
-_RUNTIME_STATE: Any = None
-_RUNTIME_STATE_LOCK = threading.Lock()
-
-
-def _runtime_state() -> Any:
-    """Lazy RuntimeStateManager without a top-level services->runtime import."""
-    global _RUNTIME_STATE
-    if _RUNTIME_STATE is None:
-        with _RUNTIME_STATE_LOCK:
-            if _RUNTIME_STATE is None:
-                try:
-                    from runtime.runtime_state_manager import RuntimeStateManager
-
-                    _RUNTIME_STATE = RuntimeStateManager(logger=flog_kv)
-                except ImportError:  # pragma: no cover
-                    flog_kv("RUNTIME", "binding_state_noop_fallback", "warning")
-                    class _Noop:
-                        def set_binding_status(self, *a: Any, **k: Any) -> None:
-                            return None
-
-                    _RUNTIME_STATE = _Noop()
-    return _RUNTIME_STATE
+_RUNTIME_STATE = RuntimeStateManager(logger=flog_kv)
 _POPUP_LOG_EVIDENCE_WINDOW_SECONDS = 120.0
 _POPUP_LOG_EVIDENCE_CACHE_SECONDS = 2.0
 _LOG_EVIDENCE_CACHE = CachedLogEvidenceCollector(ttl_seconds=_POPUP_LOG_EVIDENCE_CACHE_SECONDS)
@@ -252,7 +231,7 @@ def staged_orphan_reconcile(
     }
     if not pid:
         with acc._lock:
-            _runtime_state().set_binding_status(acc, "unbound", reason="orphan_reconcile_no_candidate")
+            _RUNTIME_STATE.set_binding_status(acc, "unbound", reason="orphan_reconcile_no_candidate")
             acc.orphan_confidence = 0.0
         result["reason"] = "no_candidate"
         return result
@@ -263,7 +242,7 @@ def staged_orphan_reconcile(
     trusted_restore = trusted_owner or trusted_identity or trusted_tracker
     if level == "HIGH_CONFIDENCE" and trusted_restore:
         with acc._lock:
-            _runtime_state().set_binding_status(acc, "verified", reason="orphan_reconcile_trusted_restore")
+            _RUNTIME_STATE.set_binding_status(acc, "verified", reason="orphan_reconcile_trusted_restore")
             acc.orphan_confidence = confidence
             acc.orphan_pid = None
             acc.orphan_identity = ""
@@ -283,7 +262,7 @@ def staged_orphan_reconcile(
                 acc.orphan_observed_at = now
                 acc.orphan_verify_after = now + max(5.0, float(quarantine_seconds or 20.0))
             acc.orphan_confidence = confidence
-            _runtime_state().set_binding_status(acc, "orphan_pending_verification", reason="orphan_reconcile_pending")
+            _RUNTIME_STATE.set_binding_status(acc, "orphan_pending_verification", reason="orphan_reconcile_pending")
             verify_after = acc.orphan_verify_after
         result["action"] = "quarantine" if now < verify_after else "monitor_only"
         result["reason"] = "medium_confidence_pending" if now < verify_after else "medium_confidence_unowned"
@@ -291,7 +270,7 @@ def staged_orphan_reconcile(
 
     with acc._lock:
         acc.orphan_confidence = confidence
-        _runtime_state().set_binding_status(
+        _RUNTIME_STATE.set_binding_status(
             acc,
             "untrusted_orphan" if confidence > 0 else "unbound",
             reason="orphan_reconcile_low_confidence",

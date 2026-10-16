@@ -14,7 +14,6 @@ from typing import Any
 from fastapi import HTTPException, Request
 
 from core import banned_block_reason, cookie_identity_block_reason, cookie_invalid_block_reason, suspended_block_reason
-from domain.roblox_private_servers import resolve_vip_access_code
 from infra import net_tls
 from services.account_hybrid import ACCOUNT_STORE, audit_event
 from services.account_reload import emit_reload_cookie_events
@@ -34,8 +33,9 @@ from services.captcha_guard import (
     is_captcha_status_text,
     set_account_captcha_hold,
 )
-from services.roblox_launch_service import AccountLaunchService, parse_vip_link
+from domain.roblox_private_servers import resolve_vip_access_code
 from services.roblox_validation import validate_cookie_details
+from services.roblox_launch_service import AccountLaunchService, parse_vip_link
 from services.verify_guard import (
     LOCKED_BLOCK_REASON,
     LOCKED_REASON,

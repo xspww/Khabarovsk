@@ -9,6 +9,8 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+from infra import net_tls
+
 USER_AGENT = "CronusLauncherHybrid/1.0"
 ROBLOX_HOME = "https://www.roblox.com/"
 GAMES_BASE = "https://games.roblox.com/"
@@ -123,21 +125,6 @@ def parse_vip_access_code_html(html: str) -> dict[str, str]:
     }
 
 
-def _urlopen(request: Any, timeout: float | None = None) -> Any:
-    """Shared-TLS urlopen without a domain->infra import.
-
-    Prefers infra.net_tls.urlopen (certifi + Windows CA) via lazy import;
-    falls back to urllib.request.urlopen so domain/ stays pure.
-    Import failure only triggers the fallback — network errors from the
-    chosen backend propagate unchanged (no silent retry).
-    """
-    try:
-        from infra import net_tls as _tls
-    except ImportError:
-        return urllib.request.urlopen(request, timeout=timeout)
-    return _tls.urlopen(request, timeout=timeout)
-
-
 def resolve_vip_access_code(cookie: str, vip_link: str, timeout: float = 12.0) -> dict[str, Any]:
     parts = parse_vip_components(vip_link)
     place_id = parts.get("place_id", "")
@@ -158,7 +145,7 @@ def resolve_vip_access_code(cookie: str, vip_link: str, timeout: float = 12.0) -
         },
     )
     try:
-        with _urlopen(req, timeout=timeout) as resp:
+        with net_tls.urlopen(req, timeout=timeout) as resp:
             body = resp.read().decode("utf-8", errors="replace")
             status = int(resp.status)
     except urllib.error.HTTPError as exc:
@@ -207,7 +194,7 @@ def universe_id_for_place(place_id: str, timeout: float = 8.0) -> tuple[bool, st
     url = APIS_BASE + f"universes/v1/places/{urllib.parse.quote(place, safe='')}/universe"
     req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, "Accept": "application/json, text/plain, */*"})
     try:
-        with _urlopen(req, timeout=timeout) as resp:
+        with net_tls.urlopen(req, timeout=timeout) as resp:
             payload = json.loads(resp.read().decode("utf-8", errors="replace"))
     except urllib.error.HTTPError as exc:
         return False, "", f"Place to universe lookup failed ({exc.code})"

@@ -11,9 +11,8 @@ import unittest
 
 class TestStdlibExecutors(unittest.TestCase):
     def test_resolve_after_shiboken(self):
-        import concurrent.futures as cf
-
         import shiboken6  # noqa: F401  (poisons lazy resolution on py3.15)
+        import concurrent.futures as cf
 
         from desktop.webview_window import _resolve_stdlib_executors
 

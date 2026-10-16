@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from core import account_launch_block_reason, cookie_invalid_block_reason
+from runtime.recovery_support import _set_account_cookie_block
 from services.captcha_guard import (
     CAPTCHA_BLOCK_REASON,
     CAPTCHA_REASON,
@@ -225,42 +226,7 @@ def mark_account_auth_quarantined(
             except Exception:
                 pass
     else:
-        try:
-            from runtime.recovery_support import _set_account_cookie_block as _cookie_block
-        except ImportError:  # pragma: no cover - keeps services->runtime out of top level
-            def _cookie_block(acc: Any, reason: str, cookie_username: str = "") -> None:
-                # Degraded mirror of runtime.recovery_support._set_account_cookie_block:
-                # same fields, same lock, best-effort persist (no recovery import).
-                lock = getattr(acc, "_lock", None)
-
-                def _write() -> None:
-                    if cookie_username:
-                        acc.cookie_username = str(cookie_username)
-                    acc.cookie_mismatch = True
-                    acc.session_checked = True
-                    acc.session_valid = False
-                    acc.manual_status = reason
-                    acc.last_error = reason
-                    acc.last_crash_reason = "cookie_mismatch"
-
-                if lock is not None:
-                    with lock:
-                        _write()
-                else:
-                    _write()
-                try:
-                    from core import flog_kv as _flog
-
-                    _flog(
-                        "ACCOUNT_DATA",
-                        "cookie_identity_status_persist_degraded",
-                        "warning",
-                        account=getattr(acc, "display_name", ""),
-                    )
-                except Exception:
-                    pass
-
-        _cookie_block(account, decision.reason)
+        _set_account_cookie_block(account, decision.reason)
         if runtime_writer is not None:
             try:
                 runtime_writer.set_recovery(account, status=decision.reason_key, reason=decision.reason_key, inflight=False)

@@ -6,36 +6,14 @@ import threading
 from typing import Any
 
 from core import flog_kv
+from runtime.runtime_state_manager import RuntimeStateManager
 from services.process_proof_policy import (
     PROOF_STRONG,
     PROOF_UNTRUSTED,
     normalize_process_proof_level,
 )
 
-_RUNTIME_STATE: Any = None
-_RUNTIME_STATE_LOCK = threading.Lock()
-
-
-def _runtime_state() -> Any:
-    """Lazy RuntimeStateManager without a top-level services->runtime import."""
-    global _RUNTIME_STATE
-    if _RUNTIME_STATE is None:
-        with _RUNTIME_STATE_LOCK:
-            if _RUNTIME_STATE is None:
-                try:
-                    from runtime.runtime_state_manager import RuntimeStateManager
-
-                    _RUNTIME_STATE = RuntimeStateManager(logger=flog_kv)
-                except ImportError:  # pragma: no cover - keeps services importable
-                    from core import flog_kv as _flog
-
-                    _flog("RUNTIME", "binding_state_noop_fallback", "warning")
-                    class _Noop:
-                        def set_binding_status(self, *a: Any, **k: Any) -> None:
-                            return None
-
-                    _RUNTIME_STATE = _Noop()
-    return _RUNTIME_STATE
+_RUNTIME_STATE = RuntimeStateManager(logger=flog_kv)
 
 
 def account_key(acc: Any) -> str:
@@ -126,7 +104,7 @@ def quarantine_process_match(account: Any, reason: str, validation: dict[str, An
     lock = getattr(account, "_lock", None)
 
     def _write() -> None:
-        _runtime_state().set_binding_status(account, "process_proof_quarantine", reason=reason or "process_proof_quarantine")
+        _RUNTIME_STATE.set_binding_status(account, "process_proof_quarantine", reason=reason or "process_proof_quarantine")
         account.binding_decision = "quarantined"
         account.process_binding_confidence = float(validation.get("confidence") or 0.0)
         account.process_proof_level = str(proof.get("process_proof_level") or PROOF_UNTRUSTED)
@@ -187,7 +165,7 @@ def mark_account_process_proof(
             account.ownership_confidence = float(confidence or 0.0)
             account.last_signal_confidence = float(confidence or 0.0)
         if status:
-            _runtime_state().set_binding_status(account, str(status), reason=reason or "process_proof")
+            _RUNTIME_STATE.set_binding_status(account, str(status), reason=reason or "process_proof")
         if proof == PROOF_STRONG:
             account.binding_decision = "verified"
             account.process_reject_reason = ""

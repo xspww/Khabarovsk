@@ -47,7 +47,7 @@ class TestBackendWiring(unittest.TestCase):
 
         bindings = _bindings()
         self.assertGreater(len(bindings), 30)
-        for name, _kind, alias, attr in bindings:
+        for name, kind, alias, attr in bindings:
             module = importlib.import_module(_ALIAS_TO_MODULE[alias])
             self.assertTrue(
                 hasattr(module, attr), f"{alias}.{attr} (bound as {name}) is missing"

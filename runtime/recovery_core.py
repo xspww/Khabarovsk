@@ -8,6 +8,7 @@ from typing import Any
 from core import Account, AccountState, EventBus, SmartQueue, StateManager, flog_kv
 from runtime.recovery_evaluator import RecoveryEvaluator
 from runtime.recovery_owner import RecoveryOwnerRegistry
+from runtime.recovery_support import should_suppress_recovery_schedule
 from runtime.recovery_policy import (
     RecoveryDedupeTracker,
     RecoveryGate,
@@ -16,7 +17,6 @@ from runtime.recovery_policy import (
 from runtime.recovery_signal_router import RecoverySignalRouter
 from runtime.recovery_slots import RecoverySlotPolicy
 from runtime.recovery_storm import RecoveryStormController
-from runtime.recovery_support import should_suppress_recovery_schedule
 from runtime.runtime_orchestrator import RuntimeOrchestrator
 from runtime.runtime_scheduler import RuntimeScheduler
 from runtime.runtime_state_manager import RuntimeStateManager

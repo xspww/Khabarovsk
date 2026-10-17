@@ -111,12 +111,109 @@ a = Analysis(
         "PySide6.QtWebEngineCore",
         "PySide6.QtWebEngineQuick",
         "PySide6.QtWebEngine",
+        # The shell imports only QtCore/QtGui/QtWidgets (verified dependency
+        # closure). Everything below is pulled into the analysis anyway and
+        # adds ~50 MB of DLLs the app never loads.
+        "PySide6.QtQml",
+        "PySide6.QtQuick",
+        "PySide6.QtQuickWidgets",
+        "PySide6.QtQuickControls2",
+        "PySide6.QtQuickTest",
+        "PySide6.QtOpenGL",
+        "PySide6.QtOpenGLWidgets",
+        "PySide6.QtPdf",
+        "PySide6.QtPdfWidgets",
+        "PySide6.QtNetwork",
+        "PySide6.QtNetworkAuth",
+        "PySide6.QtSvg",
+        "PySide6.QtSvgWidgets",
+        "PySide6.QtDataVisualization",
+        "PySide6.QtCharts",
+        "PySide6.QtGraphs",
+        "PySide6.QtGraphsWidgets",
+        "PySide6.QtMultimedia",
+        "PySide6.QtMultimediaWidgets",
+        "PySide6.QtSql",
+        "PySide6.QtTest",
+        "PySide6.QtXml",
+        "PySide6.QtPrintSupport",
+        "PySide6.QtSerialPort",
+        "PySide6.QtBluetooth",
+        "PySide6.QtNfc",
+        "PySide6.QtPositioning",
+        "PySide6.QtLocation",
+        "PySide6.QtSensors",
+        "PySide6.QtStateMachine",
+        "PySide6.QtWebChannel",
+        "PySide6.QtWebSockets",
+        "PySide6.QtDesigner",
+        "PySide6.QtHelp",
+        "PySide6.QtUiTools",
+        "PySide6.QtScxml",
+        "PySide6.QtRemoteObjects",
+        "PySide6.QtTextToSpeech",
+        "PySide6.QtSpatialAudio",
+        "PySide6.QtHttpServer",
+        "PySide6.QtConcurrent",
+        "PySide6.QtDBus",
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
     cipher=block_cipher,
     noarchive=False,
 )
+
+# Trim the collected Qt payload down to what the app actually loads.
+#
+# `excludes` above stops the analysis from following the unused Qt modules,
+# but the PySide6 hooks still copy every Qt DLL/plugin they notice and
+# opengl32sw.dll (the software OpenGL fallback). On top of the 89 MB
+# Playwright node driver that turns a ~40 MB app into a 100 MB+ onefile.
+# The verified import closure of QtCore/QtGui/QtWidgets.pyd (plus the
+# qwindows platform, qmodernwindowsstyle style and the ico/jpeg/gif image
+# plugins) is all that ever gets dlopen()-ed, so drop the rest.
+_QT_KEEP_BINARIES = {
+    "qt6core.dll",
+    "qt6gui.dll",
+    "qt6widgets.dll",
+    "qtcore.pyd",
+    "qtgui.pyd",
+    "qtwidgets.pyd",
+    "pyside6.abi3.dll",
+    "shiboken6.abi3.dll",
+    "msvcp140.dll",
+    "msvcp140_1.dll",
+    "msvcp140_2.dll",
+    "vcruntime140.dll",
+    "vcruntime140_1.dll",
+}
+_QT_KEEP_PLUGINS = {
+    "platforms/qwindows.dll",
+    "styles/qmodernwindowsstyle.dll",
+    "imageformats/qico.dll",
+    "imageformats/qjpeg.dll",
+    "imageformats/qgif.dll",
+}
+# Pillow only opens PNG/ICO and converts raw BGRA captures to "L". The AVIF
+# codec alone is 7.5 MB; webp/color-management/tkinter bindings are unused.
+_PIL_DROP_STEMS = {"_avif", "_webp", "_imagingcms", "_imagingtk"}
+
+
+def _keep_entry(dest):
+    name = dest.replace("\\", "/")
+    if name.startswith("PySide6/"):
+        if "/plugins/" in name:
+            return name.split("/plugins/", 1)[1] in _QT_KEEP_PLUGINS
+        # Drops the unused Qt DLLs/.pyd modules and every translation .qm.
+        return name.rsplit("/", 1)[-1].lower() in _QT_KEEP_BINARIES
+    if "PIL/" in name:
+        stem = name.rsplit("/", 1)[-1].split(".", 1)[0].lower()
+        return stem not in _PIL_DROP_STEMS
+    return True
+
+
+a.binaries = [entry for entry in a.binaries if _keep_entry(entry[0])]
+a.datas = [entry for entry in a.datas if _keep_entry(entry[0])]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 

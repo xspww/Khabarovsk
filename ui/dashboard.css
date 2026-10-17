@@ -199,7 +199,8 @@ html, body {
   background-clip: padding-box;
 }
 
-/* Sidebar status: 2-col compact card grid (ref image 2), never show "...". */
+/* Sidebar status: 2-col compact card grid (ref image 2). The count keeps
+   its full width; the label truncates with "..." when space runs out. */
 .app {
   grid-template-columns: 232px minmax(0, 1fr);
 }
@@ -223,14 +224,13 @@ html, body {
   justify-content: flex-start;
   gap: 4px;
 }
-.status-row span {
+.status-row > span {
   display: flex !important;
   align-items: center;
-  gap: 4px;
+  gap: 3px;
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden !important;
-  text-overflow: clip !important;
   white-space: nowrap !important;
   word-break: keep-all;
   overflow-wrap: normal;
@@ -240,11 +240,25 @@ html, body {
   line-height: 1;
   color: #dfe2e8;
 }
+/* Wide counts (100, 999, ...) keep their full width; the label is the one
+   that gives way first and truncates with an ellipsis, so the number can
+   never collide with the text. */
+.status-row .label-text {
+  display: block !important;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden !important;
+  text-overflow: ellipsis !important;
+  white-space: nowrap !important;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+}
 .status-row strong {
   flex: none;
   min-width: 0;
   margin-left: auto;
-  padding-left: 4px;
+  padding-left: 2px;
   text-align: right;
   overflow: visible;
   white-space: nowrap;

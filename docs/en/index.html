@@ -198,146 +198,17 @@
 
       <figure class="stage reveal">
         <span class="stage-glow" aria-hidden="true"></span>
-        <span class="app-back" aria-hidden="true"></span>
+        <span class="shot-back" aria-hidden="true"></span>
 
-        <div class="app" role="img" aria-label="Cronus Launcher dashboard preview with sample accounts">
-          <div class="app-titlebar">
-            <span class="app-logo">Cn</span>
-            <span class="app-name">Cronus Launcher <span>— 3.2.5</span></span>
-            <span class="win-buttons" aria-hidden="true"><span>−</span><span>□</span><span>×</span></span>
-          </div>
+        <img
+          class="shot"
+          src="../assets/dashboard.png"
+          width="1124"
+          height="843"
+          alt="Cronus Launcher dashboard showing the CPU, RAM and VIRTUAL cards, the account table with one online account, and the status board"
+        />
 
-          <div class="app-body">
-            <aside class="app-side">
-              <span class="side-stop"><i></i>STOP</span>
-
-              <nav class="side-nav">
-                <span class="row is-active">Dashboard <span class="count">4</span></span>
-                <p class="group"><span class="dot-bullet"></span>Launcher</p>
-                <span class="row sub">Queue</span>
-                <span class="row sub">Game</span>
-                <p class="group"><span class="dot-bullet"></span>Performance</p>
-                <span class="row sub">Graphic</span>
-                <span class="row sub">RAM</span>
-                <span class="row sub">Windows</span>
-                <p class="group"><span class="dot-bullet"></span>Tool</p>
-                <span class="row sub">Lua Manager</span>
-                <span class="row sub">Exploits Manager</span>
-                <span class="row sub">Cronus Manager</span>
-              </nav>
-
-              <div class="side-counts">
-                <span class="count-pill c-online"><i></i>Online <b>2</b></span>
-                <span class="count-pill c-queued"><i></i>Queued <b>1</b></span>
-                <span class="count-pill c-finished"><i></i>Finished <b>0</b></span>
-                <span class="count-pill c-captcha"><i></i>Captcha <b>1</b></span>
-                <span class="count-pill c-banned"><i></i>Banned <b>0</b></span>
-                <span class="count-pill c-suspended"><i></i>Suspended <b>0</b></span>
-                <span class="count-pill c-locked"><i></i>Locked <b>0</b></span>
-                <span class="count-pill c-invalid"><i></i>Invalid <b>0</b></span>
-              </div>
-
-              <span class="side-running">
-                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7.5V12l3.2 2" /></svg>
-                Running: 16h 41m
-              </span>
-            </aside>
-
-            <section class="app-main">
-              <div class="app-head">
-                <h4>Dashboard</h4>
-                <div class="app-actions">
-                  <span class="is-icon" aria-hidden="true">⟳</span>
-                  <span>Close Roblox</span>
-                  <span class="is-primary">Add Accounts</span>
-                  <span>Reload Cookies</span>
-                </div>
-              </div>
-
-              <div class="app-metrics">
-                <div class="app-metric">
-                  <header>CPU <b>26%</b></header>
-                  <svg class="spark" viewBox="0 0 120 32" preserveAspectRatio="none" aria-hidden="true">
-                    <polyline class="stroke-blue" fill="none" stroke-width="1.6" stroke-linejoin="round" points="0,20 6,26 12,22 18,8 24,17 30,24 36,24 42,25 48,25 54,25 60,25 66,24 72,25 78,25 84,25 90,25 96,24 102,25 108,25 114,24 120,25" />
-                  </svg>
-                  <div class="trail"><i class="fill-blue" style="--w:26%"></i></div>
-                  <div class="readout">6 threads</div>
-                </div>
-                <div class="app-metric">
-                  <header>RAM <b>47%</b></header>
-                  <div class="gauge"><i class="fill-green" style="--w:47%"></i></div>
-                  <div class="trail"><i class="fill-green" style="--w:47%"></i></div>
-                  <div class="readout">7.5 / 15.9 GB</div>
-                </div>
-                <div class="app-metric">
-                  <header>VIRTUAL <b>54%</b></header>
-                  <div class="gauge"><i class="fill-blue" style="--w:54%"></i></div>
-                  <div class="trail"><i class="fill-blue" style="--w:54%"></i></div>
-                  <div class="readout">2.3 / 4.3 GB</div>
-                </div>
-              </div>
-
-              <div class="app-searchrow">
-                <span class="app-search">
-                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.4-3.4" /></svg>
-                  Search accounts...
-                </span>
-                <span class="btn-lite">Set game</span>
-              </div>
-
-              <div class="app-filters">
-                <span class="is-on">All 4</span>
-                <span>Online 2</span>
-                <span>Queued 1</span>
-                <span class="ghost">Reset columns</span>
-              </div>
-
-              <table class="app-table">
-                <thead>
-                  <tr>
-                    <th>#</th>
-                    <th>Status</th>
-                    <th>Username</th>
-                    <th>Game</th>
-                    <th>Description</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td>1</td>
-                    <td><span class="tag tag-online"><i></i>Online</span></td>
-                    <td><span class="user-blur">kiro_dev</span></td>
-                    <td><span class="game"><i></i>Anime Expeditions</span></td>
-                    <td><span class="add-note">+ Add description</span></td>
-                  </tr>
-                  <tr>
-                    <td>2</td>
-                    <td><span class="tag tag-online"><i></i>Online</span></td>
-                    <td><span class="user-blur">mira_alt</span></td>
-                    <td><span class="game"><i></i>Anime Expeditions</span></td>
-                    <td>AFK 41m</td>
-                  </tr>
-                  <tr>
-                    <td>3</td>
-                    <td><span class="tag tag-queued"><i></i>Queued</span></td>
-                    <td><span class="user-blur">farm_07</span></td>
-                    <td><span class="game"><i></i>Anime Expeditions</span></td>
-                    <td>waiting for a slot</td>
-                  </tr>
-                  <tr>
-                    <td>4</td>
-                    <td><span class="tag tag-captcha"><i></i>Captcha</span></td>
-                    <td><span class="user-blur">nova_x2</span></td>
-                    <td><span class="game"><i></i>Anime Expeditions</span></td>
-                    <td>finish in the popup</td>
-                  </tr>
-                </tbody>
-              </table>
-            </section>
-          </div>
-        </div>
-
-        <figcaption class="app-caption">Dashboard preview — in-app labels stay English as in the real build, and every account shown is sample data.</figcaption>
+        <figcaption class="shot-caption">Real dashboard screenshot — the account name in it is blurred.</figcaption>
       </figure>
     </div>
   </div>

@@ -86,6 +86,8 @@ python main.py
 
 หน้าแรกมีกราฟทรัพยากรสด ช่องค้นหาบัญชี กับตารางที่กรองได้
 
+![แดชบอร์ด Cronus Launcher: การ์ด CPU RAM VIRTUAL ตารางบัญชีที่กำลังออนไลน์ และบอร์ดสถานะ](docs/assets/dashboard.png)
+
 - **CPU / RAM / VIRTUAL** — กราฟสดพร้อมจำนวนเธรด ค่า `ใช้ไป / ทั้งหมด GB` และการใช้ page file
 - **Search accounts... + Set game** — พิมพ์ชื่อเพื่อกรอง แล้วปัก Place ID ให้บัญชีที่เลือก
 - **All / Online / Queued + Reset columns** — ปุ่มกรองด่วนกับปุ่มล้างค่าคอลัมน์ในคลิกเดียว

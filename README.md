@@ -86,6 +86,8 @@ The launcher starts the local service on `127.0.0.1` and opens the desktop dashb
 
 The home screen holds the live resource graphs, the account search box, and a filterable account table.
 
+![Cronus Launcher dashboard: CPU, RAM and VIRTUAL cards, the account table with one online account, and the status board](docs/assets/dashboard.png)
+
 - **CPU / RAM / VIRTUAL** — live usage with thread count, `used / total GB`, and page-file usage
 - **Search accounts... + Set game** — filter by username and assign the target Place ID to selected accounts
 - **All / Online / Queued + Reset columns** — quick filters plus one-click column reset

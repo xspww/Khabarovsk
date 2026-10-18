@@ -4,7 +4,9 @@
   </a>
 </p>
 
-<p align="center">ลอนเชอร์ Roblox หลายบัญชีแบบโอเพนซอร์ส</p>
+<h1 align="center">Cronus Launcher</h1>
+
+<p align="center">ลอนเชอร์ Roblox หลายบัญชีแบบโอเพนซอร์สสำหรับ Windows — จัดคิวเปิดหลายบัญชีพร้อมกัน รีจอยอัตโนมัติเมื่อหลุด ปล่อย AFK farm และคุม FPS / RAM / CPU จากแดชบอร์ดเดียว</p>
 
 <p align="center">
   <a href="https://github.com/xspww/Khabarovsk/releases"><img alt="release" src="https://img.shields.io/github/v/release/xspww/Khabarovsk?style=flat-square&label=release" /></a>
@@ -20,7 +22,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xspww/Khabarovsk/releases"><img src="https://github.com/user-attachments/assets/9cb0ac21-2dc0-40af-bfd6-30cf0476e266" alt="แดชบอร์ด Cronus Launcher" width="1024" /></a>
+  <a href="https://xspww.github.io/Khabarovsk/th/"><b>เว็บไซต์</b></a> ·
+  <a href="https://github.com/xspww/Khabarovsk/releases/latest"><b>ดาวน์โหลด</b></a> ·
+  <a href="https://discord.gg/zUpFZxy4Jc">Discord</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/xspww/Khabarovsk/releases"><img src="docs/og.png" alt="Cronus Launcher ลอนเชอร์ Roblox หลายบัญชีสำหรับ Windows" width="1024" /></a>
 </p>
 
 ---
@@ -76,7 +84,7 @@ python main.py
 
 ### แดชบอร์ด
 
-ภาพด้านบนคือหน้าแรก กราฟทรัพยากรสด ช่องค้นหาบัญชี กับตารางที่กรองได้
+หน้าแรกมีกราฟทรัพยากรสด ช่องค้นหาบัญชี กับตารางที่กรองได้
 
 - **CPU / RAM / VIRTUAL** — กราฟสดพร้อมจำนวนเธรด ค่า `ใช้ไป / ทั้งหมด GB` และการใช้ page file
 - **Search accounts... + Set game** — พิมพ์ชื่อเพื่อกรอง แล้วปัก Place ID ให้บัญชีที่เลือก
@@ -185,4 +193,4 @@ Cronus Launcher คือลอนเชอร์ Roblox หลายบัญ�
 
 ---
 
-**ชวนคุย** [Releases](https://github.com/xspww/Khabarovsk/releases) | [Issues](https://github.com/xspww/Khabarovsk/issues) | [Actions](https://github.com/xspww/Khabarovsk/actions)
+**ชวนคุย** [เว็บไซต์](https://xspww.github.io/Khabarovsk/th/) | [Releases](https://github.com/xspww/Khabarovsk/releases) | [Issues](https://github.com/xspww/Khabarovsk/issues) | [Actions](https://github.com/xspww/Khabarovsk/actions) | [Discord](https://discord.gg/zUpFZxy4Jc)

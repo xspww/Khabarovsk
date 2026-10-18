@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Cronus Launcher — Open Source Multi-Account Roblox Launcher for Windows</title>
+<meta name="description" content="Cronus Launcher is a free, open source multi-account Roblox launcher for Windows 10/11. Queue and launch many accounts, auto rejoin servers, run AFK farm sessions, and cap FPS, RAM, and CPU from one local dashboard." />
+<link rel="canonical" href="https://xspww.github.io/Khabarovsk/" />
+<link rel="alternate" hreflang="en" href="https://xspww.github.io/Khabarovsk/" />
+<link rel="alternate" hreflang="th" href="https://xspww.github.io/Khabarovsk/th/" />
+<link rel="alternate" hreflang="x-default" href="https://xspww.github.io/Khabarovsk/" />
+<meta name="robots" content="index, follow, max-image-preview:large" />
+<meta name="theme-color" content="#0a0c10" />
+<meta name="author" content="xspww" />
+<meta name="keywords" content="Cronus Launcher, Roblox launcher, multi-account Roblox launcher, Roblox auto rejoin, Roblox AFK farm, Roblox account manager, open source Roblox launcher, Windows" />
+
+<meta property="og:type" content="website" />
+<meta property="og:site_name" content="Cronus Launcher" />
+<meta property="og:locale" content="en" />
+<meta property="og:locale:alternate" content="th_TH" />
+<meta property="og:url" content="https://xspww.github.io/Khabarovsk/" />
+<meta property="og:title" content="Cronus Launcher — Open Source Multi-Account Roblox Launcher for Windows" />
+<meta property="og:description" content="Queue and launch many Roblox accounts, auto rejoin after kicks, run AFK farm sessions, and control FPS, RAM, and CPU from one local dashboard. Free and GPL-3.0." />
+<meta property="og:image" content="https://xspww.github.io/Khabarovsk/og.png" />
+<meta property="og:image:width" content="1200" />
+<meta property="og:image:height" content="630" />
+<meta property="og:image:alt" content="Cronus Launcher — open source multi-account Roblox launcher for Windows" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="Cronus Launcher — Open Source Multi-Account Roblox Launcher" />
+<meta name="twitter:description" content="Queue and launch many Roblox accounts, auto rejoin, AFK farm, and cap FPS, RAM, and CPU from one local dashboard." />
+<meta name="twitter:image" content="https://xspww.github.io/Khabarovsk/og.png" />
+
+<link rel="icon" href="assets/cronus_icon.png" />
+<link rel="apple-touch-icon" href="assets/cronus_icon.png" />
+<link rel="stylesheet" href="styles.css" />
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@graph": [
+    {
+      "@type": "SoftwareApplication",
+      "@id": "https://xspww.github.io/Khabarovsk/#app",
+      "name": "Cronus Launcher",
+      "alternateName": "Cronus",
+      "applicationCategory": "UtilitiesApplication",
+      "applicationSubCategory": "Game launcher",
+      "operatingSystem": "Windows 10, Windows 11 (64-bit)",
+      "softwareVersion": "3.2.5",
+      "downloadUrl": "https://github.com/xspww/Khabarovsk/releases/latest",
+      "installUrl": "https://github.com/xspww/Khabarovsk/releases/latest",
+      "codeRepository": "https://github.com/xspww/Khabarovsk",
+      "license": "https://www.gnu.org/licenses/gpl-3.0.html",
+      "isAccessibleForFree": true,
+      "inLanguage": ["en", "th"],
+      "description": "Cronus Launcher is a local-first, multi-account Roblox launcher for Windows: one dashboard drives queueing, launching, auto rejoin, AFK farm sessions, and performance controls, with account cookies encrypted on the host.",
+      "featureList": [
+        "Queue and launch many Roblox accounts at once",
+        "Automatic rejoin after disconnect or kick",
+        "AFK farm sessions with status tracking",
+        "FPS limit, low-graphics mode, RAM, CPU, and window management",
+        "In-game Lua loader for executors",
+        "Roblox client version install and update",
+        "Cookies encrypted with Windows DPAPI, local only"
+      ],
+      "offers": {
+        "@type": "Offer",
+        "price": "0",
+        "priceCurrency": "USD"
+      },
+      "author": {
+        "@type": "Organization",
+        "name": "xspww",
+        "url": "https://github.com/xspww"
+      },
+      "sameAs": [
+        "https://github.com/xspww/Khabarovsk",
+        "https://github.com/xspww/Khabarovsk/releases"
+      ]
+    },
+    {
+      "@type": "WebSite",
+      "@id": "https://xspww.github.io/Khabarovsk/#website",
+      "url": "https://xspww.github.io/Khabarovsk/",
+      "name": "Cronus Launcher",
+      "inLanguage": "en",
+      "about": { "@id": "https://xspww.github.io/Khabarovsk/#app" }
+    },
+    {
+      "@type": "FAQPage",
+      "@id": "https://xspww.github.io/Khabarovsk/#faq",
+      "mainEntity": [
+        {
+          "@type": "Question",
+          "name": "Is Cronus Launcher free?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Yes. Cronus Launcher is free and open source under GPL-3.0. You can download a standalone Windows build from the Releases page or run it from source with Python 3.11+."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How many Roblox accounts can I launch at the same time?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "The launcher itself has no fixed cap — how many clients run at once depends on your PC. The multi-add dialog accepts up to 50 user:pass lines per import, and you can queue and launch accounts together from the dashboard."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Where are my account cookies stored?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "On your own machine, encrypted with Windows DPAPI, under %LOCALAPPDATA%\\Cronus Launcher\\data. Cookies are never sent to an external server and never committed to the repository."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Does Cronus Launcher bypass bans or anti-cheat?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No. It launches and manages accounts you already own. It does not bypass bans, security checks, or anti-cheat systems."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "Do I need Python installed?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "No for the release build: the .exe from the Releases page is standalone and needs no Python, only Windows 10/11 64-bit and Roblox Player. Running from source needs Python 3.11+."
+          }
+        },
+        {
+          "@type": "Question",
+          "name": "How are updates verified?",
+          "acceptedAnswer": {
+            "@type": "Answer",
+            "text": "Each release artifact is signed with the project release key. The in-app updater verifies the signature and SHA256 digest before installing, and the data directory is left untouched."
+          }
+        }
+      ]
+    }
+  ]
+}
+</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="topbar">
+  <div class="wrap">
+    <a class="brand" href="./">
+      <img src="assets/cronus_icon.png" alt="Cronus Launcher logo" width="30" height="30" />
+      Cronus Launcher
+    </a>
+    <nav class="topnav" aria-label="Main">
+      <a class="nav-link" href="#features">Features</a>
+      <a class="nav-link" href="#download">Download</a>
+      <a class="nav-link" href="#faq">FAQ</a>
+      <a href="https://github.com/xspww/Khabarovsk">GitHub</a>
+      <a class="lang" href="th/" hreflang="th" lang="th">ไทย</a>
+    </nav>
+  </div>
+</header>
+
+<main id="main">
+  <div class="hero">
+    <div class="wrap">
+      <p class="eyebrow">Open source · GPL-3.0 · Windows 10/11</p>
+      <h1>Cronus Launcher — multi-account Roblox launcher for Windows</h1>
+      <p class="tagline">Run several Roblox accounts from one dashboard: queue them, launch them together, rejoin automatically after a disconnect, and keep the machine usable.</p>
+      <p class="lead">Cronus Launcher is a free, open source desktop app for playing multiple Roblox accounts on one PC. It stages accounts in a queue, sets the target Place ID, launches them at once, and rejoins the same server when a client drops or gets kicked. Performance controls cap FPS, low-graphics mode, RAM, CPU, and window layout so a handful of clients stays stable. Account cookies are encrypted on your machine with Windows DPAPI and never leave it.</p>
+      <p class="cta">
+        <a class="btn btn-primary" href="https://github.com/xspww/Khabarovsk/releases/latest">Download for Windows</a>
+        <a class="btn btn-ghost" href="https://github.com/xspww/Khabarovsk">View source on GitHub</a>
+      </p>
+      <ul class="meta">
+        <li>Standalone <code>.exe</code>, no Python required</li>
+        <li>Cookies encrypted locally (DPAPI)</li>
+        <li>Updates verified by signature + SHA256</li>
+        <li>Not affiliated with Roblox Corporation</li>
+      </ul>
+    </div>
+  </div>
+
+  <section id="features" aria-labelledby="features-h">
+    <div class="wrap">
+      <h2 id="features-h">What it does</h2>
+      <p class="intro">Everything below runs from the local dashboard. The launcher starts a service on <code>127.0.0.1</code> and opens the desktop window — no cloud account, no upload of your sessions.</p>
+      <div class="grid">
+        <article class="card">
+          <h3>Multi-account queue</h3>
+          <p>Sign in through a popup browser, one account at a time, or paste up to 50 <code>user:pass</code> lines in Multi mode. You complete 2FA, captcha, and passkey; the launcher captures the cookie automatically.</p>
+        </article>
+        <article class="card">
+          <h3>Automatic rejoin</h3>
+          <p>Detects disconnects and kicks, then rejoins the configured Place ID and server on its own — useful for long sessions where babysitting each client is not realistic.</p>
+        </article>
+        <article class="card">
+          <h3>AFK farm sessions</h3>
+          <p>Keep accounts in a game for hours while a status board shows <code>Online</code>, <code>Queued</code>, <code>Finished</code>, <code>Captcha</code>, <code>Banned</code>, <code>Suspended</code>, <code>Locked</code>, <code>Recovery</code>, and <code>Invalid</code>.</p>
+        </article>
+        <article class="card">
+          <h3>Performance controls</h3>
+          <p>FPS limit and low-graphics mode, memory management for multi-instance sessions, automatic window layout, plus a CPU limiter and process priority applied to Roblox clients.</p>
+        </article>
+        <article class="card">
+          <h3>Lua loader for executors</h3>
+          <p>Ship <code>lua/run_in_executor.lua</code> (in the portable zip it is <code>Api.lua</code>) to your executor for faster rejoin telemetry and in-game commands.</p>
+        </article>
+        <article class="card">
+          <h3>Executor and client managers</h3>
+          <p>Tracks whether your executor works with the current official Roblox version, optionally relaunching and rejoining when it becomes compatible again, and installs or updates the Roblox client itself.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="download" aria-labelledby="download-h">
+    <div class="wrap">
+      <h2 id="download-h">Download and install</h2>
+      <p class="intro">Pick the standalone build for normal use, or clone the source if you want to run or modify the code.</p>
+      <ol class="steps">
+        <li>Open the <a href="https://github.com/xspww/Khabarovsk/releases/latest">Releases page</a>.</li>
+        <li>Download <code>CronusLauncher-&lt;version&gt;.exe</code> and run it.</li>
+        <li>Verify the download against the SHA256 value published on the release page.</li>
+      </ol>
+      <pre><code># Verify the download (PowerShell)
+(Get-FileHash CronusLauncher-&lt;version&gt;.exe -Algorithm SHA256).Hash</code></pre>
+      <table>
+        <caption class="note" style="caption-side: top; text-align: left;">Release artifacts</caption>
+        <tbody>
+          <tr>
+            <th><code>CronusLauncher-&lt;version&gt;.exe</code></th>
+            <td>Versioned download artifact. This is the exact file name the in-app updater fetches.</td>
+          </tr>
+          <tr>
+            <th><code>CronusLauncher-&lt;version&gt;-portable.zip</code></th>
+            <td><code>CronusLauncher.exe</code> with a stable name (shortcuts survive in-place updates) plus <code>Api.lua</code>, the executor loader script.</td>
+          </tr>
+        </tbody>
+      </table>
+      <p class="note">The executable is not signed with a commercial Windows publisher certificate, so SmartScreen may warn on first run. Release builds are signed with the project release key and the updater checks that signature plus the SHA256 digest before installing anything.</p>
+      <h3>Run from source</h3>
+      <pre><code>git clone https://github.com/xspww/Khabarovsk.git
+cd Khabarovsk
+python -m pip install -r requirements.txt
+.\Run.cmd</code></pre>
+    </div>
+  </section>
+
+  <section id="requirements" aria-labelledby="requirements-h">
+    <div class="wrap">
+      <h2 id="requirements-h">Requirements</h2>
+      <table>
+        <tbody>
+          <tr><th>Operating system</th><td>Windows 10 or Windows 11, 64-bit</td></tr>
+          <tr><th>Runtime (release build)</th><td>None — the <code>.exe</code> from Releases is standalone</td></tr>
+          <tr><th>Runtime (from source)</th><td>Python 3.11+ and <code>pip install -r requirements.txt</code></td></tr>
+          <tr><th>Game client</th><td>Roblox Player installed on the same PC</td></tr>
+          <tr><th>WebView2</th><td>Evergreen Runtime (prompted and downloaded if missing)</td></tr>
+          <tr><th>Browser</th><td>Installed Chrome or Edge for the sign-in popup</td></tr>
+        </tbody>
+      </table>
+      <p class="note">Runtime data lives in <code>%LOCALAPPDATA%\Cronus Launcher\data</code>. Override it with the <code>CRONUS_USER_ROOT</code> environment variable; without <code>%LOCALAPPDATA%</code> the launcher falls back to <code>~/.cronus_launcher</code>.</p>
+    </div>
+  </section>
+
+  <section id="faq" aria-labelledby="faq-h">
+    <div class="wrap">
+      <h2 id="faq-h">Frequently asked questions</h2>
+      <details open>
+        <summary>Is Cronus Launcher free?</summary>
+        <p>Yes. It is free and open source under GPL-3.0. Download the standalone Windows build from the Releases page, or run it from source with Python 3.11+.</p>
+      </details>
+      <details>
+        <summary>How many Roblox accounts can I launch at the same time?</summary>
+        <p>The launcher sets no fixed cap — how many clients stay smooth depends on your PC. The multi-add dialog accepts up to 50 <code>user:pass</code> lines per import, and accounts can be queued and started together from one dashboard.</p>
+      </details>
+      <details>
+        <summary>Where are my account cookies stored?</summary>
+        <p>On your machine only, encrypted with Windows DPAPI, under <code>%LOCALAPPDATA%\Cronus Launcher\data</code>. Cookies are never sent to an external server and never committed to the repository.</p>
+      </details>
+      <details>
+        <summary>Does it bypass bans or anti-cheat?</summary>
+        <p>No. Cronus Launcher launches and manages accounts you already own. It does not bypass bans, security checks, or anti-cheat systems.</p>
+      </details>
+      <details>
+        <summary>Do I need Python installed?</summary>
+        <p>No for the release build: the <code>.exe</code> is standalone and only needs Windows 10/11 64-bit and Roblox Player. Running from source needs Python 3.11+.</p>
+      </details>
+      <details>
+        <summary>How are updates verified?</summary>
+        <p>Each release artifact is signed with the project release key, and the in-app updater verifies that signature plus the SHA256 digest before installing. Updates leave the data directory untouched.</p>
+      </details>
+    </div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <nav class="footlinks" aria-label="Footer">
+      <a href="https://github.com/xspww/Khabarovsk">GitHub repository</a>
+      <a href="https://github.com/xspww/Khabarovsk/releases/latest">Releases</a>
+      <a href="https://github.com/xspww/Khabarovsk/blob/main/README.md">README</a>
+      <a href="https://github.com/xspww/Khabarovsk/blob/main/README.th.md" hreflang="th" lang="th">เอกสารภาษาไทย</a>
+      <a href="https://github.com/xspww/Khabarovsk/issues">Issues</a>
+      <a href="https://discord.gg/zUpFZxy4Jc">Discord</a>
+      <a href="https://github.com/xspww/Khabarovsk/blob/main/LICENSE">GPL-3.0 license</a>
+    </nav>
+    <p class="disclaimer">Cronus Launcher is an independent open source project and is not affiliated with, endorsed by, or sponsored by Roblox Corporation. "Roblox" is a trademark of Roblox Corporation.</p>
+  </div>
+</footer>
+</body>
+</html>

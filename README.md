@@ -4,7 +4,9 @@
   </a>
 </p>
 
-<p align="center">The open source multi-account Roblox launcher.</p>
+<h1 align="center">Cronus Launcher</h1>
+
+<p align="center">The open source multi-account Roblox launcher for Windows — queue accounts, launch many clients at once, auto rejoin after a disconnect, AFK farm, and cap FPS / RAM / CPU from one dashboard.</p>
 
 <p align="center">
   <a href="https://github.com/xspww/Khabarovsk/releases"><img alt="release" src="https://img.shields.io/github/v/release/xspww/Khabarovsk?style=flat-square&label=release" /></a>
@@ -20,7 +22,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xspww/Khabarovsk/releases"><img src="https://github.com/user-attachments/assets/9cb0ac21-2dc0-40af-bfd6-30cf0476e266" alt="Cronus Launcher Dashboard" width="1024" /></a>
+  <a href="https://xspww.github.io/Khabarovsk/"><b>Website</b></a> ·
+  <a href="https://github.com/xspww/Khabarovsk/releases/latest"><b>Download</b></a> ·
+  <a href="https://discord.gg/zUpFZxy4Jc">Discord</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/xspww/Khabarovsk/releases"><img src="docs/og.png" alt="Cronus Launcher — open source multi-account Roblox launcher for Windows" width="1024" /></a>
 </p>
 
 ---
@@ -76,7 +84,7 @@ The launcher starts the local service on `127.0.0.1` and opens the desktop dashb
 
 ### Dashboard
 
-The screenshot above is the home screen: live resource graphs, account search, and a filterable account table.
+The home screen holds the live resource graphs, the account search box, and a filterable account table.
 
 - **CPU / RAM / VIRTUAL** — live usage with thread count, `used / total GB`, and page-file usage
 - **Search accounts... + Set game** — filter by username and assign the target Place ID to selected accounts
@@ -185,4 +193,4 @@ Cronus Launcher is a local-first, multi-account Roblox launcher for Windows: one
 
 ---
 
-**Join our community** [Releases](https://github.com/xspww/Khabarovsk/releases) | [Issues](https://github.com/xspww/Khabarovsk/issues) | [Actions](https://github.com/xspww/Khabarovsk/actions)
+**Join our community** [Website](https://xspww.github.io/Khabarovsk/) | [Releases](https://github.com/xspww/Khabarovsk/releases) | [Issues](https://github.com/xspww/Khabarovsk/issues) | [Actions](https://github.com/xspww/Khabarovsk/actions) | [Discord](https://discord.gg/zUpFZxy4Jc)

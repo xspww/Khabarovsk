@@ -1,0 +1,7 @@
+# Crawlers read robots.txt from the origin root (xspww.github.io/robots.txt),
+# so this file only takes effect with a custom domain. It is kept here so the
+# rules travel with the site.
+User-agent: *
+Allow: /
+
+Sitemap: https://xspww.github.io/Khabarovsk/sitemap.xml

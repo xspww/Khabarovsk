@@ -279,9 +279,7 @@ code {
   position: relative;
   display: grid;
   gap: 52px;
-  align-items: center;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.25fr);
-  max-width: 1360px;
+  align-items: start;
 }
 
 .hero-copy {

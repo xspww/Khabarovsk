@@ -421,6 +421,10 @@ section {
   border-bottom: none;
 }
 
+#faq {
+  background: none;
+}
+
 section:nth-of-type(even) {
   background: linear-gradient(180deg, rgba(16, 12, 26, 0.55), rgba(8, 6, 14, 0));
 }

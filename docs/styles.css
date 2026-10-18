@@ -247,7 +247,6 @@ code {
 .hero {
   position: relative;
   overflow: hidden;
-  border-bottom: 1px solid var(--line);
   padding: 40px 0 40px;
 }
 
@@ -416,6 +415,10 @@ code {
 section {
   padding: 84px 0;
   border-bottom: 1px solid var(--line);
+}
+
+#features {
+  border-bottom: none;
 }
 
 section:nth-of-type(even) {

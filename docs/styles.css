@@ -279,7 +279,7 @@ code {
   position: relative;
   display: grid;
   gap: 52px;
-  align-items: start;
+  align-items: center;
 }
 
 .hero-copy {

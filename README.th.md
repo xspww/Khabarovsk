@@ -176,6 +176,7 @@ Root เหลือแค่ `main.py` (ทางเข้า), `core.py` (faca
 | Tests | `tests/` | [tests/README.th.md](tests/README.th.md) |
 | In-game | `lua/` (executor loader) | [lua/README.th.md](lua/README.th.md) |
 | Binary | `assets/` (icon, font) | [assets/README.th.md](assets/README.th.md) |
+| เว็บไซต์ | `docs/` (หน้าเว็บที่เสิร์ฟผ่าน GitHub Pages) | [xspww.github.io/Khabarovsk/th](https://xspww.github.io/Khabarovsk/th/) |
 
 ### ร่วมพัฒนา
 

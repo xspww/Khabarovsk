@@ -176,6 +176,7 @@ Root stays clean: entry is `main.py`, public facade is `core.py`, version single
 | Tests | `tests/` (no Windows/network/browser) | [tests/README.md](tests/README.md) |
 | In-game | `lua/` (executor loader) | [lua/README.md](lua/README.md) |
 | Binary | `assets/` (icon, fonts) | [assets/README.md](assets/README.md) |
+| Website | `docs/` (landing page served by GitHub Pages) | [xspww.github.io/Khabarovsk](https://xspww.github.io/Khabarovsk/) |
 
 ### Contributing
 

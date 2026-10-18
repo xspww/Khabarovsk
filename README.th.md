@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <a href="https://xspww.github.io/Khabarovsk/th/"><b>เว็บไซต์</b></a> ·
+  <a href="https://xspww.github.io/Khabarovsk/"><b>เว็บไซต์</b></a> ·
   <a href="https://github.com/xspww/Khabarovsk/releases/latest"><b>ดาวน์โหลด</b></a> ·
   <a href="https://discord.gg/zUpFZxy4Jc">Discord</a>
 </p>
@@ -176,7 +176,7 @@ Root เหลือแค่ `main.py` (ทางเข้า), `core.py` (faca
 | Tests | `tests/` | [tests/README.th.md](tests/README.th.md) |
 | In-game | `lua/` (executor loader) | [lua/README.th.md](lua/README.th.md) |
 | Binary | `assets/` (icon, font) | [assets/README.th.md](assets/README.th.md) |
-| เว็บไซต์ | `docs/` (หน้าเว็บที่เสิร์ฟผ่าน GitHub Pages) | [xspww.github.io/Khabarovsk/th](https://xspww.github.io/Khabarovsk/th/) |
+| เว็บไซต์ | `docs/` (หน้าเว็บที่เสิร์ฟผ่าน GitHub Pages) | [xspww.github.io/Khabarovsk](https://xspww.github.io/Khabarovsk/) |
 
 ### ร่วมพัฒนา
 
@@ -194,4 +194,4 @@ Cronus Launcher คือลอนเชอร์ Roblox หลายบัญ�
 
 ---
 
-**ชวนคุย** [เว็บไซต์](https://xspww.github.io/Khabarovsk/th/) | [Releases](https://github.com/xspww/Khabarovsk/releases) | [Issues](https://github.com/xspww/Khabarovsk/issues) | [Actions](https://github.com/xspww/Khabarovsk/actions) | [Discord](https://discord.gg/zUpFZxy4Jc)
+**ชวนคุย** [เว็บไซต์](https://xspww.github.io/Khabarovsk/) | [Releases](https://github.com/xspww/Khabarovsk/releases) | [Issues](https://github.com/xspww/Khabarovsk/issues) | [Actions](https://github.com/xspww/Khabarovsk/actions) | [Discord](https://discord.gg/zUpFZxy4Jc)

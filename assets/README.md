@@ -10,6 +10,10 @@ Build note: `cronus_launcher.spec` bundles `assets/` → `sys._MEIPASS/assets`
 resolved by `infra/app_paths.resource_path()`. Never load these via plain
 relative paths or the frozen exe will miss them.
 
+The landing page keeps its own webfont copies (`docs/assets/fonts/*.woff2` plus
+the matching `OFL-*.txt` licenses, including Chakra Petch for the display type)
+because GitHub Pages serves only the `docs/` folder.
+
 ### Summary
 
 Bundled binary assets only (icon, fonts, font license): packed by `cronus_launcher.spec` into `sys._MEIPASS` and resolved via `infra/app_paths.resource_path()`.

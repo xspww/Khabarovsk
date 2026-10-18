@@ -10,6 +10,10 @@
 แก้ผ่าน `infra/app_paths.resource_path()` ห้ามโหลดด้วย relative path
 ดิบๆ ไม่งั้น exe จะหาไม่เจอ
 
+หน้าเว็บเก็บสำเนาฟอนต์ไว้เองที่ `docs/assets/fonts/*.woff2` พร้อมไฟล์ไลเซนส์
+`OFL-*.txt` คู่กัน (มี Chakra Petch เพิ่มสำหรับฟอนต์หัวเรื่อง) เพราะ GitHub Pages
+เสิร์ฟเฉพาะโฟลเดอร์ `docs/`
+
 ### สรุป
 
 มีแค่ asset ไบนารี (ไอคอน ฟอนต์ ไลเซนส์ฟอนต์) `cronus_launcher.spec` แพ็กเข้า `sys._MEIPASS` แล้วอ้างผ่าน `infra/app_paths.resource_path()`

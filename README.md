@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <a href="https://xspww.github.io/Khabarovsk/"><b>Website</b></a> ·
+  <a href="https://xspww.github.io/Khabarovsk/en/"><b>Website</b></a> ·
   <a href="https://github.com/xspww/Khabarovsk/releases/latest"><b>Download</b></a> ·
   <a href="https://discord.gg/zUpFZxy4Jc">Discord</a>
 </p>
@@ -176,7 +176,7 @@ Root stays clean: entry is `main.py`, public facade is `core.py`, version single
 | Tests | `tests/` (no Windows/network/browser) | [tests/README.md](tests/README.md) |
 | In-game | `lua/` (executor loader) | [lua/README.md](lua/README.md) |
 | Binary | `assets/` (icon, fonts) | [assets/README.md](assets/README.md) |
-| Website | `docs/` (landing page served by GitHub Pages) | [xspww.github.io/Khabarovsk](https://xspww.github.io/Khabarovsk/) |
+| Website | `docs/` (landing page served by GitHub Pages) | [xspww.github.io/Khabarovsk/en](https://xspww.github.io/Khabarovsk/en/) |
 
 ### Contributing
 
@@ -194,4 +194,4 @@ Cronus Launcher is a local-first, multi-account Roblox launcher for Windows: one
 
 ---
 
-**Join our community** [Website](https://xspww.github.io/Khabarovsk/) | [Releases](https://github.com/xspww/Khabarovsk/releases) | [Issues](https://github.com/xspww/Khabarovsk/issues) | [Actions](https://github.com/xspww/Khabarovsk/actions) | [Discord](https://discord.gg/zUpFZxy4Jc)
+**Join our community** [Website](https://xspww.github.io/Khabarovsk/en/) | [Releases](https://github.com/xspww/Khabarovsk/releases) | [Issues](https://github.com/xspww/Khabarovsk/issues) | [Actions](https://github.com/xspww/Khabarovsk/actions) | [Discord](https://discord.gg/zUpFZxy4Jc)

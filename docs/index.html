@@ -1,37 +1,39 @@
 <!DOCTYPE html>
-<html lang="en" class="no-js">
+<html lang="th" class="no-js">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Cronus Launcher — Open Source Multi-Account Roblox Launcher for Windows</title>
-<meta name="description" content="Cronus Launcher is a free, open source multi-account Roblox launcher for Windows 10/11. Queue and launch many accounts, auto rejoin servers, run AFK farm sessions, and cap FPS, RAM, and CPU from one local dashboard." />
+<title>Cronus Launcher — ลอนเชอร์ Roblox หลายบัญชีโอเพนซอร์สสำหรับ Windows</title>
+<meta name="description" content="Cronus Launcher ลอนเชอร์ Roblox หลายบัญชีแบบโอเพนซอร์ส ใช้ฟรีบน Windows 10/11 จัดคิวเปิดหลายบัญชีพร้อมกัน รีจอยอัตโนมัติเมื่อหลุด ปล่อย AFK farm และล็อก FPS/RAM/CPU ได้จากแดชบอร์ดเดียว" />
 <link rel="canonical" href="https://xspww.github.io/Khabarovsk/" />
-<link rel="alternate" hreflang="en" href="https://xspww.github.io/Khabarovsk/" />
-<link rel="alternate" hreflang="th" href="https://xspww.github.io/Khabarovsk/th/" />
+<link rel="alternate" hreflang="th" href="https://xspww.github.io/Khabarovsk/" />
+<link rel="alternate" hreflang="en" href="https://xspww.github.io/Khabarovsk/en/" />
 <link rel="alternate" hreflang="x-default" href="https://xspww.github.io/Khabarovsk/" />
 <meta name="robots" content="index, follow, max-image-preview:large" />
-<meta name="theme-color" content="#07090d" />
+<meta name="theme-color" content="#08060e" />
 <meta name="author" content="xspww" />
-<meta name="keywords" content="Cronus Launcher, Roblox launcher, multi-account Roblox launcher, Roblox auto rejoin, Roblox AFK farm, Roblox account manager, open source Roblox launcher, Windows" />
+<meta name="keywords" content="Cronus Launcher, ลอนเชอร์ Roblox, Roblox หลายบัญชี, รีจอยอัตโนมัติ, AFK farm Roblox, จัดการบัญชี Roblox, โอเพนซอร์ส, Windows" />
 
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="Cronus Launcher" />
-<meta property="og:locale" content="en" />
-<meta property="og:locale:alternate" content="th_TH" />
+<meta property="og:locale" content="th_TH" />
+<meta property="og:locale:alternate" content="en" />
 <meta property="og:url" content="https://xspww.github.io/Khabarovsk/" />
-<meta property="og:title" content="Cronus Launcher — Open Source Multi-Account Roblox Launcher for Windows" />
-<meta property="og:description" content="Queue and launch many Roblox accounts, auto rejoin after kicks, run AFK farm sessions, and control FPS, RAM, and CPU from one local dashboard. Free and GPL-3.0." />
+<meta property="og:title" content="Cronus Launcher — ลอนเชอร์ Roblox หลายบัญชีโอเพนซอร์สสำหรับ Windows" />
+<meta property="og:description" content="จัดคิวเปิด Roblox หลายบัญชีพร้อมกัน รีจอยอัตโนมัติเมื่อหลุด ปล่อย AFK farm และคุม FPS/RAM/CPU จากแดชบอร์ดเดียว ใช้ฟรีภายใต้สัญญาอนุญาต GPL-3.0" />
 <meta property="og:image" content="https://xspww.github.io/Khabarovsk/og.png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
-<meta property="og:image:alt" content="Cronus Launcher — open source multi-account Roblox launcher for Windows" />
+<meta property="og:image:alt" content="Cronus Launcher ลอนเชอร์ Roblox หลายบัญชีสำหรับ Windows" />
 <meta name="twitter:card" content="summary_large_image" />
-<meta name="twitter:title" content="Cronus Launcher — Open Source Multi-Account Roblox Launcher" />
-<meta name="twitter:description" content="Queue and launch many Roblox accounts, auto rejoin, AFK farm, and cap FPS, RAM, and CPU from one local dashboard." />
+<meta name="twitter:title" content="Cronus Launcher — ลอนเชอร์ Roblox หลายบัญชี" />
+<meta name="twitter:description" content="เปิด Roblox หลายบัญชีจากแดชบอร์ดเดียว รีจอยอัตโนมัติ ปล่อย AFK farm และล็อก FPS/RAM/CPU" />
 <meta name="twitter:image" content="https://xspww.github.io/Khabarovsk/og.png" />
 
 <link rel="icon" href="assets/cronus_icon.png" />
 <link rel="apple-touch-icon" href="assets/cronus_icon.png" />
+<link rel="preload" as="font" type="font/woff2" href="assets/fonts/ChakraPetch-Bold.woff2" crossorigin />
+<link rel="preload" as="font" type="font/woff2" href="assets/fonts/Kanit-Regular.woff2" crossorigin />
 <link rel="stylesheet" href="styles.css" />
 <script>document.documentElement.classList.replace("no-js", "js");</script>
 <script defer src="app.js"></script>
@@ -54,16 +56,16 @@
       "codeRepository": "https://github.com/xspww/Khabarovsk",
       "license": "https://www.gnu.org/licenses/gpl-3.0.html",
       "isAccessibleForFree": true,
-      "inLanguage": ["en", "th"],
-      "description": "Cronus Launcher is a local-first, multi-account Roblox launcher for Windows: one dashboard drives queueing, launching, auto rejoin, AFK farm sessions, and performance controls, with account cookies encrypted on the host.",
+      "inLanguage": ["th", "en"],
+      "description": "Cronus Launcher คือลอนเชอร์ Roblox หลายบัญชีแบบ local-first สำหรับ Windows ใช้แดชบอร์ดเดียวจัดคิว เปิดบัญชี รีจอยอัตโนมัติ ปล่อย AFK farm และคุมประสิทธิภาพ โดย cookie ของบัญชีเข้ารหัสเก็บไว้ในเครื่อง",
       "featureList": [
-        "Queue and launch many Roblox accounts at once",
-        "Automatic rejoin after disconnect or kick",
-        "AFK farm sessions with status tracking",
-        "FPS limit, low-graphics mode, RAM, CPU, and window management",
-        "In-game Lua loader for executors",
-        "Roblox client version install and update",
-        "Cookies encrypted with Windows DPAPI, local only"
+        "จัดคิวเปิด Roblox หลายบัญชีพร้อมกัน",
+        "รีจอยอัตโนมัติเมื่อหลุดหรือโดนเตะ",
+        "ปล่อย AFK farm พร้อมบอร์ดสถานะ",
+        "ล็อก FPS โหมดกราฟิกต่ำ จัดการ RAM, CPU และหน้าต่าง",
+        "Lua loader สำหรับ executor",
+        "ติดตั้งและอัปเดตไคลเอนต์ Roblox",
+        "cookie เข้ารหัสด้วย Windows DPAPI เก็บในเครื่องเท่านั้น"
       ],
       "offers": {
         "@type": "Offer",
@@ -85,7 +87,7 @@
       "@id": "https://xspww.github.io/Khabarovsk/#website",
       "url": "https://xspww.github.io/Khabarovsk/",
       "name": "Cronus Launcher",
-      "inLanguage": "en",
+      "inLanguage": "th",
       "about": { "@id": "https://xspww.github.io/Khabarovsk/#app" }
     },
     {
@@ -94,50 +96,50 @@
       "mainEntity": [
         {
           "@type": "Question",
-          "name": "Is Cronus Launcher free?",
+          "name": "Cronus Launcher ใช้ฟรีไหม",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Yes. Cronus Launcher is free and open source under GPL-3.0. You can download a standalone Windows build from the Releases page or run it from source with Python 3.11+."
+            "text": "ใช้ฟรี และเป็นโอเพนซอร์สภายใต้สัญญาอนุญาต GPL-3.0 โหลดไฟล์ .exe สำหรับ Windows จากหน้า Releases หรือรันจากซอร์สด้วย Python 3.11 ขึ้นไปก็ได้"
           }
         },
         {
           "@type": "Question",
-          "name": "How many Roblox accounts can I launch at the same time?",
+          "name": "เปิด Roblox พร้อมกันได้กี่บัญชี",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "The launcher itself has no fixed cap — how many clients run at once depends on your PC. The multi-add dialog accepts up to 50 user:pass lines per import, and you can queue and launch accounts together from the dashboard."
+            "text": "ตัวลอนเชอร์ไม่ได้ล็อกจำนวนไว้ ตกลงอยู่ที่สเปกเครื่องของคุณ หน้าต่างเพิ่มบัญชีแบบ Multi รับได้ถึง 50 บรรทัดต่อครั้ง แล้วจัดคิวเปิดพร้อมกันจากแดชบอร์ดได้"
           }
         },
         {
           "@type": "Question",
-          "name": "Where are my account cookies stored?",
+          "name": "cookie ของบัญชีเก็บไว้ที่ไหน",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "On your own machine, encrypted with Windows DPAPI, under %LOCALAPPDATA%\\Cronus Launcher\\data. Cookies are never sent to an external server and never committed to the repository."
+            "text": "เก็บในเครื่องของคุณเอง เข้ารหัสด้วย Windows DPAPI ที่ %LOCALAPPDATA%\\Cronus Launcher\\data ไม่ส่งออกไปเซิร์ฟเวอร์ภายนอก และไม่ถูกคอมมิตลง repo"
           }
         },
         {
           "@type": "Question",
-          "name": "Does Cronus Launcher bypass bans or anti-cheat?",
+          "name": "โปรแกรมนี้ข้ามแบนหรือหลบระบบป้องกันเกมไหม",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "No. It launches and manages accounts you already own. It does not bypass bans, security checks, or anti-cheat systems."
+            "text": "ไม่ ตัวโปรแกรมแค่เปิดและจัดการบัญชีที่คุณมีอยู่แล้ว ไม่ได้ข้ามแบน ไม่ได้หลบระบบตรวจสอบหรือระบบป้องกันใดๆ"
           }
         },
         {
           "@type": "Question",
-          "name": "Do I need Python installed?",
+          "name": "ต้องลง Python ไหม",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "No for the release build: the .exe from the Releases page is standalone and needs no Python, only Windows 10/11 64-bit and Roblox Player. Running from source needs Python 3.11+."
+            "text": "ไม่ต้องสำหรับไฟล์ release เพราะ .exe ใช้ได้เลย ขอแค่ Windows 10/11 64-bit กับ Roblox Player ส่วนการรันจากซอร์สต้องใช้ Python 3.11 ขึ้นไป"
           }
         },
         {
           "@type": "Question",
-          "name": "How are updates verified?",
+          "name": "อัปเดตตรวจอะไรก่อนติดตั้ง",
           "acceptedAnswer": {
             "@type": "Answer",
-            "text": "Each release artifact is signed with the project release key. The in-app updater verifies the signature and SHA256 digest before installing, and the data directory is left untouched."
+            "text": "ไฟล์ release เซ็นด้วยคีย์ของโปรเจกต์ ตัวอัปเดตในแอปจะตรวจลายเซ็นกับค่า SHA256 ก่อนติดตั้ง และไม่แตะโฟลเดอร์ข้อมูลของคุณเลย"
           }
         }
       ]
@@ -147,20 +149,20 @@
 </script>
 </head>
 <body>
-<a class="skip" href="#main">Skip to content</a>
+<a class="skip" href="#main">ข้ามไปเนื้อหา</a>
 
 <header class="topbar">
   <div class="wrap">
     <a class="brand" href="./">
-      <img src="assets/cronus_icon.png" alt="Cronus Launcher logo" width="30" height="30" />
+      <img src="assets/cronus_icon.png" alt="โลโก้ Cronus Launcher" width="32" height="32" />
       Cronus Launcher
     </a>
-    <nav class="topnav" aria-label="Main">
-      <a class="nav-link" href="#features">Features</a>
-      <a class="nav-link" href="#download">Download</a>
-      <a class="nav-link" href="#faq">FAQ</a>
-      <a href="https://github.com/xspww/Khabarovsk">GitHub</a>
-      <a class="lang" href="th/" hreflang="th" lang="th">ไทย</a>
+    <nav class="topnav" aria-label="เมนูหลัก">
+      <a class="nav-link" href="#features">ความสามารถ</a>
+      <a class="nav-link" href="#download">ดาวน์โหลด</a>
+      <a class="nav-link" href="#faq">คำถามที่เจอบ่อย</a>
+      <a class="gh" href="https://github.com/xspww/Khabarovsk">GitHub</a>
+      <a class="lang" href="en/" hreflang="en" lang="en">EN</a>
     </nav>
   </div>
 </header>
@@ -168,134 +170,174 @@
 <main id="main">
   <div class="hero">
     <div class="wrap">
-      <p class="eyebrow">Open source · GPL-3.0 · Windows 10/11</p>
-      <h1>Cronus Launcher — multi-account Roblox launcher for Windows</h1>
-      <p class="tagline">Run every account from one dashboard: queue them, launch them together, rejoin automatically after a disconnect, and still have a usable PC.</p>
-      <p class="lead">Cronus Launcher is a free, open source desktop app for playing multiple Roblox accounts on one PC. It stages accounts in a queue, sets the target Place ID, starts them at once, and rejoins the same server when a client drops or gets kicked. Performance controls cap FPS, low-graphics mode, RAM, CPU, and window layout so a handful of clients stays stable.</p>
+      <div class="hero-copy">
+        <p class="eyebrow">โอเพนซอร์ส · ใช้ฟรี · Windows 10/11</p>
+        <h1 class="title">Cronus Launcher</h1>
+        <p class="subtitle">ลอนเชอร์ Roblox หลายบัญชี สำหรับ Windows</p>
+        <p class="lead">คุม Roblox หลายบัญชีจากแดชบอร์ดเดียว จัดคิวไว้แล้วกดเปิดพร้อมกัน พอหลุดหรือโดนเตะระบบก็รีจอยกลับเซิร์ฟเวอร์เดิมให้เอง ปล่อย AFK farm ข้ามคืนได้ ส่วน FPS / RAM / CPU ก็ล็อกไว้ไม่ให้เครื่องอืด และ <strong>cookie ทุกบัญชีเข้ารหัสด้วย Windows DPAPI เก็บไว้ในเครื่องคุณเท่านั้น</strong></p>
 
-      <p class="cta">
-        <a class="btn btn-primary" href="https://github.com/xspww/Khabarovsk/releases/latest">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12" /><path d="m7 11 5 5 5-5" /><path d="M4 20h16" /></svg>
-          Download for Windows
-        </a>
-        <a class="btn" href="https://github.com/xspww/Khabarovsk">
-          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38l-.01-1.49c-2.23.48-2.7-1.04-2.7-1.04-.36-.93-.89-1.18-.89-1.18-.73-.5.05-.49.05-.49.8.06 1.23.83 1.23.83.71 1.22 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.6 7.6 0 0 1 4 0c1.53-1.03 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.28.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48l-.01 2.2c0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z" /></svg>
-          View source
-        </a>
-      </p>
+        <p class="cta">
+          <a class="btn btn-primary" href="https://github.com/xspww/Khabarovsk/releases/latest">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3v12" /><path d="m7 11 5 5 5-5" /><path d="M4 20h16" /></svg>
+            ดาวน์โหลดเลย!
+            <span class="arrow" aria-hidden="true">→</span>
+          </a>
+          <a class="btn" href="https://discord.gg/zUpFZxy4Jc">
+            <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.32 4.57A19.8 19.8 0 0 0 15.44 3c-.21.38-.46.9-.63 1.31a14.9 14.9 0 0 0-4.44 0c-.17-.4-.42-.93-.64-1.31a19.7 19.7 0 0 0-4.88 1.57C1.85 9.28 1.09 13.9 1.47 18.45a19.9 19.9 0 0 0 6.02 3.05c.48-.66.9-1.36 1.27-2.1-.7-.26-1.36-.58-1.99-.96.17-.12.33-.25.49-.38a14.2 14.2 0 0 0 12.2 0c.16.14.32.26.49.38-.63.38-1.3.7-2 .96.37.74.79 1.44 1.27 2.1a19.8 19.8 0 0 0 6.02-3.05c.45-5.28-.76-9.85-3.2-13.88ZM8.5 15.35c-1.18 0-2.15-1.08-2.15-2.4 0-1.33.95-2.41 2.15-2.41 1.2 0 2.17 1.09 2.15 2.4 0 1.33-.95 2.41-2.15 2.41Zm7.05 0c-1.18 0-2.15-1.08-2.15-2.4 0-1.33.95-2.41 2.15-2.41 1.2 0 2.17 1.09 2.15 2.4 0 1.33-.95 2.41-2.15 2.41Z" /></svg>
+            Discord
+          </a>
+        </p>
 
-      <ul class="meta">
-        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5" /></svg>Standalone <code>.exe</code>, no Python</li>
-        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="10.5" width="15" height="9.5" rx="2.5" /><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" /></svg>Cookies encrypted locally (DPAPI)</li>
-        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3Z" /><path d="m9 12 2 2 4-4" /></svg>Updates signed + SHA256 verified</li>
-        <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></svg>Not affiliated with Roblox Corp.</li>
-      </ul>
+        <ul class="trust">
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5" /></svg><code>.exe</code> ใช้ได้เลย ไม่ต้องลง Python</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4.5" y="10.5" width="15" height="9.5" rx="2.5" /><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5" /></svg>cookie เข้ารหัสในเครื่อง (DPAPI)</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v6c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3Z" /><path d="m9 12 2 2 4-4" /></svg>อัปเดตตรวจลายเซ็น + SHA256</li>
+          <li><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></svg>ไม่เกี่ยวข้องกับ Roblox Corporation</li>
+        </ul>
+      </div>
 
-      <figure class="preview reveal">
-        <div class="window" role="img" aria-label="Cronus Launcher dashboard preview with sample accounts">
-          <div class="window-bar">
-            <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
-            <span class="window-title">Cronus Launcher <em>v3.2.5</em></span>
+      <figure class="stage reveal">
+        <span class="stage-glow" aria-hidden="true"></span>
+        <span class="app-back" aria-hidden="true"></span>
+
+        <div class="app" role="img" aria-label="ตัวอย่างหน้าจอแดชบอร์ด Cronus Launcher พร้อมข้อมูลบัญชีตัวอย่าง">
+          <div class="app-titlebar">
+            <span class="app-logo">Cn</span>
+            <span class="app-name">Cronus Launcher <span>— 3.2.5</span></span>
+            <span class="win-buttons" aria-hidden="true"><span>−</span><span>□</span><span>×</span></span>
           </div>
-          <div class="window-body">
-            <div class="metrics">
-              <div class="metric">
-                <div class="metric-head"><span>CPU</span><b>34%</b></div>
-                <svg viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
-                  <polyline class="spark-cpu" fill="none" stroke-width="2" stroke-linejoin="round" points="0,25 10,21 20,24 30,17 40,20 50,13 60,16 70,10 80,13 90,8 100,12 110,7 120,9" />
-                </svg>
-                <div class="metric-foot">12 threads · limiter on</div>
-              </div>
-              <div class="metric">
-                <div class="metric-head"><span>RAM</span><b>6.2 / 16 GB</b></div>
-                <svg viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
-                  <polyline class="spark-ram" fill="none" stroke-width="2" stroke-linejoin="round" points="0,28 10,26 20,22 30,24 40,19 50,21 60,15 70,17 80,13 90,15 100,11 110,12 120,9" />
-                </svg>
-                <div class="metric-foot">5 clients · page file 1.4 GB</div>
-              </div>
-              <div class="metric">
-                <div class="metric-head"><span>VIRTUAL</span><b>2.1 GB</b></div>
-                <svg viewBox="0 0 120 34" preserveAspectRatio="none" aria-hidden="true">
-                  <polyline class="spark-virt" fill="none" stroke-width="2" stroke-linejoin="round" points="0,22 10,24 20,20 30,21 40,18 50,19 60,16 70,18 80,15 90,16 100,14 110,15 120,13" />
-                </svg>
-                <div class="metric-foot">peak 3.0 GB today</div>
-              </div>
-            </div>
 
-            <div class="toolbar">
-              <span class="chip chip-start">START</span>
-              <span class="chip">Close Roblox</span>
-              <span class="chip">Add Accounts</span>
-              <span class="chip">Reload Cookies</span>
-              <span class="search">Search accounts…</span>
-            </div>
+          <div class="app-body">
+            <aside class="app-side">
+              <span class="side-stop"><i></i>STOP</span>
 
-            <table class="mock-table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Status</th>
-                  <th>Username</th>
-                  <th class="col-hide">Game</th>
-                  <th class="col-hide">Description</th>
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td>1</td>
-                  <td><span class="pill pill-online">Online</span></td>
-                  <td>kiro_dev</td>
-                  <td class="col-hide">Place 1758…</td>
-                  <td class="col-hide muted-cell">rejoined 00:12 ago</td>
-                </tr>
-                <tr>
-                  <td>2</td>
-                  <td><span class="pill pill-online">Online</span></td>
-                  <td>mira_alt</td>
-                  <td class="col-hide">Place 1758…</td>
-                  <td class="col-hide muted-cell">server full · rejoining</td>
-                </tr>
-                <tr>
-                  <td>3</td>
-                  <td><span class="pill pill-online">Online</span></td>
-                  <td>atlas_09</td>
-                  <td class="col-hide">Place 1758…</td>
-                  <td class="col-hide muted-cell">AFK 41m</td>
-                </tr>
-                <tr>
-                  <td>4</td>
-                  <td><span class="pill pill-queued">Queued</span></td>
-                  <td>farm_07</td>
-                  <td class="col-hide">Place 1758…</td>
-                  <td class="col-hide muted-cell">waiting for a slot</td>
-                </tr>
-                <tr>
-                  <td>5</td>
-                  <td><span class="pill pill-warn">Captcha</span></td>
-                  <td>nova_x2</td>
-                  <td class="col-hide">Place 1758…</td>
-                  <td class="col-hide muted-cell">finish in the popup</td>
-                </tr>
-                <tr>
-                  <td>6</td>
-                  <td><span class="pill pill-idle">Finished</span></td>
-                  <td>guest_alt9</td>
-                  <td class="col-hide">Place 1758…</td>
-                  <td class="col-hide muted-cell">session ended</td>
-                </tr>
-              </tbody>
-            </table>
+              <nav class="side-nav">
+                <span class="row is-active">Dashboard <span class="count">4</span></span>
+                <p class="group"><span class="dot-bullet"></span>Launcher</p>
+                <span class="row sub">Queue</span>
+                <span class="row sub">Game</span>
+                <p class="group"><span class="dot-bullet"></span>Performance</p>
+                <span class="row sub">Graphic</span>
+                <span class="row sub">RAM</span>
+                <span class="row sub">Windows</span>
+                <p class="group"><span class="dot-bullet"></span>Tool</p>
+                <span class="row sub">Lua Manager</span>
+                <span class="row sub">Exploits Manager</span>
+                <span class="row sub">Cronus Manager</span>
+              </nav>
 
-            <div class="mock-foot">
-              <span class="pill pill-online">Online 3</span>
-              <span class="pill pill-queued">Queued 1</span>
-              <span class="pill pill-warn">Captcha 1</span>
-              <span class="pill pill-idle">Finished 1</span>
-              <span class="timer">Running: 42m 18s</span>
-            </div>
+              <div class="side-counts">
+                <span class="count-pill c-online"><i></i>Online <b>2</b></span>
+                <span class="count-pill c-queued"><i></i>Queued <b>1</b></span>
+                <span class="count-pill c-finished"><i></i>Finished <b>0</b></span>
+                <span class="count-pill c-captcha"><i></i>Captcha <b>1</b></span>
+                <span class="count-pill c-banned"><i></i>Banned <b>0</b></span>
+                <span class="count-pill c-suspended"><i></i>Suspended <b>0</b></span>
+                <span class="count-pill c-locked"><i></i>Locked <b>0</b></span>
+                <span class="count-pill c-invalid"><i></i>Invalid <b>0</b></span>
+              </div>
+
+              <span class="side-running">
+                <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M12 7.5V12l3.2 2" /></svg>
+                Running: 16h 41m
+              </span>
+            </aside>
+
+            <section class="app-main">
+              <div class="app-head">
+                <h4>Dashboard</h4>
+                <div class="app-actions">
+                  <span class="is-icon" aria-hidden="true">⟳</span>
+                  <span>Close Roblox</span>
+                  <span class="is-primary">Add Accounts</span>
+                  <span>Reload Cookies</span>
+                </div>
+              </div>
+
+              <div class="app-metrics">
+                <div class="app-metric">
+                  <header>CPU <b>26%</b></header>
+                  <svg class="spark" viewBox="0 0 120 32" preserveAspectRatio="none" aria-hidden="true">
+                    <polyline class="stroke-blue" fill="none" stroke-width="1.6" stroke-linejoin="round" points="0,20 6,26 12,22 18,8 24,17 30,24 36,24 42,25 48,25 54,25 60,25 66,24 72,25 78,25 84,25 90,25 96,24 102,25 108,25 114,24 120,25" />
+                  </svg>
+                  <div class="trail"><i class="fill-blue" style="--w:26%"></i></div>
+                  <div class="readout">6 threads</div>
+                </div>
+                <div class="app-metric">
+                  <header>RAM <b>47%</b></header>
+                  <div class="gauge"><i class="fill-green" style="--w:47%"></i></div>
+                  <div class="trail"><i class="fill-green" style="--w:47%"></i></div>
+                  <div class="readout">7.5 / 15.9 GB</div>
+                </div>
+                <div class="app-metric">
+                  <header>VIRTUAL <b>54%</b></header>
+                  <div class="gauge"><i class="fill-blue" style="--w:54%"></i></div>
+                  <div class="trail"><i class="fill-blue" style="--w:54%"></i></div>
+                  <div class="readout">2.3 / 4.3 GB</div>
+                </div>
+              </div>
+
+              <div class="app-searchrow">
+                <span class="app-search">
+                  <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7" /><path d="m20 20-3.4-3.4" /></svg>
+                  Search accounts...
+                </span>
+                <span class="btn-lite">Set game</span>
+              </div>
+
+              <div class="app-filters">
+                <span class="is-on">All 4</span>
+                <span>Online 2</span>
+                <span>Queued 1</span>
+                <span class="ghost">Reset columns</span>
+              </div>
+
+              <table class="app-table">
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Status</th>
+                    <th>Username</th>
+                    <th>Game</th>
+                    <th>Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>1</td>
+                    <td><span class="tag tag-online"><i></i>Online</span></td>
+                    <td><span class="user-blur">kiro_dev</span></td>
+                    <td><span class="game"><i></i>Anime Expeditions</span></td>
+                    <td><span class="add-note">+ Add description</span></td>
+                  </tr>
+                  <tr>
+                    <td>2</td>
+                    <td><span class="tag tag-online"><i></i>Online</span></td>
+                    <td><span class="user-blur">mira_alt</span></td>
+                    <td><span class="game"><i></i>Anime Expeditions</span></td>
+                    <td>AFK 41m</td>
+                  </tr>
+                  <tr>
+                    <td>3</td>
+                    <td><span class="tag tag-queued"><i></i>Queued</span></td>
+                    <td><span class="user-blur">farm_07</span></td>
+                    <td><span class="game"><i></i>Anime Expeditions</span></td>
+                    <td>waiting for a slot</td>
+                  </tr>
+                  <tr>
+                    <td>4</td>
+                    <td><span class="tag tag-captcha"><i></i>Captcha</span></td>
+                    <td><span class="user-blur">nova_x2</span></td>
+                    <td><span class="game"><i></i>Anime Expeditions</span></td>
+                    <td>finish in the popup</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
           </div>
         </div>
-        <figcaption>Dashboard preview — sample accounts, not a real session.</figcaption>
+
+        <figcaption class="app-caption">ตัวอย่างหน้าจอแดชบอร์ด — ป้ายในโปรแกรมเป็นภาษาอังกฤษตามตัวจริง และบัญชีทั้งหมดเป็นข้อมูลตัวอย่าง</figcaption>
       </figure>
     </div>
   </div>
@@ -303,39 +345,39 @@
   <section id="features" aria-labelledby="features-h">
     <div class="wrap">
       <div class="section-head reveal">
-        <h2 id="features-h">What it does</h2>
-        <p>Everything below runs from the local dashboard. The launcher starts a service on <code>127.0.0.1</code> and opens the desktop window — no cloud account, no upload of your sessions.</p>
+        <h2 id="features-h">ทำอะไรได้บ้าง</h2>
+        <p>ทุกอย่างสั่งจากแดชบอร์ดในเครื่อง ตัวลอนเชอร์เปิด service ที่ <code>127.0.0.1</code> แล้วเปิดหน้าต่างให้เอง ไม่มีบัญชีคลาวด์ ไม่มีข้อมูลเซสชันถูกส่งออกไปข้างนอก</p>
       </div>
       <div class="grid">
         <article class="card reveal">
           <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 3 7.5 12 12l9-4.5L12 3Z" /><path d="M3 12.5 12 17l9-4.5" /><path d="M3 17.5 12 22l9-4.5" /></svg></span>
-          <h3>Multi-account queue</h3>
-          <p>Sign in through a popup browser one account at a time, or paste up to 50 <code>user:pass</code> lines in Multi mode. You complete 2FA, captcha, and passkey; the launcher captures the cookie automatically.</p>
+          <h3>จัดคิวหลายบัญชี</h3>
+          <p>ล็อกอินผ่านป๊อปอัพทีละบัญชี หรือวาง <code>user:pass</code> ในโหมด Multi ได้ถึง 50 บรรทัด ส่วน 2FA กับ captcha และ passkey คุณกดเองในป๊อปอัพ แล้วตัวโปรแกรมดึง cookie ให้อัตโนมัติ</p>
         </article>
         <article class="card reveal">
           <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3.2-6.9" /><polyline points="21 3.5 21 9 15.5 9" /></svg></span>
-          <h3>Automatic rejoin</h3>
-          <p>Detects disconnects and kicks, then rejoins the configured Place ID and server on its own — useful for long sessions where babysitting each client is not realistic.</p>
+          <h3>รีจอยอัตโนมัติ</h3>
+          <p>พอไคลเอนต์หลุดหรือโดนเตะ ระบบพากลับเข้า Place ID กับเซิร์ฟเวอร์ที่ตั้งไว้ให้เอง เหมาะกับเซสชันยาวๆ ที่นั่งเฝ้าทีละจอไม่ไหว</p>
         </article>
         <article class="card reveal">
           <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5.2l3.6 2.1" /></svg></span>
-          <h3>AFK farm sessions</h3>
-          <p>Keep accounts in a game for hours while the status board tracks <code>Online</code>, <code>Queued</code>, <code>Finished</code>, <code>Captcha</code>, <code>Banned</code>, <code>Suspended</code>, <code>Locked</code>, <code>Recovery</code>, and <code>Invalid</code>.</p>
+          <h3>ปล่อย AFK farm</h3>
+          <p>ปล่อยบัญชีค้างในเกมได้เป็นชั่วโมง ระหว่างนั้นบอร์ดสถานะบอกไว้ครบทั้ง <code>Online</code> <code>Queued</code> <code>Finished</code> <code>Captcha</code> <code>Banned</code> <code>Suspended</code> <code>Locked</code> <code>Recovery</code> และ <code>Invalid</code></p>
         </article>
         <article class="card reveal">
           <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18a9 9 0 1 1 16 0" /><path d="m12 13.5 4.6-4.6" /><circle cx="12" cy="14.6" r="1.7" /></svg></span>
-          <h3>Performance controls</h3>
-          <p>FPS limit and low-graphics mode, memory management for multi-instance sessions, automatic window layout, plus a CPU limiter and process priority applied to Roblox clients.</p>
+          <h3>คุมประสิทธิภาพ</h3>
+          <p>ล็อก FPS โหมดกราฟิกต่ำ จัดการ RAM สำหรับเซสชันหลายจอ จัดเลย์เอาต์หน้าต่างให้อัตโนมัติ พร้อมตัวจำกัด CPU และตั้ง priority ให้ไคลเอนต์ Roblox</p>
         </article>
         <article class="card reveal">
           <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 8-4 4 4 4" /><path d="m15 8 4 4-4 4" /></svg></span>
-          <h3>Lua loader for executors</h3>
-          <p>Ship <code>lua/run_in_executor.lua</code> (in the portable zip it is <code>Api.lua</code>) to your executor for faster rejoin telemetry and in-game commands.</p>
+          <h3>Lua loader สำหรับ executor</h3>
+          <p>เอา <code>lua/run_in_executor.lua</code> ไปรันใน executor (ไฟล์ zip แบบพกพาแถมมาในชื่อ <code>Api.lua</code>) ช่วยให้ส่ง telemetry กับสั่งงานในเกมได้ไวขึ้น</p>
         </article>
         <article class="card reveal">
           <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3Z" /><path d="M4 7.5l8 4.5 8-4.5" /><path d="M12 12v9" /></svg></span>
-          <h3>Executor and client managers</h3>
-          <p>Tracks whether your executor works with the current official Roblox version — optionally relaunching and rejoining when it becomes compatible again — and installs or updates the Roblox client itself.</p>
+          <h3>ตัวจัดการ executor และไคลเอนต์</h3>
+          <p>ตามดูว่า executor ที่คุณใช้ยังทำงานกับ Roblox เวอร์ชันทางการไหม เปิด auto-relaunch ไว้ก็ปิดแล้วเปิดใหม่ให้ พร้อมรีจอยกลับเข้าเกม และติดตั้งหรืออัปเดตตัวเกมให้ด้วย</p>
         </article>
       </div>
     </div>
@@ -344,30 +386,30 @@
   <section id="download" aria-labelledby="download-h">
     <div class="wrap">
       <div class="section-head reveal">
-        <h2 id="download-h">Download and install</h2>
-        <p>Pick the standalone build for normal use, or clone the source if you want to run or modify the code.</p>
+        <h2 id="download-h">ดาวน์โหลดและติดตั้ง</h2>
+        <p>ใช้ไฟล์ <code>.exe</code> จากหน้า Releases ก็พอ ถ้าอยากรันจากซอร์สหรือแก้โค้ดเองก็โคลน repo ได้เลย</p>
       </div>
       <ol class="steps reveal">
-        <li>Open the <a href="https://github.com/xspww/Khabarovsk/releases/latest">Releases page</a>.</li>
-        <li>Download <code>CronusLauncher-&lt;version&gt;.exe</code> and run it.</li>
-        <li>Verify the download against the SHA256 value published on the release page.</li>
+        <li>เปิดหน้า <a href="https://github.com/xspww/Khabarovsk/releases/latest">Releases</a></li>
+        <li>โหลด <code>CronusLauncher-&lt;version&gt;.exe</code> แล้วเปิดได้เลย</li>
+        <li>เทียบค่า SHA256 ที่ได้กับค่าที่ประกาศไว้บนหน้า release</li>
       </ol>
-      <pre class="reveal"><code># Verify the download (PowerShell)
+      <pre class="reveal"><code># ตรวจไฟล์ที่โหลดมา (PowerShell)
 (Get-FileHash CronusLauncher-&lt;version&gt;.exe -Algorithm SHA256).Hash</code></pre>
       <table class="reveal">
         <tbody>
           <tr>
-            <th>Release artifacts</th>
-            <td><code>CronusLauncher-&lt;version&gt;.exe</code> — the versioned download artifact, and the exact file name the in-app updater fetches.</td>
+            <th>ไฟล์ในหน้า release</th>
+            <td><code>CronusLauncher-&lt;version&gt;.exe</code> — ไฟล์ดาวน์โหลดตามเวอร์ชัน และเป็นชื่อที่ตัวอัปเดตในแอปโหลดตรงตัว</td>
           </tr>
           <tr>
-            <th>Portable zip</th>
-            <td><code>CronusLauncher-&lt;version&gt;-portable.zip</code> — <code>CronusLauncher.exe</code> with a stable name (shortcuts survive in-place updates) plus <code>Api.lua</code>, the executor loader script.</td>
+            <th>ไฟล์ zip แบบพกพา</th>
+            <td><code>CronusLauncher-&lt;version&gt;-portable.zip</code> — <code>CronusLauncher.exe</code> ที่ใช้ชื่อคงเดิม (ชอร์ตคัตไม่หลุดตอนอัปเดตแบบแทนที่ไฟล์) พร้อม <code>Api.lua</code> สคริปต์ loader สำหรับ executor</td>
           </tr>
         </tbody>
       </table>
-      <p class="note">The executable is not signed with a commercial Windows publisher certificate, so SmartScreen may warn on first run. Release builds are signed with the project release key, and the updater checks that signature plus the SHA256 digest before installing anything.</p>
-      <h3>Run from source</h3>
+      <p class="note">ไฟล์ <code>.exe</code> ไม่ได้เซ็นด้วยใบรับรอง publisher เชิงพาณิชย์ พอเปิดครั้งแรก SmartScreen อาจเตือน ตัวไฟล์ release เซ็นด้วยคีย์ของโปรเจกต์ และตัวอัปเดตจะตรวจลายเซ็นกับ SHA256 ก่อนติดตั้งทุกครั้ง</p>
+      <h3 class="sub">รันจากซอร์ส</h3>
       <pre class="reveal"><code>git clone https://github.com/xspww/Khabarovsk.git
 cd Khabarovsk
 python -m pip install -r requirements.txt
@@ -378,51 +420,51 @@ python -m pip install -r requirements.txt
   <section id="requirements" aria-labelledby="requirements-h">
     <div class="wrap">
       <div class="section-head reveal">
-        <h2 id="requirements-h">Requirements</h2>
-        <p>Windows 10/11 64-bit is the only hard requirement for the release build.</p>
+        <h2 id="requirements-h">สิ่งที่ต้องมี</h2>
+        <p>ของบังคับจริงมีอย่างเดียวคือ Windows 10/11 รุ่น 64-bit ส่วนที่เหลือสำหรับคนที่รันจากซอร์ส</p>
       </div>
       <table class="reveal">
         <tbody>
-          <tr><th>Operating system</th><td>Windows 10 or Windows 11, 64-bit</td></tr>
-          <tr><th>Runtime (release build)</th><td>None — the <code>.exe</code> from Releases is standalone</td></tr>
-          <tr><th>Runtime (from source)</th><td>Python 3.11+ and <code>pip install -r requirements.txt</code></td></tr>
-          <tr><th>Game client</th><td>Roblox Player installed on the same PC</td></tr>
-          <tr><th>WebView2</th><td>Evergreen Runtime (prompted and downloaded if missing)</td></tr>
-          <tr><th>Browser</th><td>Installed Chrome or Edge for the sign-in popup</td></tr>
+          <tr><th>ระบบปฏิบัติการ</th><td>Windows 10 หรือ Windows 11 รุ่น 64-bit</td></tr>
+          <tr><th>รันไทม์ (ตัว release)</th><td>ไม่ต้องลงเพิ่ม ไฟล์ <code>.exe</code> จากหน้า Releases พร้อมใช้</td></tr>
+          <tr><th>รันไทม์ (รันจากซอร์ส)</th><td>Python 3.11 ขึ้นไป และ <code>pip install -r requirements.txt</code></td></tr>
+          <tr><th>ตัวเกม</th><td>ลง Roblox Player ไว้บนเครื่องเดียวกัน</td></tr>
+          <tr><th>WebView2</th><td>Evergreen Runtime (ถ้ายังไม่มี แอปจะถามก่อนแล้วโหลดให้)</td></tr>
+          <tr><th>เบราว์เซอร์</th><td>Chrome หรือ Edge ที่ลงไว้แล้ว สำหรับป๊อปอัพตอนล็อกอิน</td></tr>
         </tbody>
       </table>
-      <p class="note">Runtime data lives in <code>%LOCALAPPDATA%\Cronus Launcher\data</code>. Override it with the <code>CRONUS_USER_ROOT</code> environment variable; without <code>%LOCALAPPDATA%</code> the launcher falls back to <code>~/.cronus_launcher</code>.</p>
+      <p class="note">ข้อมูลตอนรันอยู่ที่ <code>%LOCALAPPDATA%\Cronus Launcher\data</code> เปลี่ยนที่เก็บได้ด้วย env <code>CRONUS_USER_ROOT</code> ถ้าไม่มี <code>%LOCALAPPDATA%</code> จะใช้ <code>~/.cronus_launcher</code> แทน</p>
     </div>
   </section>
 
   <section id="faq" aria-labelledby="faq-h">
     <div class="wrap">
       <div class="section-head reveal">
-        <h2 id="faq-h">Frequently asked questions</h2>
+        <h2 id="faq-h">คำถามที่เจอบ่อย</h2>
       </div>
       <details class="reveal" open>
-        <summary>Is Cronus Launcher free?</summary>
-        <p>Yes. It is free and open source under GPL-3.0. Download the standalone Windows build from the Releases page, or run it from source with Python 3.11+.</p>
+        <summary>Cronus Launcher ใช้ฟรีไหม</summary>
+        <p>ใช้ฟรี และเป็นโอเพนซอร์สภายใต้สัญญาอนุญาต GPL-3.0 โหลดไฟล์ <code>.exe</code> สำหรับ Windows จากหน้า Releases หรือจะรันจากซอร์สด้วย Python 3.11 ขึ้นไปก็ได้</p>
       </details>
       <details class="reveal">
-        <summary>How many Roblox accounts can I launch at the same time?</summary>
-        <p>The launcher sets no fixed cap — how many clients stay smooth depends on your PC. The multi-add dialog accepts up to 50 <code>user:pass</code> lines per import, and accounts can be queued and started together from one dashboard.</p>
+        <summary>เปิด Roblox พร้อมกันได้กี่บัญชี</summary>
+        <p>ตัวลอนเชอร์ไม่ได้ล็อกจำนวนไว้ ตกลงอยู่ที่สเปกเครื่องคุณ หน้าต่างเพิ่มบัญชีแบบ Multi รับได้ถึง 50 บรรทัดต่อครั้ง แล้วจัดคิวเปิดพร้อมกันจากแดชบอร์ดได้</p>
       </details>
       <details class="reveal">
-        <summary>Where are my account cookies stored?</summary>
-        <p>On your machine only, encrypted with Windows DPAPI, under <code>%LOCALAPPDATA%\Cronus Launcher\data</code>. Cookies are never sent to an external server and never committed to the repository.</p>
+        <summary>cookie ของบัญชีเก็บไว้ที่ไหน</summary>
+        <p>เก็บในเครื่องคุณเอง เข้ารหัสด้วย Windows DPAPI ที่ <code>%LOCALAPPDATA%\Cronus Launcher\data</code> ไม่ส่งออกไปเซิร์ฟเวอร์ภายนอก และไม่ถูกคอมมิตลง repo</p>
       </details>
       <details class="reveal">
-        <summary>Does it bypass bans or anti-cheat?</summary>
-        <p>No. Cronus Launcher launches and manages accounts you already own. It does not bypass bans, security checks, or anti-cheat systems.</p>
+        <summary>ข้ามแบนหรือหลบระบบป้องกันเกมไหม</summary>
+        <p>ไม่ ตัวโปรแกรมแค่เปิดและจัดการบัญชีที่คุณมีอยู่แล้ว ไม่ได้ข้ามแบน ไม่ได้หลบระบบตรวจสอบหรือระบบป้องกันใดๆ</p>
       </details>
       <details class="reveal">
-        <summary>Do I need Python installed?</summary>
-        <p>No for the release build: the <code>.exe</code> is standalone and only needs Windows 10/11 64-bit and Roblox Player. Running from source needs Python 3.11+.</p>
+        <summary>ต้องลง Python ไหม</summary>
+        <p>ไม่ต้องสำหรับไฟล์ release เพราะ <code>.exe</code> ใช้ได้เลย ขอแค่ Windows 10/11 64-bit กับ Roblox Player ส่วนการรันจากซอร์สต้องใช้ Python 3.11 ขึ้นไป</p>
       </details>
       <details class="reveal">
-        <summary>How are updates verified?</summary>
-        <p>Each release artifact is signed with the project release key, and the in-app updater verifies that signature plus the SHA256 digest before installing. Updates leave the data directory untouched.</p>
+        <summary>อัปเดตตรวจอะไรก่อนติดตั้ง</summary>
+        <p>ไฟล์ release เซ็นด้วยคีย์ของโปรเจกต์ ตัวอัปเดตในแอปจะตรวจลายเซ็นกับค่า SHA256 ก่อนติดตั้ง และไม่แตะโฟลเดอร์ข้อมูลของคุณเลย</p>
       </details>
     </div>
   </section>
@@ -430,16 +472,16 @@ python -m pip install -r requirements.txt
 
 <footer>
   <div class="wrap">
-    <nav class="footlinks" aria-label="Footer">
-      <a href="https://github.com/xspww/Khabarovsk">GitHub repository</a>
+    <nav class="footlinks" aria-label="ลิงก์ท้ายหน้า">
+      <a href="https://github.com/xspww/Khabarovsk">repo บน GitHub</a>
       <a href="https://github.com/xspww/Khabarovsk/releases/latest">Releases</a>
-      <a href="https://github.com/xspww/Khabarovsk/blob/main/README.md">README</a>
       <a href="https://github.com/xspww/Khabarovsk/blob/main/README.th.md" hreflang="th" lang="th">เอกสารภาษาไทย</a>
-      <a href="https://github.com/xspww/Khabarovsk/issues">Issues</a>
+      <a href="https://github.com/xspww/Khabarovsk/blob/main/README.md" hreflang="en" lang="en">README (English)</a>
+      <a href="en/" hreflang="en" lang="en">English site</a>
       <a href="https://discord.gg/zUpFZxy4Jc">Discord</a>
-      <a href="https://github.com/xspww/Khabarovsk/blob/main/LICENSE">GPL-3.0 license</a>
+      <a href="https://github.com/xspww/Khabarovsk/blob/main/LICENSE">สัญญาอนุญาต GPL-3.0</a>
     </nav>
-    <p class="disclaimer">Cronus Launcher is an independent open source project and is not affiliated with, endorsed by, or sponsored by Roblox Corporation. "Roblox" is a trademark of Roblox Corporation.</p>
+    <p class="disclaimer">Cronus Launcher เป็นโปรเจกต์โอเพนซอร์สที่พัฒนากันเอง ไม่ได้เกี่ยวข้อง ไม่ได้ได้รับการรับรอง และไม่ได้สนับสนุนโดย Roblox Corporation “Roblox” เป็นเครื่องหมายการค้าของ Roblox Corporation</p>
   </div>
 </footer>
 </body>

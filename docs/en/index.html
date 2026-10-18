@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Cronus Launcher — Open Source Multi-Account Roblox Launcher for Windows</title>
-<meta name="description" content="Cronus Launcher is a free, open source multi-account Roblox launcher for Windows 10/11. Queue and launch many accounts, auto rejoin servers, run AFK farm sessions, and cap FPS, RAM, and CPU from one local dashboard." />
+<meta name="description" content="Cronus Launcher is a free, open source multi-account Roblox launcher for Windows 10/11. Queue and launch many accounts, auto rejoin servers, and cap FPS, RAM, and CPU from one local dashboard." />
 <link rel="canonical" href="https://xspww.github.io/Khabarovsk/en/" />
 <link rel="alternate" hreflang="th" href="https://xspww.github.io/Khabarovsk/" />
 <link rel="alternate" hreflang="en" href="https://xspww.github.io/Khabarovsk/en/" />
@@ -12,7 +12,7 @@
 <meta name="robots" content="index, follow, max-image-preview:large" />
 <meta name="theme-color" content="#08060e" />
 <meta name="author" content="xspww" />
-<meta name="keywords" content="Cronus Launcher, Roblox launcher, multi-account Roblox launcher, Roblox auto rejoin, Roblox AFK farm, Roblox account manager, open source Roblox launcher, Windows" />
+<meta name="keywords" content="Cronus Launcher, Roblox launcher, multi-account Roblox launcher, Roblox auto rejoin, Roblox account manager, open source Roblox launcher, Windows" />
 
 <meta property="og:type" content="website" />
 <meta property="og:site_name" content="Cronus Launcher" />
@@ -20,14 +20,14 @@
 <meta property="og:locale:alternate" content="th_TH" />
 <meta property="og:url" content="https://xspww.github.io/Khabarovsk/en/" />
 <meta property="og:title" content="Cronus Launcher — Open Source Multi-Account Roblox Launcher for Windows" />
-<meta property="og:description" content="Queue and launch many Roblox accounts, auto rejoin after kicks, run AFK farm sessions, and control FPS, RAM, and CPU from one local dashboard. Free and GPL-3.0." />
+<meta property="og:description" content="Queue and launch many Roblox accounts, auto rejoin after kicks, and control FPS, RAM, and CPU from one local dashboard. Free and GPL-3.0." />
 <meta property="og:image" content="https://xspww.github.io/Khabarovsk/og.png" />
 <meta property="og:image:width" content="1200" />
 <meta property="og:image:height" content="630" />
 <meta property="og:image:alt" content="Cronus Launcher — open source multi-account Roblox launcher for Windows" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="Cronus Launcher — Open Source Multi-Account Roblox Launcher" />
-<meta name="twitter:description" content="Queue and launch many Roblox accounts, auto rejoin, AFK farm, and cap FPS, RAM, and CPU from one local dashboard." />
+<meta name="twitter:description" content="Queue and launch many Roblox accounts, auto rejoin, and cap FPS, RAM, and CPU from one local dashboard." />
 <meta name="twitter:image" content="https://xspww.github.io/Khabarovsk/og.png" />
 
 <link rel="icon" href="../assets/cronus_icon.png" />
@@ -57,14 +57,12 @@
       "license": "https://www.gnu.org/licenses/gpl-3.0.html",
       "isAccessibleForFree": true,
       "inLanguage": "en",
-      "description": "Cronus Launcher is a local-first, multi-account Roblox launcher for Windows: one dashboard drives queueing, launching, auto rejoin, AFK farm sessions, and performance controls, with account cookies encrypted on the host.",
+      "description": "Cronus Launcher is a local-first, multi-account Roblox launcher for Windows: one dashboard drives queueing, launching, auto rejoin, and performance controls, with account cookies encrypted on the host.",
       "featureList": [
-        "Queue and launch many Roblox accounts at once",
+        "Sign in to many Roblox accounts at once",
         "Automatic rejoin after disconnect or kick",
-        "AFK farm sessions with status tracking",
-        "FPS limit, low-graphics mode, RAM, CPU, and window management",
-        "In-game Lua loader for executors",
-        "Roblox client version install and update",
+        "FPS, RAM, and CPU locks applied to Roblox clients",
+        "Executor compatibility checks plus Roblox client install and update",
         "Cookies encrypted with Windows DPAPI, local only"
       ],
       "offers": {
@@ -172,7 +170,7 @@
       <div class="hero-copy">
         <h1 class="title">Cronus Launcher</h1>
         <p class="subtitle">Multi-account Roblox launcher for Windows</p>
-        <p class="lead">Run every Roblox account from one dashboard. Queue them, start them together, and let the launcher rejoin the same server when a client drops or gets kicked. Leave AFK farm sessions running overnight while FPS / RAM / CPU stays capped — and <strong>every account cookie is encrypted on your PC with Windows DPAPI</strong>.</p>
+        <p class="lead">Run every Roblox account from one dashboard. Queue them, start them together, and let the launcher rejoin the same server when a client drops or gets kicked. Leave sessions running overnight while FPS / RAM / CPU stays capped — and <strong>every account cookie is encrypted on your PC with Windows DPAPI</strong>.</p>
 
         <p class="cta">
           <a class="btn btn-primary" href="https://github.com/xspww/Khabarovsk/releases/latest">
@@ -215,13 +213,12 @@
     <div class="wrap">
       <div class="section-head reveal">
         <h2 id="features-h">What it does</h2>
-        <p>Everything below runs from the local dashboard. The launcher starts a service on <code>127.0.0.1</code> and opens the desktop window — no cloud account, no upload of your sessions.</p>
       </div>
       <div class="grid">
         <article class="card reveal">
           <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 3 7.5 12 12l9-4.5L12 3Z" /><path d="M3 12.5 12 17l9-4.5" /><path d="M3 17.5 12 22l9-4.5" /></svg></span>
-          <h3>Multi-account queue</h3>
-          <p>Sign in through a popup browser one account at a time, or paste up to 50 <code>user:pass</code> lines in Multi mode. You complete 2FA, captcha, and passkey; the launcher captures the cookie automatically.</p>
+          <h3>Multi-account login</h3>
+          <p>Sign in to many accounts at the same time. Cookie support plus an account checker that reports whether an account still works, or if it hit a captcha or a face scan.</p>
         </article>
         <article class="card reveal">
           <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-3.2-6.9" /><polyline points="21 3.5 21 9 15.5 9" /></svg></span>
@@ -229,19 +226,9 @@
           <p>Detects disconnects and kicks, then rejoins the configured Place ID and server on its own — useful for long sessions where babysitting each client is not realistic.</p>
         </article>
         <article class="card reveal">
-          <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9" /><path d="M12 7v5.2l3.6 2.1" /></svg></span>
-          <h3>AFK farm sessions</h3>
-          <p>Keep accounts in a game for hours while the status board tracks <code>Online</code>, <code>Queued</code>, <code>Finished</code>, <code>Captcha</code>, <code>Banned</code>, <code>Suspended</code>, <code>Locked</code>, <code>Recovery</code>, and <code>Invalid</code>.</p>
-        </article>
-        <article class="card reveal">
           <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18a9 9 0 1 1 16 0" /><path d="m12 13.5 4.6-4.6" /><circle cx="12" cy="14.6" r="1.7" /></svg></span>
-          <h3>Performance controls</h3>
-          <p>FPS limit and low-graphics mode, memory management for multi-instance sessions, automatic window layout, plus a CPU limiter and process priority applied to Roblox clients.</p>
-        </article>
-        <article class="card reveal">
-          <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m9 8-4 4 4 4" /><path d="m15 8 4 4-4 4" /></svg></span>
-          <h3>Lua loader for executors</h3>
-          <p>Ship <code>lua/run_in_executor.lua</code> (in the portable zip it is <code>Api.lua</code>) to your executor for faster rejoin telemetry and in-game commands.</p>
+          <h3>Roblox settings</h3>
+          <p>Lock FPS, RAM, and CPU to exactly what you want.</p>
         </article>
         <article class="card reveal">
           <span class="icon" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3Z" /><path d="M4 7.5l8 4.5 8-4.5" /><path d="M12 12v9" /></svg></span>

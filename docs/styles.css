@@ -725,7 +725,6 @@ footer {
   }
 
   .hero > .wrap {
-    grid-template-columns: 1fr;
     gap: 46px;
   }
 
@@ -735,6 +734,10 @@ footer {
 
   .hero {
     padding: 36px 0 40px;
+  }
+
+  .title {
+    font-size: clamp(1.6rem, 7vw, 2.4rem);
   }
 
   section {

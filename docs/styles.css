@@ -248,7 +248,7 @@ code {
   position: relative;
   overflow: hidden;
   border-bottom: 1px solid var(--line);
-  padding: 72px 0 86px;
+  padding: 40px 0 40px;
 }
 
 .hero::before {
@@ -735,7 +735,7 @@ footer {
   }
 
   .hero {
-    padding: 54px 0 66px;
+    padding: 36px 0 40px;
   }
 
   section {

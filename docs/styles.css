@@ -530,15 +530,17 @@ h2 {
 
 .steps li {
   counter-increment: step;
-  display: grid;
-  grid-template-columns: 34px 1fr;
-  gap: 16px;
-  align-items: start;
+  position: relative;
+  min-height: 34px;
+  padding-left: 50px;
   color: var(--text-2);
 }
 
 .steps li::before {
   content: counter(step);
+  position: absolute;
+  left: 0;
+  top: 0;
   display: grid;
   place-items: center;
   width: 34px;

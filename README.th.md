@@ -28,7 +28,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/xspww/Khabarovsk/releases"><img src="docs/og.png" alt="Cronus Launcher ลอนเชอร์ Roblox หลายบัญชีสำหรับ Windows" width="1024" /></a>
+  <img width="1124" height="843" alt="image" src="https://github.com/user-attachments/assets/9372db2c-b3ed-4be6-87c2-6772373664cb" />
 </p>
 
 ---

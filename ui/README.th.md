@@ -20,7 +20,7 @@
 | `runtime/api.js` | ไคลเอนต์ fetch ทุก route | `api_routes/*` |
 | `runtime/status.js` | เม็ดสถานะ (Online/Queued/Finished/Captcha/Banned/… + timer Running) | `runtime/runtime_view_model.py` ผ่าน `runtime_routes.py` |
 | `runtime/accountStatus.js` | ชิปสถานะรายบัญชี |  |
-| `runtime/gamesManager.js` | UI คลังเกม | `api_routes/games_routes.py` + `domain/games.py` |
+| `runtime/gamesManager.js` | UI คลังเกม (แจ้งจำนวนบัญชีที่กำลังสลับเกมสด) | `api_routes/games_routes.py` + `domain/games.py` |
 | `runtime/executorCompatibility.js` | ป้าย compat ของ executor + แบนเนอร์รอแพตช์ | `services/executor_compatibility.py` ผ่าน `system_routes.py` |
 | `runtime/cronusManager.js` | การ์ดเวอร์ชัน/ติดตั้งไคลเอนต์ | `services/roblox_install_manager.py` ผ่าน `system_routes.py` |
 | `runtime/robloxSettingsCard.js` | การ์ด graphics/FPS | `services/performance_settings.py` ผ่าน `performance_routes.py` |

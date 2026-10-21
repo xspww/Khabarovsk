@@ -20,7 +20,7 @@ No `__init__.py` (web assets, not a Python package).
 | `runtime/api.js` | Fetch client for all routes. | `api_routes/*`. |
 | `runtime/status.js` | Status pills (Online/Queued/Finished/Captcha/Banned/… + Running timer). | `runtime/runtime_view_model.py` via `runtime_routes.py`. |
 | `runtime/accountStatus.js` | Per-account status chips. |  |
-| `runtime/gamesManager.js` | Game library UI. | `api_routes/games_routes.py` + `domain/games.py`. |
+| `runtime/gamesManager.js` | Game library UI (assignment toast reports live switching). | `api_routes/games_routes.py` + `domain/games.py`. |
 | `runtime/executorCompatibility.js` | Executor compat badge + wait-for-patch hold banner. | `services/executor_compatibility.py` via `system_routes.py`. |
 | `runtime/cronusManager.js` | Client version/install card. | `services/roblox_install_manager.py` via `system_routes.py`. |
 | `runtime/robloxSettingsCard.js` | Graphics/FPS card. | `services/performance_settings.py` via `performance_routes.py`. |

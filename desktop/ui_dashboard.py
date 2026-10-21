@@ -7,7 +7,7 @@ _STATIC_SCRIPTS = (
     '<script src="/ui/runtime/perfGuard.js?v=8"></script>'
     '<script src="/ui/runtime/robloxSettingsCard.js?v=1"></script>'
     '<script src="/ui/runtime/executorCompatibility.js?v=8"></script>'
-    '<script src="/ui/runtime/gamesManager.js?v=15"></script>'
+    '<script src="/ui/runtime/gamesManager.js?v=16"></script>'
     '<script src="/ui/runtime/customUi.js?v=16"></script>'
     '<script src="/ui/runtime/cronusManager.js?v=7"></script>'
     '<script src="/ui/runtime/hoverScrollbar.js?v=4"></script>'

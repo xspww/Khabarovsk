@@ -73,6 +73,9 @@ def _run(cfg, accounts, games, game_mode, cfg_mgr, outcome):
     cfg = cfg if isinstance(cfg, dict) else {}
     games = list(games or [])
     per_account = str(game_mode or "shared") == "per_account"
+    # The legacy Shared keys are only a target source when the Games pool
+    # is empty. With a pool, an unassigned account is "No game".
+    legacy_target = not (per_account and games)
     legacy_place = str(cfg.get("game_place_id", "") or "").strip()
     legacy_vip = str(cfg.get("game_private_server_url", "") or "").strip()
     legacy_enabled = bool(cfg.get("auto_create_private_server_enabled", False))
@@ -96,7 +99,7 @@ def _run(cfg, accounts, games, game_mode, cfg_mgr, outcome):
             place = str(
                 effective_place(
                     getattr(acc, "place_id", ""), game,
-                    legacy_place if game is None else "",
+                    legacy_place if game is None and legacy_target else "",
                 )
             ).strip()
             if not place:
@@ -115,7 +118,7 @@ def _run(cfg, accounts, games, game_mode, cfg_mgr, outcome):
                 gvip = str((game or {}).get("private_server_url") or "").strip()
                 if gvip:
                     links.append(gvip)
-            if game is None and legacy_vip:
+            if game is None and legacy_target and legacy_vip:
                 links.append(legacy_vip)
             if any(_usable_link_code(link, place) for link in links):
                 continue  # Has a link: use it silently, no check, no toast.

@@ -33,6 +33,7 @@
 | `roblox_validation.py` | `validate_cookie_details`, `validate_record_cookie_identity`, `validate_cookie` | `runtime/account_worker.py`, `runtime/captcha_detector.py`, `runtime/verify_detector.py`, `runtime/maintenance_moderation.py`, `services/manual_login_service.py`, `services/roblox_launcher.py` |
 | `roblox_multibox.py` | guard subprocess (`ensure/release/status`, spawn `services/multi_roblox_guard.py`, `atexit`) | `runtime/farm_lifecycle.py`, `runtime/recovery_engine.py`, `runtime/machine_supervisor.py`, `services/roblox_launcher.py` |
 | `roblox_launch_service.py` | บริการเปิดเกม: ประกอบ deeplink / join private-server | `runtime/launch_attempt.py`, `runtime/account_worker.py` |
+| `game_switch.py` | สลับเกมขณะรัน: เทียบ launch target ก่อน/หลัง, force-rejoin บัญชีที่เป้าหมายเปลี่ยน และหยุดบัญชีที่ไม่มีเกมแล้ว ("No game") | `api_routes/games_routes.py`, `api_routes/config_routes.py`, `runtime/farm.py` |
 | `roblox_launcher.py` | `HybridLauncher`: คุมขั้นตอน validate → guard → VIP → ticket → เปิดเกม | `services/roblox_launch_service.py`, `services/roblox_hybrid.py` (facade), `services/roblox_http.py`, `services/roblox_multibox.py` |
 | `roblox_install_manager.py` | ตัวติดตั้ง/อัปเดตจาก official endpoint เท่านั้น + ล้างเวอร์ชันเก่า | `main.py` (`ROBLOX_INSTALLER`), `api_routes/system_routes.py` (Cronus Manager) |
 | `roblox_processes.py` | แจกแจง/ผูกโปรเซส (PID ↔ บัญชี) | `services/process_service.py`, เทสโดย `tests/test_process_binding.py` |

@@ -15,7 +15,7 @@ UI เรียกผ่าน `ui/runtime/api.js`
 | `performance_routes.py` | FPS/graphics, ล็อก CPU, RAM, หน้าต่าง (ใช้ `services/performance_settings`) | `services/cpu_limiter.py`, `services/ram_cleanup.py`, `services/window_control.py` |
 | `config_routes.py` | อ่าน/เขียนตั้งค่า (คีย์ gfx ใช้ `services/performance_settings`) | `config/store.py`, `config/validation.py` |
 | `settings_state.py` | อะแดปเตอร์ settings แบบ dict-in/out มีเทสไม่ใช้ HTTP | `domain/account_model.py`, `tests/test_settings_state.py` |
-| `games_routes.py` | CRUD คลังหลายเกม | `domain/games.py`, `ui/runtime/gamesManager.js` |
+| `games_routes.py` | CRUD คลังหลายเกม + สลับเกมสดขณะ START ทำงาน | `domain/games.py`, `services/game_switch.py`, `ui/runtime/gamesManager.js` |
 | `lua_routes.py` | endpoint ตัวช่วย Lua + session-token (ใช้ `infra/app_paths`) | `services/lua_session_tokens.py`, `lua/run_in_executor.lua` |
 | `manual_login_routes.py` | Manual Login แบบ Single/Multi | `services/manual_login_service.py` |
 | `discord_routes.py` | เปิด/ปิด presence + สถานะ | `services/discord_presence.py` |

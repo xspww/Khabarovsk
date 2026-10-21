@@ -462,7 +462,7 @@
   }
 
   function noGameHtml(isCurrent) {
-    return `<button type="button" class="cronus-gitem${isCurrent ? " current" : ""}" data-game-id=""><span class="ogame-thumb ogame-thumb-empty" aria-hidden="true">—</span><span class="t"><span class="n">(No game)</span><br><span class="p">START will skip this account</span></span><span class="tick">${isCurrent ? "✓" : ""}</span></button>`;
+    return `<button type="button" class="cronus-gitem${isCurrent ? " current" : ""}" data-game-id=""><span class="ogame-thumb ogame-thumb-empty" aria-hidden="true">—</span><span class="t"><span class="n">(No game)</span><br><span class="p">No launch target — Start is blocked until assigned</span></span><span class="tick">${isCurrent ? "✓" : ""}</span></button>`;
   }
 
   function positionPop(anchor) {
@@ -519,9 +519,14 @@
       + GAMES.map((g) => gameItemHtml(g, !!String(g.id || "") && String(g.id).toLowerCase() === String(current).toLowerCase())).join("")
       + noGameHtml(!gameById(current));
     wirePopItems(async (gid) => {
-      await assignGame(user, gid);
+      const payload = await assignGame(user, gid);
       refreshRowBadges();
       notifyGamesChanged();
+      if (Array.isArray(payload && payload.game_stopped) && payload.game_stopped.length) {
+        toast(`No game set - stopped ${user} now`, "info");
+      } else if (Array.isArray(payload && payload.game_rejoined) && payload.game_rejoined.length) {
+        toast(`Game changed - switching ${user} now`, "info");
+      }
     });
     preloadThumbs(key, () => {
       closePop();
@@ -551,11 +556,13 @@
       + GAMES.map((g) => gameItemHtml(g, allSame(String(g.id || "")))).join("")
       + noGameHtml(noneSet);
     wirePopItems(async (gid) => {
-      await api("/accounts/assign-game", "POST", { usernames: users, game_id: gid });
+      const payload = await api("/accounts/assign-game", "POST", { usernames: users, game_id: gid });
       users.forEach((u) => { ACCOUNT_GAMES[String(u).toLowerCase()] = String(gid || ""); });
       refreshRowBadges();
       notifyGamesChanged();
-      toast(gid ? `Game set for ${users.length} accounts` : `Cleared game for ${users.length} accounts`);
+      const switching = Array.isArray(payload && payload.game_rejoined) ? payload.game_rejoined.length : 0;
+      const stopping = Array.isArray(payload && payload.game_stopped) ? payload.game_stopped.length : 0;
+      toast((gid ? `Game set for ${users.length} accounts` : `Cleared game for ${users.length} accounts`) + (stopping ? ` - stopped ${stopping} now` : "") + (switching ? ` - switching ${switching} now` : ""));
     });
     preloadThumbs("bulk", () => {
       closePop();

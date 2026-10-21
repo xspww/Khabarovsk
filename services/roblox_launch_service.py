@@ -157,8 +157,7 @@ class AccountLaunchService:
                 cfg_mgr.get("auto_create_private_server_free_only", True),
             )
             # Assigned game only here (game is not None): unmatched accounts
-            # fall through to the Shared keys below instead of staying
-            # target-less.
+            # fall into the "No game" branch below and stay target-less.
             global_vip = effective_global_vip(
                 game,
                 "",
@@ -176,18 +175,33 @@ class AccountLaunchService:
             target["auto_create_private_server_free_only"] = flags["free_only"]
             return target
         if games:
-            # Per-account mode, unassigned account: explicit per-account
-            # values still win, then the Shared keys fill the gap (this is
-            # the only path where `games` is non-empty but `game` is None,
-            # because Shared mode returns no games at all).
+            # Per-account mode, unassigned account ("No game"): only an
+            # explicit per-account target may launch. The Shared keys are
+            # deliberately NOT a fallback here — otherwise clearing the
+            # game would silently relaunch the previous/shared place.
             place_id = str(
                 target.get("place_id")
                 or record.get("place_id")
-                or cfg_mgr.get("game_place_id", "")
                 or ""
             ).strip()
             vip_links = vip_links_for_place(list(record.get("vip_links") or []), place_id)
-            return _finish_shared_target(target, place_id, vip_links, cfg_mgr)
+            target.setdefault("vip_links", vip_links)
+            target["place_id"] = place_id
+            # The dashboard sends the Shared global link in the body; drop
+            # it when this account has no target of its own.
+            target["global_vip_link"] = _checked_global_vip_link(
+                str(target.get("global_vip_link") or ""), place_id
+            ) if place_id else ""
+            target["shared_direct_vip"] = ""
+            target.setdefault(
+                "auto_create_private_server_enabled",
+                cfg_mgr.get("auto_create_private_server_enabled", False),
+            )
+            target.setdefault(
+                "auto_create_private_server_free_only",
+                cfg_mgr.get("auto_create_private_server_free_only", True),
+            )
+            return target
         place_id = str(target.get("place_id") or cfg_mgr.get("game_place_id", "") or record.get("place_id") or "").strip()
         vip_links = vip_links_for_place(list(record.get("vip_links") or []), place_id)
         return _finish_shared_target(target, place_id, vip_links, cfg_mgr)
@@ -293,7 +307,11 @@ def build_launch_url(cls, acc: Account) -> tuple[str, ServerType, str]:
             getattr(acc, "game_id", ""), getattr(acc, "place_id", ""),
             _snap,
         )
-        _shared = str(getattr(cls, "SHARED_PLACE_ID", "") or "").strip() if _game is None else ""
+        # Per-account mode with a pool: unassigned means "No game", not
+        # "use the Shared Place ID". The legacy fallback only applies to
+        # Shared mode or a truly empty pool.
+        _pool_active = _mode == "per_account" and bool(_snap)
+        _shared = "" if _pool_active else str(getattr(cls, "SHARED_PLACE_ID", "") or "").strip()
     except Exception:
         _game = None
         _shared = ""
@@ -374,10 +392,12 @@ def launch(cls, acc: Account) -> tuple[bool, str, str]:
                 )
             except Exception:
                 game = None
-            # Unmatched (or Shared-mode) accounts fall back to the Shared
-            # Place ID instead of staying target-less.
+            # Only Shared mode (or a legacy empty pool) falls back to the
+            # Shared Place ID. In per-account mode an unmatched account is
+            # "No game" and must stay target-less.
+            _pool_active = _mode == "per_account" and bool(_snap)
             _shared_fb = ""
-            if game is None:
+            if game is None and not _pool_active:
                 try:
                     _shared_fb = str(getattr(cls, "SHARED_PLACE_ID", "") or "").strip()
                 except Exception:
@@ -415,7 +435,7 @@ def launch(cls, acc: Account) -> tuple[bool, str, str]:
                     except Exception:
                         global_vip = ""
                 else:
-                    global_vip = cls.GLOBAL_VIP_LINK
+                    global_vip = "" if _pool_active else cls.GLOBAL_VIP_LINK
             global_place = cls.parse_vip_link(global_vip)[0] if global_vip else ""
             if target_place and global_place and global_place != target_place:
                 global_vip = ""
@@ -423,7 +443,7 @@ def launch(cls, acc: Account) -> tuple[bool, str, str]:
             # shared link (place + link/access code) joins that exact room
             # for every account, regardless of the auto-create toggle.
             shared_direct_vip = ""
-            if game is None:
+            if game is None and not _pool_active:
                 shared_direct_vip = shared_direct_vip_link(str(cls.GLOBAL_VIP_LINK or ""), target_place)
             target = {
                 "place_id": target_place,

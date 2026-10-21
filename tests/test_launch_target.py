@@ -78,6 +78,20 @@ class TestBuildTarget(unittest.TestCase):
         self.assertEqual(target["place_id"], "555")
         self.assertEqual(target["vip_links"], [])
 
+    def test_unassigned_branch_ignores_shared_keys(self):
+        cfg = _per_account_cfg()
+        cfg["game_place_id"] = "777"
+        cfg["game_private_server_url"] = LINK_222
+        target = AccountLaunchService.build_target(
+            {"global_vip_link": LINK_222},
+            {"vip_links": [], "place_id": ""},
+            cfg,
+        )
+        self.assertNotIn("game_id", target)
+        self.assertEqual(target["place_id"], "")
+        self.assertEqual(target["vip_links"], [])
+        self.assertEqual(target["global_vip_link"], "")
+
     def test_assigned_branch_game_authoritative(self):
         cfg = _per_account_cfg()
         target = AccountLaunchService.build_target(

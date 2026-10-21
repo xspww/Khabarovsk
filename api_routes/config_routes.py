@@ -6,6 +6,7 @@ from fastapi import HTTPException, Request
 
 from runtime.account_selection import runtime_account_allowlist
 from services.executor_relauncher import EXECUTOR_NAMES
+from services.game_switch import capture_game_targets, rejoin_changed_game_targets
 from services.performance_settings import (
     normalize_fps_limit,
     normalize_graphics_quality,
@@ -393,16 +394,48 @@ def register(app, ctx: ApiContext) -> None:
             updates["auto_create_private_server_free_only"] = bool(updates["auto_create_private_server_free_only"])
         if "block_same_server_enabled" in updates:
             updates["block_same_server_enabled"] = bool(updates["block_same_server_enabled"])
+        game_switch_keys = {"game_mode", "game_place_id", "game_private_server_url", "games"}
+        targets_before = {}
+        if game_switch_keys.intersection(updates):
+            try:
+                targets_before = capture_game_targets(farm._accounts, cfg_mgr.snapshot())
+            except Exception:
+                targets_before = {}
         persist_config(ctx, updates)
         applied_defaults = 0
-        if "game_place_id" in updates or "game_private_server_url" in updates:
+        if game_switch_keys.intersection(updates):
             applied_defaults = _apply_game_defaults(ctx, farm._accounts, persist=True)
         if hasattr(farm, "apply_config_snapshot"):
             farm.apply_config_snapshot()
+        game_rejoined = []
+        game_stopped = []
+        if targets_before:
+            try:
+                switched = rejoin_changed_game_targets(farm, targets_before, cfg_mgr)
+                if isinstance(switched, dict):
+                    game_rejoined = list(switched.get("rejoined") or [])
+                    game_stopped = list(switched.get("stopped") or [])
+                else:
+                    game_rejoined = list(switched or [])
+            except Exception:
+                game_rejoined = []
+                game_stopped = []
         try:
             from core import flog_kv as _flog_kv
 
-            _flog_kv("CONFIG", "updated", updated=list(updates.keys()), game_defaults_applied=applied_defaults)
+            _flog_kv(
+                "CONFIG",
+                "updated",
+                updated=list(updates.keys()),
+                game_defaults_applied=applied_defaults,
+                game_rejoined=len(game_rejoined),
+            )
         except Exception:
             pass
-        return {"ok": True, "updated": list(updates.keys()), "game_defaults_applied": applied_defaults}
+        return {
+            "ok": True,
+            "updated": list(updates.keys()),
+            "game_defaults_applied": applied_defaults,
+            "game_rejoined": game_rejoined,
+            "game_stopped": game_stopped,
+        }

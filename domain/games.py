@@ -20,11 +20,15 @@ Resolution order for an account (never silently join the wrong map):
 1. explicit per-account ``place_id`` / ``vip_links`` always win,
 2. otherwise the account's ``game_id`` entry supplies place + VIP + flags
    (only when ``game_mode`` is ``"per_account"``),
-3. otherwise the legacy global keys apply (Shared Place ID fallback),
-4. otherwise the account has no target and must be blocked with a warning.
+3. otherwise, only when the Games pool is empty, the legacy global keys
+   apply (Shared Place ID fallback),
+4. otherwise the account has no target ("No game") and must be blocked
+   with a warning.
 
-In ``"shared"`` mode (default) step 2 is skipped: every account joins
-the Shared Place ID and pool assignments are ignored (but kept, so
+In ``"per_account"`` mode a non-empty pool is authoritative: an account
+with no assigned game has no launch target even when the Shared Place ID
+is set. In ``"shared"`` mode (default) step 2 is skipped: every account
+joins the Shared Place ID and pool assignments are ignored (but kept, so
 switching back to ``"per_account"`` restores them).
 """
 
@@ -179,9 +183,9 @@ def game_for_account(
 def normalize_game_mode(value: Any) -> str:
     """Clean the GAME card mode switch.
 
-    ``"per_account"`` enables the Games pool (unassigned accounts fall back
-    to the Shared Place ID); anything else means ``"shared"`` — every
-    account joins the Place ID above and pool assignments are ignored.
+    ``"per_account"`` enables the Games pool (unassigned accounts have no
+    target and are blocked at START); anything else means ``"shared"`` —
+    every account joins the Place ID above and pool assignments are ignored.
     """
     text = _text(value).lower().replace("-", "_")
     if text in {"per_account", "peraccount", "per account"}:

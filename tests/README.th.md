@@ -24,6 +24,8 @@
 | `test_process_backend_wiring.py` | เส้น binder: ทุกชื่อที่ผูกไว้ต้อง resolve ได้ (AST + import) | `services/process_backend.py` |
 | `test_recovery_seam.py` | ความแคบของ recovery seam (router ผ่าน 7 แอ็กชันเท่านั้น) | `runtime/recovery_seam.py`, `runtime/recovery_signal_router.py` |
 | `test_vip_links.py` | helper ลิงก์ VIP (กรองราย place, shared-direct) | `domain/roblox_private_servers.py` |
+| `test_game_switch.py` | สลับเกมขณะรัน: เทียบ target + rejoin/stop เมื่อ assign/config/แก้เกม | `services/game_switch.py`, `api_routes/games_routes.py`, `api_routes/config_routes.py` |
+| `test_farm_runtime_reset.py` | ลำดับ reset runtime ของ farm ตอน stop/Finished (kill → reset → bump revision) | `runtime/farm.py` |
 
 ### สรุป
 

@@ -274,42 +274,7 @@ class FarmController:
         Single owner for finish-side runtime reset — route modules leverage
         this instead of reaching into farm privates directly.
         """
-        if acc is None:
-            return
-        try:
-            from core import AccountState as _AccountState
-
-            runtime_state = getattr(self, "_runtime_state", None)
-            if runtime_state is not None:
-                with acc._lock:
-                    if hasattr(runtime_state, "clear_recovery"):
-                        runtime_state.clear_recovery(acc, reason="account_finished", inflight=False)
-                    runtime_state.set_cooldown(acc, 0.0, reason="account_finished")
-                    try:
-                        runtime_state.set_desired(acc, _AccountState.IDLE, reason="account_finished")
-                    except Exception:
-                        pass
-                    # Clear stale markers so the card does not stick on Rejoining.
-                    # Must mirror revive: recovery_view keys off these texts +
-                    # last_recovery_at, so clear them all and stamp the reason.
-                    try:
-                        acc.last_crash_reason = ""
-                        acc.last_recovery_reason = ""
-                        acc.last_state_reason = "account_finished"
-                        acc.last_recovery_at = 0.0
-                        acc.last_rejoin_trigger = ""
-                        acc.recovery_scheduled_at = 0.0
-                        acc.recovery_inflight = False
-                        acc.recovery_status = ""
-                        acc.pid_missing_since = 0.0
-                    except Exception:
-                        pass
-                    try:
-                        acc.sync_runtime("account_finished")
-                    except Exception:
-                        pass
-        except Exception:
-            pass
+        self._reset_account_runtime(acc, reason="account_finished")
         try:
             worker = (getattr(self, "_workers", None) or {}).get(
                 getattr(acc, "_config_username", "")
@@ -323,6 +288,75 @@ class FarmController:
                 self._bump_status_revision()
         except Exception:
             pass
+
+    def _reset_account_runtime(self, acc: Any, reason: str = "runtime_reset") -> None:
+        """Clear recovery/process state so an account stays quiet."""
+        if acc is None:
+            return
+        try:
+            from core import AccountState as _AccountState
+
+            runtime_state = getattr(self, "_runtime_state", None)
+            if runtime_state is not None:
+                with acc._lock:
+                    if hasattr(runtime_state, "clear_recovery"):
+                        runtime_state.clear_recovery(acc, reason=reason, inflight=False)
+                    runtime_state.set_cooldown(acc, 0.0, reason=reason)
+                    try:
+                        runtime_state.set_desired(acc, _AccountState.IDLE, reason=reason)
+                    except Exception:
+                        pass
+                    # Clear stale markers so the card does not stick on Rejoining.
+                    # Must mirror revive: recovery_view keys off these texts +
+                    # last_recovery_at, so clear them all and stamp the reason.
+                    try:
+                        acc.last_crash_reason = ""
+                        acc.last_recovery_reason = ""
+                        acc.last_state_reason = reason
+                        acc.last_recovery_at = 0.0
+                        acc.last_rejoin_trigger = ""
+                        acc.recovery_scheduled_at = 0.0
+                        acc.recovery_inflight = False
+                        acc.recovery_status = ""
+                        acc.pid_missing_since = 0.0
+                    except Exception:
+                        pass
+                    try:
+                        acc.sync_runtime(reason)
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
+    def stop_account(self, username: str, reason: str = "game_unassigned") -> tuple[bool, str]:
+        """Stop one account's client without marking the account Finished.
+
+        Used when an account loses its launch target ("No game"): the old
+        client must not keep farming the removed game, and the worker must
+        not immediately try to rejoin a target-less account.
+        """
+        acc = self._find_account(username)
+        if not acc:
+            return False, "Account not found"
+        if getattr(acc, "pid", 0):
+            try:
+                self.kill_account_pid(username, reason=reason)
+            except Exception:
+                pass
+        self._reset_account_runtime(acc, reason=reason)
+        self._push_event(
+            "system",
+            f"Stopped - no game assigned: {acc.display_name}",
+            account=acc,
+            severity="warn",
+            reason=reason,
+        )
+        try:
+            if hasattr(self, "_bump_status_revision"):
+                self._bump_status_revision()
+        except Exception:
+            pass
+        return True, f"Stopped: {username}"
 
     def revive_unfinished_account(self, username: str) -> bool:
         """Give an Unfinished account a clean relaunch while the farm runs.
@@ -666,7 +700,13 @@ class FarmController:
             self._force_rejoin_limiter = limiter
         return limiter.check(account_key)
 
-    def force_rejoin(self, username: str):
+    def force_rejoin(
+        self,
+        username: str,
+        reason: str = "force_rejoin",
+        *,
+        ignore_rate_limit: bool = False,
+    ):
         acc = self._find_account(username)
         if acc:
             try:
@@ -677,17 +717,23 @@ class FarmController:
             except Exception:
                 pass
         if acc and self._recovery:
-            allowed, rate_msg = self._check_force_rejoin_rate_limit(acc._config_username)
-            if not allowed:
-                flog_kv("COMMAND", "force_rejoin_rate_limited", "warning", account=acc.display_name, msg=rate_msg)
-                return False, rate_msg
-            routed = self._runtime_orchestrator.request_rejoin(acc, "force_rejoin")
+            if not ignore_rate_limit:
+                allowed, rate_msg = self._check_force_rejoin_rate_limit(acc._config_username)
+                if not allowed:
+                    flog_kv("COMMAND", "force_rejoin_rate_limited", "warning", account=acc.display_name, msg=rate_msg)
+                    return False, rate_msg
+            routed = self._runtime_orchestrator.request_rejoin(acc, reason)
             if not routed:
                 return False, "Rejoin rejected"
             worker = self._workers.get(acc._config_username)
             if worker:
                 worker.wake()
-            self._push_event("rejoin", f"Force rejoin: {acc.display_name}", account=acc, severity="warn", reason="force_rejoin")
+            message = (
+                f"Game changed - rejoin: {acc.display_name}"
+                if reason == "game_changed"
+                else f"Force rejoin: {acc.display_name}"
+            )
+            self._push_event("rejoin", message, account=acc, severity="warn", reason=reason)
             return True, f"Rejoin: {username}"
         return False, "Account not running or recovery coordinator unavailable"
 

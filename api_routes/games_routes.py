@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import HTTPException, Request
 
 from services.account_hybrid import ACCOUNT_STORE
+from services.game_switch import capture_game_targets, rejoin_changed_game_targets
 
 from .context import ApiContext
 from .settings_state import _apply_game_defaults, persist_config
@@ -48,9 +49,45 @@ def _save_games(ctx: ApiContext, games: list[dict[str, Any]]) -> list[dict[str, 
 
 def _refresh_farm_targets(ctx: ApiContext) -> int:
     try:
-        return int(_apply_game_defaults(ctx, ctx.farm._accounts, persist=True))
+        applied = int(_apply_game_defaults(ctx, ctx.farm._accounts, persist=True))
     except Exception:
-        return 0
+        applied = 0
+    # Running workers keep their own config snapshot. Push the new Games
+    # pool/shared keys before a rejoin, or the relaunch still resolves the
+    # old place from the stale snapshot.
+    try:
+        apply_snapshot = getattr(ctx.farm, "apply_config_snapshot", None)
+        if callable(apply_snapshot):
+            apply_snapshot()
+    except Exception:
+        pass
+    return applied
+
+
+def _capture_game_targets(ctx: ApiContext) -> dict[str, tuple[str, str]]:
+    """Snapshot live launch targets before a game edit mutates accounts."""
+    try:
+        return capture_game_targets(ctx.farm._accounts, ctx.cfg_mgr.snapshot())
+    except Exception:
+        return {}
+
+
+def _rejoin_changed_targets(
+    ctx: ApiContext,
+    before: dict[str, tuple[str, str]],
+) -> tuple[list[str], list[str]]:
+    """Rejoin/stop running clients after all account syncs finish."""
+    try:
+        result = rejoin_changed_game_targets(ctx.farm, before, ctx.cfg_mgr)
+    except Exception:
+        return [], []
+    if isinstance(result, dict):
+        return (
+            list(result.get("rejoined") or []),
+            list(result.get("stopped") or []),
+        )
+    # Backward-compatible shape for older implementations.
+    return list(result or []), []
 
 
 def register(app, ctx: ApiContext) -> None:
@@ -123,9 +160,17 @@ def register(app, ctx: ApiContext) -> None:
             games = normalize_games(games)
         except ValueError as exc:
             raise HTTPException(400, str(exc))
+        targets_before = _capture_game_targets(ctx)
         clean = _save_games(ctx, games)
         applied = _refresh_farm_targets(ctx)
-        return {"ok": True, "games": clean, "game_defaults_applied": applied}
+        rejoined, stopped = _rejoin_changed_targets(ctx, targets_before)
+        return {
+            "ok": True,
+            "games": clean,
+            "game_defaults_applied": applied,
+            "game_rejoined": rejoined,
+            "game_stopped": stopped,
+        }
 
     @app.post("/api/games/delete")
     async def api_delete_game(request: Request):
@@ -159,17 +204,33 @@ def register(app, ctx: ApiContext) -> None:
                 + (" ..." if len(assigned) > 5 else "")
                 + ". Reassign them first or retry with force.",
             )
+        targets_before = _capture_game_targets(ctx)
         if assigned and force:
             try:
                 records = ACCOUNT_STORE.read_records(include_cookies=False)
                 for record in records:
                     if str(record.get("game_id") or "").strip().lower() == game_id.lower():
+                        # Full unassign: leaving the old place/VIP behind
+                        # would silently keep the account in the deleted
+                        # game (the same resurrection trap as "No game").
                         record["game_id"] = ""
+                        record["place_id"] = ""
+                        record["vip_links"] = []
+                        record["active_vip"] = ""
                 ACCOUNT_STORE.write_records(records)
             except Exception as exc:
                 raise HTTPException(500, f"Unassign failed: {exc}")
         clean = _save_games(ctx, remaining)
-        applied = _refresh_farm_targets(ctx)
+        try:
+            # Force unassign is explicit; never let the one-time migration
+            # re-link these accounts to the default game afterwards. Must be
+            # persisted BEFORE the resync below, because that resync applies
+            # game defaults (and therefore runs the migration) on the cleared
+            # records — the guard has to be in place first.
+            if assigned and force and not bool(ctx.cfg_mgr.get("games_migrated", False)):
+                persist_config(ctx, {"games_migrated": True})
+        except Exception:
+            pass
         try:
             from . import account_records
 
@@ -178,11 +239,15 @@ def register(app, ctx: ApiContext) -> None:
             )
         except Exception:
             pass
+        applied = _refresh_farm_targets(ctx)
+        rejoined, stopped = _rejoin_changed_targets(ctx, targets_before)
         return {
             "ok": True,
             "games": clean,
             "unassigned": assigned if force else [],
             "game_defaults_applied": applied,
+            "game_rejoined": rejoined,
+            "game_stopped": stopped,
         }
 
     def _assign_usernames(usernames: Any, game_id: str) -> dict[str, Any]:
@@ -216,6 +281,7 @@ def register(app, ctx: ApiContext) -> None:
         missing = [n for n in names if n.lower() not in by_name]
         if missing:
             raise HTTPException(404, "Account not found: " + ", ".join(missing[:5]))
+        targets_before = _capture_game_targets(ctx)
         for name in names:
             record = by_name[name.lower()]
             record["game_id"] = wanted
@@ -234,7 +300,7 @@ def register(app, ctx: ApiContext) -> None:
                 # while the UI labels it as the new game. Clear it so the
                 # picker stays the single source of truth.
                 current_place = str(record.get("place_id") or "").strip()
-                if current_place and target_place and current_place != target_place:
+                if current_place and current_place != target_place:
                     record["place_id"] = ""
                 # Dropping a game must not leak its VIP into the new one.
                 if str(record.get("active_vip") or "").strip():
@@ -244,6 +310,16 @@ def register(app, ctx: ApiContext) -> None:
         except Exception as exc:
             raise HTTPException(500, f"Save failed: {exc}")
         try:
+            # The user explicitly managed assignments ("No game" included).
+            # Close the one-time legacy migration so it cannot re-link this
+            # account to the default game. Persist BEFORE the resync below:
+            # that resync applies game defaults, which runs the migration on
+            # the just-cleared records if the guard is still open.
+            if not bool(ctx.cfg_mgr.get("games_migrated", False)):
+                persist_config(ctx, {"games_migrated": True})
+        except Exception:
+            pass
+        try:
             from . import account_records
 
             account_records.replace_farm_accounts_from_store(
@@ -252,7 +328,15 @@ def register(app, ctx: ApiContext) -> None:
         except Exception:
             pass
         applied = _refresh_farm_targets(ctx)
-        return {"ok": True, "assigned": names, "game_id": wanted, "game_defaults_applied": applied}
+        rejoined, stopped = _rejoin_changed_targets(ctx, targets_before)
+        return {
+            "ok": True,
+            "assigned": names,
+            "game_id": wanted,
+            "game_defaults_applied": applied,
+            "game_rejoined": rejoined,
+            "game_stopped": stopped,
+        }
 
     @app.post("/api/account/{username}/game")
     async def api_assign_single_game(username: str, request: Request):

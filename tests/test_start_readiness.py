@@ -80,6 +80,51 @@ class TestDecideStart(unittest.TestCase):
         )
         self.assertEqual(result["error_code"], "missing_launch_target")
         self.assertEqual(starter.calls, 0)
+        # Suggesting the Shared Place ID would be wrong for this mode: an
+        # unassigned account must not inherit it.
+        self.assertNotIn("Shared Place ID", result["required_action"])
+
+    def test_complete_shared_vip_counts_as_a_target(self):
+        # Shared mode with no Shared Place ID but a complete Shared Private
+        # Server URL is a valid launch target (launch joins that room).
+        starter = _Starter()
+        cfg = {
+            "game_mode": "shared",
+            "game_place_id": "",
+            "game_private_server_url": "https://www.roblox.com/games/444/x?privateServerLinkCode=abc",
+        }
+        result = decide_start([_acc("u1")], cfg, "cmd1", starter, run_preflight=_empty_preflight)
+        self.assertTrue(result["ok"] and result["accepted"])
+        self.assertEqual(starter.calls, 1)
+
+    def test_incomplete_shared_vip_still_blocks_start(self):
+        # A VIP URL without a link code cannot be joined directly.
+        starter = _Starter()
+        cfg = {
+            "game_mode": "shared",
+            "game_place_id": "",
+            "game_private_server_url": "https://www.roblox.com/games/444/x",
+        }
+        result = decide_start([_acc("u1")], cfg, "cmd1", starter, run_preflight=_empty_preflight)
+        self.assertEqual(result["error_code"], "missing_launch_target")
+        self.assertEqual(starter.calls, 0)
+
+    def test_unassigned_per_account_ignores_shared_place(self):
+        starter = _Starter()
+        cfg = {
+            "game_mode": "per_account",
+            "game_place_id": "999",
+            "games": [
+                {"id": "game-1", "name": "Game 1", "place_id": "111"},
+            ],
+        }
+        result = decide_start(
+            [_acc("u1")], cfg, "cmd1", starter,
+            run_preflight=_empty_preflight,
+        )
+        self.assertEqual(result["error_code"], "missing_launch_target")
+        self.assertEqual(result["missing_targets"], ["u1"])
+        self.assertEqual(starter.calls, 0)
 
     def test_preflight_blocked(self):
         starter = _Starter()

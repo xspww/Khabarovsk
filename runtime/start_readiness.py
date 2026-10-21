@@ -73,8 +73,9 @@ def decide_start(
             _mode = normalize_game_mode(_snap.get("game_mode", "shared"))
         except Exception:
             _mode = "shared"
-        # Shared GAME mode ignores the pool; Per-account falls back
-        # to the Shared Place ID for unassigned accounts.
+        # Shared GAME mode ignores the pool. Per-account mode uses the
+        # pool as the only target source: an unassigned account stays
+        # target-less ("No game") even when a Shared Place ID is set.
         _games = ensure_games_migrated(_snap) if _mode == "per_account" else []
         _legacy_place = str(cfg.get("game_place_id", "") or "")
         _shared_vip = str(cfg.get("game_private_server_url", "") or "")
@@ -108,7 +109,7 @@ def decide_start(
                 effective_place(
                     getattr(a, "place_id", ""),
                     _game,
-                    _legacy_place if _game is None else "",
+                    _legacy_place if not _games else "",
                 )
             ).strip()
         except Exception:
@@ -118,18 +119,37 @@ def decide_start(
             _gvip = str((_game or {}).get("private_server_url") or "").strip()
             if _gvip:
                 _links = [_gvip]
+        if not _place and not _links and not _games and _shared_vip:
+            # Shared mode with only a complete Shared Private Server URL:
+            # that link is a valid target (launch joins that room directly).
+            # Incomplete links stay target-less so START still blocks with a
+            # clear error instead of failing at launch time.
+            try:
+                from domain.roblox_private_servers import shared_direct_vip_link
+
+                if shared_direct_vip_link(_shared_vip, _legacy_place):
+                    _links = [_shared_vip]
+            except Exception:
+                pass
         if not _place and not _links:
             missing_targets.append(a.username)
     if missing_targets:
         shown = ", ".join(missing_targets[:3])
         suffix = "" if len(missing_targets) <= 3 else " ..."
+        required_action = (
+            "Assign a game to each account (Games list) or set a per-account "
+            "place_id / VIP link before /api/start."
+            if _mode == "per_account"
+            else "Set a Shared Place ID (or a complete Shared Private Server "
+            "URL) in the Game view, then retry /api/start."
+        )
         return {
             "ok": False,
             "accepted": False,
             "command_id": command_id,
             "error_code": "missing_launch_target",
             "msg": f"Missing game assignment for: {shown}{suffix}",
-            "required_action": "Set a Shared Place ID (Game view), assign a game to each account (Games list), or set a per-account place_id / VIP link before /api/start.",
+            "required_action": required_action,
             "missing_target_count": len(missing_targets),
             "missing_targets": missing_targets[:10],
         }

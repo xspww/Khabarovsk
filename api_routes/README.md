@@ -15,7 +15,7 @@ UI calls these from `ui/runtime/api.js`.
 | `performance_routes.py` | FPS/graphics, CPU limiter, RAM, windows (uses `services/performance_settings`). | `services/cpu_limiter.py`, `services/ram_cleanup.py`, `services/window_control.py`. |
 | `config_routes.py` | Config get/set (uses `services/performance_settings` for gfx keys). | `config/store.py`, `config/validation.py`. |
 | `settings_state.py` | Settings dict-in/out adapter. Tested without HTTP. | `domain/account_model.py`, `tests/test_settings_state.py`. |
-| `games_routes.py` | Multi-game library CRUD. | `domain/games.py`, `ui/runtime/gamesManager.js`. |
+| `games_routes.py` | Multi-game library CRUD + live target rejoin while START is running. | `domain/games.py`, `services/game_switch.py`, `ui/runtime/gamesManager.js`. |
 | `lua_routes.py` | Lua helper + session-token endpoints (uses `infra/app_paths`). | `services/lua_session_tokens.py`, `lua/run_in_executor.lua`. |
 | `manual_login_routes.py` | Manual Login Single/Multi. | `services/manual_login_service.py`. |
 | `discord_routes.py` | Presence toggle/status. | `services/discord_presence.py`. |

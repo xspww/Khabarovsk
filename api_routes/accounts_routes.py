@@ -284,6 +284,15 @@ def register(app, ctx: ApiContext) -> None:
                         game = game_for_account(item.get("game_id"), "", games)
                         if game:
                             eff = str(game.get("place_id") or "").strip()
+                            if not eff:
+                                # Games with only a private-server link still
+                                # have a place; show that map in the column.
+                                eff = str(
+                                    parse_vip_link(
+                                        str(game.get("private_server_url") or "")
+                                    )[0]
+                                    or ""
+                                ).strip()
                     item["effective_place_id"] = eff
                 except Exception:
                     item["effective_place_id"] = ""

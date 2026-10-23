@@ -25,6 +25,7 @@ calls and WebView2 windows stay out of scope.
 | `test_vip_links.py` | VIP link helpers (per-place filter, shared-direct). | `domain/roblox_private_servers.py`. |
 | `test_game_switch.py` | Live game switching: target diffing + rejoin/stop on assignment/config/game edits. | `services/game_switch.py`, `api_routes/games_routes.py`, `api_routes/config_routes.py`. |
 | `test_farm_runtime_reset.py` | Farm stop/Finished runtime reset ordering (kill → reset → bump revision). | `runtime/farm.py`. |
+| `test_console_activity.py` | Console identity keys, counters, visible start failures, log redaction. | `infra/console_activity.py`, `infra/core_logging.py`. |
 
 ### Summary
 

@@ -8,7 +8,6 @@ from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from core import flog_kv
-from desktop import console_output
 from runtime.popup_detector.popup_sampler import PopupWindowSampler
 from runtime.start_readiness import decide_start
 
@@ -192,7 +191,7 @@ def register(app, ctx: ApiContext) -> None:
             from services.roblox_http import set_selected_roblox_version
             set_selected_roblox_version(str(body.get("roblox_version") or "").strip())
         except Exception:
-            pass
+            "intentional: ignore exception"
         accepted, command = _begin_runtime_command(request, "global", "start", ttl=60.0)
         if not accepted:
             return _command_rejected_payload(command, "Start unavailable")
@@ -243,7 +242,6 @@ def register(app, ctx: ApiContext) -> None:
                 result = {"ok": False, "accepted": False, "command_id": command["command_id"], "msg": "Not running"}
                 return result
             farm.stop()
-            console_output.clear_screen()
             ok = True
             result = {"ok": True, "accepted": True, "command_id": command["command_id"], "msg": "Farm stopped"}
             return result
@@ -312,7 +310,7 @@ def register(app, ctx: ApiContext) -> None:
                 except Exception:
                     continue
         except Exception:
-            pass
+            "intentional: ignore exception"
         items = []
         for entry in live if isinstance(live, list) else []:
             try:
@@ -544,7 +542,7 @@ def register(app, ctx: ApiContext) -> None:
         try:
             from services.captcha_guard import is_account_captcha_required
         except Exception:
-            is_account_captcha_required = lambda _a: False  # type: ignore
+            is_account_captcha_required = lambda _a: False
         resumed: list = []
         skipped: list = []
         missing: list = []
@@ -596,9 +594,9 @@ def register(app, ctx: ApiContext) -> None:
             from services.captcha_guard import is_account_captcha_required as _is_cap
             from services.verify_guard import is_account_locked, is_account_recovery
         except Exception:
-            is_account_locked = lambda _a: False  # type: ignore
-            is_account_recovery = lambda _a: False  # type: ignore
-            _is_cap = lambda _a: False  # type: ignore
+            is_account_locked = lambda _a: False
+            is_account_recovery = lambda _a: False
+            _is_cap = lambda _a: False
         resumed: list = []
         skipped: list = []
         missing: list = []

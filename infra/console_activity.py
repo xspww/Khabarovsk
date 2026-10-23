@@ -10,6 +10,7 @@ from typing import Any
 from desktop import console_output
 
 _LOCK = threading.Lock()
+_CANONICAL_BY_NAME: dict[str, str] = {}
 _ACTIVE_ACCOUNTS: set[str] = set()
 _CAPTCHA_ACCOUNTS: set[str] = set()
 _TOTAL_ACCOUNTS = 0
@@ -169,18 +170,61 @@ def _account(fields: dict[str, Any]) -> str:
 
 
 def _account_key(account: Any) -> str:
-    return _text(account, "Account").lower()
+    key = _text(account, "Account").lower()
+    return _CANONICAL_BY_NAME.get(key, key)
+
+
+def _remap_account_key(old: str, new: str) -> None:
+    """Move state recorded under an old display name to its canonical key."""
+    if old == new:
+        return
+    for entries in (_ACTIVE_ACCOUNTS, _CAPTCHA_ACCOUNTS, _BLOCKED_ACCOUNTS, _FINISHED_ACCOUNTS):
+        if old in entries:
+            entries.discard(old)
+            entries.add(new)
+    for mapping in (
+        _LAST_DISCONNECT_AT,
+        _LAST_CAPTCHA_AT,
+        _LAST_PID_BY_ACCOUNT,
+        _SERVER_TYPE_BY_ACCOUNT,
+        _LAST_TELEPORT_AT_BY_ACCOUNT,
+        _LAST_JOB_BY_ACCOUNT,
+        _LAST_PLACE_BY_ACCOUNT,
+    ):
+        if old in mapping:
+            mapping[new] = mapping.pop(old)
+    prefix = f"{old}:"
+    for key in [key for key in _LAST_FOUND_AT_BY_KEY if key.startswith(prefix)]:
+        _LAST_FOUND_AT_BY_KEY[f"{new}:{key[len(prefix):]}"] = _LAST_FOUND_AT_BY_KEY.pop(key)
+
+
+def _learn_identity(fields: dict[str, Any]) -> None:
+    """Map a display name/alias to the stable config username.
+
+    Emitters pass ``account`` (display name, which may be an alias) and
+    ``account_id`` (config username). Console state must use one canonical
+    key per account, otherwise an alias and a username become two entries.
+    """
+    account = _text(fields.get("account"))
+    account_id = _text(fields.get("account_id") or fields.get("accountId") or fields.get("username"))
+    if not account or not account_id:
+        return
+    display_key = account.lower()
+    canonical = account_id.lower()
+    _CANONICAL_BY_NAME[canonical] = canonical
+    previous = _CANONICAL_BY_NAME.get(display_key)
+    _CANONICAL_BY_NAME[display_key] = canonical
+    if previous != canonical:
+        # State may have been recorded under the raw alias before the map
+        # existed; move only that alias key (never another account's key).
+        _remap_account_key(display_key, canonical)
 
 
 def _is_auth_blocked(account: Any) -> bool:
     # Product rule Q1: captcha / cookie-blocked / finished = blocked.
-    # All sets store display names; compare case-insensitive.
+    # Sets store canonical keys, so one lookup covers every alias.
     key = _account_key(account)
-    for blocked_set in (_CAPTCHA_ACCOUNTS, _BLOCKED_ACCOUNTS, _FINISHED_ACCOUNTS):
-        for entry in blocked_set:
-            if str(entry or "").lower() == key:
-                return True
-    return False
+    return key in _CAPTCHA_ACCOUNTS or key in _BLOCKED_ACCOUNTS or key in _FINISHED_ACCOUNTS
 
 
 def _reason(fields: dict[str, Any], default: str = "") -> str:
@@ -302,6 +346,12 @@ def _found_process_line(account: str, pid: Any, fields: dict[str, Any] | None = 
     if previous and now - previous < _FOUND_DEDUP_SECONDS:
         return None
     _LAST_FOUND_AT_BY_KEY[dedupe_key] = now
+    if len(_LAST_FOUND_AT_BY_KEY) > 512:
+        # PIDs change on every relaunch; keep the dedup cache bounded.
+        cutoff = now - max(60.0, _FOUND_DEDUP_SECONDS)
+        for stale_key, seen_at in list(_LAST_FOUND_AT_BY_KEY.items()):
+            if seen_at < cutoff:
+                _LAST_FOUND_AT_BY_KEY.pop(stale_key, None)
     suffix = f" In {_server_paren(kind)}" if kind else ""
     return _line(
         _ICON_OK,
@@ -383,6 +433,13 @@ def _farm_line(started: bool, detail: str = "") -> str:
     if detail:
         msg += f" {_paint(f'— {detail}', _COLOR_GRAY)}"
     return _line(_ICON_FARM, msg)
+
+
+def _error_line(title: str, error: Any = "", detail: Any = "") -> str:
+    reason = _text(error) or _text(detail) or "unknown error"
+    if len(reason) > 160:
+        reason = reason[:157] + "..."
+    return _line(_ICON_FAIL, f"{_paint(title, _COLOR_WHITE)} {_paint(f'— {reason}', _COLOR_GRAY)}")
 
 
 def _same_server_line(account: str, conflict: str = "", job: str = "") -> str:
@@ -495,20 +552,6 @@ def _server_moved_line(account: str, old_job: str, new_job: str, place: str = ""
     return _line(_ICON_TELEPORT, f"{_username_paren(account)} {detail}")
 
 
-def _duration_text(value: Any) -> str:
-    text = _text(value)
-    if not text:
-        return ""
-    try:
-        seconds = max(0.0, float(text))
-        if seconds == 0:
-            return "now"
-        if seconds.is_integer():
-            return f"{int(seconds)}s"
-        return f"{seconds:.1f}s"
-    except Exception:
-        return text
-
 
 def _suspect_process_line(account: str) -> str:
     stamp = f"[{time.strftime('%H:%M:%S')}]"
@@ -535,7 +578,7 @@ def format_console_line(icon: str, message: str, *, indent: bool = False) -> str
 
 def _disconnect_line(account: str, reason: str = "") -> str | None:
     now = time.monotonic()
-    key = _text(account, "Account").lower()
+    key = _account_key(account)
     previous = float(_LAST_DISCONNECT_AT.get(key) or 0.0)
     if now - previous < _DISCONNECT_DEDUP_SECONDS:
         return None
@@ -547,7 +590,7 @@ def _disconnect_line(account: str, reason: str = "") -> str | None:
 
 def _captcha_line(account: str, pid: str = "") -> str | None:
     now = time.monotonic()
-    key = _text(account, "Account").lower()
+    key = _account_key(account)
     previous = float(_LAST_CAPTCHA_AT.get(key) or 0.0)
     if now - previous < _CAPTCHA_DEDUP_SECONDS:
         return None
@@ -556,13 +599,14 @@ def _captcha_line(account: str, pid: str = "") -> str | None:
     return _line(_ICON_VIP, f"{_username_paren(account)} CAPTCHA required{pid_text}")
 
 
-def _print_line(line: str) -> None:
-    console_output.write_line(line)
+def _print_lines(lines: list[str]) -> None:
+    if lines:
+        console_output.write_line("\n".join(lines))
 
 
-def _emit_suspect_process_check(fields: dict[str, Any]) -> None:
+def _emit_suspect_process_check(fields: dict[str, Any]) -> str | None:
     account = _account(fields)
-    key = account.lower()
+    key = _account_key(account)
     final = _boolish(fields.get("final"), False)
     # Final must always clear, even for blocked accounts, otherwise a stale
     # logged entry would suppress the next legit Checking after unblock.
@@ -575,30 +619,30 @@ def _emit_suspect_process_check(fields: dict[str, Any]) -> None:
             _SUSPECT_FINALIZED_AT_BY_ACCOUNT[key] = time.monotonic()
         else:
             _SUSPECT_FINALIZED_AT_BY_ACCOUNT.pop(key, None)
-        return
+        return None
     # Q1: blocked accounts (captcha / cookie / finished) never get Checking.
     if _is_auth_blocked(account):
-        return
+        return None
     finalized_at = float(_SUSPECT_FINALIZED_AT_BY_ACCOUNT.get(key) or 0.0)
     if finalized_at and time.monotonic() - finalized_at <= _SUSPECT_FINAL_SUPPRESS_SECONDS:
-        return
+        return None
     if key in _SUSPECT_LOGGED_ACCOUNTS:
-        return
+        return None
     _SUSPECT_FINALIZED_AT_BY_ACCOUNT.pop(key, None)
     _SUSPECT_LOGGED_ACCOUNTS.add(key)
-    _print_line(_suspect_process_line(account))
+    return _suspect_process_line(account)
 
 
-def _emit_check_before_disconnect(account: str) -> None:
+def _emit_check_before_disconnect(account: str) -> str | None:
     # Q1: blocked accounts never get the pre-disconnect Checking line.
     if _is_auth_blocked(account):
-        return
+        return None
     key = _account_key(account)
     if key in _SUSPECT_LOGGED_ACCOUNTS:
-        return
+        return None
     _SUSPECT_FINALIZED_AT_BY_ACCOUNT.pop(key, None)
     _SUSPECT_LOGGED_ACCOUNTS.add(key)
-    _print_line(_suspect_process_line(account))
+    return _suspect_process_line(account)
 
 
 def _title_text_locked() -> str:
@@ -613,7 +657,7 @@ def _set_title_locked() -> None:
 
         ctypes.windll.kernel32.SetConsoleTitleW(_title_text_locked())
     except Exception:
-        pass
+        "intentional: ignore exception"
 
 
 def set_total_accounts(count: Any) -> None:
@@ -629,7 +673,9 @@ def set_total_accounts(count: Any) -> None:
 
 def _update_counters(scope: str, name: str, fields: dict[str, Any]) -> None:
     global _QUEUE_SIZE
+    _learn_identity(fields)
     account = _account(fields)
+    key = _account_key(account)
     # Never track the fallback "Account" placeholder as a real account.
     is_real_account = bool(account and account != "Account")
     if scope == "STATE" and name == "transition":
@@ -638,67 +684,70 @@ def _update_counters(scope: str, name: str, fields: dict[str, Any]) -> None:
         reason = _reason(fields)
         if reason in {"captcha_required", "identity_locked", "account_recovery"}:
             if is_real_account:
-                _CAPTCHA_ACCOUNTS.add(account)
+                _CAPTCHA_ACCOUNTS.add(key)
         elif reason in {"manual_resume", "captcha_resume", "locked_resume", "recovery_resume", "verify_resume"} or new in {"QUEUED", "LAUNCHING", "VERIFY", "IN_GAME", "IDLE", "READY"}:
-            _CAPTCHA_ACCOUNTS.discard(account)
+            _CAPTCHA_ACCOUNTS.discard(key)
             # Account is launchable again -> clear cookie/finished blocks too.
             if new in {"QUEUED", "LAUNCHING", "VERIFY", "IN_GAME", "READY"}:
-                _BLOCKED_ACCOUNTS.discard(account)
+                _BLOCKED_ACCOUNTS.discard(key)
                 # Do not auto-clear FINISHED here; explicit unfinished event clears it.
                 if new in {"LAUNCHING", "VERIFY", "IN_GAME"}:
-                    _FINISHED_ACCOUNTS.discard(account)
+                    _FINISHED_ACCOUNTS.discard(key)
         if new in {"LAUNCHING", "VERIFY"}:
-            _SERVER_TYPE_BY_ACCOUNT.pop(_account_key(account), None)
+            _SERVER_TYPE_BY_ACCOUNT.pop(key, None)
         if new == "IN_GAME":
-            _ACTIVE_ACCOUNTS.add(account)
+            _ACTIVE_ACCOUNTS.add(key)
         if old == "IN_GAME" and new != "IN_GAME":
-            _ACTIVE_ACCOUNTS.discard(account)
+            _ACTIVE_ACCOUNTS.discard(key)
         if new in {"FAILED", "IDLE"}:
-            _ACTIVE_ACCOUNTS.discard(account)
+            _ACTIVE_ACCOUNTS.discard(key)
         if new == "LAUNCHING":
             _QUEUE_SIZE = max(0, _QUEUE_SIZE - 1)
         if reason in {"captcha_required", "identity_locked", "account_recovery"}:
-            _ACTIVE_ACCOUNTS.discard(account)
+            _ACTIVE_ACCOUNTS.discard(key)
     elif scope == "STATE" and name == "forced_reset":
-        _ACTIVE_ACCOUNTS.discard(account)
-        _CAPTCHA_ACCOUNTS.discard(account)
-        _BLOCKED_ACCOUNTS.discard(account)
+        _ACTIVE_ACCOUNTS.discard(key)
+        _CAPTCHA_ACCOUNTS.discard(key)
+        _BLOCKED_ACCOUNTS.discard(key)
     elif scope == "CAPTCHA" or name == "captcha_dialog_hold" or (scope == "RECOVERY" and name == "captcha_hold"):
         if "resume" in name or "clear" in name or _reason(fields) in {"manual_resume", "captcha_resume", "locked_resume", "recovery_resume", "verify_resume"}:
-            _CAPTCHA_ACCOUNTS.discard(account)
+            _CAPTCHA_ACCOUNTS.discard(key)
         elif is_real_account:
-            _CAPTCHA_ACCOUNTS.add(account)
-        _ACTIVE_ACCOUNTS.discard(account)
+            _CAPTCHA_ACCOUNTS.add(key)
+        _ACTIVE_ACCOUNTS.discard(key)
     elif scope == "FARM" and name == "account_preflight_blocked":
         # Q1: cookie / mismatch / captcha preflight -> treat as blocked.
         if is_real_account:
-            _BLOCKED_ACCOUNTS.add(account)
-        _ACTIVE_ACCOUNTS.discard(account)
+            _BLOCKED_ACCOUNTS.add(key)
+        _ACTIVE_ACCOUNTS.discard(key)
     elif scope == "API" and name in {"accounts_finished", "account_finished"}:
         raw = _text(fields.get("account", "")) or account
         if "," in raw:
             for part in [p.strip() for p in raw.split(",") if p.strip()]:
+                part_key = _account_key(part)
                 if part != "Account":
-                    _FINISHED_ACCOUNTS.add(part)
-                _ACTIVE_ACCOUNTS.discard(part)
+                    _FINISHED_ACCOUNTS.add(part_key)
+                _ACTIVE_ACCOUNTS.discard(part_key)
         elif raw and raw != "Account":
-            _FINISHED_ACCOUNTS.add(raw)
-            _ACTIVE_ACCOUNTS.discard(raw)
+            _FINISHED_ACCOUNTS.add(key)
+            _ACTIVE_ACCOUNTS.discard(key)
     elif scope == "API" and name in {"accounts_unfinished", "account_unfinished", "account_unfinished_relaunched"}:
         raw = _text(fields.get("account", "")) or account
         if "," in raw:
             for part in [p.strip() for p in raw.split(",") if p.strip()]:
-                _FINISHED_ACCOUNTS.discard(part)
-                _BLOCKED_ACCOUNTS.discard(part)
+                part_key = _account_key(part)
+                _FINISHED_ACCOUNTS.discard(part_key)
+                _BLOCKED_ACCOUNTS.discard(part_key)
         else:
-            _FINISHED_ACCOUNTS.discard(raw or account)
-            _BLOCKED_ACCOUNTS.discard(raw or account)
+            raw_key = _account_key(raw or account)
+            _FINISHED_ACCOUNTS.discard(raw_key)
+            _BLOCKED_ACCOUNTS.discard(raw_key)
     elif scope == "QUEUE":
         if "size" in fields:
             try:
                 _QUEUE_SIZE = max(0, int(fields.get("size") or 0))
             except Exception:
-                pass
+                "intentional: ignore exception"
         elif name == "cancel_all":
             _QUEUE_SIZE = 0
 
@@ -756,7 +805,7 @@ def _format_misc(scope: str, name: str, fields: dict[str, Any]) -> str | None:
         if "," in acct:
             parts = [p.strip() for p in acct.split(",") if p.strip()]
             acct = f"{len(parts)} accounts" if len(parts) > 1 else (parts[0] if parts else "Accounts")
-            dedupe_key = f"{acct.lower()}:{'finished' if is_finished else 'unfinished'}"
+            dedupe_key = f"{_account_key(acct)}:{'finished' if is_finished else 'unfinished'}"
             now = time.monotonic()
             previous = float(_LAST_FINISHED_AT_BY_KEY.get(dedupe_key) or 0.0)
             if previous and now - previous < _FINISHED_DEDUP_SECONDS:
@@ -764,7 +813,7 @@ def _format_misc(scope: str, name: str, fields: dict[str, Any]) -> str | None:
             _LAST_FINISHED_AT_BY_KEY[dedupe_key] = now
             return _finished_line(acct, is_finished, "")
         acct = acct or "Account"
-        dedupe_key = f"{acct.lower()}:{'finished' if is_finished else 'unfinished'}"
+        dedupe_key = f"{_account_key(acct)}:{'finished' if is_finished else 'unfinished'}"
         now = time.monotonic()
         previous = float(_LAST_FINISHED_AT_BY_KEY.get(dedupe_key) or 0.0)
         if previous and now - previous < _FINISHED_DEDUP_SECONDS:
@@ -772,8 +821,14 @@ def _format_misc(scope: str, name: str, fields: dict[str, Any]) -> str | None:
         _LAST_FINISHED_AT_BY_KEY[dedupe_key] = now
         # Single account: don't append redundant total count.
         return _finished_line(acct, is_finished, "")
-    if scope == "API" and name in {"start_preflight_error", "start_failed", "game_defaults_applied"}:
+    if scope == "API" and name == "start_failed":
+        return _error_line("Start failed", fields.get("error"))
+    if scope == "API" and name == "start_preflight_error":
+        return _error_line("Start blocked", fields.get("error"))
+    if scope == "API" and name == "game_defaults_applied":
         return None
+    if scope == "BOOT" and name == "farm_start_failed":
+        return _error_line("Farm failed to start", fields.get("error"))
     if scope == "ACCOUNT_DATA" and name in {"reload_cookie_validation", "reload_synced_running_farm"}:
         # Summary is emitted separately as RELOAD line; skip noisy sync logs.
         return None
@@ -786,7 +841,7 @@ def _format_misc(scope: str, name: str, fields: dict[str, Any]) -> str | None:
             if valid != "" or captcha != "" or invalid != "" or banned != "":
                 return _reload_cookies_line(valid or 0, captcha or 0, invalid or 0, banned or 0)
         except Exception:
-            pass
+            "intentional: ignore exception"
         return None
     if scope == "FARM" and name in {"started", "stopped", "start", "stop"}:
         try:
@@ -909,17 +964,23 @@ def emit_structured(scope: str, name: str, **fields: Any) -> None:
     scope_text = _text(scope).upper()
     name_text = _text(name)
     data = dict(fields)
+    lines: list[str] = []
     with _LOCK:
         _update_counters(scope_text, name_text, data)
         if scope_text == "RUNTIME" and name_text == "suspect_process_check":
-            _emit_suspect_process_check(data)
+            line = _emit_suspect_process_check(data)
+            if line:
+                lines.append(line)
         else:
             line = _format_structured(scope_text, name_text, data)
             if line:
                 if " disconnected" in line:
-                    _emit_check_before_disconnect(_account(data))
-                _print_line(line)
+                    checking = _emit_check_before_disconnect(_account(data))
+                    if checking:
+                        lines.append(checking)
+                lines.append(line)
         _set_title_locked()
+    _print_lines(lines)
 
 
 def _format_text(message: str) -> str | None:
@@ -948,15 +1009,19 @@ def emit_text(message: str) -> None:
     if not _enabled():
         return
     msg = str(message or "")
-    line = _format_text(msg)
-    if not line:
-        return
     account = ""
     match = re.match(r"^\[WORKER\]\s+(.+?)\s+(?:disconnect dialog detected|Not Responding)\b", msg.strip())
     if match:
         account = match.group(1).strip()
+    lines: list[str] = []
     with _LOCK:
+        line = _format_text(msg)
+        if not line:
+            return
         if account and " disconnected" in line:
-            _emit_check_before_disconnect(account)
-        _print_line(line)
+            checking = _emit_check_before_disconnect(account)
+            if checking:
+                lines.append(checking)
+        lines.append(line)
         _set_title_locked()
+    _print_lines(lines)

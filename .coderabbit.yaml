@@ -1,0 +1,174 @@
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+# CodeRabbit config for Khabarovsk.
+# Docs: https://docs.coderabbit.ai/reference/configuration
+# Verify what CodeRabbit actually parsed: comment "@coderabbitai configuration" on a PR.
+
+language: "th-TH"          # review text in Thai; switch to "en-US" if you prefer English
+early_access: false
+enable_free_tier: true     # public repo -> free tier
+
+reviews:
+  profile: "chill"         # quiet | chill | assertive
+  request_changes_workflow: false   # report only, do not block merges yet
+  high_level_summary: true
+  high_level_summary_in_walkthrough: false
+  review_status: true
+  commit_status: true
+  fail_commit_status: false
+  collapse_walkthrough: false
+  changed_files_summary: true
+  sequence_diagrams: false
+  estimate_code_review_effort: true
+  assess_linked_issues: true
+  related_issues: true
+  related_prs: true
+  suggested_labels: true
+  auto_apply_labels: false
+  suggested_reviewers: false
+  poem: false
+  abort_on_close: true
+  disable_cache: false
+
+  auto_review:
+    enabled: true
+    auto_incremental_review: true
+    drafts: false
+    ignore_title_keywords:
+      - "WIP"
+      - "DO NOT MERGE"
+
+  # Skip generated/bundled/minified files: reviewing a 72 KB single-line bundle is noise.
+  path_filters:
+    - "!build/**"
+    - "!dist/**"
+    - "!**/__pycache__/**"
+    - "!assets/**"
+    - "!**/*.min.js"
+    - "!ui/app/dashboard.js"
+    - "!ui/panels/settingsPanels.js"
+    - "!ui/events/bindings.js"
+    - "!ui/components/icons.js"
+    - "!err.txt"
+    - "!out.txt"
+    - "!build.log"
+    - "!**/*.log"
+
+  path_instructions:
+    - path: "**/*.py"
+      instructions: |
+        Python 3.11, Windows-only desktop app. Keep `from __future__ import annotations` at the top of new
+        modules, use `snake_case`, and prefer small pure helpers so they stay unit-testable.
+        - Do NOT add new third-party dependencies (requirements.txt is intentionally minimal: fastapi, uvicorn,
+          psutil, pillow, PySide6, qtwebview2, cryptography, certifi, playwright). stdlib first.
+        - Logging goes through the project helpers (`flog`, `flog_kv`, `core_logging`). Flag any `print()` added
+          to runtime/service code.
+        - Flag any log line, exception message, or API response that could leak account cookies
+          (`_|WARNING:...`), passwords, or full AccountData records. Redaction is required.
+        - `ruff.toml` is the source of truth for lint rules. Do not suggest rules the config intentionally
+          ignores (BLE/S defensive excepts, UP006/UP035/UP045 annotation churn, C901, SIM102/103/105/108,
+          TRY003/300/301, E731, RUF046).
+        - Flag blocking calls (time.sleep, subprocess.run, requests/urllib, Playwright waits) inside async
+          functions and FastAPI route handlers; they must be offloaded or made non-blocking.
+    - path: "runtime/**"
+      instructions: |
+        Runtime orchestration: threading, per-account workers, launch attempts, and recovery policies.
+        - Treat the single-owner invariants as load-bearing: one account owns one PID/worker/slot at a time.
+          Call out any change that could allow two workers, duplicate launches, or double recovery for the
+          same account.
+        - Watch for lock ordering, state mutated outside the owning worker, and shared dict/list access
+          across threads without a lock.
+        - Recovery gating (rate limits, slots, storm breaker) must not be bypassed by new code paths.
+        - Prefer explicit state transitions over boolean flags; flag flags that can drift out of sync.
+    - path: "services/**"
+      instructions: |
+        Platform integration (Win32/ctypes, Playwright, Roblox HTTP, process and window control).
+        - PID reuse and stale process handles are a real hazard: require identity re-checks before killing or
+          adopting a process.
+        - Every external call (HTTP, Roblox endpoints, Playwright) needs a timeout and a bounded retry/backoff.
+        - Failures from Roblox endpoints must degrade gracefully (no farm-wide crash, no unbounded loop).
+        - Flag hardcoded credentials, tokens, or endpoints; cookie handling must stay redacted.
+    - path: "api_routes/**"
+      instructions: |
+        FastAPI routes served on localhost for the desktop UI.
+        - Validate and coerce request payloads; never trust UI input as already-normalized.
+        - Handlers should stay thin: business logic belongs in services/runtime.
+        - Flag any route that mutates shared runtime state without going through the existing
+          dispatcher/lock/idempotency path.
+    - path: "ui/**/*.js"
+      instructions: |
+        Vanilla ES modules, no bundler, no framework, no npm build step. Keep it that way.
+        - Any value interpolated into innerHTML/template literals must go through `esc()`; flag missing escaping
+          as XSS.
+        - Preserve existing module boundaries and the `panelCtx()` injection style used by panels.
+        - Do not rename globals or exports consumed from `index.html` or other modules without updating callers.
+    - path: "tests/**"
+      instructions: |
+        Tests use stdlib `unittest` (no pytest) and must stay hermetic: no Windows APIs, no network, no browser,
+        no real Roblox process. Run with `python -m unittest discover -s tests`.
+        - New behavior in domain/runtime/services needs a matching test file listed in tests/README.md.
+        - Flag tests that depend on machine state, real paths, timing sleeps, or live services.
+    - path: "lua/**"
+      instructions: |
+        Roblox Lua executed by an executor inside the game client. Keep it dependency-free and compatible with
+        the executors the project already supports; avoid syntax newer than Luau's current stable set.
+
+  finishing_touches:
+    docstrings:
+      enabled: false       # project style keeps docstrings minimal
+    unit_tests:
+      enabled: true
+    simplify:
+      enabled: false
+
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+    title:
+      mode: "warning"
+      requirements: >-
+        Use conventional-commit style, e.g. `fix(games): stop running clients when a game is unassigned`.
+        Max 72 characters, imperative mood, no emoji.
+    description:
+      mode: "warning"
+    issue_assessment:
+      mode: "warning"
+
+  tools:
+    ruff:
+      enabled: true
+      config_file: "ruff.toml"
+    pylint:
+      enabled: false
+    flake8:
+      enabled: false
+    markdownlint:
+      enabled: false       # Thai docs + tables trip line-length rules
+    yamllint:
+      enabled: true
+    actionlint:
+      enabled: true
+    gitleaks:
+      enabled: true        # catches committed cookies/tokens
+    trufflehog:
+      enabled: false
+    semgrep:
+      enabled: false
+
+chat:
+  auto_reply: true
+  art: false
+
+knowledge_base:
+  opt_out: false
+  web_search:
+    enabled: true
+  learnings:
+    scope: "auto"
+  issues:
+    scope: "auto"
+  pull_requests:
+    scope: "auto"
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "GLOSSARY.md"

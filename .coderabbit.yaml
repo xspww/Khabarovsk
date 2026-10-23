@@ -37,7 +37,11 @@ reviews:
       - "WIP"
       - "DO NOT MERGE"
 
-  # Skip generated/bundled/minified files: reviewing a 72 KB single-line bundle is noise.
+  # Skip build output and already-minified files.
+  # NOTE: the ui/ entries below are intentional. This repo ships its UI sources already
+  # minified (each file is 1-9 lines of 10-70 KB, no bundler, no sourcemaps), so every
+  # line-anchored comment would land on "line 1" and be unactionable. They are skipped
+  # rather than reviewed badly; UI logic still gets covered through its Python/API side.
   path_filters:
     - "!build/**"
     - "!dist/**"
@@ -96,11 +100,14 @@ reviews:
           dispatcher/lock/idempotency path.
     - path: "ui/**/*.js"
       instructions: |
-        Vanilla ES modules, no bundler, no framework, no npm build step. Keep it that way.
+        Vanilla ES modules, no bundler and no npm build step. The largest modules are committed already
+        minified (single long lines) and are excluded in `path_filters`; the modules that do get reviewed
+        are the readable ones, so apply normal module style rules to them.
         - Any value interpolated into innerHTML/template literals must go through `esc()`; flag missing escaping
           as XSS.
         - Preserve existing module boundaries and the `panelCtx()` injection style used by panels.
         - Do not rename globals or exports consumed from `index.html` or other modules without updating callers.
+        - Do not suggest a build step, bundler, TypeScript, or framework migration; that is out of scope.
     - path: "tests/**"
       instructions: |
         Tests use stdlib `unittest` (no pytest) and must stay hermetic: no Windows APIs, no network, no browser,

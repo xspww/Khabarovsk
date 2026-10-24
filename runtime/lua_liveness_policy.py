@@ -60,20 +60,39 @@ def mark_waiting_for_lua(acc: Any, runtime_state: Any, state_mgr: Any, reason: s
         state_mgr.transition(acc, AccountState.VERIFY, reason=LUA_WAITING_STATUS, force=True)
 
 
-def account_lua_online(acc: Any, now: float | None = None, timeout: float = 60.0) -> bool:
-    current = float(now if now is not None else time.time())
-    in_game_at = float(getattr(acc, "lua_in_game_at", 0.0) or 0.0)
-    last_event_at = float(getattr(acc, "lua_last_event_at", 0.0) or 0.0)
+def _float_attr(acc: Any, name: str) -> float:
+    return float(getattr(acc, name, 0.0) or 0.0)
+
+
+def _str_attr(acc: Any, name: str) -> str:
+    return str(getattr(acc, name, "") or "")
+
+
+def _event_fresh(in_game_at: float, last_event_at: float, current: float, timeout: float) -> bool:
     if in_game_at <= 0 or last_event_at <= 0:
         return False
     if current - last_event_at > max(1.0, float(timeout or 60.0)):
         return False
-    session_id = str(getattr(acc, "session_id", "") or "")
-    lua_session_id = str(getattr(acc, "lua_session_id", "") or "")
-    if session_id and lua_session_id and session_id != lua_session_id:
+    return True
+
+
+def _identity_matches(acc: Any, first: str, second: str) -> bool:
+    first_value = _str_attr(acc, first)
+    second_value = _str_attr(acc, second)
+    return not (first_value and second_value and first_value != second_value)
+
+
+def account_lua_online(acc: Any, now: float | None = None, timeout: float = 60.0) -> bool:
+    current = float(now if now is not None else time.time())
+    if not _event_fresh(
+        _float_attr(acc, "lua_in_game_at"),
+        _float_attr(acc, "lua_last_event_at"),
+        current,
+        timeout,
+    ):
         return False
-    launch_nonce = str(getattr(acc, "launch_nonce", "") or "")
-    lua_launch_nonce = str(getattr(acc, "lua_launch_nonce", "") or "")
-    if launch_nonce and lua_launch_nonce and launch_nonce != lua_launch_nonce:
+    if not _identity_matches(acc, "session_id", "lua_session_id"):
+        return False
+    if not _identity_matches(acc, "launch_nonce", "lua_launch_nonce"):
         return False
     return True

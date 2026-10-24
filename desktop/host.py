@@ -38,22 +38,142 @@ BASE_DIR = APP_ROOT_DIR
 HOST = "127.0.0.1"
 PORT = DEFAULT_PORT
 _SHUTDOWN_REQUESTED = threading.Event()
-_app = None
-_farm = None
-_backend_host: BackendHost | None = None
 _STARTUP_PROGRESS_WIDTH = 44
 _STARTUP_PROGRESS_TOTAL_STEPS = 6
 _STARTUP_PROGRESS_FRAME_DELAY = 0.012
 _STARTUP_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
-_STARTUP_PROGRESS_ACTIVE = False
-_STARTUP_PROGRESS_LAST_LEN = 0
-_STARTUP_PROGRESS_PERCENT = 0
-_STARTUP_SPINNER_INDEX = 0
-_STARTUP_CLEAR_AFTER_WINDOW_SHOW = False
-_STARTUP_COLOR_SUPPORT: bool | None = None
 _COLOR_DIM = "\x1b[90m"
 _COLOR_NAVY_BLUE = "\x1b[38;2;30;64;175m"
 _COLOR_NAVY_TEXT = "\x1b[38;2;96;165;250m"
+
+
+class _HostState:
+    def __init__(self) -> None:
+        self.app: Any = None
+        self.farm: Any = None
+        self.backend: BackendHost | None = None
+        self.port = DEFAULT_PORT
+
+    def configure(self, fastapi_app: Any, farm_controller: Any) -> None:
+        self.app = fastapi_app
+        self.farm = farm_controller
+
+    def require_configured(self) -> tuple[Any, Any]:
+        if self.app is None or self.farm is None:
+            raise RuntimeError("desktop_host is not configured")
+        return self.app, self.farm
+
+
+class _StartupProgress:
+    def __init__(self) -> None:
+        self.active = False
+        self.last_len = 0
+        self.percent = 0
+        self.spinner_index = 0
+        self.clear_after_window_show = False
+        self.color_support: bool | None = None
+
+    def colors_enabled(self) -> bool:
+        if not console_output.color_requested():
+            return False
+        if self.color_support is None:
+            self.color_support = _startup_enable_virtual_terminal()
+        return bool(self.color_support)
+
+    def progress_line(self, percent: int, detail: str) -> str:
+        try:
+            pct = int(percent)
+        except (TypeError, ValueError):
+            pct = 0
+        pct = max(0, min(100, pct))
+        filled = int(round(_STARTUP_PROGRESS_WIDTH * (pct / 100.0)))
+        bar = _startup_paint("█" * filled, _COLOR_NAVY_BLUE) + _startup_paint(
+            "░" * (_STARTUP_PROGRESS_WIDTH - filled), _COLOR_DIM
+        )
+        spinner = _STARTUP_SPINNER_FRAMES[
+            self.spinner_index % len(_STARTUP_SPINNER_FRAMES)
+        ]
+        self.spinner_index += 1
+        detail_text = str(detail or "").strip() or "Starting"
+        label = _startup_paint(detail_text, _COLOR_NAVY_TEXT)
+        step = f"{_startup_progress_step(pct)}/{_STARTUP_PROGRESS_TOTAL_STEPS}"
+        return f"{spinner} {label}  [{bar}] {step} {pct:3d}%"
+
+    def render(self, percent: int, detail: str) -> None:
+        line = self.progress_line(percent, detail)
+        visible_len = _startup_visible_len(line)
+        padding = " " * max(0, self.last_len - visible_len)
+        _console_write_inline(f"\r{line}{padding}")
+        self.last_len = visible_len
+
+    def advance(self, percent: int, detail: str) -> None:
+        try:
+            target = int(percent)
+        except (TypeError, ValueError):
+            target = 0
+        target = max(0, min(100, target))
+        start = self.percent if self.active else target
+        if self.active and target > start:
+            frame_count = min(10, max(3, target - start))
+            for index in range(1, frame_count + 1):
+                frame_percent = start + round(
+                    (target - start) * (index / frame_count)
+                )
+                self.render(frame_percent, detail)
+                if index < frame_count:
+                    time.sleep(_STARTUP_PROGRESS_FRAME_DELAY)
+        else:
+            self.render(target, detail)
+        self.active = True
+        self.percent = target
+
+    def finish(self, *, clear: bool) -> None:
+        if self.active:
+            _console_write_inline("\r" + (" " * self.last_len) + "\r")
+        self.active = False
+        self.last_len = 0
+        self.percent = 0
+        self.spinner_index = 0
+        if clear:
+            _console_clear_startup_screen()
+
+    def seal_inline_line(self) -> None:
+        if self.last_len > 0:
+            _console_write_inline("\n")
+            self.last_len = 0
+
+    def set_clear_after_window_show(self, enabled: bool = True) -> None:
+        self.clear_after_window_show = bool(enabled)
+
+    def finish_after_window_show(self) -> None:
+        clear = bool(self.clear_after_window_show)
+        self.clear_after_window_show = False
+        self.finish(clear=clear)
+
+    def render_update(self, percent: int, label: str) -> None:
+        try:
+            pct = max(0, min(100, int(percent)))
+        except (TypeError, ValueError):
+            pct = 0
+        filled = int(round(_UPDATE_BAR_WIDTH * (pct / 100.0)))
+        bar = _startup_paint("█" * filled, _COLOR_NAVY_BLUE) + _startup_paint(
+            "░" * (_UPDATE_BAR_WIDTH - filled), _COLOR_DIM
+        )
+        spinner = _STARTUP_SPINNER_FRAMES[
+            self.spinner_index % len(_STARTUP_SPINNER_FRAMES)
+        ]
+        self.spinner_index += 1
+        text = _startup_paint(str(label or "Updating"), _COLOR_NAVY_TEXT)
+        line = f"{spinner} {text}  [{bar}] {pct:3d}%"
+        visible_len = _startup_visible_len(line)
+        padding = " " * max(0, self.last_len - visible_len)
+        _console_write_inline(f"\r{line}{padding}")
+        self.active = True
+        self.last_len = visible_len
+
+
+_HOST = _HostState()
+_STARTUP = _StartupProgress()
 
 
 def _console_write(message: str = "") -> None:
@@ -69,12 +189,7 @@ def _startup_enable_virtual_terminal() -> bool:
 
 
 def _startup_colors_enabled() -> bool:
-    global _STARTUP_COLOR_SUPPORT
-    if not console_output.color_requested():
-        return False
-    if _STARTUP_COLOR_SUPPORT is None:
-        _STARTUP_COLOR_SUPPORT = _startup_enable_virtual_terminal()
-    return bool(_STARTUP_COLOR_SUPPORT)
+    return _STARTUP.colors_enabled()
 
 
 def _startup_paint(text: str, color: str) -> str:
@@ -101,50 +216,15 @@ def _startup_progress_step(percent: int) -> int:
 
 
 def _startup_progress_line(percent: int, detail: str) -> str:
-    global _STARTUP_SPINNER_INDEX
-    try:
-        pct = int(percent)
-    except (TypeError, ValueError):
-        pct = 0
-    pct = max(0, min(100, pct))
-    filled = int(round(_STARTUP_PROGRESS_WIDTH * (pct / 100.0)))
-    bar = _startup_paint("█" * filled, _COLOR_NAVY_BLUE) + _startup_paint("░" * (_STARTUP_PROGRESS_WIDTH - filled), _COLOR_DIM)
-    spinner = _STARTUP_SPINNER_FRAMES[_STARTUP_SPINNER_INDEX % len(_STARTUP_SPINNER_FRAMES)]
-    _STARTUP_SPINNER_INDEX += 1
-    detail_text = str(detail or "").strip() or "Starting"
-    label = _startup_paint(detail_text, _COLOR_NAVY_TEXT)
-    step = f"{_startup_progress_step(pct)}/{_STARTUP_PROGRESS_TOTAL_STEPS}"
-    return f"{spinner} {label}  [{bar}] {step} {pct:3d}%"
+    return _STARTUP.progress_line(percent, detail)
 
 
 def _render_startup_progress(percent: int, detail: str) -> None:
-    global _STARTUP_PROGRESS_LAST_LEN
-    line = _startup_progress_line(percent, detail)
-    visible_len = _startup_visible_len(line)
-    padding = " " * max(0, _STARTUP_PROGRESS_LAST_LEN - visible_len)
-    _console_write_inline(f"\r{line}{padding}")
-    _STARTUP_PROGRESS_LAST_LEN = visible_len
+    _STARTUP.render(percent, detail)
 
 
 def _console_startup_progress(percent: int, detail: str) -> None:
-    global _STARTUP_PROGRESS_ACTIVE, _STARTUP_PROGRESS_PERCENT
-    try:
-        target = int(percent)
-    except (TypeError, ValueError):
-        target = 0
-    target = max(0, min(100, target))
-    start = _STARTUP_PROGRESS_PERCENT if _STARTUP_PROGRESS_ACTIVE else target
-    if _STARTUP_PROGRESS_ACTIVE and target > start:
-        frame_count = min(10, max(3, target - start))
-        for index in range(1, frame_count + 1):
-            frame_percent = start + round((target - start) * (index / frame_count))
-            _render_startup_progress(frame_percent, detail)
-            if index < frame_count:
-                time.sleep(_STARTUP_PROGRESS_FRAME_DELAY)
-    else:
-        _render_startup_progress(target, detail)
-    _STARTUP_PROGRESS_ACTIVE = True
-    _STARTUP_PROGRESS_PERCENT = target
+    _STARTUP.advance(percent, detail)
 
 
 def _console_clear_startup_screen() -> None:
@@ -152,15 +232,7 @@ def _console_clear_startup_screen() -> None:
 
 
 def _console_finish_startup(*, clear: bool) -> None:
-    global _STARTUP_PROGRESS_ACTIVE, _STARTUP_PROGRESS_LAST_LEN, _STARTUP_PROGRESS_PERCENT, _STARTUP_SPINNER_INDEX
-    if _STARTUP_PROGRESS_ACTIVE:
-        _console_write_inline("\r" + (" " * _STARTUP_PROGRESS_LAST_LEN) + "\r")
-    _STARTUP_PROGRESS_ACTIVE = False
-    _STARTUP_PROGRESS_LAST_LEN = 0
-    _STARTUP_PROGRESS_PERCENT = 0
-    _STARTUP_SPINNER_INDEX = 0
-    if clear:
-        _console_clear_startup_screen()
+    _STARTUP.finish(clear=clear)
 
 
 def _console_seal_inline_line() -> None:
@@ -171,22 +243,15 @@ def _console_seal_inline_line() -> None:
     Sealing keeps the completed line and moves the cursor to the next line
     for whoever writes next (usually the swap script's own header).
     """
-    global _STARTUP_PROGRESS_LAST_LEN
-    if _STARTUP_PROGRESS_LAST_LEN > 0:
-        _console_write_inline("\n")
-        _STARTUP_PROGRESS_LAST_LEN = 0
+    _STARTUP.seal_inline_line()
 
 
 def _console_clear_after_window_show(enabled: bool = True) -> None:
-    global _STARTUP_CLEAR_AFTER_WINDOW_SHOW
-    _STARTUP_CLEAR_AFTER_WINDOW_SHOW = bool(enabled)
+    _STARTUP.set_clear_after_window_show(enabled)
 
 
 def _console_finish_after_window_show() -> None:
-    global _STARTUP_CLEAR_AFTER_WINDOW_SHOW
-    clear = bool(_STARTUP_CLEAR_AFTER_WINDOW_SHOW)
-    _STARTUP_CLEAR_AFTER_WINDOW_SHOW = False
-    _console_finish_startup(clear=clear)
+    _STARTUP.finish_after_window_show()
 
 
 def _console_event(icon: str, message: str, *, indent: bool = False) -> None:
@@ -208,65 +273,60 @@ def _parse_update_percent(job: dict) -> int | None:
         if match:
             return max(0, min(100, int(match.group(1))))
     except Exception:
-        pass
+        "intentional: ignore exception"
     return None
 
 
 def _render_update_progress(percent: int, label: str) -> None:
     """Single-line updater progress reusing the boot bar style (no step x/6)."""
-    # Mark the progress as active so _console_finish_startup() actually
-    # erases this line later; without this the clear was skipped and the
-    # next message concatenated onto it ("100%Restarting into...").
-    global _STARTUP_PROGRESS_LAST_LEN, _STARTUP_SPINNER_INDEX, _STARTUP_PROGRESS_ACTIVE
-    try:
-        pct = max(0, min(100, int(percent)))
-    except (TypeError, ValueError):
-        pct = 0
-    filled = int(round(_UPDATE_BAR_WIDTH * (pct / 100.0)))
-    bar = _startup_paint("█" * filled, _COLOR_NAVY_BLUE) + _startup_paint("░" * (_UPDATE_BAR_WIDTH - filled), _COLOR_DIM)
-    spinner = _STARTUP_SPINNER_FRAMES[_STARTUP_SPINNER_INDEX % len(_STARTUP_SPINNER_FRAMES)]
-    _STARTUP_SPINNER_INDEX += 1
-    text = _startup_paint(str(label or "Updating"), _COLOR_NAVY_TEXT)
-    line = f"{spinner} {text}  [{bar}] {pct:3d}%"
-    visible_len = _startup_visible_len(line)
-    padding = " " * max(0, _STARTUP_PROGRESS_LAST_LEN - visible_len)
-    _console_write_inline(f"\r{line}{padding}")
-    _STARTUP_PROGRESS_ACTIVE = True
-    _STARTUP_PROGRESS_LAST_LEN = visible_len
+    _STARTUP.render_update(percent, label)
+
+
+_STATUS_PROGRESS = {
+    "port": (35, "Selecting local port"),
+    "dashboard": (88, "Dashboard ready"),
+    "desktop": (96, "Opening desktop window"),
+}
+
+
+def _status_startup(detail_text: str) -> None:
+    if "existing" in detail_text.lower():
+        _console_startup_progress(18, detail_text)
+    else:
+        _console_startup_progress(8, detail_text or "Preparing startup")
+
+
+def _status_backend(detail_text: str) -> None:
+    if detail_text.lower().startswith("not ready"):
+        _console_finish_startup(clear=False)
+        _console_event(
+            "XX",
+            f"Cronus backend not ready: {detail_text.replace('Not ready:', '', 1).strip()}",
+        )
+    elif detail_text.lower().startswith("ready"):
+        _console_startup_progress(78, detail_text)
+    else:
+        _console_startup_progress(55, detail_text or "Starting FastAPI server")
+
+
+def _status_fixed(label_key: str, detail_text: str) -> None:
+    entry = _STATUS_PROGRESS.get(label_key)
+    if entry is None:
+        return
+    percent, fallback = entry
+    _console_startup_progress(percent, detail_text or fallback)
 
 
 def _console_status(label: str, detail: str) -> None:
     label_key = str(label or "").strip().lower()
     detail_text = str(detail or "").strip()
     if label_key == "startup":
-        if "existing" in detail_text.lower():
-            _console_startup_progress(18, detail_text)
-        else:
-            _console_startup_progress(8, detail_text or "Preparing startup")
-        return
-    if label_key == "port":
-        _console_startup_progress(35, detail_text or "Selecting local port")
+        _status_startup(detail_text)
         return
     if label_key == "backend":
-        if detail_text.lower().startswith("not ready"):
-            _console_finish_startup(clear=False)
-            _console_event("XX", f"Cronus backend not ready: {detail_text.replace('Not ready:', '', 1).strip()}")
-        elif detail_text.lower().startswith("ready"):
-            _console_startup_progress(78, detail_text)
-        else:
-            _console_startup_progress(55, detail_text or "Starting FastAPI server")
+        _status_backend(detail_text)
         return
-    if label_key == "dashboard":
-        _console_startup_progress(88, detail_text or "Dashboard ready")
-        return
-    if label_key == "desktop":
-        _console_startup_progress(96, detail_text or "Opening desktop window")
-        return
-    if label_key == "shutdown":
-        return
-    if label_key == "log":
-        return
-    return
+    _status_fixed(label_key, detail_text)
 
 
 def _console_header() -> None:
@@ -277,20 +337,16 @@ def _console_header() -> None:
             ctypes.windll.kernel32.SetConsoleTitleW(f"{APP_NAME} Console")
             _set_console_window_icon()
     except Exception:
-        pass
+        "intentional: ignore exception"
     return
 
 
 def configure(fastapi_app: Any, farm_controller: Any) -> None:
-    global _app, _farm
-    _app = fastapi_app
-    _farm = farm_controller
+    _HOST.configure(fastapi_app, farm_controller)
 
 
 def _require_configured() -> tuple[Any, Any]:
-    if _app is None or _farm is None:
-        raise RuntimeError("desktop_host is not configured")
-    return _app, _farm
+    return _HOST.require_configured()
 
 
 BOOT_FARM_DELAY_SECONDS = 30.0
@@ -305,7 +361,7 @@ def _autostart_api(path: str, method: str = "GET", body: Any = None) -> Any:
     # used to make the startup update prompt and --autostart updates fail
     # silently and fall back to a normal boot with the update button shown.
     req = urllib.request.Request(
-        f"http://{HOST}:{PORT}{path}",
+        f"http://{HOST}:{_HOST.port}{path}",
         data=data,
         method=method,
         headers={
@@ -318,6 +374,73 @@ def _autostart_api(path: str, method: str = "GET", body: Any = None) -> Any:
             return _json.loads(resp.read().decode("utf-8", errors="replace"))
     except Exception as exc:
         return {"ok": False, "msg": f"local api failed: {exc}"}
+
+
+def _heal_startup_shortcut(cfg: Any) -> None:
+    if not bool(cfg.get("start_on_boot", False)):
+        return
+    try:
+        from infra import app_paths
+        from services import startup_manager
+
+        res = startup_manager.heal_shortcut(str(app_paths.EXECUTABLE_PATH or ""))
+        flog_kv(
+            "BOOT",
+            "startup_healed",
+            changed=bool(res.get("changed")),
+            msg=str(res.get("msg") or ""),
+        )
+    except Exception as exc:
+        flog_kv("BOOT", "startup_heal_failed", "warning", error=str(exc))
+
+
+def _update_skip_reason(applied: Any) -> str:
+    if not isinstance(applied, dict):
+        return "not accepted"
+    return str(applied.get("msg") or "not accepted")
+
+
+def _autostart_update(cfg: Any) -> bool:
+    if not bool(cfg.get("auto_update_on_boot", False)):
+        return False
+    try:
+        snap = _autostart_api("/api/update/check")
+        if (
+            not isinstance(snap, dict)
+            or not snap.get("update_available")
+            or not snap.get("latest_version")
+        ):
+            flog_kv("BOOT", "auto_update_uptodate")
+            return False
+        version = str(snap.get("latest_version") or "")
+        flog_kv("BOOT", "auto_update_applying", version=version)
+        applied = _autostart_api(
+            "/api/update/apply", "POST", {"confirm_stop_farm": True}
+        )
+        if isinstance(applied, dict) and applied.get("accepted"):
+            flog_kv("BOOT", "auto_update_restarting", version=version)
+            return True
+        reason = _update_skip_reason(applied)
+        flog_kv("BOOT", "auto_update_skipped", "warning", msg=reason)
+    except Exception as exc:
+        flog_kv("BOOT", "auto_update_failed", "warning", error=str(exc))
+    return False
+
+
+def _autostart_start_farm(farm: Any, cfg: Any) -> bool:
+    if not bool(cfg.get("start_farming_on_boot", False)):
+        return True
+    if _SHUTDOWN_REQUESTED.wait(BOOT_FARM_DELAY_SECONDS):
+        return False
+    try:
+        if getattr(farm, "running", False):
+            flog_kv("BOOT", "farm_already_running")
+            return False
+        farm.start()
+        flog_kv("BOOT", "farm_started")
+    except Exception as exc:
+        flog_kv("BOOT", "farm_start_failed", "error", error=str(exc))
+    return True
 
 
 def _run_autostart_chain() -> None:
@@ -336,46 +459,216 @@ def _run_autostart_chain() -> None:
         flog_kv("BOOT", "manual_boot")
     if _SHUTDOWN_REQUESTED.is_set():
         return
-    if bool(cfg.get("start_on_boot", False)):
-        try:
-            from infra import app_paths
-            from services import startup_manager
-
-            res = startup_manager.heal_shortcut(str(app_paths.EXECUTABLE_PATH or ""))
-            flog_kv("BOOT", "startup_healed", changed=bool(res.get("changed")), msg=str(res.get("msg") or ""))
-        except Exception as exc:
-            flog_kv("BOOT", "startup_heal_failed", "warning", error=str(exc))
+    _heal_startup_shortcut(cfg)
     if "--autostart" not in sys.argv:
         flog_kv("BOOT", "autostart_done", mode="manual")
         return
-    if bool(cfg.get("auto_update_on_boot", False)):
-        try:
-            snap = _autostart_api("/api/update/check")
-            if isinstance(snap, dict) and snap.get("update_available") and snap.get("latest_version"):
-                version = str(snap.get("latest_version") or "")
-                flog_kv("BOOT", "auto_update_applying", version=version)
-                applied = _autostart_api("/api/update/apply", "POST", {"confirm_stop_farm": True})
-                if isinstance(applied, dict) and applied.get("accepted"):
-                    flog_kv("BOOT", "auto_update_restarting", version=version)
-                    return
-                reason = str((applied or {}).get("msg") or "not accepted") if isinstance(applied, dict) else "not accepted"
-                flog_kv("BOOT", "auto_update_skipped", "warning", msg=reason)
-            else:
-                flog_kv("BOOT", "auto_update_uptodate")
-        except Exception as exc:
-            flog_kv("BOOT", "auto_update_failed", "warning", error=str(exc))
-    if bool(cfg.get("start_farming_on_boot", False)):
-        if _SHUTDOWN_REQUESTED.wait(BOOT_FARM_DELAY_SECONDS):
-            return
-        try:
-            if getattr(farm, "running", False):
-                flog_kv("BOOT", "farm_already_running")
-                return
-            farm.start()
-            flog_kv("BOOT", "farm_started")
-        except Exception as exc:
-            flog_kv("BOOT", "farm_start_failed", "error", error=str(exc))
-    flog_kv("BOOT", "autostart_done")
+    if _autostart_update(cfg):
+        return
+    if _autostart_start_farm(farm, cfg):
+        flog_kv("BOOT", "autostart_done")
+
+
+def _app_is_compiled() -> bool:
+    try:
+        from infra import app_paths
+
+        return bool(app_paths.IS_COMPILED)
+    except Exception:
+        return False
+
+
+def _startup_prompt_skipped(cfg: Any) -> bool:
+    try:
+        return "--autostart" in sys.argv and bool(
+            cfg.get("auto_update_on_boot", False)
+        )
+    except Exception:
+        return False
+
+
+def _check_startup_update() -> dict | None:
+    box: dict = {}
+    try:
+        from services.app_version_check import check_app_update
+
+        def _check() -> None:
+            try:
+                box["snap"] = check_app_update()
+            except Exception as exc:
+                box["error"] = exc
+
+        checker = threading.Thread(
+            target=_check, daemon=True, name="CronusStartupUpdateCheck"
+        )
+        checker.start()
+        checker.join(timeout=8.0)
+        if checker.is_alive():
+            flog_kv(
+                "UPDATE",
+                "startup_check_slow_skipped",
+                "warning",
+                timeout_s=8.0,
+            )
+            return None
+        if "error" in box:
+            raise box["error"]
+        snap = box.get("snap")
+    except Exception as exc:
+        flog_kv("UPDATE", "startup_check_failed", "warning", error=str(exc))
+        return None
+    return snap if isinstance(snap, dict) else None
+
+
+def _version_label(version: str, fallback: str = "") -> str:
+    if version and not version.lower().startswith("v"):
+        return f"v{version}"
+    return version or fallback
+
+
+def _update_prompt_text(cur_label: str, new_label: str) -> str:
+    return (
+        "A new version is available!\n"
+        f"Current: {cur_label}\n"
+        f"New: {new_label}\n"
+        "\n"
+        "Would you like to update now?"
+    )
+
+
+def _ask_update_prompt(text: str) -> int | None:
+    try:
+        choice = ctypes.windll.user32.MessageBoxW(
+            None,
+            text,
+            "Update Available",
+            0x00000004 | 0x00000040,  # MB_YESNO | MB_ICONINFORMATION
+        )
+    except Exception as exc:
+        flog_kv("UPDATE", "startup_prompt_failed", "warning", error=str(exc))
+        return None
+    return int(choice or 0)
+
+
+def _confirm_startup_update(text: str, latest: str) -> bool:
+    choice = _ask_update_prompt(text)
+    if choice is None:
+        return False
+    if choice != 6:  # IDYES
+        flog_kv("UPDATE", "startup_prompt_declined", version=latest)
+        return False
+    flog_kv("UPDATE", "startup_prompt_accepted", version=latest)
+    return True
+
+
+def _start_update() -> bool:
+    try:
+        applied = _autostart_api(
+            "/api/update/apply", "POST", {"confirm_stop_farm": True}
+        )
+    except Exception as exc:
+        flog_kv("UPDATE", "startup_apply_failed", "warning", error=str(exc))
+        return False
+    if not isinstance(applied, dict) or not applied.get("accepted"):
+        flog_kv(
+            "UPDATE",
+            "startup_apply_rejected",
+            "warning",
+            msg=_update_skip_reason(applied),
+        )
+        return False
+    return True
+
+
+def _update_phase(job: dict) -> str:
+    return str(job.get("state") or "updating").strip().lower() or "updating"
+
+
+def _update_phase_label(phase: str, latest: str) -> str:
+    label = _UPDATE_PHASE_LABELS.get(
+        phase, phase.replace("_", " ").capitalize()
+    )
+    if latest and phase in {"downloading", "verifying"}:
+        return f"{label} v{latest}"
+    return label
+
+
+def _update_progress_args(
+    job: dict, phase: str, latest: str
+) -> tuple[int, str]:
+    label = _update_phase_label(phase, latest)
+    pct = _parse_update_percent(job)
+    if pct is None:
+        pct = 100 if phase == "verifying" else 0
+    return pct, label
+
+
+def _update_error_message(job: dict) -> str:
+    return str(job.get("error") or job.get("msg") or "update failed")
+
+
+def _show_update_failure(error: str) -> None:
+    try:
+        ctypes.windll.user32.MessageBoxW(
+            None,
+            f"Update failed:\n{error}",
+            "Update Available",
+            0x00000000 | 0x00000010,  # MB_OK | MB_ICONERROR
+        )
+    except Exception:
+        "intentional: ignore exception"
+
+
+def _finish_update_job(job: dict, latest: str) -> bool:
+    if job.get("state") == "failed":
+        error = _update_error_message(job)
+        flog_kv("UPDATE", "startup_update_failed", "error", error=error)
+        _show_update_failure(error)
+        return False
+    _console_write(f"Updated to v{latest} - launching...")
+    return True
+
+
+def _fetch_update_job() -> dict | None:
+    try:
+        status = _autostart_api("/api/update/status")
+    except Exception:
+        return None
+    job = status.get("job") if isinstance(status, dict) else None
+    return job if isinstance(job, dict) else None
+
+
+def _monitor_startup_update(latest: str) -> bool:
+    _console_finish_startup(clear=False)
+    restart_announced = False
+    try:
+        while True:
+            time.sleep(0.5)
+            job = _fetch_update_job()
+            if job is None:
+                continue
+            if not job.get("active"):
+                return _finish_update_job(job, latest)
+            phase = _update_phase(job)
+            if phase == "restarting":
+                # The updater takes over only after this process exits. Seal
+                # the final progress line, then stay silent during handoff.
+                if not restart_announced:
+                    restart_announced = True
+                    _console_seal_inline_line()
+                continue
+            # Render every tick so the spinner keeps moving even while the
+            # backend reports KB counts instead of percents.
+            pct, label = _update_progress_args(job, phase, latest)
+            _render_update_progress(pct, label)
+    except Exception:
+        return True
+
+
+def _snapshot_versions(snap: dict) -> tuple[str, str]:
+    latest = str(snap.get("latest_version") or "").strip()
+    current = str(snap.get("current_version") or "").strip()
+    return latest, current
 
 
 def _maybe_prompt_startup_update() -> bool:
@@ -395,144 +688,40 @@ def _maybe_prompt_startup_update() -> bool:
         return False
     # Source checkouts cannot replace their running Python files. Keep the
     # update notice in the dashboard instead of prompting at every startup.
-    try:
-        from infra import app_paths
-
-        if not app_paths.IS_COMPILED:
-            return False
-    except Exception:
+    if not _app_is_compiled():
         return False
     try:
         _, farm = _require_configured()
         cfg = farm.cfg_mgr
     except Exception:
         return False
-    try:
-        if "--autostart" in sys.argv and bool(cfg.get("auto_update_on_boot", False)):
-            return False
-    except Exception:
-        pass
+    if _startup_prompt_skipped(cfg):
+        return False
     # The GitHub check used to run synchronously here (up to 20s on a bad
     # link), stalling every launch before the window even opened. Run it in
     # a thread and give up fast: a slow check just boots normally and the
     # dashboard button surfaces the update when its own poll completes.
-    try:
-        from services.app_version_check import check_app_update
-
-        _box: dict = {}
-
-        def _check() -> None:
-            try:
-                _box["snap"] = check_app_update()
-            except Exception as exc:
-                _box["error"] = exc
-
-        _checker = threading.Thread(target=_check, daemon=True, name="CronusStartupUpdateCheck")
-        _checker.start()
-        _checker.join(timeout=8.0)
-        if _checker.is_alive():
-            flog_kv("UPDATE", "startup_check_slow_skipped", "warning", timeout_s=8.0)
-            return False
-        if "error" in _box:
-            raise _box["error"]
-        snap = _box.get("snap")
-    except Exception as exc:
-        flog_kv("UPDATE", "startup_check_failed", "warning", error=str(exc))
-        return False
-    if not isinstance(snap, dict):
+    snap = _check_startup_update()
+    if snap is None:
         return False
     if not snap.get("update_available"):
         return False
-    latest = str(snap.get("latest_version") or "").strip()
+    latest, current = _snapshot_versions(snap)
     if not latest:
         return False
-    current = str(snap.get("current_version") or "").strip()
-    cur_label = f"v{current}" if current and not current.lower().startswith("v") else (current or "unknown")
-    new_label = f"v{latest}" if not latest.lower().startswith("v") else latest
-    text = (
-        "A new version is available!\n"
-        f"Current: {cur_label}\n"
-        f"New: {new_label}\n"
-        "\n"
-        "Would you like to update now?"
+    text = _update_prompt_text(
+        _version_label(current, "unknown"), _version_label(latest)
     )
-    try:
-        choice = ctypes.windll.user32.MessageBoxW(
-            None,
-            text,
-            "Update Available",
-            0x00000004 | 0x00000040,  # MB_YESNO | MB_ICONINFORMATION
-        )
-    except Exception as exc:
-        flog_kv("UPDATE", "startup_prompt_failed", "warning", error=str(exc))
+    if not _confirm_startup_update(text, latest):
         return False
-    if int(choice or 0) != 6:  # IDYES
-        flog_kv("UPDATE", "startup_prompt_declined", version=latest)
-        return False
-    flog_kv("UPDATE", "startup_prompt_accepted", version=latest)
-    try:
-        applied = _autostart_api("/api/update/apply", "POST", {"confirm_stop_farm": True})
-    except Exception as exc:
-        flog_kv("UPDATE", "startup_apply_failed", "warning", error=str(exc))
-        return False
-    if not isinstance(applied, dict) or not applied.get("accepted"):
-        reason = str((applied or {}).get("msg") or "not accepted") if isinstance(applied, dict) else "not accepted"
-        flog_kv("UPDATE", "startup_apply_rejected", "warning", msg=reason)
+    if not _start_update():
         return False
     # End the boot progress bar first so the update status starts on its own
     # clean line (it used to jam onto the bar: "88%Updating to vX...").
     # No separate update line here: the progress line carries the version.
     # The swap script waits for this process to exit before writing to the
     # console, so the two progress displays cannot overwrite each other.
-    _console_finish_startup(clear=False)
-    _restart_announced = False
-    try:
-        while True:
-            time.sleep(0.5)
-            try:
-                snap_status = _autostart_api("/api/update/status")
-            except Exception:
-                continue
-            job = snap_status.get("job") if isinstance(snap_status, dict) else None
-            if not isinstance(job, dict):
-                continue
-            if not job.get("active"):
-                _console_finish_startup(clear=False)
-                if job.get("state") == "failed":
-                    err = str(job.get("error") or job.get("msg") or "update failed")
-                    flog_kv("UPDATE", "startup_update_failed", "error", error=err)
-                    try:
-                        ctypes.windll.user32.MessageBoxW(
-                            None,
-                            f"Update failed:\n{err}",
-                            "Update Available",
-                            0x00000000 | 0x00000010,  # MB_OK | MB_ICONERROR
-                        )
-                    except Exception:
-                        pass
-                    return False
-                _console_write(f"Updated to v{latest} - launching...")
-                return True
-            phase = str(job.get("state") or "updating").strip().lower() or "updating"
-            if phase == "restarting":
-                # The updater takes over only after this process exits. Seal
-                # the final progress line, then stay silent during handoff.
-                if not _restart_announced:
-                    _restart_announced = True
-                    _console_seal_inline_line()
-                continue
-            label = _UPDATE_PHASE_LABELS.get(phase, phase.replace("_", " ").capitalize())
-            if latest and phase in {"downloading", "verifying"}:
-                label = f"{label} v{latest}"
-            pct = _parse_update_percent(job)
-            if pct is None:
-                pct = 100 if phase == "verifying" else 0
-            # Render every tick so the spinner keeps moving even while the
-            # backend reports KB counts instead of percents.
-            _render_update_progress(pct, label)
-    except Exception:
-        return True
-    return True
+    return _monitor_startup_update(latest)
 
 
 def _fast_exit(code: int = 0) -> None:
@@ -546,113 +735,151 @@ def _fast_exit(code: int = 0) -> None:
     try:
         _clear_instance_state()
     except Exception:
-        pass
+        "intentional: ignore exception"
     try:
         sys.stdout.flush()
     except Exception:
-        pass
+        "intentional: ignore exception"
     try:
         sys.stderr.flush()
     except Exception:
-        pass
+        "intentional: ignore exception"
     os._exit(int(code))
 
 
-def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
-    if fastapi_app is not None or farm_controller is not None:
-        configure(fastapi_app, farm_controller)
-    global PORT, _backend_host
-    if "--post-update" in sys.argv and IS_COMPILED:
-        # Self-heal for updates applied by a pre-fix updater, which boots
-        # this build with stdout/stderr redirected into a log file. Without
-        # this the whole session runs with a dead terminal until relaunch.
-        # (Fixed updaters no longer redirect; this covers the one update
-        # that delivers the fix, whose swap script came from the old build.)
-        console_output.reattach_console_if_redirected()
-    _console_header()
-    _console_status("startup", "Preparing single-instance guard")
-    if "--post-update" in sys.argv:
-        _console_status("startup", "Post-update boot: sweeping leftover instances")
-        flog_kv("MAIN", "post_update_boot", argv=" ".join(sys.argv[1:]))
-        try:
-            from desktop import instance_guard as _ig
+def _find_leftover_app_process() -> int | None:
+    from desktop import instance_guard as instance_guard
 
-            def _leftover_app_process() -> int | None:
-                pid = _ig._find_same_app_process()
-                if pid:
-                    try:
-                        import psutil
+    pid = instance_guard._find_same_app_process()
+    if not pid:
+        return None
+    try:
+        import psutil
 
-                        cmd = " ".join(psutil.Process(int(pid)).cmdline() or []).lower()
-                        if "cronus_updater_" in cmd:
-                            return None
-                    except Exception:
-                        pass
-                    return pid
-                return None
+        cmd = " ".join(psutil.Process(int(pid)).cmdline() or []).lower()
+        if "cronus_updater_" in cmd:
+            return None
+    except Exception:
+        "intentional: ignore exception"
+    return pid
 
-            for _ in range(40):
-                _stop_previous_instance()
-                _stop_same_app_processes()
-                if _leftover_app_process() is None and _ig._find_existing_dashboard(DEFAULT_PORT) is None:
-                    break
-                time.sleep(0.5)
-        except Exception as exc:
-            flog_kv("MAIN", "post_update_sweep_failed", "warning", error=str(exc))
-    else:
+
+def _post_update_sweep() -> None:
+    try:
+        from desktop import instance_guard as instance_guard
+
+        for _ in range(40):
+            _stop_previous_instance()
+            _stop_same_app_processes()
+            if (
+                _find_leftover_app_process() is None
+                and instance_guard._find_existing_dashboard(DEFAULT_PORT) is None
+            ):
+                break
+            time.sleep(0.5)
+    except Exception as exc:
+        flog_kv("MAIN", "post_update_sweep_failed", "warning", error=str(exc))
+
+
+def _initial_instance_sweep() -> None:
+    if "--post-update" not in sys.argv:
         _stop_previous_instance()
         _stop_same_app_processes()
+        return
+    _console_status(
+        "startup", "Post-update boot: sweeping leftover instances"
+    )
+    flog_kv("MAIN", "post_update_boot", argv=" ".join(sys.argv[1:]))
+    _post_update_sweep()
+
+
+def _acquire_instance_guard() -> tuple[bool, bool]:
     mutex_ok = _acquire_single_instance_mutex()
     socket_ok = _acquire_instance_socket()
-    if (not mutex_ok) or (not socket_ok):
-        _console_status("startup", "Existing Cronus instance detected; requesting cleanup")
-        _stop_previous_instance()
-        _stop_same_app_processes()
-        # Keep the mutex already acquired by this process. Recreating it would
-        # report ERROR_ALREADY_EXISTS against our own still-open handle.
-        if not mutex_ok:
-            mutex_ok = _acquire_single_instance_mutex()
-        if not socket_ok:
-            socket_ok = _acquire_instance_socket()
+    if mutex_ok and socket_ok:
+        return mutex_ok, socket_ok
+    _console_status(
+        "startup", "Existing Cronus instance detected; requesting cleanup"
+    )
+    _stop_previous_instance()
+    _stop_same_app_processes()
+    # Keep the mutex already acquired by this process. Recreating it would
+    # report ERROR_ALREADY_EXISTS against our own still-open handle.
     if not mutex_ok:
-        flog_kv("MAIN", "duplicate_instance_refused", "error", socket_ok=socket_ok)
-        _console_status("shutdown", "Another Cronus instance is running; close it first")
-        return
-    PORT = _find_free_port(DEFAULT_PORT)
-    _console_status("port", f"Selected http://{HOST}:{PORT}")
-    _write_instance_state(PORT)
-    _console_status("backend", "Starting FastAPI server")
+        mutex_ok = _acquire_single_instance_mutex()
+    if not socket_ok:
+        socket_ok = _acquire_instance_socket()
+    return mutex_ok, socket_ok
+
+
+def _start_backend(port: int) -> tuple[Any, bool, str]:
     app, farm = _require_configured()
-    _backend_host = BackendHost(HOST, PORT)
-    _backend_host.configure(app, PORT)
-    server_thread = _backend_host.start()
-    ready, detail = _backend_host.wait_ready(server_thread)
+    backend = BackendHost(HOST, port)
+    _HOST.backend = backend
+    backend.configure(app, port)
+    server_thread = backend.start()
+    ready, detail = backend.wait_ready(server_thread)
+    return farm, ready, detail
+
+
+def _report_backend_ready(port: int, ready: bool, detail: str) -> None:
     if ready:
-        flog(f"[MAIN] FastAPI ready on http://{HOST}:{PORT}")
+        flog(f"[MAIN] FastAPI ready on http://{HOST}:{port}")
         _console_status("backend", f"Ready ({detail})")
-        _console_status("dashboard", f"http://{HOST}:{PORT}")
-    else:
-        flog_kv("MAIN", "fastapi_not_ready", "error", port=PORT, detail=detail)
-        _console_status("backend", f"Not ready: {detail}")
-        _console_status("log", LOG_FILE)
-    if ready and _maybe_prompt_startup_update():
-        # User hit Yes and the updater took over: it downloads, swaps the
-        # exe, and os._exit()s into the new version. Park here instead of
-        # opening the desktop window; if the update failed the prompt
-        # returns False and we boot normally below.
-        try:
-            while not _SHUTDOWN_REQUESTED.wait(1.0):
-                pass
-        except KeyboardInterrupt:
-            pass
+        _console_status("dashboard", f"http://{HOST}:{port}")
         return
-    threading.Thread(target=_run_autostart_chain, daemon=True, name="CronusAutostart").start()
+    flog_kv("MAIN", "fastapi_not_ready", "error", port=port, detail=detail)
+    _console_status("backend", f"Not ready: {detail}")
+    _console_status("log", LOG_FILE)
+
+
+def _wait_for_shutdown() -> None:
+    try:
+        while not _SHUTDOWN_REQUESTED.wait(1.0):
+            pass
+    except KeyboardInterrupt:
+        "intentional: ignore exception"
+
+
+def _stop_farm_on_interrupt() -> None:
+    _console_status("shutdown", "Ctrl+C received; stopping farm")
+    try:
+        _, farm = _require_configured()
+        fast_stop = getattr(farm, "stop_fast", None)
+        if callable(fast_stop):
+            fast_stop()
+        elif farm.running:
+            farm.stop()
+    except Exception:
+        "intentional: ignore exception"
+
+
+def _run_browser_fallback(ready: bool) -> None:
+    _console_status(
+        "desktop", "Desktop window unavailable; opening browser fallback"
+    )
+    _console_clear_after_window_show(False)
+    _console_finish_startup(clear=ready)
+    webbrowser.open(f"http://{HOST}:{_HOST.port}")
+    try:
+        while not _SHUTDOWN_REQUESTED.wait(1.0):
+            pass
+    except KeyboardInterrupt:
+        _stop_farm_on_interrupt()
+        _fast_exit(0)
+    # Shutdown was requested via /api/app/shutdown (already os._exit(0)s
+    # itself) or the loop above ended: never linger, exit at once so the
+    # terminal closes together with the program.
+    _fast_exit(0)
+
+
+def _run_desktop_window(farm: Any, ready: bool) -> None:
     _console_status("desktop", "Opening desktop window (WebView2)")
     _console_clear_after_window_show(ready)
     try:
         window = DesktopWindow()
         if window.run(
-            f"http://{HOST}:{PORT}",
+            f"http://{HOST}:{_HOST.port}",
             farm,
             _SHUTDOWN_REQUESTED,
             on_first_show=_console_finish_after_window_show,
@@ -662,29 +889,47 @@ def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
             return
     except Exception as exc:
         flog_kv("MAIN", "desktop_webview_failed", "warning", error=str(exc))
-    _console_status("desktop", "Desktop window unavailable; opening browser fallback")
-    _console_clear_after_window_show(False)
-    _console_finish_startup(clear=ready)
-    webbrowser.open(f"http://{HOST}:{PORT}")
-    try:
-        while not _SHUTDOWN_REQUESTED.wait(1.0):
-            pass
-    except KeyboardInterrupt:
-        _console_status("shutdown", "Ctrl+C received; stopping farm")
-        try:
-            _, farm = _require_configured()
-            fast_stop = getattr(farm, "stop_fast", None)
-            if callable(fast_stop):
-                fast_stop()
-            elif farm.running:
-                farm.stop()
-        except Exception:
-            pass
-        _fast_exit(0)
-    # Shutdown was requested via /api/app/shutdown (already os._exit(0)s
-    # itself) or the loop above ended: never linger, exit at once so the
-    # terminal closes together with the program.
-    _fast_exit(0)
+    _run_browser_fallback(ready)
+
+
+def run_desktop(fastapi_app: Any = None, farm_controller: Any = None):
+    if fastapi_app is not None or farm_controller is not None:
+        configure(fastapi_app, farm_controller)
+    if "--post-update" in sys.argv and IS_COMPILED:
+        # Self-heal for updates applied by a pre-fix updater, which boots
+        # this build with stdout/stderr redirected into a log file. Without
+        # this the whole session runs with a dead terminal until relaunch.
+        # (Fixed updaters no longer redirect; this covers the one update
+        # that delivers the fix, whose swap script came from the old build.)
+        console_output.reattach_console_if_redirected()
+    _console_header()
+    _console_status("startup", "Preparing single-instance guard")
+    _initial_instance_sweep()
+    mutex_ok, socket_ok = _acquire_instance_guard()
+    if not mutex_ok:
+        flog_kv("MAIN", "duplicate_instance_refused", "error", socket_ok=socket_ok)
+        _console_status(
+            "shutdown", "Another Cronus instance is running; close it first"
+        )
+        return
+    port = _find_free_port(DEFAULT_PORT)
+    _HOST.port = port
+    _console_status("port", f"Selected http://{HOST}:{port}")
+    _write_instance_state(port)
+    _console_status("backend", "Starting FastAPI server")
+    farm, ready, detail = _start_backend(port)
+    _report_backend_ready(port, ready, detail)
+    if ready and _maybe_prompt_startup_update():
+        # User hit Yes and the updater took over: it downloads, swaps the
+        # exe, and os._exit()s into the new version. Park here instead of
+        # opening the desktop window; if the update failed the prompt
+        # returns False and we boot normally below.
+        _wait_for_shutdown()
+        return
+    threading.Thread(
+        target=_run_autostart_chain, daemon=True, name="CronusAutostart"
+    ).start()
+    _run_desktop_window(farm, ready)
 
 
 INSTANCE_TOKEN = _INSTANCE_TOKEN

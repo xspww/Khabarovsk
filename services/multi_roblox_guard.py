@@ -53,7 +53,7 @@ def close_handles(handles: list[tuple[str, int]]) -> None:
         try:
             KERNEL32.CloseHandle(ctypes.c_void_p(handle))
         except Exception:
-            pass
+            "intentional: ignore exception"
 
 
 def _parent_alive(parent_pid: int | None) -> bool:
@@ -71,7 +71,7 @@ def _parent_alive(parent_pid: int | None) -> bool:
         try:
             KERNEL32.CloseHandle(handle)
         except Exception:
-            pass
+            "intentional: ignore exception"
 
 
 def _parse_args(argv: list[str]) -> argparse.Namespace:

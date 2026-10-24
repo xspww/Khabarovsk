@@ -3,12 +3,11 @@ from __future__ import annotations
 
 import threading
 import time
-from typing import Any
+from typing import Any, NamedTuple
 
 from core import Account, AccountState, EventBus, SmartQueue, StateManager, flog_kv
 from runtime.recovery_evaluator import RecoveryEvaluator
 from runtime.recovery_owner import RecoveryOwnerRegistry
-from runtime.recovery_support import should_suppress_recovery_schedule
 from runtime.recovery_policy import (
     RecoveryDedupeTracker,
     RecoveryGate,
@@ -17,6 +16,7 @@ from runtime.recovery_policy import (
 from runtime.recovery_signal_router import RecoverySignalRouter
 from runtime.recovery_slots import RecoverySlotPolicy
 from runtime.recovery_storm import RecoveryStormController
+from runtime.recovery_support import should_suppress_recovery_schedule
 from runtime.runtime_orchestrator import RuntimeOrchestrator
 from runtime.runtime_scheduler import RuntimeScheduler
 from runtime.runtime_state_manager import RuntimeStateManager
@@ -28,6 +28,14 @@ ACTIVE_SLOT_STATES = {
     AccountState.VERIFY,
     AccountState.IN_GAME,
 }
+
+
+class _ExecutorPark(NamedTuple):
+    key: str
+    due: float
+    generation: int
+    runtime_generation: int
+    command_generation: int
 
 
 class RecoveryCoreMixin:
@@ -136,6 +144,67 @@ class RecoveryCoreMixin:
             return False
 
 
+    def _executor_hold_remaining(self, acc: Account, now: float) -> float:
+        try:
+            if str(getattr(acc, "recovery_status", "") or "") != "wait_exploit_patch":
+                return 0.0
+            return float(getattr(acc, "cooldown_until", 0.0) or 0.0) - now
+        except Exception:
+            return 0.0
+
+    def _park_account(self, acc: Account, trigger: str, due: float) -> _ExecutorPark | None:
+        key = f"recovery:{acc._config_username}"
+        try:
+            with acc._lock:
+                if self._closed or self._stop.is_set():
+                    return None
+                park = _ExecutorPark(
+                    key=key,
+                    due=due,
+                    generation=acc.recovery_generation,
+                    runtime_generation=acc.runtime_generation,
+                    command_generation=acc.command_generation,
+                )
+                self._state_mgr.set_cooldown(acc, due, reason=f"executor_hold:{trigger}")
+                self._state_mgr.set_recovery(acc, status="wait_exploit_patch", reason=trigger, inflight=True)
+                try:
+                    self._state_mgr.transition(acc, AccountState.COOLDOWN, reason=f"executor_hold:{trigger}")
+                except Exception:
+                    "intentional: ignore exception"
+                acc.recovery_scheduled_at = due
+                acc.scheduler_slot = key
+        except Exception:
+            return None
+        return park
+
+    def _schedule_parked_recovery(self, acc: Account, trigger: str, park: _ExecutorPark) -> None:
+        try:
+            current = self._scheduler.get(park.key)
+            if should_suppress_recovery_schedule(
+                current, park.due, park.generation, park.runtime_generation, park.command_generation
+            ):
+                return
+        except Exception:
+            "intentional: ignore exception"
+        try:
+            self._scheduler.schedule_once(
+                park.key,
+                self._run_scheduled_recovery,
+                due_at=park.due,
+                reason=f"executor_hold:{trigger}",
+                account=acc,
+                runtime_generation=park.runtime_generation,
+                recovery_generation=park.generation,
+                command_generation=park.command_generation,
+                payload={"scheduler_slot": "recovery", "allow_runtime_generation_drift": True},
+            )
+        except Exception:
+            "intentional: ignore exception"
+        try:
+            self._persist_runtime()
+        except Exception:
+            "intentional: ignore exception"
+
     def _park_for_executor_hold(self, acc: Account, trigger: str) -> None:
         """Park an account as Wait-for-patch. Dashboard-only, no terminal spam.
 
@@ -144,62 +213,13 @@ class RecoveryCoreMixin:
         evaluate ticks stay quiet.
         """
         now = time.time()
-        try:
-            if str(getattr(acc, "recovery_status", "") or "") == "wait_exploit_patch":
-                try:
-                    remaining = float(getattr(acc, "cooldown_until", 0.0) or 0.0) - now
-                except Exception:
-                    remaining = 0.0
-                if remaining > 30.0:
-                    return
-        except Exception:
-            pass
-        delay = 60.0
-        due = now + delay
-        key = f"recovery:{acc._config_username}"
-        try:
-            with acc._lock:
-                if self._closed or self._stop.is_set():
-                    return
-                generation = acc.recovery_generation
-                runtime_generation = acc.runtime_generation
-                command_generation = acc.command_generation
-                self._state_mgr.set_cooldown(acc, due, reason=f"executor_hold:{trigger}")
-                self._state_mgr.set_recovery(acc, status="wait_exploit_patch", reason=trigger, inflight=True)
-                try:
-                    self._state_mgr.transition(acc, AccountState.COOLDOWN, reason=f"executor_hold:{trigger}")
-                except Exception:
-                    pass
-                acc.recovery_scheduled_at = due
-                acc.scheduler_slot = key
-        except Exception:
+        if self._executor_hold_remaining(acc, now) > 30.0:
             return
-        try:
-            current = self._scheduler.get(key)
-            if should_suppress_recovery_schedule(
-                current, due, generation, runtime_generation, command_generation
-            ):
-                return
-        except Exception:
-            pass
-        try:
-            self._scheduler.schedule_once(
-                key,
-                self._run_scheduled_recovery,
-                due_at=due,
-                reason=f"executor_hold:{trigger}",
-                account=acc,
-                runtime_generation=runtime_generation,
-                recovery_generation=generation,
-                command_generation=command_generation,
-                payload={"scheduler_slot": "recovery", "allow_runtime_generation_drift": True},
-            )
-        except Exception:
-            pass
-        try:
-            self._persist_runtime()
-        except Exception:
-            pass
+        due = now + 60.0
+        park = self._park_account(acc, trigger, due)
+        if park is None:
+            return
+        self._schedule_parked_recovery(acc, trigger, park)
 
 
     def _is_closed(self) -> bool:
@@ -241,21 +261,6 @@ class RecoveryCoreMixin:
 
         log_recovery_decision(event, acc, reason, **fields)
 
-
-    def _max_concurrent_accounts(self) -> int:
-        return self.slot_policy.max_concurrent_accounts()
-
-
-    def _queue_delay_seconds(self) -> float:
-        return self.slot_policy.queue_delay_seconds()
-
-
-    def _active_slot_count(self, excluding: Account | None = None) -> int:
-        return self.slot_policy.active_slot_count(excluding=excluding)
-
-
-    def _queue_slot_available(self, acc: Account) -> bool:
-        return self.slot_policy.slot_available(acc)
 
 
     def _cfg_bool(self, key: str, default: bool) -> bool:

@@ -43,46 +43,155 @@ def build_farm_status(farm: Any, include_diagnostics: bool = False) -> dict:
     return RuntimeViewModelBuilder(farm, include_diagnostics=include_diagnostics).build_status()
 
 
-def build_farm_health_account_rows(farm: Any, now: float) -> list[dict[str, Any]]:
+def _text(value: Any) -> str:
+    return str(value or "")
+
+
+def _cfg_snapshot(farm: Any) -> dict[str, Any]:
     try:
-        cfg_snapshot = farm.cfg_mgr.snapshot()
+        return farm.cfg_mgr.snapshot()
     except Exception:
-        cfg_snapshot = {}
+        return {}
+
+
+def _account_key(acc: Any) -> str:
+    return _text(getattr(acc, "_config_username", "") or getattr(acc, "username", ""))
+
+
+def _public_state(snapshot: dict[str, Any], key: str, acc: Any, attr: str, default: str) -> str:
+    return str(snapshot.get(key) or getattr(getattr(acc, attr, None), "name", default))
+
+
+def _snapshot_text(
+    snapshot: dict[str, Any],
+    key: str,
+    acc: Any,
+    attr: str,
+    default: str = "",
+) -> str:
+    return _text(snapshot.get(key) or getattr(acc, attr, default))
+
+
+def _snapshot_float(
+    snapshot: dict[str, Any],
+    key: str,
+    acc: Any,
+    attr: str,
+    default: float = 0.0,
+) -> float:
+    return float(snapshot.get(key, getattr(acc, attr, default)) or 0.0)
+
+
+def _snapshot_int(snapshot: dict[str, Any], key: str, acc: Any, attr: str) -> int:
+    return int(snapshot.get(key, getattr(acc, attr, 0)) or 0)
+
+
+def _blocked_reason(acc: Any, cfg_snapshot: dict[str, Any]) -> str:
+    return account_launch_block_reason(acc) or runtime_account_filter_reason(acc, cfg_snapshot)
+
+
+def _cooldown_left(cooldown_until: float, now: float) -> int:
+    if not cooldown_until:
+        return 0
+    return max(0, int(cooldown_until - now))
+
+
+def _binding_status(snapshot: dict[str, Any], acc: Any) -> str:
+    return _text(
+        snapshot.get("binding_status")
+        or snapshot.get("bind_status")
+        or getattr(acc, "process_binding_status", "")
+    )
+
+
+def _proof_level(snapshot: dict[str, Any], acc: Any) -> str:
+    return str(
+        snapshot.get("process_proof_level")
+        or getattr(acc, "process_proof_level", "untrusted")
+        or "untrusted"
+    )
+
+
+def _watchdog_classification(acc: Any) -> str:
+    return _text(getattr(acc, "last_watchdog_classification", ""))
+
+
+def _account_health_row(
+    acc: Any,
+    snapshot: dict[str, Any],
+    cfg_snapshot: dict[str, Any],
+    now: float,
+) -> dict[str, Any]:
+    cooldown_until = float(
+        snapshot.get("cooldown_until", getattr(acc, "cooldown_until", 0.0)) or 0.0
+    )
+    state = _public_state(snapshot, "public_state", acc, "state", "IDLE")
+    desired_state = _public_state(
+        snapshot,
+        "desired_public_state",
+        acc,
+        "desired_state",
+        "IN_GAME",
+    )
+    row: dict[str, Any] = {
+        "account_id": _account_key(acc),
+        "state": state,
+        "public_state": state,
+        "desired_state": desired_state,
+        "blocked_reason": _text(_blocked_reason(acc, cfg_snapshot)),
+        "pid_bound": bool(snapshot.get("pid")),
+        "recovery_active": bool(snapshot.get("recovery_active", False)),
+        "recovery_inflight": bool(snapshot.get("recovery_inflight", False)),
+        "recovery_status": _snapshot_text(snapshot, "recovery_status", acc, "recovery_status"),
+        "recovery_reason": _snapshot_text(
+            snapshot,
+            "recovery_reason",
+            acc,
+            "last_recovery_reason",
+        ),
+        "cooldown_left": _cooldown_left(cooldown_until, now),
+        "retry_count": _snapshot_int(snapshot, "retry_count", acc, "retry_count"),
+        "fail_count": _snapshot_int(snapshot, "fail_count", acc, "fail_count"),
+        "last_heartbeat": _snapshot_float(snapshot, "last_heartbeat", acc, "last_heartbeat"),
+        "last_transition_at": _snapshot_float(
+            snapshot,
+            "last_transition_at",
+            acc,
+            "last_state_change_at",
+        ),
+        "last_transition_reason": _snapshot_text(
+            snapshot,
+            "last_transition_reason",
+            acc,
+            "last_state_reason",
+        ),
+        "current_command": _snapshot_text(snapshot, "current_command", acc, "current_command"),
+        "command_inflight": snapshot.get("command_inflight"),
+        "process_binding_status": _binding_status(snapshot, acc),
+        "process_proof_level": _proof_level(snapshot, acc),
+        "process_reject_reason": _snapshot_text(
+            snapshot,
+            "process_reject_reason",
+            acc,
+            "process_reject_reason",
+        ),
+        "liveness_state": _snapshot_text(snapshot, "liveness_state", acc, "liveness_state"),
+        "liveness_score": _snapshot_float(snapshot, "liveness_score", acc, "liveness_score"),
+        "watchdog_classification": _watchdog_classification(acc),
+    }
+    row["health_flags"] = account_health_flags(
+        {**row, "process_alive": bool(row["pid_bound"])},
+        now=now,
+    )
+    return row
+
+
+def build_farm_health_account_rows(farm: Any, now: float) -> list[dict[str, Any]]:
+    cfg_snapshot = _cfg_snapshot(farm)
     rows: list[dict[str, Any]] = []
     for acc in farm._accounts:
         runtime_snapshot = farm._runtime_state.snapshot(acc)
-        state = str(runtime_snapshot.get("public_state") or getattr(getattr(acc, "state", None), "name", "IDLE"))
-        desired_state = str(runtime_snapshot.get("desired_public_state") or getattr(getattr(acc, "desired_state", None), "name", "IN_GAME"))
-        cooldown_until = float(runtime_snapshot.get("cooldown_until", getattr(acc, "cooldown_until", 0.0)) or 0.0)
-        blocked_reason = account_launch_block_reason(acc) or runtime_account_filter_reason(acc, cfg_snapshot)
-        row: dict[str, Any] = {
-            "account_id": str(getattr(acc, "_config_username", "") or getattr(acc, "username", "") or ""),
-            "state": state,
-            "public_state": state,
-            "desired_state": desired_state,
-            "blocked_reason": blocked_reason or "",
-            "pid_bound": bool(runtime_snapshot.get("pid")),
-            "recovery_active": bool(runtime_snapshot.get("recovery_active", False)),
-            "recovery_inflight": bool(runtime_snapshot.get("recovery_inflight", False)),
-            "recovery_status": str(runtime_snapshot.get("recovery_status") or getattr(acc, "recovery_status", "") or ""),
-            "recovery_reason": str(runtime_snapshot.get("recovery_reason") or getattr(acc, "last_recovery_reason", "") or ""),
-            "cooldown_left": max(0, int(cooldown_until - now)) if cooldown_until else 0,
-            "retry_count": int(runtime_snapshot.get("retry_count", getattr(acc, "retry_count", 0)) or 0),
-            "fail_count": int(runtime_snapshot.get("fail_count", getattr(acc, "fail_count", 0)) or 0),
-            "last_heartbeat": float(runtime_snapshot.get("last_heartbeat", 0.0) or 0.0),
-            "last_transition_at": float(runtime_snapshot.get("last_transition_at", getattr(acc, "last_state_change_at", 0.0)) or 0.0),
-            "last_transition_reason": str(runtime_snapshot.get("last_transition_reason") or getattr(acc, "last_state_reason", "") or ""),
-            "current_command": str(runtime_snapshot.get("current_command") or getattr(acc, "current_command", "") or ""),
-            "command_inflight": runtime_snapshot.get("command_inflight"),
-            "process_binding_status": str(runtime_snapshot.get("binding_status") or runtime_snapshot.get("bind_status") or getattr(acc, "process_binding_status", "") or ""),
-            "process_proof_level": str(runtime_snapshot.get("process_proof_level") or getattr(acc, "process_proof_level", "untrusted") or "untrusted"),
-            "process_reject_reason": str(runtime_snapshot.get("process_reject_reason") or getattr(acc, "process_reject_reason", "") or ""),
-            "liveness_state": str(runtime_snapshot.get("liveness_state") or getattr(acc, "liveness_state", "") or ""),
-            "liveness_score": float(runtime_snapshot.get("liveness_score", getattr(acc, "liveness_score", 0.0)) or 0.0),
-            "watchdog_classification": str(getattr(acc, "last_watchdog_classification", "") or ""),
-        }
-        row["health_flags"] = account_health_flags({**row, "process_alive": bool(row["pid_bound"])}, now=now)
-        rows.append(row)
+        rows.append(_account_health_row(acc, runtime_snapshot, cfg_snapshot, now))
     return rows
 
 
@@ -118,9 +227,10 @@ def build_worker_health(farm: Any, now: float) -> dict[str, Any]:
     }
 
 
-def build_farm_health_snapshot(farm: Any) -> dict[str, Any]:
-    now = time.time()
-    queue_snapshot = farm._queue.snapshot() if farm._queue else {
+def _queue_snapshot(farm: Any) -> dict[str, Any]:
+    if farm._queue:
+        return farm._queue.snapshot()
+    return {
         "size": 0,
         "pending": 0,
         "busy": False,
@@ -129,6 +239,41 @@ def build_farm_health_snapshot(farm: Any) -> dict[str, Any]:
         "oldest_age_seconds": 0.0,
         "entries": [],
     }
+
+
+def _recovery_storm(farm: Any) -> dict[str, Any]:
+    recovery = getattr(farm, "_recovery", None)
+    if not getattr(recovery, "_storm", None):
+        return {}
+    return recovery._storm.snapshot()
+
+
+def _status_revision(farm: Any) -> int:
+    with farm._status_lock:
+        return int(farm._status_revision)
+
+
+def _event_ages(events: list[Any], now: float) -> list[float]:
+    ages: list[float] = []
+    for event in events:
+        if not isinstance(event, dict):
+            continue
+        try:
+            ts = float(event.get("ts") or 0.0)
+        except Exception:
+            ts = 0.0
+        if ts > 0.0:
+            ages.append(max(0.0, now - ts))
+    return ages
+
+
+def _last_event_age(ages: list[float]) -> float:
+    return round(min(ages), 1) if ages else 0.0
+
+
+def build_farm_health_snapshot(farm: Any) -> dict[str, Any]:
+    now = time.time()
+    queue_snapshot = _queue_snapshot(farm)
     scheduler_snapshot = farm._runtime_scheduler.snapshot(now=now) if farm._runtime_scheduler else {}
     with farm._event_lock:
         recent_events = list(farm._event_log)[-100:]
@@ -140,22 +285,10 @@ def build_farm_health_snapshot(farm: Any) -> dict[str, Any]:
         scheduler_snapshot=scheduler_snapshot,
         now=now,
     )
-    recovery_storm = {}
-    if getattr(getattr(farm, "_recovery", None), "_storm", None):
-        recovery_storm = farm._recovery._storm.snapshot()
-    with farm._status_lock:
-        status_revision = int(farm._status_revision)
+    recovery_storm = _recovery_storm(farm)
+    status_revision = _status_revision(farm)
     operator_health = load_cached_operator_health()
-    event_ages = []
-    for event in recent_events:
-        if not isinstance(event, dict):
-            continue
-        try:
-            ts = float(event.get("ts") or 0.0)
-        except Exception:
-            ts = 0.0
-        if ts > 0.0:
-            event_ages.append(max(0.0, now - ts))
+    event_ages = _event_ages(recent_events, now)
     return {
         "running": bool(farm.running),
         "status_revision": status_revision,
@@ -166,7 +299,7 @@ def build_farm_health_snapshot(farm: Any) -> dict[str, Any]:
         "runtime_health": runtime_health,
         "recovery_storm": recovery_storm,
         "recent_runtime_events": recent_events,
-        "last_runtime_event_age_seconds": round(min(event_ages), 1) if event_ages else 0.0,
+        "last_runtime_event_age_seconds": _last_event_age(event_ages),
         "workers": build_worker_health(farm, now),
         "dispatcher": build_thread_health(farm, farm._dispatcher, now),
         "maintenance": build_thread_health(farm, farm._maintenance, now),

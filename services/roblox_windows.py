@@ -50,7 +50,7 @@ def _window_snapshot_for_pid(cls, pid: int | None) -> dict[str, Any]:
 
         user32.EnumWindows(WNDENUMPROC(_enum_callback), 0)
     except Exception:
-        pass
+        "intentional: ignore exception"
     return snapshot
 
 def _count_visible_windows_for_pid(cls, pid: int | None) -> int:
@@ -175,6 +175,113 @@ def _measure_window_rect(user32: Any, rect: Any, hwnd: int, iconic: bool) -> tup
         return None
 
 
+def _window_visible(user32: Any, hwnd: Any) -> bool:
+    return bool(user32.IsWindowVisible(hwnd))
+
+
+def _window_pid(user32: Any, hwnd: Any) -> int:
+    win_pid = ctypes.c_ulong(0)
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(win_pid))
+    return int(win_pid.value or 0)
+
+
+def _window_iconic(user32: Any, hwnd: Any) -> bool:
+    return bool(user32.IsIconic(hwnd))
+
+
+def _taskbar_marked(user32: Any, hwnd: Any) -> bool:
+    try:
+        return bool(user32.GetPropW(ctypes.c_void_p(int(hwnd)), TASKBAR_HIDDEN_PROP))
+    except Exception:
+        return False
+
+
+def _enum_windows(user32: Any, callback: Any) -> None:
+    wndenumproc = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_long)
+    user32.EnumWindows(wndenumproc(callback), 0)
+
+
+def _window_record(
+    pid: int,
+    hwnd: int,
+    measured: tuple[int, int, int, int, int, int],
+    meta: dict[str, Any],
+) -> dict[str, Any]:
+    left, top, right, bottom, width, height = measured
+    return {
+        "pid": pid,
+        "hwnd": hwnd,
+        "left": left,
+        "top": top,
+        "right": right,
+        "bottom": bottom,
+        "width": width,
+        "height": height,
+        "area": width * height,
+        "created": float(meta.get("created") or 0.0),
+        "name": str(meta.get("name") or ""),
+    }
+
+
+def _visible_window_candidate(
+    user32: Any,
+    hwnd: Any,
+    proc_meta: dict[int, dict[str, Any]],
+    include_minimized: bool,
+) -> dict[str, Any] | None:
+    if not _window_visible(user32, hwnd):
+        return None
+    pid = _window_pid(user32, hwnd)
+    meta = proc_meta.get(pid)
+    if not meta:
+        return None
+    if _taskbar_marked(user32, hwnd):
+        return None
+    iconic = _window_iconic(user32, hwnd)
+    if iconic and not include_minimized:
+        return None
+    measured = _measure_window_rect(user32, _EnumRect(), int(hwnd), iconic)
+    if measured is None or not _passes_window_size_filter(measured[4], measured[5]):
+        return None
+    record = _window_record(pid, int(hwnd), measured, meta)
+    record["iconic"] = iconic
+    return record
+
+
+def _hidden_window_candidate(
+    user32: Any,
+    hwnd: Any,
+    proc_meta: dict[int, dict[str, Any]],
+) -> dict[str, Any] | None:
+    try:
+        visible = _window_visible(user32, hwnd)
+    except Exception:
+        return None
+    taskbar_hidden = _taskbar_marked(user32, hwnd)
+    if visible and not taskbar_hidden:
+        return None
+    try:
+        pid = _window_pid(user32, hwnd)
+    except Exception:
+        return None
+    meta = proc_meta.get(pid)
+    if not meta:
+        return None
+    try:
+        iconic = _window_iconic(user32, hwnd)
+    except Exception:
+        iconic = False
+    measured = _measure_window_rect(user32, _EnumRect(), int(hwnd), iconic)
+    if measured is None:
+        return None
+    if not _passes_window_size_filter(measured[4], measured[5]):
+        return None
+    record = _window_record(pid, int(hwnd), measured, meta)
+    record["visible"] = visible
+    record["taskbar_hidden"] = taskbar_hidden
+    return record
+
+
 def _visible_roblox_windows(cls, include_minimized: bool = True) -> list[dict[str, Any]]:
     windows: list[dict[str, Any]] = []
     try:
@@ -183,49 +290,14 @@ def _visible_roblox_windows(cls, include_minimized: bool = True) -> list[dict[st
             return []
 
         user32 = ctypes.windll.user32
-        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_long)
 
         def _enum_callback(hwnd, lparam):
-            if not user32.IsWindowVisible(hwnd):
-                return True
-            win_pid = ctypes.c_ulong(0)
-            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(win_pid))
-            pid = int(win_pid.value or 0)
-            meta = proc_meta.get(pid)
-            if not meta:
-                return True
-            try:
-                if bool(user32.GetPropW(ctypes.c_void_p(int(hwnd)), TASKBAR_HIDDEN_PROP)):
-                    return True
-            except Exception:
-                pass
-            iconic = bool(user32.IsIconic(hwnd))
-            if iconic and not include_minimized:
-                return True
-            measured = _measure_window_rect(user32, _EnumRect(), hwnd, iconic)
-            if measured is None:
-                return True
-            left, top, right, bottom, width, height = measured
-            area = width * height
-            if not _passes_window_size_filter(width, height):
-                return True
-            windows.append({
-                "pid": pid,
-                "hwnd": int(hwnd),
-                "left": left,
-                "top": top,
-                "right": right,
-                "bottom": bottom,
-                "width": width,
-                "height": height,
-                "area": area,
-                "created": float(meta.get("created") or 0.0),
-                "name": str(meta.get("name") or ""),
-                "iconic": iconic,
-            })
+            candidate = _visible_window_candidate(user32, hwnd, proc_meta, include_minimized)
+            if candidate is not None:
+                windows.append(candidate)
             return True
 
-        user32.EnumWindows(WNDENUMPROC(_enum_callback), 0)
+        _enum_windows(user32, _enum_callback)
     except Exception as exc:
         flog_kv("WINDOW", "enumerate_roblox_windows_failed", "warning", error=str(exc))
         return []
@@ -291,61 +363,37 @@ def _hidden_roblox_windows(cls) -> list[dict[str, Any]]:
         if not proc_meta:
             return []
         user32 = ctypes.windll.user32
-        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_long)
 
         def _enum_callback(hwnd, lparam):
-            try:
-                visible = bool(user32.IsWindowVisible(hwnd))
-            except Exception:
-                return True
-            try:
-                taskbar_hidden = bool(user32.GetPropW(ctypes.c_void_p(int(hwnd)), TASKBAR_HIDDEN_PROP))
-            except Exception:
-                taskbar_hidden = False
-            if visible and not taskbar_hidden:
-                return True
-            win_pid = ctypes.c_ulong(0)
-            try:
-                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(win_pid))
-            except Exception:
-                return True
-            pid = int(win_pid.value or 0)
-            meta = proc_meta.get(pid)
-            if not meta:
-                return True
-            try:
-                iconic = bool(user32.IsIconic(hwnd))
-            except Exception:
-                iconic = False
-            measured = _measure_window_rect(user32, _EnumRect(), hwnd, iconic)
-            if measured is None:
-                return True
-            left, top, right, bottom, width, height = measured
-            area = width * height
-            if not _passes_window_size_filter(width, height):
-                return True
-            windows.append({
-                "pid": pid,
-                "hwnd": int(hwnd),
-                "left": left,
-                "top": top,
-                "right": right,
-                "bottom": bottom,
-                "width": width,
-                "height": height,
-                "area": area,
-                "created": float(meta.get("created") or 0.0),
-                "name": str(meta.get("name") or ""),
-                "visible": visible,
-                "taskbar_hidden": taskbar_hidden,
-            })
+            record = _hidden_window_candidate(user32, hwnd, proc_meta)
+            if record is not None:
+                windows.append(record)
             return True
 
-        user32.EnumWindows(WNDENUMPROC(_enum_callback), 0)
+        _enum_windows(user32, _enum_callback)
     except Exception as exc:
         flog_kv("WINDOW", "enumerate_hidden_roblox_windows_failed", "warning", error=str(exc))
         return []
     return _dedupe_largest_per_pid(windows)
+
+def _merge_hidden_windows(
+    windows: list[dict[str, Any]],
+    hidden: list[dict[str, Any]],
+    excluded: set[int],
+) -> None:
+    """Re-hide windows the user restored: still prop-marked and back on screen."""
+    seen_hwnds = {int(item.get("hwnd") or 0) for item in windows}
+    for item in hidden:
+        if not bool(item.get("taskbar_hidden")) or not bool(item.get("visible")):
+            continue
+        if int(item.get("pid") or 0) in excluded:
+            continue
+        hwnd = int(item.get("hwnd") or 0)
+        if hwnd in seen_hwnds:
+            continue
+        windows.append(item)
+        seen_hwnds.add(hwnd)
+
 
 def hide_roblox_windows(cls, exclude_pids: list[int] | None = None) -> dict[str, Any]:
     from services.window_control import hide_windows
@@ -353,20 +401,9 @@ def hide_roblox_windows(cls, exclude_pids: list[int] | None = None) -> dict[str,
     excluded = {int(pid) for pid in (exclude_pids or []) if pid}
     windows = [item for item in cls._visible_roblox_windows(include_minimized=True) if int(item.get("pid") or 0) not in excluded]
     try:
-        # Re-hide windows the user restored manually: still prop-marked and
-        # back on screen, so _visible excludes them but auto-hide must catch them.
-        seen_hwnds = {int(item.get("hwnd") or 0) for item in windows}
-        for item in cls._hidden_roblox_windows():
-            if not bool(item.get("taskbar_hidden")) or not bool(item.get("visible")):
-                continue
-            if int(item.get("pid") or 0) in excluded:
-                continue
-            if int(item.get("hwnd") or 0) in seen_hwnds:
-                continue
-            windows.append(item)
-            seen_hwnds.add(int(item.get("hwnd") or 0))
+        _merge_hidden_windows(windows, cls._hidden_roblox_windows(), excluded)
     except Exception:
-        pass
+        "intentional: ignore exception"
     return hide_windows(windows)
 
 def show_roblox_windows(cls, exclude_pids: list[int] | None = None) -> dict[str, Any]:
@@ -376,6 +413,38 @@ def show_roblox_windows(cls, exclude_pids: list[int] | None = None) -> dict[str,
     windows = [item for item in cls._hidden_roblox_windows() if int(item.get("pid") or 0) not in excluded]
     return show_windows(windows)
 
+def _scan_hung_windows(user32: Any, pid: int) -> tuple[bool, int]:
+    state = {"hung": False, "window_count": 0}
+
+    def _enum_callback(hwnd, lparam):
+        if not user32.IsWindowVisible(hwnd):
+            return True
+        win_pid = ctypes.c_ulong(0)
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(win_pid))
+        if win_pid.value == pid:
+            state["window_count"] += 1
+            if user32.IsHungAppWindow(hwnd):
+                state["hung"] = True
+                return False
+        return True
+
+    _enum_windows(user32, _enum_callback)
+    return bool(state["hung"]), int(state["window_count"])
+
+
+def _nr_cached(cls, pid: int) -> bool | None:
+    with cls._cache_lock:
+        cached = cls._nr_cache.get(pid)
+        if cached and (time.time() - cached[0]) < cls._nr_cache_ttl:
+            return bool(cached[1])
+    return None
+
+
+def _nr_store(cls, pid: int, hung: bool) -> None:
+    with cls._cache_lock:
+        cls._nr_cache[pid] = (time.time(), hung)
+
+
 def is_not_responding(cls, pid: int | None) -> bool:
     """
     ตรวจจับ 'Not Responding' ผ่าน Windows IsHungAppWindow()
@@ -383,40 +452,19 @@ def is_not_responding(cls, pid: int | None) -> bool:
     """
     if pid is None:
         return False
-    with cls._cache_lock:
-        cached = cls._nr_cache.get(pid)
-        if cached and (time.time() - cached[0]) < cls._nr_cache_ttl:
-            return cached[1]
+    cached = _nr_cached(cls, pid)
+    if cached is not None:
+        return cached
     try:
         user32 = ctypes.windll.user32
-        result = {"hung": False, "window_count": 0}
-        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_long)
-
-        def _enum_callback(hwnd, lparam):
-            if not user32.IsWindowVisible(hwnd):
-                return True
-            win_pid = ctypes.c_ulong(0)
-            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(win_pid))
-            if win_pid.value == pid:
-                result["window_count"] += 1
-                if user32.IsHungAppWindow(hwnd):
-                    result["hung"] = True
-                    return False
-            return True
-
-        callback = WNDENUMPROC(_enum_callback)
-        user32.EnumWindows(callback, 0)
-
-        if result["window_count"] == 0:
-            with cls._cache_lock:
-                cls._nr_cache[pid] = (time.time(), False)
+        hung, window_count = _scan_hung_windows(user32, pid)
+        if window_count == 0:
+            _nr_store(cls, pid, False)
             return False
-        if result["hung"]:
+        if hung:
             flog(f"[PROC] PID {pid} is NOT RESPONDING (Task Manager style)")
-        with cls._cache_lock:
-            cls._nr_cache[pid] = (time.time(), result["hung"])
-        return result["hung"]
-
+        _nr_store(cls, pid, hung)
+        return hung
     except Exception as e:
         flog(f"[PROC] is_not_responding error for PID {pid}: {e}", "warning")
         return False
@@ -470,7 +518,7 @@ def _get_pid_window_rect(cls, pid: int | None) -> tuple[int, int, int, int] | No
                 if user32.IsIconic(hwnd):
                     return True
             except Exception:
-                pass
+                "intentional: ignore exception"
             win_pid = ctypes.c_ulong(0)
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(win_pid))
             if win_pid.value != pid:
@@ -494,88 +542,94 @@ def _get_pid_window_rect(cls, pid: int | None) -> tuple[int, int, int, int] | No
     except Exception:
         return None
 
+def _find_window_for_pid(user32: Any, pid: int | None) -> int | None:
+    target: list[int] = []
+
+    def _enum_callback(win_hwnd, lparam):
+        if not user32.IsWindowVisible(win_hwnd):
+            return True
+        win_pid = ctypes.c_ulong(0)
+        user32.GetWindowThreadProcessId(win_hwnd, ctypes.byref(win_pid))
+        if win_pid.value == pid:
+            target.append(int(win_hwnd))
+            return False
+        return True
+
+    _enum_windows(user32, _enum_callback)
+    return target[0] if target else None
+
+
+def _bitmap_header(width: int, height: int) -> Any:
+    class BITMAPINFOHEADER(ctypes.Structure):
+        _fields_ = [
+            ("biSize", wintypes.DWORD),
+            ("biWidth", wintypes.LONG),
+            ("biHeight", wintypes.LONG),
+            ("biPlanes", wintypes.WORD),
+            ("biBitCount", wintypes.WORD),
+            ("biCompression", wintypes.DWORD),
+            ("biSizeImage", wintypes.DWORD),
+            ("biXPelsPerMeter", wintypes.LONG),
+            ("biYPelsPerMeter", wintypes.LONG),
+            ("biClrUsed", wintypes.DWORD),
+            ("biClrImportant", wintypes.DWORD),
+        ]
+
+    class BITMAPINFO(ctypes.Structure):
+        _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", wintypes.DWORD * 3)]
+
+    bmi = BITMAPINFO()
+    bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
+    bmi.bmiHeader.biWidth = width
+    bmi.bmiHeader.biHeight = -height
+    bmi.bmiHeader.biPlanes = 1
+    bmi.bmiHeader.biBitCount = 32
+    bmi.bmiHeader.biCompression = 0
+    return bmi
+
+
+def _capture_window_bitmap(
+    user32: Any,
+    gdi32: Any,
+    hwnd: int,
+    width: int,
+    height: int,
+    image_cls: Any,
+) -> Any:
+    hwnd_dc = user32.GetWindowDC(hwnd)
+    mem_dc = gdi32.CreateCompatibleDC(hwnd_dc)
+    bitmap = gdi32.CreateCompatibleBitmap(hwnd_dc, width, height)
+    gdi32.SelectObject(mem_dc, bitmap)
+    ok = user32.PrintWindow(hwnd, mem_dc, 0x00000002)
+    if not ok:
+        user32.PrintWindow(hwnd, mem_dc, 0)
+    bmi = _bitmap_header(width, height)
+    buffer = ctypes.create_string_buffer(width * height * 4)
+    gdi32.GetDIBits(mem_dc, bitmap, 0, height, buffer, ctypes.byref(bmi), 0)
+    image = image_cls.frombuffer("RGBA", (width, height), buffer, "raw", "BGRA", 0, 1).convert("L")
+    gdi32.DeleteObject(bitmap)
+    gdi32.DeleteDC(mem_dc)
+    user32.ReleaseDC(hwnd, hwnd_dc)
+    return image
+
+
 def _capture_pid_window_image(cls, pid: int | None):
     rect = cls._get_pid_window_rect(pid)
     if not rect:
         return None
     try:
         from PIL import Image
-        left, top, right, bottom = rect
-        width = max(0, int(right - left))
-        height = max(0, int(bottom - top))
+
+        width = max(0, int(rect[2] - rect[0]))
+        height = max(0, int(rect[3] - rect[1]))
         if width <= 0 or height <= 0:
             return None
         user32 = ctypes.windll.user32
         gdi32 = ctypes.windll.gdi32
-
-        hwnd = None
-        try:
-            hwnd = user32.WindowFromPoint(wintypes.POINT(left + 8, top + 8))
-        except Exception:
-            hwnd = None
-        if not hwnd:
-            hwnd = user32.GetForegroundWindow()
-
-        target_hwnd = None
-        WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_long)
-        def _enum_callback(win_hwnd, lparam):
-            nonlocal target_hwnd
-            if not user32.IsWindowVisible(win_hwnd):
-                return True
-            win_pid = ctypes.c_ulong(0)
-            user32.GetWindowThreadProcessId(win_hwnd, ctypes.byref(win_pid))
-            if win_pid.value == pid:
-                target_hwnd = win_hwnd
-                return False
-            return True
-        user32.EnumWindows(WNDENUMPROC(_enum_callback), 0)
+        target_hwnd = _find_window_for_pid(user32, pid)
         if not target_hwnd:
             return None
-
-        hwnd_dc = user32.GetWindowDC(target_hwnd)
-        mem_dc = gdi32.CreateCompatibleDC(hwnd_dc)
-        bitmap = gdi32.CreateCompatibleBitmap(hwnd_dc, width, height)
-        gdi32.SelectObject(mem_dc, bitmap)
-        PW_RENDERFULLCONTENT = 0x00000002
-        ok = user32.PrintWindow(target_hwnd, mem_dc, PW_RENDERFULLCONTENT)
-        if not ok:
-            user32.PrintWindow(target_hwnd, mem_dc, 0)
-
-        class BITMAPINFOHEADER(ctypes.Structure):
-            _fields_ = [
-                ("biSize", wintypes.DWORD),
-                ("biWidth", wintypes.LONG),
-                ("biHeight", wintypes.LONG),
-                ("biPlanes", wintypes.WORD),
-                ("biBitCount", wintypes.WORD),
-                ("biCompression", wintypes.DWORD),
-                ("biSizeImage", wintypes.DWORD),
-                ("biXPelsPerMeter", wintypes.LONG),
-                ("biYPelsPerMeter", wintypes.LONG),
-                ("biClrUsed", wintypes.DWORD),
-                ("biClrImportant", wintypes.DWORD),
-            ]
-
-        class BITMAPINFO(ctypes.Structure):
-            _fields_ = [("bmiHeader", BITMAPINFOHEADER), ("bmiColors", wintypes.DWORD * 3)]
-
-        bmi = BITMAPINFO()
-        bmi.bmiHeader.biSize = ctypes.sizeof(BITMAPINFOHEADER)
-        bmi.bmiHeader.biWidth = width
-        bmi.bmiHeader.biHeight = -height
-        bmi.bmiHeader.biPlanes = 1
-        bmi.bmiHeader.biBitCount = 32
-        bmi.bmiHeader.biCompression = 0
-
-        buf_len = width * height * 4
-        buffer = ctypes.create_string_buffer(buf_len)
-        gdi32.GetDIBits(mem_dc, bitmap, 0, height, buffer, ctypes.byref(bmi), 0)
-        image = Image.frombuffer("RGBA", (width, height), buffer, "raw", "BGRA", 0, 1).convert("L")
-
-        gdi32.DeleteObject(bitmap)
-        gdi32.DeleteDC(mem_dc)
-        user32.ReleaseDC(target_hwnd, hwnd_dc)
-        return image
+        return _capture_window_bitmap(user32, gdi32, target_hwnd, width, height, Image)
     except Exception:
         return None
 

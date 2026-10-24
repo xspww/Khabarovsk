@@ -92,6 +92,147 @@ def _roblox_roots() -> list[Path]:
     return unique
 
 
+def _install_status_payload(
+    installed: dict[str, Any],
+    latest: dict[str, Any],
+    blockers: list[dict[str, Any]],
+    job: dict[str, Any],
+    block_msg: str,
+    running_blocked: bool,
+) -> dict[str, Any]:
+    installed_version = installed.get("version") or ""
+    latest_version = latest.get("version") or ""
+    return {
+        "ok": True,
+        "installed": installed,
+        "installed_version": installed_version,
+        "installed_path": installed.get("path") or "",
+        "latest_version": latest_version,
+        "latest_version_checked_at": latest.get("checked_at") or 0,
+        "latest_version_error": latest.get("error") or "",
+        "latest_version_refreshing": bool(latest.get("refreshing")),
+        "installed_up_to_date": bool(
+            installed_version and latest_version and installed_version.lower() == latest_version.lower()
+        ),
+        "running_blocked": running_blocked,
+        "blockers": blockers,
+        "block_msg": block_msg,
+        "job": job,
+    }
+
+
+def _iter_removable_versions(
+    root: Path,
+    normalized: str,
+    is_safe_root: Callable[[Path], bool],
+) -> list[Path]:
+    versions_dir = root / "Versions"
+    if not versions_dir.is_dir():
+        return []
+    if not (root.name.lower() == "roblox" and is_safe_root(root)):
+        return []
+    removable: list[Path] = []
+    for child in versions_dir.iterdir():
+        if not child.is_dir() or not child.name.lower().startswith("version-"):
+            continue
+        if child.name.lower() == normalized.lower():
+            continue
+        removable.append(child)
+    return removable
+
+
+def _version_candidates(root: Path) -> list[dict[str, Any]]:
+    versions_dir = root / "Versions"
+    if not versions_dir.exists():
+        return []
+    found: list[dict[str, Any]] = []
+    for child in versions_dir.iterdir():
+        if not child.is_dir() or not child.name.lower().startswith("version-"):
+            continue
+        exe = child / ROBLOX_EXE
+        if not exe.exists():
+            continue
+        try:
+            modified = exe.stat().st_mtime
+        except OSError:
+            modified = 0
+        # `root` is the Roblox installation root; callers opening a
+        # version need the concrete version directory instead.
+        found.append({"version": child.name, "path": str(exe), "root": str(child), "modified": modified})
+    return found
+
+
+def _dedupe_installed(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    candidates.sort(key=lambda item: float(item.get("modified") or 0), reverse=True)
+    deduped: list[dict[str, Any]] = []
+    seen_versions = set()
+    for item in candidates:
+        key = str(item.get("version") or "").strip().lower()
+        if not key or key in seen_versions:
+            continue
+        seen_versions.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def _process_blocker_info(proc: Any) -> dict[str, Any] | None:
+    try:
+        pid = int(proc.info.get("pid") or 0)
+        if not pid:
+            return None
+        name = str(proc.info.get("name") or "").strip()
+        exe = str(proc.info.get("exe") or "").strip()
+        cmdline_parts = proc.info.get("cmdline") or []
+        cmdline = " ".join(str(part) for part in cmdline_parts)
+    except Exception:
+        return None
+    return {
+        "pid": pid,
+        "name": name,
+        "name_l": name.lower(),
+        "exe": exe,
+        "haystack": f"{exe} {cmdline}".lower(),
+    }
+
+
+def _blocker_reason(info: dict[str, Any], root_markers: list[str]) -> str:
+    if info["name_l"] in ROBLOX_INSTALL_BLOCKER_NAMES:
+        return "roblox_process"
+    if any(marker and marker in info["haystack"] for marker in root_markers):
+        return "uses_roblox_path"
+    return ""
+
+
+def _collect_blockers(psutil: Any, current_pid: int, root_markers: list[str]) -> list[dict[str, Any]]:
+    blockers: list[dict[str, Any]] = []
+    seen = set()
+    for proc in psutil.process_iter(["pid", "name", "exe", "cmdline"]):
+        info = _process_blocker_info(proc)
+        if info is None or info["pid"] == current_pid:
+            continue
+        reason = _blocker_reason(info, root_markers)
+        if not reason or info["pid"] in seen:
+            continue
+        seen.add(info["pid"])
+        blockers.append({
+            "pid": info["pid"],
+            "name": info["name"] or f"PID {info['pid']}",
+            "path": info["exe"],
+            "reason": reason,
+        })
+    return blockers
+
+
+def _safe_member_parts(filename: Any) -> tuple[str, list[str]]:
+    raw_name = str(filename or "").replace("\\", "/").lstrip("/")
+    if not raw_name:
+        return "", []
+    parts = [part for part in PurePosixPath(raw_name).parts if part not in ("", ".")]
+    if not parts or any(part == ".." for part in parts) or ":" in parts[0]:
+        raise RuntimeError(f"Unsafe Roblox package path: {filename}")
+    return raw_name, parts
+
+
 class RobloxInstallManager:
     def __init__(
         self,
@@ -131,27 +272,10 @@ class RobloxInstallManager:
             job = dict(self._job)
         installed = self.detect_installed()
         latest = self._latest_version_status()
-        installed_version = installed.get("version") or ""
-        latest_version = latest.get("version") or ""
         blockers = self.find_install_blockers()
         block_msg = self._format_blockers(blockers)
-        return {
-            "ok": True,
-            "installed": installed,
-            "installed_version": installed_version,
-            "installed_path": installed.get("path") or "",
-            "latest_version": latest_version,
-            "latest_version_checked_at": latest.get("checked_at") or 0,
-            "latest_version_error": latest.get("error") or "",
-            "latest_version_refreshing": bool(latest.get("refreshing")),
-            "installed_up_to_date": bool(
-                installed_version and latest_version and installed_version.lower() == latest_version.lower()
-            ),
-            "running_blocked": bool(self.guard_running() or self.roblox_running() or blockers),
-            "blockers": blockers,
-            "block_msg": block_msg,
-            "job": job,
-        }
+        running_blocked = bool(self.guard_running() or self.roblox_running() or blockers)
+        return _install_status_payload(installed, latest, blockers, job, block_msg, running_blocked)
 
     def _latest_version_status(self) -> dict[str, Any]:
         now = time.time()
@@ -237,7 +361,7 @@ class RobloxInstallManager:
         try:
             self.logger(f"[ROBLOX_INSTALL] {state} {extra}")
         except Exception:
-            pass
+            "intentional: ignore exception"
 
     def _run_uninstall(self) -> None:
         self._set_job("Uninstalling")
@@ -302,17 +426,9 @@ class RobloxInstallManager:
         """
         normalized = str(version or "")
         removed = 0
-        for root in list(roots) if roots is not None else list(self.roblox_roots()):
-            versions_dir = root / "Versions"
-            if not versions_dir.is_dir():
-                continue
-            if not (root.name.lower() == "roblox" and self._safe_roblox_root(root)):
-                continue
-            for child in versions_dir.iterdir():
-                if not child.is_dir() or not child.name.lower().startswith("version-"):
-                    continue
-                if child.name.lower() == normalized.lower():
-                    continue
+        candidates = list(roots) if roots is not None else list(self.roblox_roots())
+        for root in candidates:
+            for child in _iter_removable_versions(root, normalized, self._safe_roblox_root):
                 try:
                     shutil.rmtree(child, ignore_errors=False)
                     removed += 1
@@ -333,32 +449,8 @@ class RobloxInstallManager:
         """
         candidates: list[dict[str, Any]] = []
         for root in self.roblox_roots():
-            versions_dir = root / "Versions"
-            if not versions_dir.exists():
-                continue
-            for child in versions_dir.iterdir():
-                if not child.is_dir() or not child.name.lower().startswith("version-"):
-                    continue
-                exe = child / ROBLOX_EXE
-                if not exe.exists():
-                    continue
-                try:
-                    modified = exe.stat().st_mtime
-                except OSError:
-                    modified = 0
-                # `root` is the Roblox installation root; callers opening a
-                # version need the concrete version directory instead.
-                candidates.append({"version": child.name, "path": str(exe), "root": str(child), "modified": modified})
-        candidates.sort(key=lambda item: float(item.get("modified") or 0), reverse=True)
-        deduped: list[dict[str, Any]] = []
-        seen_versions = set()
-        for item in candidates:
-            key = str(item.get("version") or "").strip().lower()
-            if not key or key in seen_versions:
-                continue
-            seen_versions.add(key)
-            deduped.append(item)
-        return deduped
+            candidates.extend(_version_candidates(root))
+        return _dedupe_installed(candidates)
 
     def detect_installed(self) -> dict[str, Any]:
         candidates = self.list_installed()
@@ -369,45 +461,14 @@ class RobloxInstallManager:
         return best
 
     def find_install_blockers(self) -> list[dict[str, Any]]:
-        blockers: list[dict[str, Any]] = []
         try:
             import psutil
         except Exception:
-            return blockers
+            return []
 
         current_pid = os.getpid()
         root_markers = [str(root).lower() for root in self.roblox_roots()]
-        seen = set()
-        for proc in psutil.process_iter(["pid", "name", "exe", "cmdline"]):
-            try:
-                pid = int(proc.info.get("pid") or 0)
-                if not pid or pid == current_pid:
-                    continue
-                name = str(proc.info.get("name") or "").strip()
-                name_l = name.lower()
-                exe = str(proc.info.get("exe") or "").strip()
-                cmdline_parts = proc.info.get("cmdline") or []
-                cmdline = " ".join(str(part) for part in cmdline_parts)
-                haystack = f"{exe} {cmdline}".lower()
-            except Exception:
-                continue
-
-            reason = ""
-            if name_l in ROBLOX_INSTALL_BLOCKER_NAMES:
-                reason = "roblox_process"
-            elif any(marker and marker in haystack for marker in root_markers):
-                reason = "uses_roblox_path"
-            if not reason:
-                continue
-            if pid in seen:
-                continue
-            seen.add(pid)
-            blockers.append({
-                "pid": pid,
-                "name": name or f"PID {pid}",
-                "path": exe,
-                "reason": reason,
-            })
+        blockers = _collect_blockers(psutil, current_pid, root_markers)
         blockers.sort(key=lambda item: (str(item.get("name") or "").lower(), int(item.get("pid") or 0)))
         return blockers
 
@@ -461,12 +522,7 @@ class RobloxInstallManager:
             or parent.endswith(("\\appdata\\local", "\\program files", "\\program files (x86)"))
         )
 
-    def _remove_roblox_tree(self, root: Path) -> None:
-        if not self._safe_roblox_root(root):
-            raise RuntimeError("unsafe path")
-        if not root.exists():
-            return
-
+    def _remove_tree_attempts(self, root: Path) -> tuple[bool, BaseException | None]:
         last_error: BaseException | None = None
         for attempt in range(4):
             self._clear_tree_attributes(root)
@@ -474,7 +530,7 @@ class RobloxInstallManager:
                 self._repair_tree_permissions(root)
             try:
                 shutil.rmtree(root, onerror=self._rmtree_onerror)
-                return
+                return True, None
             except PermissionError as exc:
                 last_error = exc
                 time.sleep(0.15 * (attempt + 1))
@@ -483,7 +539,17 @@ class RobloxInstallManager:
                 if getattr(exc, "winerror", None) != 5:
                     raise
                 time.sleep(0.15 * (attempt + 1))
+        return False, last_error
 
+    def _remove_roblox_tree(self, root: Path) -> None:
+        if not self._safe_roblox_root(root):
+            raise RuntimeError("unsafe path")
+        if not root.exists():
+            return
+
+        removed, last_error = self._remove_tree_attempts(root)
+        if removed:
+            return
         if root.exists():
             blockers = self.find_install_blockers()
             if blockers:
@@ -520,7 +586,7 @@ class RobloxInstallManager:
         try:
             os.chmod(path, stat.S_IREAD | stat.S_IWRITE | stat.S_IEXEC)
         except OSError:
-            pass
+            "intentional: ignore exception"
         if os.name != "nt":
             return
         try:
@@ -531,7 +597,7 @@ class RobloxInstallManager:
             if clean_attrs != attrs:
                 ctypes.windll.kernel32.SetFileAttributesW(str(path), clean_attrs)
         except Exception:
-            pass
+            "intentional: ignore exception"
 
     def _repair_tree_permissions(self, root: Path) -> None:
         if os.name != "nt" or not self._safe_roblox_root(root) or not root.exists():
@@ -561,7 +627,7 @@ class RobloxInstallManager:
                 for name in dirs:
                     return str(Path(current) / name)
         except Exception:
-            pass
+            "intentional: ignore exception"
         return str(root)
 
     def remove_protocol_registry(self) -> dict[str, Any]:
@@ -602,10 +668,6 @@ class RobloxInstallManager:
 
     def fetch_latest_version(self) -> str:
         # Official-only: always ask clientsettingscdn.roblox.com directly.
-        return self.fetch_official_latest_version()
-
-    def fetch_weao_windows_version(self, channel: str = "current") -> str:
-        # Deprecated: kept for backward-compat, now delegates to official.
         return self.fetch_official_latest_version()
 
     def fetch_official_latest_version(self) -> str:
@@ -669,12 +731,9 @@ class RobloxInstallManager:
     def _safe_extract_zip(self, archive: zipfile.ZipFile, target: Path) -> None:
         root = target.resolve()
         for member in archive.infolist():
-            raw_name = str(member.filename or "").replace("\\", "/").lstrip("/")
-            if not raw_name:
+            raw_name, parts = _safe_member_parts(member.filename)
+            if not parts:
                 continue
-            parts = [part for part in PurePosixPath(raw_name).parts if part not in ("", ".")]
-            if not parts or any(part == ".." for part in parts) or ":" in parts[0]:
-                raise RuntimeError(f"Unsafe Roblox package path: {member.filename}")
             destination = target.joinpath(*parts).resolve()
             if destination != root and root not in destination.parents:
                 raise RuntimeError(f"Unsafe Roblox package path: {member.filename}")
@@ -745,7 +804,7 @@ class RobloxInstallManager:
         try:
             ctypes.windll.shell32.SHChangeNotify(0x08000000, 0, None, None)
         except Exception:
-            pass
+            "intentional: ignore exception"
 
     def _download_text(self, url: str) -> str:
         with net_tls.urlopen(urllib.request.Request(url, headers={"User-Agent": "CronusLauncher/RT"}), timeout=45) as response:

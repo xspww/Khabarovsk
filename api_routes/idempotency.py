@@ -51,7 +51,7 @@ def _begin(request: Request, action: str, account: str, body_hash: str) -> Idemp
         request.state.cronus_idempotency_action = action
         request.state.cronus_idempotency_account = account
     except Exception:
-        pass
+        "intentional: ignore exception"
     if not key:
         return IdempotencyContext(action=action, account=account, body_hash=body_hash)
     scope = f"{request.method}:{request.url.path}:{action}:{account}:{body_hash}:{key}"

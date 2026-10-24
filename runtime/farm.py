@@ -82,12 +82,22 @@ class FarmController:
         self._stop = threading.Event()
         self.running = False
         self.start_ts: float | None = None
+        self._init_executor_hold()
+        self._init_account_state()
+        self._init_counters()
+        self._init_persistence()
+        self._init_console_liveness()
+        self._init_command_plane()
+        self._subscribe_events()
+
+    def _init_executor_hold(self) -> None:
         self._executor_start_guard = None
         self._executor_hold = False
         self._executor_hold_reason = ""
         self._executor_hold_detail = ""
         self._executor_hold_lock = threading.RLock()
 
+    def _init_account_state(self) -> None:
         self._accounts: list[Account] = []
         self._workers: dict[str, AccountWorker] = {}
         self._net_mon: NetworkMonitor | None = None
@@ -101,6 +111,7 @@ class FarmController:
         self._last_control_plane_restart_at = 0.0
         self._force_rejoin_limiter = PerAccountRateLimiter(FORCE_REJOIN_INTERVAL_SECONDS)
 
+    def _init_counters(self) -> None:
         self._total_rejoin = 0
         self._total_crash = 0
         self._event_log: list = []
@@ -120,6 +131,8 @@ class FarmController:
         self._last_runtime_truth_state: dict[str, str] = {}
         self._last_runtime_truth_progress: dict[str, int] = {}
         self._runtime_state = RuntimeStateManager(logger=flog_kv)
+
+    def _init_persistence(self) -> None:
         self._runtime_store = RuntimeStore(os.path.join(APP_DATA_DIR, "cronus_runtime.db"))
         self._timeline = RuntimeTimeline(
             self._runtime_store,
@@ -135,13 +148,17 @@ class FarmController:
         except Exception as e:
             flog_kv("RUNTIME", "open_transaction_rollback_failed", "warning", error=e)
         self._supervisor = SupervisorRuntime(store=self._runtime_store, logger=flog_kv)
-        self._machine_supervisor = MachineSupervisor(cfg_mgr.snapshot(), self._accounts)
+        self._machine_supervisor = MachineSupervisor(self.cfg_mgr.snapshot(), self._accounts)
+
+    def _init_console_liveness(self) -> None:
         try:
             from infra.console_activity import set_lua_liveness_required
 
-            set_lua_liveness_required(lua_liveness_required(cfg_mgr.snapshot()))
+            set_lua_liveness_required(lua_liveness_required(self.cfg_mgr.snapshot()))
         except Exception:
-            pass
+            "intentional: ignore exception"
+
+    def _init_command_plane(self) -> None:
         self._runtime_orchestrator = RuntimeOrchestrator(
             self._runtime_state,
             timeline=self._timeline,
@@ -158,6 +175,7 @@ class FarmController:
         )
         self._lifecycle = FarmLifecycleService(self)
 
+    def _subscribe_events(self) -> None:
         self.bus.on(EventName.REJOIN_SUCCESS, self._on_rejoin)
         self.bus.on(EventName.ACCOUNT_CRASH, self._on_crash)
         self.bus.on(EventName.ACCOUNT_FAILED, self._on_failed)
@@ -282,12 +300,12 @@ class FarmController:
             if worker is not None:
                 worker.wake()
         except Exception:
-            pass
+            "intentional: ignore exception"
         try:
             if hasattr(self, "_bump_status_revision"):
                 self._bump_status_revision()
         except Exception:
-            pass
+            "intentional: ignore exception"
 
     def _reset_account_runtime(self, acc: Any, reason: str = "runtime_reset") -> None:
         """Clear recovery/process state so an account stays quiet."""
@@ -305,7 +323,7 @@ class FarmController:
                     try:
                         runtime_state.set_desired(acc, _AccountState.IDLE, reason=reason)
                     except Exception:
-                        pass
+                        "intentional: ignore exception"
                     # Clear stale markers so the card does not stick on Rejoining.
                     # Must mirror revive: recovery_view keys off these texts +
                     # last_recovery_at, so clear them all and stamp the reason.
@@ -320,13 +338,13 @@ class FarmController:
                         acc.recovery_status = ""
                         acc.pid_missing_since = 0.0
                     except Exception:
-                        pass
+                        "intentional: ignore exception"
                     try:
                         acc.sync_runtime(reason)
                     except Exception:
-                        pass
+                        "intentional: ignore exception"
         except Exception:
-            pass
+            "intentional: ignore exception"
 
     def stop_account(self, username: str, reason: str = "game_unassigned") -> tuple[bool, str]:
         """Stop one account's client without marking the account Finished.
@@ -342,7 +360,7 @@ class FarmController:
             try:
                 self.kill_account_pid(username, reason=reason)
             except Exception:
-                pass
+                "intentional: ignore exception"
         self._reset_account_runtime(acc, reason=reason)
         self._push_event(
             "system",
@@ -355,20 +373,10 @@ class FarmController:
             if hasattr(self, "_bump_status_revision"):
                 self._bump_status_revision()
         except Exception:
-            pass
+            "intentional: ignore exception"
         return True, f"Stopped: {username}"
 
-    def revive_unfinished_account(self, username: str) -> bool:
-        """Give an Unfinished account a clean relaunch while the farm runs.
-
-        Single owner for unfinished-revive — route modules leverage this
-        instead of reimplementing worker/state manipulation past the seam.
-        """
-        from core import flog_kv as _flog_kv
-
-        acc = self._find_account(username)
-        if acc is None:
-            return False
+    def _clear_stale_pid(self, acc: Account) -> None:
         try:
             from services.process_service import ProcessManager
 
@@ -389,7 +397,9 @@ class FarmController:
                     acc.bound_process_identity = None
                     acc.pid_missing_since = 0.0
         except Exception:
-            pass
+            "intentional: ignore exception"
+
+    def _reset_unfinished_runtime(self, acc: Account) -> None:
         try:
             from core import AccountState as _AccountState
 
@@ -402,7 +412,7 @@ class FarmController:
                     try:
                         runtime_state.set_desired(acc, _AccountState.IN_GAME, reason="account_unfinished")
                     except Exception:
-                        pass
+                        "intentional: ignore exception"
                     # Drop stale Rejoining markers (kill/crash/rejoin text + old timestamps).
                     try:
                         acc.last_crash_reason = ""
@@ -416,9 +426,78 @@ class FarmController:
                         acc.recovery_status = ""
                         acc.sync_runtime("account_unfinished")
                     except Exception:
-                        pass
+                        "intentional: ignore exception"
         except Exception:
-            pass
+            "intentional: ignore exception"
+
+    def _force_idle_public_state(self, acc: Account) -> None:
+        try:
+            from core import AccountState as _AccountState
+
+            state_mgr = getattr(self, "_state_mgr", None)
+            if state_mgr is not None:
+                try:
+                    state_mgr.transition(acc, _AccountState.IDLE, reason="account_unfinished", force=True)
+                except Exception:
+                    "intentional: ignore exception"
+                return
+            rs = getattr(self, "_runtime_state", None)
+            if rs is not None and hasattr(rs, "transition_public"):
+                try:
+                    rs.transition_public(acc, _AccountState.IDLE, reason="account_unfinished", force=True)
+                except Exception:
+                    "intentional: ignore exception"
+        except Exception:
+            "intentional: ignore exception"
+
+    def _request_unfinished_evaluate(self, acc: Account) -> None:
+        try:
+            orchestrator = getattr(self, "_runtime_orchestrator", None)
+            if orchestrator is not None and hasattr(orchestrator, "request_evaluate"):
+                orchestrator.request_evaluate(acc, trigger="account_unfinished")
+        except Exception:
+            "intentional: ignore exception"
+
+    def _wake_account_worker(self, acc: Account) -> None:
+        try:
+            worker = (getattr(self, "_workers", None) or {}).get(acc._config_username)
+            if worker is not None:
+                worker.wake()
+        except Exception:
+            "intentional: ignore exception"
+
+    def _announce_unfinished_relaunch(self, acc: Account, log: Any) -> None:
+        try:
+            if hasattr(self, "_bump_status_revision"):
+                self._bump_status_revision()
+            if hasattr(self, "_push_event"):
+                self._push_event(
+                    "system",
+                    f"Unfinished relaunch: {acc.display_name}",
+                    account=acc,
+                    severity="success",
+                    reason="account_unfinished",
+                )
+        except Exception:
+            "intentional: ignore exception"
+        try:
+            log("API", "account_unfinished_relaunched", account=acc.display_name)
+        except Exception:
+            "intentional: ignore exception"
+
+    def revive_unfinished_account(self, username: str) -> bool:
+        """Give an Unfinished account a clean relaunch while the farm runs.
+
+        Single owner for unfinished-revive — route modules leverage this
+        instead of reimplementing worker/state manipulation past the seam.
+        """
+        from core import flog_kv as _flog_kv
+
+        acc = self._find_account(username)
+        if acc is None:
+            return False
+        self._clear_stale_pid(acc)
+        self._reset_unfinished_runtime(acc)
         try:
             from services.account_reload import (
                 _prepare_added_runtime_account,
@@ -429,86 +508,56 @@ class FarmController:
                 return False
             # Force public state back to IDLE so worker + recovery can launch fresh.
             # Without this, state != IN_GAME branch in AccountWorker just sleeps.
-            try:
-                from core import AccountState as _AccountState2
-
-                state_mgr = getattr(self, "_state_mgr", None)
-                if state_mgr is not None:
-                    try:
-                        state_mgr.transition(acc, _AccountState2.IDLE, reason="account_unfinished", force=True)
-                    except Exception:
-                        pass
-                else:
-                    rs = getattr(self, "_runtime_state", None)
-                    if rs is not None and hasattr(rs, "transition_public"):
-                        try:
-                            rs.transition_public(acc, _AccountState2.IDLE, reason="account_unfinished", force=True)
-                        except Exception:
-                            pass
-            except Exception:
-                pass
+            self._force_idle_public_state(acc)
             started = bool(_start_added_worker(self, acc))
             # Critical: wake is not enough — queue a fresh evaluate like manual resume.
-            try:
-                orchestrator = getattr(self, "_runtime_orchestrator", None)
-                if orchestrator is not None and hasattr(orchestrator, "request_evaluate"):
-                    orchestrator.request_evaluate(acc, trigger="account_unfinished")
-            except Exception:
-                pass
-            try:
-                worker = (getattr(self, "_workers", None) or {}).get(acc._config_username)
-                if worker is not None:
-                    worker.wake()
-            except Exception:
-                pass
-            try:
-                if hasattr(self, "_bump_status_revision"):
-                    self._bump_status_revision()
-                if hasattr(self, "_push_event"):
-                    self._push_event(
-                        "system",
-                        f"Unfinished relaunch: {acc.display_name}",
-                        account=acc,
-                        severity="success",
-                        reason="account_unfinished",
-                    )
-            except Exception:
-                pass
-            try:
-                _flog_kv("API", "account_unfinished_relaunched", account=acc.display_name)
-            except Exception:
-                pass
+            self._request_unfinished_evaluate(acc)
+            self._wake_account_worker(acc)
+            self._announce_unfinished_relaunch(acc, _flog_kv)
             return started
         except Exception:
             return False
 
+    def _capability_start(self, acc: Account | None) -> tuple[bool, str, Account | None]:
+        if self.running:
+            return False, "Already running", None
+        return True, "", None
+
+    def _capability_stop(self, acc: Account | None) -> tuple[bool, str, Account | None]:
+        if not self.running:
+            return False, "Not running", None
+        return True, "", None
+
+    def _capability_force_rejoin(self, acc: Account | None) -> tuple[bool, str, Account | None]:
+        if not self.running:
+            return False, "Guard stopped", acc
+        if not acc:
+            return False, "Account not found", None
+        with acc._lock:
+            if acc.state == AccountState.FAILED:
+                return False, "Account failed", acc
+        return True, "", acc
+
+    def _capability_kill_pid(self, acc: Account | None) -> tuple[bool, str, Account | None]:
+        if not acc:
+            return False, "Account not found", None
+        with acc._lock:
+            if not acc.pid:
+                return False, "No active PID", acc
+        return True, "", acc
+
     def _command_capability(self, action: str, account: str = "") -> tuple[bool, str, Account | None]:
         acc = self._find_account(account) if account else None
-        if action == "start":
-            if self.running:
-                return False, "Already running", None
-            return True, "", None
-        if action == "stop":
-            if not self.running:
-                return False, "Not running", None
-            return True, "", None
-        if action == "force_rejoin":
-            if not self.running:
-                return False, "Guard stopped", acc
-            if not acc:
-                return False, "Account not found", None
-            with acc._lock:
-                if acc.state == AccountState.FAILED:
-                    return False, "Account failed", acc
+        checks = {
+            "start": self._capability_start,
+            "stop": self._capability_stop,
+            "force_rejoin": self._capability_force_rejoin,
+            "kill_pid": self._capability_kill_pid,
+        }
+        check = checks.get(action)
+        if check is None:
             return True, "", acc
-        if action == "kill_pid":
-            if not acc:
-                return False, "Account not found", None
-            with acc._lock:
-                if not acc.pid:
-                    return False, "No active PID", acc
-            return True, "", acc
-        return True, "", acc
+        return check(acc)
 
     def begin_command(
         self,
@@ -552,6 +601,32 @@ class FarmController:
             runtime_state=getattr(self, "_runtime_state", None),
         )
 
+    def _preflight_quarantine(self, acc: Account, decision: Any, recovery: Any, runtime_state: Any) -> bool:
+        try:
+            mark_account_auth_quarantined(acc, decision, source="preflight", runtime_writer=runtime_state)
+            recovery.fail_account(acc, decision.reason_key, decision.reason)
+            return True
+        except Exception as e:
+            flog_kv("FARM", "preflight_fail_account_error", "warning", account=acc.display_name, error=e)
+            return False
+
+    def _log_preflight_block(self, acc: Account, decision: Any) -> None:
+        try:
+            flog_kv("FARM", "account_preflight_blocked", "warning", account=acc.display_name, **decision.to_dict())
+        except Exception as e:
+            flog_kv("FARM", "preflight_fail_account_error", "warning", account=acc.display_name, error=e)
+
+    def _clear_cookie_mismatch(self, acc: Account, state_mgr: Any, runtime_state: Any) -> None:
+        try:
+            with acc._lock:
+                if acc.state == AccountState.FAILED and acc.last_crash_reason == "cookie_mismatch":
+                    _clear_account_cookie_block(acc)
+                    runtime_state.clear_recovery(acc, reason="cookie_mismatch_cleared", inflight=False)
+                    runtime_state.set_cooldown(acc, 0.0, reason="cookie_mismatch_cleared")
+                    state_mgr.transition(acc, AccountState.IDLE, reason="cookie_mismatch_cleared", force=True)
+        except Exception as e:
+            flog_kv("FARM", "preflight_cookie_clear_error", "warning", account=acc.display_name, error=e)
+
     def _preflight_cookie_blocks(self) -> dict[str, str]:
         blocked: dict[str, str] = {}
         recovery = self._recovery
@@ -566,23 +641,11 @@ class FarmController:
                 flog_kv("FARM", "preflight_auth_gate_error", "warning", account=acc.display_name, error=e)
                 continue
             if decision.blocked:
-                try:
-                    mark_account_auth_quarantined(acc, decision, source="preflight", runtime_writer=runtime_state)
-                    recovery.fail_account(acc, decision.reason_key, decision.reason)
+                if self._preflight_quarantine(acc, decision, recovery, runtime_state):
                     blocked[acc._config_username] = decision.reason
-                    flog_kv("FARM", "account_preflight_blocked", "warning", account=acc.display_name, **decision.to_dict())
-                except Exception as e:
-                    flog_kv("FARM", "preflight_fail_account_error", "warning", account=acc.display_name, error=e)
+                    self._log_preflight_block(acc, decision)
                 continue
-            try:
-                with acc._lock:
-                    if acc.state == AccountState.FAILED and acc.last_crash_reason == "cookie_mismatch":
-                        _clear_account_cookie_block(acc)
-                        runtime_state.clear_recovery(acc, reason="cookie_mismatch_cleared", inflight=False)
-                        runtime_state.set_cooldown(acc, 0.0, reason="cookie_mismatch_cleared")
-                        state_mgr.transition(acc, AccountState.IDLE, reason="cookie_mismatch_cleared", force=True)
-            except Exception as e:
-                flog_kv("FARM", "preflight_cookie_clear_error", "warning", account=acc.display_name, error=e)
+            self._clear_cookie_mismatch(acc, state_mgr, runtime_state)
         return blocked
 
     def start(self):
@@ -610,11 +673,11 @@ class FarmController:
             if callable(check_setter):
                 check_setter(self.is_executor_hold)
         except Exception:
-            pass
+            "intentional: ignore exception"
         try:
             self._bump_status_revision()
         except Exception:
-            pass
+            "intentional: ignore exception"
 
     def is_executor_hold(self) -> bool:
         try:
@@ -638,14 +701,14 @@ class FarmController:
         try:
             self.set_executor_hold(False)
         except Exception:
-            pass
+            "intentional: ignore exception"
         return self._lifecycle.stop()
 
     def stop_fast(self):
         try:
             self.set_executor_hold(False)
         except Exception:
-            pass
+            "intentional: ignore exception"
         return self._lifecycle.stop_fast()
 
     def set_accounts(self, accounts: list[Account]):
@@ -655,7 +718,7 @@ class FarmController:
 
             set_total_accounts(len(self._accounts))
         except Exception:
-            pass
+            "intentional: ignore exception"
         self._machine_supervisor.set_accounts(self._accounts)
         if self._recovery:
             self._recovery._accounts = self._accounts
@@ -672,7 +735,7 @@ class FarmController:
 
             set_lua_liveness_required(lua_liveness_required(cfg))
         except Exception:
-            pass
+            "intentional: ignore exception"
         try:
             self._apply_runtime_config_snapshot(cfg)
         except Exception as e:
@@ -715,7 +778,7 @@ class FarmController:
                 if is_account_finished(acc):
                     return False, "Account is Finished"
             except Exception:
-                pass
+                "intentional: ignore exception"
         if acc and self._recovery:
             if not ignore_rate_limit:
                 allowed, rate_msg = self._check_force_rejoin_rate_limit(acc._config_username)
@@ -814,6 +877,22 @@ class FarmController:
     def resume_recovery_account(self, username: str) -> tuple[bool, str]:
         return self._resume_blocked_account(username, clear_account_recovery_hold, "Recovery", "verify", "recovery_resume")
 
+    def _clear_any_verify_hold(self, acc: Account) -> bool:
+        was_any = False
+        try:
+            was_any = bool(clear_account_locked_hold(acc, runtime_writer=self._runtime_state)) or was_any
+        except Exception:
+            "intentional: ignore exception"
+        try:
+            was_any = bool(clear_account_recovery_hold(acc, runtime_writer=self._runtime_state)) or was_any
+        except Exception:
+            "intentional: ignore exception"
+        try:
+            was_any = bool(clear_account_captcha_hold(acc, runtime_writer=self._runtime_state)) or was_any
+        except Exception:
+            "intentional: ignore exception"
+        return was_any
+
     def resume_verify_account(self, username: str) -> tuple[bool, str]:
         """Clear whichever verify hold is present (Locked / Recovery / Captcha)."""
         acc = self._find_account(username)
@@ -830,87 +909,91 @@ class FarmController:
             if is_account_captcha_required(acc):
                 return self.resume_captcha_account(username)
         except Exception:
-            pass
+            "intentional: ignore exception"
         # Fallback: try all clears so a stale mark never sticks.
-        was_any = False
-        try:
-            was_any = bool(clear_account_locked_hold(acc, runtime_writer=self._runtime_state)) or was_any
-        except Exception:
-            pass
-        try:
-            was_any = bool(clear_account_recovery_hold(acc, runtime_writer=self._runtime_state)) or was_any
-        except Exception:
-            pass
-        try:
-            was_any = bool(clear_account_captcha_hold(acc, runtime_writer=self._runtime_state)) or was_any
-        except Exception:
-            pass
-        if was_any:
+        if self._clear_any_verify_hold(acc):
             return self._resume_blocked_account(username, lambda a, runtime_writer=None: False, "Verify", "verify", "verify_resume")
         return False, f"No Locked/Recovery/Captcha hold for {username}"
 
-    def _resume_blocked_account(self, username: str, clear_fn: Any, kind_label: str, event_kind: str, resume_reason: str) -> tuple[bool, str]:
-        acc = self._find_account(username)
-        if not acc:
-            return False, "Account not found"
+    def _clear_hold(self, acc: Account, clear_fn: Any) -> bool:
         try:
-            was_blocked = bool(clear_fn(acc, runtime_writer=self._runtime_state))
+            return bool(clear_fn(acc, runtime_writer=self._runtime_state))
         except Exception:
-            was_blocked = False
+            return False
+
+    def _resume_still_blocked(
+        self,
+        acc: Account,
+        username: str,
+        decision: Any,
+        kind_label: str,
+        event_kind: str,
+        was_blocked: bool,
+    ) -> tuple[bool, str]:
         try:
-            decision = evaluate_account_auth_gate(acc)
+            mark_account_auth_quarantined(acc, decision, source="manual_resume", runtime_writer=self._runtime_state)
+            if self._recovery:
+                self._recovery.fail_account(acc, decision.reason_key, decision.reason)
         except Exception as e:
-            flog_kv("FARM", "captcha_resume_auth_gate_error", "warning", account=acc.display_name, error=e)
-            return False, f"{kind_label} cleared for {username}, but auth gate unavailable. Retry later."
-        if decision.blocked:
-            try:
-                mark_account_auth_quarantined(acc, decision, source="manual_resume", runtime_writer=self._runtime_state)
-                if self._recovery:
-                    self._recovery.fail_account(acc, decision.reason_key, decision.reason)
-            except Exception as e:
-                flog_kv("FARM", "captcha_resume_quarantine_error", "warning", account=acc.display_name, error=e)
-                return False, f"{kind_label} cleared for {username}, but auth quarantine failed. Retry later."
-            self.cfg_mgr.save_accounts(self._accounts)
-            self.cfg_mgr.save_runtime(self._accounts)
-            self._bump_status_revision()
-            self._push_event(
-                event_kind,
-                f"{kind_label} cleared: {acc.display_name} - still blocked: {decision.reason}",
-                account=acc,
-                severity="warn",
-                reason=decision.reason_key,
-                was_captcha=was_blocked,
-            )
-            return False, f"{kind_label} cleared for {username}, but launch is still blocked: {decision.reason}"
-        if self._runtime_state:
-            with acc._lock:
-                self._runtime_state.set_desired(acc, AccountState.IN_GAME, reason="manual_resume")
-                self._runtime_state.set_cooldown(acc, 0.0, reason="manual_resume")
-        live_session = False
+            flog_kv("FARM", "captcha_resume_quarantine_error", "warning", account=acc.display_name, error=e)
+            return False, f"{kind_label} cleared for {username}, but auth quarantine failed. Retry later."
+        self.cfg_mgr.save_accounts(self._accounts)
+        self.cfg_mgr.save_runtime(self._accounts)
+        self._bump_status_revision()
+        self._push_event(
+            event_kind,
+            f"{kind_label} cleared: {acc.display_name} - still blocked: {decision.reason}",
+            account=acc,
+            severity="warn",
+            reason=decision.reason_key,
+            was_captcha=was_blocked,
+        )
+        return False, f"{kind_label} cleared for {username}, but launch is still blocked: {decision.reason}"
+
+    def _resume_set_desired(self, acc: Account) -> None:
+        if not self._runtime_state:
+            return
+        with acc._lock:
+            self._runtime_state.set_desired(acc, AccountState.IN_GAME, reason="manual_resume")
+            self._runtime_state.set_cooldown(acc, 0.0, reason="manual_resume")
+
+    def _resume_live_session(self, acc: Account) -> bool:
         with acc._lock:
             pid = acc.pid
             identity = acc.bound_process_identity
             tracker_id = acc.browser_tracker_id
-        if pid:
-            live_session = bool(
-                ProcessManager.is_bound_game_alive(
-                    pid,
-                    owner_key=acc._config_username,
-                    expected_identity=identity,
-                    expected_browser_tracker_id=tracker_id,
-                )
+        if not pid:
+            return False
+        return bool(
+            ProcessManager.is_bound_game_alive(
+                pid,
+                owner_key=acc._config_username,
+                expected_identity=identity,
+                expected_browser_tracker_id=tracker_id,
             )
-        lua_required = lua_liveness_required(self.cfg_mgr.snapshot())
-        if self._state_mgr:
-            if live_session:
-                if lua_required:
-                    mark_waiting_for_lua(acc, self._runtime_state, self._state_mgr, "manual_resume_live_session")
-                else:
-                    self._state_mgr.transition(acc, AccountState.IN_GAME, reason="manual_resume_live_session", force=True)
-                    self._state_mgr.clear_recovery(acc, reason="manual_resume_live_session", inflight=False)
-                self._state_mgr.set_binding_status(acc, "verified", reason="manual_resume_live_session")
-            else:
-                self._state_mgr.transition(acc, AccountState.IDLE, reason="manual_resume", force=True)
+        )
+
+    def _resume_apply_state(self, acc: Account, live_session: bool, lua_required: bool) -> None:
+        if not self._state_mgr:
+            return
+        if not live_session:
+            self._state_mgr.transition(acc, AccountState.IDLE, reason="manual_resume", force=True)
+            return
+        if lua_required:
+            mark_waiting_for_lua(acc, self._runtime_state, self._state_mgr, "manual_resume_live_session")
+        else:
+            self._state_mgr.transition(acc, AccountState.IN_GAME, reason="manual_resume_live_session", force=True)
+            self._state_mgr.clear_recovery(acc, reason="manual_resume_live_session", inflight=False)
+        self._state_mgr.set_binding_status(acc, "verified", reason="manual_resume_live_session")
+
+    def _resume_save_and_announce(
+        self,
+        acc: Account,
+        kind_label: str,
+        event_kind: str,
+        resume_reason: str,
+        was_blocked: bool,
+    ) -> None:
         self.cfg_mgr.save_accounts(self._accounts)
         self.cfg_mgr.save_runtime(self._accounts)
         self._bump_status_revision()
@@ -922,6 +1005,34 @@ class FarmController:
             reason=resume_reason,
             was_captcha=was_blocked,
         )
+
+    def _ensure_resume_worker(self, acc: Account) -> Any:
+        worker = self._workers.get(acc._config_username)
+        if worker and worker.is_alive():
+            worker.wake()
+            return worker
+        worker = AccountWorker(
+            acc=acc,
+            state_mgr=self._state_mgr,
+            bus=self.bus,
+            cfg=self.cfg_mgr.snapshot(),
+            recovery=self._recovery,
+            stop=self._stop,
+            supervisor=self._supervisor,
+            accounts=self._accounts,
+        )
+        self._workers[acc._config_username] = worker
+        worker.start()
+        return worker
+
+    def _resume_finish(
+        self,
+        acc: Account,
+        username: str,
+        kind_label: str,
+        live_session: bool,
+        lua_required: bool,
+    ) -> tuple[bool, str]:
         if not self.running:
             return True, f"{kind_label} cleared for {username}. Start Cronus when ready."
         if not self._recovery or not self._state_mgr:
@@ -933,25 +1044,29 @@ class FarmController:
             if lua_required:
                 return True, f"{kind_label} cleared for {username}. Waiting for Lua."
             return True, f"{kind_label} cleared for {username}. Live session verified."
-        worker = self._workers.get(acc._config_username)
-        if not worker or not worker.is_alive():
-            worker = AccountWorker(
-                acc=acc,
-                state_mgr=self._state_mgr,
-                bus=self.bus,
-                cfg=self.cfg_mgr.snapshot(),
-                recovery=self._recovery,
-                stop=self._stop,
-                supervisor=self._supervisor,
-                accounts=self._accounts,
-            )
-            self._workers[acc._config_username] = worker
-            worker.start()
-        else:
-            worker.wake()
+        worker = self._ensure_resume_worker(acc)
         self._runtime_orchestrator.request_evaluate(acc, trigger="manual_resume")
         worker.wake()
         return True, f"{kind_label} cleared for {username}. Resume requested."
+
+    def _resume_blocked_account(self, username: str, clear_fn: Any, kind_label: str, event_kind: str, resume_reason: str) -> tuple[bool, str]:
+        acc = self._find_account(username)
+        if not acc:
+            return False, "Account not found"
+        was_blocked = self._clear_hold(acc, clear_fn)
+        try:
+            decision = evaluate_account_auth_gate(acc)
+        except Exception as e:
+            flog_kv("FARM", "captcha_resume_auth_gate_error", "warning", account=acc.display_name, error=e)
+            return False, f"{kind_label} cleared for {username}, but auth gate unavailable. Retry later."
+        if decision.blocked:
+            return self._resume_still_blocked(acc, username, decision, kind_label, event_kind, was_blocked)
+        self._resume_set_desired(acc)
+        live_session = self._resume_live_session(acc)
+        lua_required = lua_liveness_required(self.cfg_mgr.snapshot())
+        self._resume_apply_state(acc, live_session, lua_required)
+        self._resume_save_and_announce(acc, kind_label, event_kind, resume_reason, was_blocked)
+        return self._resume_finish(acc, username, kind_label, live_session, lua_required)
 
     @staticmethod
     def _account_expects_private_server(acc: Account) -> bool:
@@ -966,32 +1081,33 @@ class FarmController:
             or str(launch_intent.get("active_private_link_code_hash") or "").strip()
         )
 
-    def _apply_lua_server_detection(self, acc: Account, payload: dict[str, Any]) -> dict[str, Any]:
-        detection = detect_lua_server(payload)
-        if not detection.observed:
-            return {}
+    def _normalize_server_detection(self, acc: Account, detection: LuaServerDetection) -> LuaServerDetection:
+        if detection.server_type != "PUBLIC" or not self._account_expects_private_server(acc):
+            return detection
+        return LuaServerDetection(
+            observed=True,
+            server_type="VIP",
+            is_vip=True,
+            private_server_id=detection.private_server_id,
+            private_server_owner_id=detection.private_server_owner_id,
+            place_id=detection.place_id,
+            job_id=detection.job_id,
+            universe_id=detection.universe_id,
+        )
 
-        now = time.time()
-        expects_private = self._account_expects_private_server(acc)
-        if detection.server_type == "PUBLIC" and expects_private:
-            detection = LuaServerDetection(
-                observed=True,
-                server_type="VIP",
-                is_vip=True,
-                private_server_id=detection.private_server_id,
-                private_server_owner_id=detection.private_server_owner_id,
-                place_id=detection.place_id,
-                job_id=detection.job_id,
-                universe_id=detection.universe_id,
-            )
-        pid_key = str(
+    @staticmethod
+    def _server_pid_key(acc: Account, payload: dict[str, Any]) -> str:
+        return str(
             payload.get("pid")
             or payload.get("process_id")
             or payload.get("roblox_pid")
             or getattr(acc, "pid", "")
             or ""
         ).strip()
-        log_key = ":".join(
+
+    @staticmethod
+    def _server_log_key(detection: LuaServerDetection, pid_key: str) -> str:
+        return ":".join(
             [
                 detection.server_type,
                 detection.private_server_id,
@@ -1000,6 +1116,14 @@ class FarmController:
                 pid_key,
             ]
         )
+
+    def _store_server_detection(
+        self,
+        acc: Account,
+        detection: LuaServerDetection,
+        now: float,
+        log_key: str,
+    ) -> bool:
         with acc._lock:
             previous_type = str(acc.observed_server_type or "")
             previous_private_id = str(acc.observed_private_server_id or "")
@@ -1019,37 +1143,54 @@ class FarmController:
             )
             if should_log:
                 acc._last_server_detection_log_key = log_key
+        return should_log
 
-        if should_log:
-            private_label = detection.private_server_id[:8] if detection.private_server_id else ""
-            flog_kv(
-                "VIP",
-                "server_detected",
-                account=acc.display_name,
-                pid=pid_key,
-                is_vip=detection.is_vip,
-                server_type=detection.server_type,
-                private_server_id=private_label,
-                place_id=detection.place_id,
-                job_id=detection.job_id,
-            )
-            if hasattr(self, "_bump_status_revision"):
-                self._bump_status_revision()
+    def _log_server_detection(self, acc: Account, detection: LuaServerDetection, pid_key: str) -> None:
+        private_label = detection.private_server_id[:8] if detection.private_server_id else ""
+        flog_kv(
+            "VIP",
+            "server_detected",
+            account=acc.display_name,
+            pid=pid_key,
+            is_vip=detection.is_vip,
+            server_type=detection.server_type,
+            private_server_id=private_label,
+            place_id=detection.place_id,
+            job_id=detection.job_id,
+        )
+        if hasattr(self, "_bump_status_revision"):
+            self._bump_status_revision()
 
-        # Block same-server: if another account already sits in this JobId,
-        # hop this account to a different server (public servers only hop
-        # cleanly; VIP private links stay put).
+    def _hop_same_server(self, acc: Account, detection: LuaServerDetection) -> None:
         try:
             if detection.job_id and not detection.is_vip:
                 from services.same_server_guard import check_and_hop_same_server
 
                 check_and_hop_same_server(
-                    self, acc,
+                    self,
+                    acc,
                     detection_job_id=detection.job_id,
                     detection_place_id=detection.place_id,
                 )
         except Exception:
-            pass
+            "intentional: ignore exception"
+
+    def _apply_lua_server_detection(self, acc: Account, payload: dict[str, Any]) -> dict[str, Any]:
+        detection = detect_lua_server(payload)
+        if not detection.observed:
+            return {}
+
+        now = time.time()
+        detection = self._normalize_server_detection(acc, detection)
+        pid_key = self._server_pid_key(acc, payload)
+        log_key = self._server_log_key(detection, pid_key)
+        if self._store_server_detection(acc, detection, now, log_key):
+            self._log_server_detection(acc, detection, pid_key)
+
+        # Block same-server: if another account already sits in this JobId,
+        # hop this account to a different server (public servers only hop
+        # cleanly; VIP private links stay put).
+        self._hop_same_server(acc, detection)
 
         return {
             "observed_server_type": detection.server_type,

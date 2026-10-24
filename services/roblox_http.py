@@ -34,13 +34,23 @@ MODERATION_HEADERS = {
     "Referer": "https://www.roblox.com/",
 }
 
-_SELECTED_ROBLOX_VERSION = ""
+class _SelectedRobloxVersion:
+    def __init__(self) -> None:
+        self.value = ""
+
+    def set(self, version: str = "") -> None:
+        self.value = str(version or "").strip()
+
+    def get(self) -> str:
+        return self.value
+
+
+_SELECTED_ROBLOX_VERSION = _SelectedRobloxVersion()
 
 
 def set_selected_roblox_version(version: str = "") -> None:
     """Pin launches to a specific installed official Roblox version ('' = OS default)."""
-    global _SELECTED_ROBLOX_VERSION
-    _SELECTED_ROBLOX_VERSION = str(version or "").strip()
+    _SELECTED_ROBLOX_VERSION.set(version)
 
 
 def _roblox_version_exe(version: str) -> str:
@@ -67,15 +77,15 @@ def _roblox_version_exe(version: str) -> str:
 
 def open_roblox_uri(uri: str) -> None:
     """Open a Roblox URI, pinned to the selected version when one is set."""
-    exe = _roblox_version_exe(_SELECTED_ROBLOX_VERSION)
+    exe = _roblox_version_exe(_SELECTED_ROBLOX_VERSION.get())
     if exe:
         try:
             subprocess.Popen([exe, uri], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
         except Exception:
-            pass
+            "intentional: ignore exception"
     try:
-        os.startfile(uri)  # type: ignore[attr-defined]
+        os.startfile(uri)
     except Exception:
         subprocess.Popen(
             f'start "" "{uri}"',
@@ -84,6 +94,34 @@ def open_roblox_uri(uri: str) -> None:
             stderr=subprocess.DEVNULL,
             creationflags=subprocess.CREATE_NO_WINDOW,
         )
+
+
+def _encode_body(data: Any, headers: dict[str, str]) -> bytes | None:
+    """Encode a request body and set the matching Content-Type when needed."""
+    if data is None:
+        return None
+    if isinstance(data, (dict, list)):
+        headers.setdefault("Content-Type", "application/json")
+        return json.dumps(data).encode("utf-8")
+    if isinstance(data, bytes):
+        return data
+    headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
+    return str(data).encode("utf-8")
+
+
+def _csrf_header(headers: dict[str, str]) -> str:
+    return headers.get("x-csrf-token") or headers.get("X-CSRF-TOKEN") or ""
+
+
+def _csrf_retry_allowed(token: str, retry_csrf: bool, method: str) -> bool:
+    return bool(token and retry_csrf and method.upper() not in {"GET", "HEAD"})
+
+
+def _error_body_text(exc: urllib.error.HTTPError) -> str:
+    try:
+        return exc.read().decode("utf-8", errors="replace")
+    except Exception:
+        return str(exc)
 
 
 class RobloxHTTP:
@@ -114,32 +152,19 @@ class RobloxHTTP:
         timeout: float = 12.0,
         retry_csrf: bool = True,
     ) -> tuple[int, str, dict[str, str]]:
-        body = None
         req_headers = self._headers(headers)
-        if data is not None:
-            if isinstance(data, (dict, list)):
-                body = json.dumps(data).encode("utf-8")
-                req_headers.setdefault("Content-Type", "application/json")
-            elif isinstance(data, bytes):
-                body = data
-            else:
-                body = str(data).encode("utf-8")
-                req_headers.setdefault("Content-Type", "application/x-www-form-urlencoded")
+        body = _encode_body(data, req_headers)
         req = urllib.request.Request(url, data=body, method=method.upper(), headers=req_headers)
         try:
             with net_tls.urlopen(req, timeout=timeout) as resp:
                 return resp.status, resp.read().decode("utf-8", errors="replace"), dict(resp.headers.items())
         except urllib.error.HTTPError as exc:
             response_headers = dict(exc.headers.items())
-            token = response_headers.get("x-csrf-token") or response_headers.get("X-CSRF-TOKEN")
-            if token and retry_csrf and method.upper() not in {"GET", "HEAD"}:
+            token = _csrf_header(response_headers)
+            if _csrf_retry_allowed(token, retry_csrf, method):
                 self.csrf_token = token
                 return self.request(url, method, data, headers, timeout, retry_csrf=False)
-            try:
-                body_text = exc.read().decode("utf-8", errors="replace")
-            except Exception:
-                body_text = str(exc)
-            return exc.code, body_text, response_headers
+            return exc.code, _error_body_text(exc), response_headers
 
     def get_csrf(self) -> tuple[bool, str]:
         status, body, headers = self.request(
@@ -148,7 +173,7 @@ class RobloxHTTP:
             headers={"Content-Type": "application/json"},
             retry_csrf=False,
         )
-        token = headers.get("x-csrf-token") or headers.get("X-CSRF-TOKEN")
+        token = _csrf_header(headers)
         if token:
             self.csrf_token = token
             return True, token

@@ -53,9 +53,29 @@ _CA_ENV_VARS = ("SSL_CERT_FILE", "SSL_CERT_DIR", "REQUESTS_CA_BUNDLE", "CURL_CA_
 # "CA" holds user-added roots, "ROOT" the preinstalled trusted ones.
 _WINDOWS_CERT_STORES = ("CA", "ROOT")
 
-_LOCK = threading.Lock()
-_CONTEXT: ssl.SSLContext | None = None
-_SOURCES: tuple[str, ...] = ()
+class _TlsState:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.context: ssl.SSLContext | None = None
+        self.sources: tuple[str, ...] = ()
+
+    def load(self) -> ssl.SSLContext:
+        context = self.context
+        if context is not None:
+            return context
+        with self.lock:
+            if self.context is None:
+                built, sources = _build()
+                self.context = built
+                self.sources = sources
+            return self.context
+
+    def trust_sources(self) -> tuple[str, ...]:
+        self.load()
+        return self.sources
+
+
+_TLS = _TlsState()
 
 
 _PEM_HEADER = "-----BEGIN CERTIFICATE-----"
@@ -67,25 +87,7 @@ def _der_to_pem(der: bytes) -> str:
     return _PEM_HEADER + "\n" + "\n".join(lines) + "\n-----END CERTIFICATE-----\n"
 
 
-def _entry_to_pem(entry: Any) -> str:
-    """Normalise one ssl.enum_certificates() result to PEM.
-
-    The result shape is not stable across CPython versions: 3.11-3.13 hand
-    back dicts keyed 'data'/'encoding', while 3.14 hands back
-    ``(pfx, name, der)``-style tuples. Accept both instead of silently
-    loading an empty store - the first version of this code assumed dicts
-    and quietly trusted nothing beyond certifi on 3.14.
-    """
-    data = None
-    if isinstance(entry, dict):
-        data = entry.get("data")
-    elif isinstance(entry, (tuple, list)):
-        for item in entry:
-            if isinstance(item, (bytes, bytearray)) and len(item) > 64:
-                data = item
-                break
-            if isinstance(item, str) and _PEM_HEADER in item:
-                return item
+def _pem_from_bytes(data: Any) -> str:
     if not data:
         return ""
     if isinstance(data, (bytes, bytearray)):
@@ -100,6 +102,33 @@ def _entry_to_pem(entry: Any) -> str:
             return _der_to_pem(base64.b64decode(data, validate=False))
         except Exception:
             return ""
+    return ""
+
+
+def _tuple_entry_data(entry: Any) -> tuple[bool, Any]:
+    """Return (is_pem, data) for one tuple/list enum_certificates() result."""
+    for item in entry:
+        if isinstance(item, (bytes, bytearray)) and len(item) > 64:
+            return False, item
+        if isinstance(item, str) and _PEM_HEADER in item:
+            return True, item
+    return False, None
+
+
+def _entry_to_pem(entry: Any) -> str:
+    """Normalise one ssl.enum_certificates() result to PEM.
+
+    The result shape is not stable across CPython versions: 3.11-3.13 hand
+    back dicts keyed 'data'/'encoding', while 3.14 hands back
+    ``(pfx, name, der)``-style tuples. Accept both instead of silently
+    loading an empty store - the first version of this code assumed dicts
+    and quietly trusted nothing beyond certifi on 3.14.
+    """
+    if isinstance(entry, dict):
+        return _pem_from_bytes(entry.get("data"))
+    if isinstance(entry, (tuple, list)):
+        is_pem, data = _tuple_entry_data(entry)
+        return data if is_pem else _pem_from_bytes(data)
     return ""
 
 
@@ -174,22 +203,12 @@ def _build() -> tuple[ssl.SSLContext, tuple[str, ...]]:
 
 def default_context() -> ssl.SSLContext:
     """Cached SSLContext every HTTPS call in the app should use."""
-    global _CONTEXT, _SOURCES
-    context = _CONTEXT
-    if context is not None:
-        return context
-    with _LOCK:
-        if _CONTEXT is None:
-            built, sources = _build()
-            _CONTEXT = built
-            _SOURCES = sources
-        return _CONTEXT
+    return _TLS.load()
 
 
 def trust_sources() -> tuple[str, ...]:
     """Human-readable list of what default_context() actually loaded."""
-    default_context()
-    return _SOURCES
+    return _TLS.trust_sources()
 
 
 def https_handler() -> urllib.request.HTTPSHandler:

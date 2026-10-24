@@ -3,7 +3,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 NETWORK_DISCONNECT = "NETWORK_DISCONNECT"
 SESSION_CONFLICT = "SESSION_CONFLICT"
@@ -111,6 +111,78 @@ def priority_for_signal(signal: str = "", category: str = "", popup_code: str = 
     return CATEGORY_PRIORITY.get(str(category or "").strip().upper(), PRIORITY_MEDIUM)
 
 
+class _PayloadText(NamedTuple):
+    popup_code: str
+    trigger: str
+    watchdog_reason: str
+    cooldown_reason: str
+    detail: str
+
+
+def _payload_text_fields(
+    payload: dict[str, Any],
+    signal: str,
+    reason: str,
+) -> _PayloadText:
+    return _PayloadText(
+        popup_code=str(payload.get("popup_code") or payload.get("error_code") or ""),
+        trigger=str(payload.get("trigger") or signal or reason or ""),
+        watchdog_reason=str(payload.get("watchdog_reason") or ""),
+        cooldown_reason=str(payload.get("cooldown_reason") or ""),
+        detail=str(payload.get("detail") or payload.get("reason_msg") or ""),
+    )
+
+
+def _payload_numeric(
+    payload: dict[str, Any],
+    account: Any,
+) -> tuple[float, int]:
+    confidence = float(
+        payload.get("popup_confidence") or payload.get("confidence") or 0.0
+    )
+    retry_count = int(
+        payload.get("retry_count") or getattr(account, "retry_count", 0) or 0
+    )
+    return confidence, retry_count
+
+
+def _account_id(account: Any) -> str:
+    return str(
+        getattr(account, "_config_username", "")
+        or getattr(account, "username", "")
+        or ""
+    )
+
+
+def _context_category(
+    payload: dict[str, Any],
+    reason: str,
+    popup_code: str,
+) -> str:
+    return normalize_disconnect_category(
+        reason=payload.get("reason_key") or reason,
+        popup_code=popup_code,
+        category=payload.get("disconnect_category") or payload.get("category") or "",
+    )
+
+
+def _context_priority(
+    payload: dict[str, Any],
+    signal: str,
+    category: str,
+    popup_code: str,
+) -> int:
+    return int(
+        payload.get("signal_priority")
+        or priority_for_signal(
+            signal=signal,
+            category=category,
+            popup_code=popup_code,
+            visual=bool(payload.get("visual_disconnect", False)),
+        )
+    )
+
+
 @dataclass(frozen=True)
 class RecoveryAttemptContext:
     account_id: str
@@ -160,29 +232,26 @@ class RecoveryAttemptContext:
         payload: dict[str, Any] | None = None,
     ) -> RecoveryAttemptContext:
         payload = dict(payload or {})
-        popup_code = str(payload.get("popup_code") or payload.get("error_code") or "")
-        category = normalize_disconnect_category(
-            reason=payload.get("reason_key") or reason,
-            popup_code=popup_code,
-            category=payload.get("disconnect_category") or payload.get("category") or "",
+        text = _payload_text_fields(payload, signal, reason)
+        category = _context_category(payload, reason, text.popup_code)
+        priority = _context_priority(
+            payload,
+            signal,
+            category,
+            text.popup_code,
         )
-        priority = int(payload.get("signal_priority") or priority_for_signal(
-            signal=signal,
-            category=category,
-            popup_code=popup_code,
-            visual=bool(payload.get("visual_disconnect", False)),
-        ))
+        confidence, retry_count = _payload_numeric(payload, account)
         return cls(
-            account_id=str(getattr(account, "_config_username", "") or getattr(account, "username", "") or ""),
+            account_id=_account_id(account),
             runtime_generation=int(getattr(account, "runtime_generation", 0) or 0),
             pid=int(getattr(account, "pid", 0) or 0),
-            trigger=str(payload.get("trigger") or signal or reason or ""),
+            trigger=text.trigger,
             category=category,
-            popup_code=popup_code,
-            popup_confidence=float(payload.get("popup_confidence") or payload.get("confidence") or 0.0),
-            watchdog_reason=str(payload.get("watchdog_reason") or ""),
-            cooldown_reason=str(payload.get("cooldown_reason") or ""),
-            retry_count=int(payload.get("retry_count") or getattr(account, "retry_count", 0) or 0),
+            popup_code=text.popup_code,
+            popup_confidence=confidence,
+            watchdog_reason=text.watchdog_reason,
+            cooldown_reason=text.cooldown_reason,
+            retry_count=retry_count,
             priority=priority,
-            detail=str(payload.get("detail") or payload.get("reason_msg") or ""),
+            detail=text.detail,
         )

@@ -6,12 +6,12 @@
   "use strict";
 
   function isZoomKey(e) {
-    var k = e.key;
+    let k = e.key;
     if (k === "+" || k === "-" || k === "=" || k === "_" || k === "0") return true;
     // Numpad Add/Sub/0 + legacy keyCodes (107/109/96, 187/189/48)
-    var c = e.keyCode || e.which || 0;
+    let c = e.keyCode || e.which || 0;
     if (c === 107 || c === 109 || c === 96 || c === 187 || c === 189 || c === 48) return true;
-    var code = e.code || "";
+    let code = e.code || "";
     if (code === "NumpadAdd" || code === "NumpadSubtract" || code === "Numpad0" ||
         code === "Equal" || code === "Minus" || code === "Digit0") return true;
     return false;

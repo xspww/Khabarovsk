@@ -1,11 +1,12 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import ctypes
+import functools
 import os
 import signal
 import sys
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NamedTuple
 
 from core import flog_kv
 from desktop.console_icon import APP_ICON_FILE
@@ -65,7 +66,7 @@ def _mark_webview2_prompted() -> None:
         with open(_WEBVIEW2_PROMPT_FLAG, "w", encoding="utf-8") as handle:
             handle.write("1")
     except Exception:
-        pass
+        "intentional: ignore exception"
 
 
 def _download_webview2_bootstrapper() -> str:
@@ -199,7 +200,7 @@ def _webview_data_dir() -> str:
     try:
         os.makedirs(path, exist_ok=True)
     except Exception:
-        pass
+        "intentional: ignore exception"
     return path
 
 
@@ -210,7 +211,7 @@ def _prepare_webview_env() -> None:
         data_dir = _webview_data_dir()
         os.environ.setdefault("WEBVIEW2_USER_DATA_FOLDER", data_dir)
     except Exception:
-        pass
+        "intentional: ignore exception"
     # Silence benign Chromium shutdown spam on stderr (e.g.
     # "Failed to unregister class Chrome_WidgetWin_0. Error = 1411"),
     # which is not our error but scares users in the console/updater
@@ -221,14 +222,14 @@ def _prepare_webview_env() -> None:
         if "--disable-logging" not in prev:
             os.environ["WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS"] = (prev + " --disable-logging").strip()
     except Exception:
-        pass
+        "intentional: ignore exception"
 
 
 def _set_app_user_model_id() -> None:
     try:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Cronus.Launcher.Desktop")
     except Exception:
-        pass
+        "intentional: ignore exception"
 
 
 def _bundled_kanit_candidates() -> list:
@@ -243,37 +244,47 @@ def _bundled_kanit_candidates() -> list:
     return candidates
 
 
+def _kanit_fonts_ready(qfontdb: Any) -> bool:
+    try:
+        families = qfontdb.families()
+    except Exception:
+        return False
+    return "Inter" in families and "Kanit" in families
+
+
+def _load_font_candidate(qfontdb: Any, path: str) -> bool:
+    try:
+        if not path or not os.path.exists(path):
+            return False
+        font_id = qfontdb.addApplicationFont(path)
+        return int(font_id) >= 0
+    except Exception as exc:
+        flog_kv("MAIN", "desktop_font_load_failed", "warning", path=path, error=str(exc))
+        return False
+
+
 def _load_bundled_kanit_fonts() -> bool:
     try:
         from PySide6.QtGui import QFontDatabase
     except Exception as exc:
         flog_kv("MAIN", "desktop_font_qt_unavailable", "debug", error=str(exc))
         return False
-    try:
-        if "Inter" in QFontDatabase.families() and "Kanit" in QFontDatabase.families():
-            return True
-    except Exception:
-        pass
+    if _kanit_fonts_ready(QFontDatabase):
+        return True
     loaded_any = False
     for path in _bundled_kanit_candidates():
-        try:
-            if not path or not os.path.exists(path):
-                continue
-            font_id = QFontDatabase.addApplicationFont(path)
-            if int(font_id) >= 0:
-                loaded_any = True
-        except Exception as exc:
-            flog_kv("MAIN", "desktop_font_load_failed", "warning", path=path, error=str(exc))
+        if _load_font_candidate(QFontDatabase, path):
+            loaded_any = True
     try:
-        if "Inter" in QFontDatabase.families():
-            if loaded_any:
-                from core import flog
-
-                flog("[MAIN] Bundled Inter/Kanit fonts loaded for Qt widgets")
-            return True
+        if "Inter" not in QFontDatabase.families():
+            return False
     except Exception:
-        pass
-    return False
+        return False
+    if loaded_any:
+        from core import flog
+
+        flog("[MAIN] Bundled Inter/Kanit fonts loaded for Qt widgets")
+    return True
 
 
 def _webview2_preflight() -> bool:
@@ -295,6 +306,536 @@ def _webview2_preflight() -> bool:
     except Exception as exc:
         flog_kv("MAIN", "desktop_webview_preflight_failed", "warning", error=str(exc))
         return False
+
+
+_SHELL_QSS_NORMAL = (
+    "QWidget#CronusWindowShell {"
+    " background: #0b0c10;"
+    " border: 1px solid #20232c;"
+    " border-radius: 0px;"
+    "}"
+    "#CronusWebView { background: #0b0c10; border: 0; }"
+)
+_SHELL_QSS_MAXIMIZED = (
+    "QWidget#CronusWindowShell {"
+    " background: #0b0c10;"
+    " border: 0px;"
+    " border-radius: 0px;"
+    "}"
+    "#CronusWebView { background: #0b0c10; border: 0; }"
+)
+
+_TITLE_BAR_QSS = """
+                    #CronusTitleBar {
+                        background-color: #0c0d13;
+                        border-bottom: 1px solid #20232c;
+                    }
+                    #CronusTitle {
+                        font-family: "Inter", "Kanit", "Segoe UI", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif;
+                        color: #9aa0ab;
+                        font-size: 12px;
+                        font-weight: 500;
+                    }
+                    #CronusStatusIcon {
+                        margin-right: 0px;
+                    }
+                    QPushButton#WinMinButton, QPushButton#WinMaxButton, QPushButton#WinCloseButton {
+                        width: 34px; height: 22px; min-width: 34px; max-width: 34px;
+                        min-height: 22px; max-height: 22px; border-radius: 9px;
+border: 1px solid #262a33;
+                         background-color: #14161c;
+                         color: #53565e;
+                        padding: 0px;
+                    }
+                    QPushButton#WinMinButton:hover, QPushButton#WinMaxButton:hover {
+background-color: #1a1d29;
+                         border-color: #3a3f4d;
+                        color: #ffffff;
+                    }
+                    QPushButton#WinCloseButton:hover {
+background-color: #26161b;
+                         border-color: #4c1d24;
+                         color: #f87171;
+                    }
+                    """
+
+
+class _QtBindings(NamedTuple):
+    QCoreApplication: Any
+    QPoint: Any
+    QSize: Any
+    Qt: Any
+    QTimer: Any
+    QEvent: Any
+    QColor: Any
+    QFont: Any
+    QIcon: Any
+    QPainter: Any
+    QPen: Any
+    QPixmap: Any
+    QApplication: Any
+    QFrame: Any
+    QHBoxLayout: Any
+    QLabel: Any
+    QMainWindow: Any
+    QPushButton: Any
+    QVBoxLayout: Any
+    QWidget: Any
+    QtWebView2Widget: Any
+
+
+def _load_qt_bindings() -> _QtBindings | None:
+    try:
+        from PySide6.QtCore import QCoreApplication, QEvent, QPoint, QSize, Qt, QTimer
+        from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
+        from PySide6.QtWidgets import (
+            QApplication,
+            QFrame,
+            QHBoxLayout,
+            QLabel,
+            QMainWindow,
+            QPushButton,
+            QVBoxLayout,
+            QWidget,
+        )
+        from qtwebview2 import QtWebView2Widget
+    except Exception as exc:
+        flog_kv("MAIN", "desktop_qt_unavailable", "warning", error=str(exc))
+        return None
+    return _QtBindings(
+        QCoreApplication,
+        QPoint,
+        QSize,
+        Qt,
+        QTimer,
+        QEvent,
+        QColor,
+        QFont,
+        QIcon,
+        QPainter,
+        QPen,
+        QPixmap,
+        QApplication,
+        QFrame,
+        QHBoxLayout,
+        QLabel,
+        QMainWindow,
+        QPushButton,
+        QVBoxLayout,
+        QWidget,
+        QtWebView2Widget,
+    )
+
+
+def _title_icon_pixmap(qt: _QtBindings, title_icon_file: str) -> Any:
+    source = qt.QPixmap(title_icon_file)
+    if source.isNull():
+        return qt.QPixmap()
+    return source.scaled(
+        22,
+        22,
+        qt.Qt.AspectRatioMode.KeepAspectRatio,
+        qt.Qt.TransformationMode.SmoothTransformation,
+    )
+
+
+def _window_control_icon(qt: _QtBindings, kind: str) -> Any:
+    pixmap = qt.QPixmap(16, 16)
+    pixmap.fill(qt.QColor(0, 0, 0, 0))
+    painter = qt.QPainter(pixmap)
+    painter.setRenderHint(qt.QPainter.RenderHint.Antialiasing, True)
+    pen = qt.QPen(qt.QColor("#6b7a91"), 1.6)
+    pen.setCapStyle(qt.Qt.PenCapStyle.RoundCap)
+    pen.setJoinStyle(qt.Qt.PenJoinStyle.RoundJoin)
+    painter.setPen(pen)
+    if kind == "minimize":
+        painter.drawLine(5, 8, 11, 8)
+    elif kind == "maximize":
+        painter.drawRect(5, 5, 6, 6)
+    else:
+        painter.drawLine(5, 5, 11, 11)
+        painter.drawLine(11, 5, 5, 11)
+    painter.end()
+    return qt.QIcon(pixmap)
+
+
+def _title_bar_init(bar: Any, parent: Any, title: str = APP_NAME) -> None:
+    qt = bar._qt
+    bar._window = parent
+    bar._drag_pos = qt.QPoint()
+    bar._running = False
+    bar._idle_icon = _title_icon_pixmap(qt, bar._title_icon_file)
+    bar._active_icon = bar._idle_icon
+    bar.setObjectName("CronusTitleBar")
+    bar.setFixedHeight(32)
+    bar._title_label = qt.QLabel(bar)
+    bar._title_label.setObjectName("CronusTitle")
+    bar._title_label.setTextFormat(qt.Qt.TextFormat.RichText)
+    # NOTE: QLabel with RichText renders via QTextDocument, which
+    # ignores the QSS font-family and uses the widget/QApp font
+    # instead. So the font must be set in BOTH places:
+    # QFont (for the document default) + inline HTML style.
+    try:
+        title_font = qt.QFont("Inter", 9)
+        title_font.setWeight(qt.QFont.Weight.Medium)
+        bar._title_label.setFont(title_font)
+    except Exception:
+        "intentional: ignore exception"
+    title_font_stack = "'Inter','Kanit','Segoe UI','Leelawadee UI',Tahoma,'Noto Sans Thai',sans-serif"
+    bar._title_label.setText(
+        f'<span style="font-family: {title_font_stack}; font-weight: 500;">{APP_NAME}</span> '
+        f'<span style="font-family: {title_font_stack}; font-weight: 500; color: #5c616b;">- {app_display_version()}</span>'
+    )
+    bar._title_label.setAlignment(qt.Qt.AlignmentFlag.AlignCenter)
+    bar._title_label.setAttribute(qt.Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
+    layout = qt.QHBoxLayout(bar)
+    layout.setContentsMargins(12, 0, 10, 0)
+    layout.setSpacing(6)
+    bar._status_icon = qt.QLabel(bar)
+    bar._status_icon.setObjectName("CronusStatusIcon")
+    bar._status_icon.setFixedSize(22, 22)
+    bar._status_icon.setAlignment(qt.Qt.AlignmentFlag.AlignCenter)
+    if not bar._idle_icon.isNull():
+        bar._status_icon.setPixmap(bar._idle_icon)
+    layout.addWidget(bar._status_icon)
+    layout.addStretch(1)
+    min_btn = bar._button("WinMinButton", "Minimize", "minimize")
+    max_btn = bar._button("WinMaxButton", "Maximize", "maximize")
+    close_btn = bar._button("WinCloseButton", "Close", "close")
+    min_btn.clicked.connect(parent.showMinimized)
+    max_btn.clicked.connect(bar._toggle_maximized)
+    close_btn.clicked.connect(parent.close)
+    layout.addWidget(min_btn)
+    layout.addWidget(max_btn)
+    layout.addWidget(close_btn)
+    bar.setStyleSheet(_TITLE_BAR_QSS)
+
+
+def _title_bar_resized(bar: Any, event: Any) -> None:
+    bar._title_label.setGeometry(0, 0, bar.width(), bar.height())
+
+
+def _title_bar_set_running(bar: Any, running: bool) -> None:
+    running = bool(running)
+    if running == bar._running:
+        return
+    bar._running = running
+    icon = bar._active_icon if running else bar._idle_icon
+    if not icon.isNull():
+        bar._status_icon.setPixmap(icon)
+
+
+def _title_bar_button(bar: Any, name: str, tooltip: str, icon_name: str) -> Any:
+    button = bar._qt.QPushButton("", bar)
+    button.setObjectName(name)
+    button.setToolTip(tooltip)
+    button.setFixedSize(34, 22)
+    button.setIcon(_window_control_icon(bar._qt, icon_name))
+    button.setIconSize(bar._qt.QSize(16, 16))
+    button.setCursor(bar._qt.Qt.CursorShape.PointingHandCursor)
+    button.setFocusPolicy(bar._qt.Qt.FocusPolicy.NoFocus)
+    return button
+
+
+def _title_bar_event_pos(bar: Any, event: Any) -> Any:
+    try:
+        return event.globalPosition().toPoint()
+    except AttributeError:
+        return event.globalPos()
+
+
+def _title_bar_toggle_maximized(bar: Any) -> None:
+    if bar._window.isMaximized():
+        bar._window.showNormal()
+    else:
+        bar._window.showMaximized()
+
+
+def _title_bar_mouse_press(bar: Any, event: Any) -> None:
+    if event.button() == bar._qt.Qt.MouseButton.LeftButton:
+        bar._drag_pos = bar._event_pos(event) - bar._window.frameGeometry().topLeft()
+        event.accept()
+
+
+def _title_bar_mouse_move(bar: Any, event: Any) -> None:
+    if (
+        event.buttons() & bar._qt.Qt.MouseButton.LeftButton
+        and not bar._window.isMaximized()
+    ):
+        bar._window.move(bar._event_pos(event) - bar._drag_pos)
+        event.accept()
+
+
+def _title_bar_mouse_double_click(bar: Any, event: Any) -> None:
+    if event.button() == bar._qt.Qt.MouseButton.LeftButton:
+        bar._toggle_maximized()
+        event.accept()
+
+
+def _make_rounded_window_class(qt: _QtBindings) -> type:
+    QMainWindow = qt.QMainWindow
+
+    class RoundedMainWindow(QMainWindow):
+        # NOTE: no QBitmap mask here. WebView2 is a native HWND child and
+        # cannot be clipped by a Qt mask (airspace). Window is square
+        # (no rounding): DWM DONOTROUND + Qt radius 0. The visible 1px
+        # border is drawn by the Qt shell only. The web `.app` stays flat
+        # (border 0 / radius 0) so there is exactly one outer edge.
+        # This also removes a full-mask repaint on every resize (CPU win).
+        def changeEvent(self, event):
+            try:
+                QEvent = qt.QEvent
+            except Exception:
+                QEvent = None
+            try:
+                if QEvent is not None and event.type() == QEvent.Type.WindowStateChange:
+                    sync = getattr(self, "_cronus_sync_chrome", None)
+                    if callable(sync):
+                        sync(bool(self.isMaximized()))
+            except Exception:
+                "intentional: ignore exception"
+            super().changeEvent(event)
+
+    return RoundedMainWindow
+
+
+def _make_title_bar_class(qt: _QtBindings, title_icon_file: str) -> type:
+    QFrame = qt.QFrame
+
+    class TitleBar(QFrame):
+        _qt = qt
+        _title_icon_file = title_icon_file
+
+        def __init__(self, parent, title: str = APP_NAME):
+            super().__init__(parent)
+            _title_bar_init(self, parent, title)
+
+        def resizeEvent(self, event):
+            super().resizeEvent(event)
+            _title_bar_resized(self, event)
+
+        set_running = _title_bar_set_running
+        _button = _title_bar_button
+        _event_pos = _title_bar_event_pos
+        _toggle_maximized = _title_bar_toggle_maximized
+        mousePressEvent = _title_bar_mouse_press
+        mouseMoveEvent = _title_bar_mouse_move
+        mouseDoubleClickEvent = _title_bar_mouse_double_click
+
+    return TitleBar
+
+
+def _apply_windows_rounded_corners(qwindow: Any, maximized: bool = False) -> None:
+    if os.name != "nt":
+        return
+    try:
+        hwnd = int(qwindow.winId())
+        # Square window: DONOTROUND (1) in both states. Maximized
+        # frameless windows must not round either, otherwise DWM
+        # leaves a gap / cut border at the screen edges.
+        _ = maximized
+        preference = ctypes.c_int(1)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            ctypes.c_void_p(hwnd),
+            ctypes.c_uint(33),
+            ctypes.byref(preference),
+            ctypes.sizeof(preference),
+        )
+    except Exception as exc:
+        flog_kv("MAIN", "desktop_rounded_corner_unavailable", "debug", error=str(exc))
+
+
+def _sync_chrome(window: Any, container: Any, view: Any, maximized: bool) -> None:
+    try:
+        container.setStyleSheet(_SHELL_QSS_MAXIMIZED if maximized else _SHELL_QSS_NORMAL)
+    except Exception:
+        "intentional: ignore exception"
+    _apply_windows_rounded_corners(window, maximized=maximized)
+    # WebView2 JS bridge: only evaluate_js exists (ExecuteScriptAsync
+    # queued pre-init). Guard is_ready so a pre-init call is skipped
+    # instead of raising inside the bridge.
+    try:
+        if bool(getattr(view, "is_ready", False)):
+            view.evaluate_js(
+                "try{document.documentElement.classList.toggle"
+                "('cronus-maximized', %s)}catch(e){}"
+                % ("true" if maximized else "false")
+            )
+    except Exception:
+        "intentional: ignore exception"
+
+
+def _build_qt_app(qt: _QtBindings) -> tuple[Any, Any, str]:
+    _set_app_user_model_id()
+    try:
+        qt.QCoreApplication.setApplicationName(APP_NAME)
+        qt.QCoreApplication.setOrganizationName("Cronus")
+    except Exception:
+        "intentional: ignore exception"
+    app_qt = qt.QApplication.instance() or qt.QApplication(sys.argv[:1])
+    kanit_ok = _load_bundled_kanit_fonts()
+    try:
+        if kanit_ok:
+            app_qt.setFont(qt.QFont("Inter", 9))
+    except Exception as exc:
+        flog_kv("MAIN", "desktop_font_apply_failed", "debug", error=str(exc))
+    icon_path = resource_path("assets", APP_ICON_FILE)
+    icon = qt.QIcon(icon_path) if os.path.exists(icon_path) else qt.QIcon()
+    if not icon.isNull():
+        app_qt.setWindowIcon(icon)
+    return app_qt, icon, icon_path
+
+
+def _build_main_window(
+    qt: _QtBindings,
+    url: str,
+    icon: Any,
+) -> tuple[Any, Any, Any]:
+    window = _make_rounded_window_class(qt)()
+    window.setWindowTitle(APP_NAME)
+    window.setWindowFlags(qt.Qt.WindowType.Window | qt.Qt.WindowType.FramelessWindowHint)
+    # Opaque shell: WebView2 is a native HWND child and cannot be
+    # clipped by a translucent Qt mask (airspace). Translucency caused
+    # the buggy fringe/black corners. Outer rounding comes from DWM only.
+    window.setAttribute(qt.Qt.WidgetAttribute.WA_TranslucentBackground, False)
+    window.setStyleSheet("QMainWindow { background: #0b0c10; }")
+    if not icon.isNull():
+        window.setWindowIcon(icon)
+    # Opaque WebView2 view: no translucency, no alpha compositing.
+    # This is the main RAM/CPU win vs the old transparent QWebEngineView.
+    view = qt.QtWebView2Widget(parent=window, url=str(url or ""))
+    view.setObjectName("CronusWebView")
+    view.setStyleSheet("#CronusWebView { background: #0b0c10; border: 0; }")
+    container = qt.QWidget(window)
+    container.setObjectName("CronusWindowShell")
+    container.setAttribute(qt.Qt.WidgetAttribute.WA_StyledBackground, True)
+    # Single outer edge: Qt draws the 1px border, square corners.
+    # The web `.app` is flat (no border / radius / inset ring).
+    container.setStyleSheet(_SHELL_QSS_NORMAL)
+    return window, view, container
+
+
+def _install_shell_layout(
+    qt: _QtBindings,
+    window: Any,
+    container: Any,
+    view: Any,
+    title_bar: Any,
+) -> None:
+    # NOTE: children are inset by 1px so they never paint over the outer
+    # ring. QSS border-radius does not clip child widgets, so without
+    # this the square titlebar/web corners cover the rounded border.
+    layout = qt.QVBoxLayout(container)
+    layout.setContentsMargins(1, 1, 1, 1)
+    layout.setSpacing(0)
+    layout.addWidget(title_bar)
+    layout.addWidget(view, 1)
+    window.setCentralWidget(container)
+
+
+def _show_window(
+    qt: _QtBindings,
+    window: Any,
+    app_qt: Any,
+    on_first_show: Callable[[], None] | None,
+) -> None:
+    # Initial size matched to the Storm Launcher reference screenshot
+    # (compact ~4:3 login window, not wide 1280x820).
+    window.resize(1124, 843)
+    window.setMinimumSize(966, 659)
+    try:
+        screen = app_qt.primaryScreen()
+        if screen is not None:
+            geo = screen.availableGeometry()
+            window.move(geo.center() - window.rect().center())
+    except Exception:
+        "intentional: ignore exception"
+    _apply_windows_rounded_corners(window)
+    window.show()
+    window.raise_()
+    window.activateWindow()
+    try:
+        if callable(on_first_show):
+            on_first_show()
+    except Exception:
+        "intentional: ignore exception"
+    _apply_windows_rounded_corners(window)
+
+
+class _DesktopRuntime:
+    def __init__(
+        self,
+        farm: Any,
+        shutdown_event: Any,
+        title_timer: Any,
+        app_qt: Any,
+    ) -> None:
+        self.farm = farm
+        self.shutdown_event = shutdown_event
+        self.title_timer = title_timer
+        self.app_qt = app_qt
+        self.shutting_down = False
+
+    def stop(self, reason: str = "desktop_shutdown") -> None:
+        if self.shutting_down:
+            return
+        self.shutting_down = True
+        try:
+            self.shutdown_event.set()
+        except Exception:
+            "intentional: ignore exception"
+        try:
+            self.title_timer.stop()
+        except Exception:
+            "intentional: ignore exception"
+        # Fast close: window is already gone, never block on the full
+        # graceful stop() (sequential 2s joins = 10s+ hang). stop_fast()
+        # signals workers, kills Roblox, persists runtime, releases the
+        # guard — daemon threads die with the process exit in run_desktop.
+        try:
+            if self.farm is not None and bool(getattr(self.farm, "running", False)):
+                fast_stop = getattr(self.farm, "stop_fast", None)
+                if callable(fast_stop):
+                    fast_stop()
+                else:
+                    self.farm.stop()
+        except Exception as exc:
+            flog_kv("MAIN", "desktop_shutdown_stop_farm_failed", "warning", reason=reason, error=str(exc))
+        try:
+            from desktop.instance_guard import _clear_instance_state
+
+            _clear_instance_state()
+        except Exception:
+            "intentional: ignore exception"
+
+
+def _refresh_title_status(title_bar: Any, runtime: _DesktopRuntime) -> None:
+    if runtime.shutting_down:
+        return
+    try:
+        running = bool(getattr(runtime.farm, "running", False))
+    except KeyboardInterrupt:
+        runtime.stop("ctrl_c")
+        try:
+            runtime.app_qt.quit()
+        except Exception:
+            "intentional: ignore exception"
+        return
+    except Exception:
+        running = False
+    title_bar.set_running(running)
+
+
+def _log_ctrl_c() -> None:
+    from core import flog as _flog
+
+    _flog("[MAIN] Ctrl+C received - closing desktop window")
+
+
+def _handle_sigint(_signum: Any, _frame: Any, runtime: _DesktopRuntime) -> None:
+    _log_ctrl_c()
+    runtime.stop("ctrl_c")
+    runtime.app_qt.quit()
 
 
 class DesktopWindow:
@@ -326,426 +867,48 @@ class DesktopWindow:
         _prepare_webview_env()
         if not _webview2_preflight():
             return False
-        try:
-            from PySide6.QtCore import QCoreApplication, QPoint, QSize, Qt, QTimer
-            from PySide6.QtGui import QColor, QFont, QIcon, QPainter, QPen, QPixmap
-            from PySide6.QtWidgets import (
-                QApplication,
-                QFrame,
-                QHBoxLayout,
-                QLabel,
-                QMainWindow,
-                QPushButton,
-                QVBoxLayout,
-                QWidget,
-            )
-            from qtwebview2 import QtWebView2Widget
-        except Exception as exc:
-            flog_kv("MAIN", "desktop_qt_unavailable", "warning", error=str(exc))
+        qt = _load_qt_bindings()
+        if qt is None:
             return False
 
-        TITLE_ICON_FILE = resource_path("assets", APP_ICON_FILE)
+        app_qt, icon, title_icon_file = _build_qt_app(qt)
+        window, view, container = _build_main_window(qt, url, icon)
+        title_bar = _make_title_bar_class(qt, title_icon_file)(window)
+        _install_shell_layout(qt, window, container, view, title_bar)
+        sync_chrome = functools.partial(_sync_chrome, window, container, view)
+        window._cronus_sync_chrome = sync_chrome
+        sync_chrome(bool(window.isMaximized()))
+        _show_window(qt, window, app_qt, on_first_show)
 
-        def _title_icon_pixmap() -> QPixmap:
-            source = QPixmap(TITLE_ICON_FILE)
-            if source.isNull():
-                return QPixmap()
-            return source.scaled(
-                22,
-                22,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            )
-
-        def _window_control_icon(kind: str) -> QIcon:
-            pixmap = QPixmap(16, 16)
-            pixmap.fill(QColor(0, 0, 0, 0))
-            painter = QPainter(pixmap)
-            painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-            pen = QPen(QColor("#6b7a91"), 1.6)
-            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-            painter.setPen(pen)
-            if kind == "minimize":
-                painter.drawLine(5, 8, 11, 8)
-            elif kind == "maximize":
-                painter.drawRect(5, 5, 6, 6)
-            else:
-                painter.drawLine(5, 5, 11, 11)
-                painter.drawLine(11, 5, 5, 11)
-            painter.end()
-            return QIcon(pixmap)
-
-        class RoundedMainWindow(QMainWindow):
-            # NOTE: no QBitmap mask here. WebView2 is a native HWND child and
-            # cannot be clipped by a Qt mask (airspace). Window is square
-            # (no rounding): DWM DONOTROUND + Qt radius 0. The visible 1px
-            # border is drawn by the Qt shell only. The web `.app` stays flat
-            # (border 0 / radius 0) so there is exactly one outer edge.
-            # This also removes a full-mask repaint on every resize (CPU win).
-            def changeEvent(self, event):  # noqa: N802 (Qt override)
-                try:
-                    from PySide6.QtCore import QEvent
-                except Exception:
-                    QEvent = None
-                try:
-                    if QEvent is not None and event.type() == QEvent.Type.WindowStateChange:
-                        sync = getattr(self, "_cronus_sync_chrome", None)
-                        if callable(sync):
-                            sync(bool(self.isMaximized()))
-                except Exception:
-                    pass
-                super().changeEvent(event)
-
-        class TitleBar(QFrame):
-            def __init__(self, parent, title: str = APP_NAME):
-                super().__init__(parent)
-                self._window = parent
-                self._drag_pos = QPoint()
-                self._running = False
-                self._idle_icon = _title_icon_pixmap()
-                self._active_icon = self._idle_icon
-                self.setObjectName("CronusTitleBar")
-                self.setFixedHeight(32)
-                self._title_label = QLabel(self)
-                self._title_label.setObjectName("CronusTitle")
-                self._title_label.setTextFormat(Qt.TextFormat.RichText)
-                # NOTE: QLabel with RichText renders via QTextDocument, which
-                # ignores the QSS font-family and uses the widget/QApp font
-                # instead. So the font must be set in BOTH places:
-                # QFont (for the document default) + inline HTML style.
-                try:
-                    _title_font = QFont("Inter", 9)
-                    _title_font.setWeight(QFont.Weight.Medium)
-                    self._title_label.setFont(_title_font)
-                except Exception:
-                    pass
-                _title_font_stack = "'Inter','Kanit','Segoe UI','Leelawadee UI',Tahoma,'Noto Sans Thai',sans-serif"
-                self._title_label.setText(
-                    f'<span style="font-family: {_title_font_stack}; font-weight: 500;">{APP_NAME}</span> '
-                    f'<span style="font-family: {_title_font_stack}; font-weight: 500; color: #5c616b;">- {app_display_version()}</span>'
-                )
-                self._title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                self._title_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents, True)
-                layout = QHBoxLayout(self)
-                layout.setContentsMargins(12, 0, 10, 0)
-                layout.setSpacing(6)
-                self._status_icon = QLabel(self)
-                self._status_icon.setObjectName("CronusStatusIcon")
-                self._status_icon.setFixedSize(22, 22)
-                self._status_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
-                if not self._idle_icon.isNull():
-                    self._status_icon.setPixmap(self._idle_icon)
-                layout.addWidget(self._status_icon)
-                layout.addStretch(1)
-                min_btn = self._button("WinMinButton", "Minimize", "minimize")
-                max_btn = self._button("WinMaxButton", "Maximize", "maximize")
-                close_btn = self._button("WinCloseButton", "Close", "close")
-                min_btn.clicked.connect(parent.showMinimized)
-                max_btn.clicked.connect(self._toggle_maximized)
-                close_btn.clicked.connect(parent.close)
-                layout.addWidget(min_btn)
-                layout.addWidget(max_btn)
-                layout.addWidget(close_btn)
-                self.setStyleSheet(
-                    """
-                    #CronusTitleBar {
-                        background-color: #0c0d13;
-                        border-bottom: 1px solid #20232c;
-                    }
-                    #CronusTitle {
-                        font-family: "Inter", "Kanit", "Segoe UI", "Leelawadee UI", Tahoma, "Noto Sans Thai", sans-serif;
-                        color: #9aa0ab;
-                        font-size: 12px;
-                        font-weight: 500;
-                    }
-                    #CronusStatusIcon {
-                        margin-right: 0px;
-                    }
-                    QPushButton#WinMinButton, QPushButton#WinMaxButton, QPushButton#WinCloseButton {
-                        width: 34px; height: 22px; min-width: 34px; max-width: 34px;
-                        min-height: 22px; max-height: 22px; border-radius: 9px;
-border: 1px solid #262a33;
-                         background-color: #14161c;
-                         color: #53565e;
-                        padding: 0px;
-                    }
-                    QPushButton#WinMinButton:hover, QPushButton#WinMaxButton:hover {
-background-color: #1a1d29;
-                         border-color: #3a3f4d;
-                        color: #ffffff;
-                    }
-                    QPushButton#WinCloseButton:hover {
-background-color: #26161b;
-                         border-color: #4c1d24;
-                        color: #f87171;
-                    }
-                    """
-                )
-
-            def resizeEvent(self, event):
-                super().resizeEvent(event)
-                self._title_label.setGeometry(0, 0, self.width(), self.height())
-
-            def set_running(self, running: bool):
-                running = bool(running)
-                if running == self._running:
-                    return
-                self._running = running
-                icon = self._active_icon if running else self._idle_icon
-                if not icon.isNull():
-                    self._status_icon.setPixmap(icon)
-
-            def _button(self, name: str, tooltip: str, icon_name: str):
-                button = QPushButton("", self)
-                button.setObjectName(name)
-                button.setToolTip(tooltip)
-                button.setFixedSize(34, 22)
-                button.setIcon(_window_control_icon(icon_name))
-                button.setIconSize(QSize(16, 16))
-                button.setCursor(Qt.CursorShape.PointingHandCursor)
-                button.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-                return button
-
-            def _event_pos(self, event):
-                try:
-                    return event.globalPosition().toPoint()
-                except AttributeError:
-                    return event.globalPos()
-
-            def _toggle_maximized(self):
-                if self._window.isMaximized():
-                    self._window.showNormal()
-                else:
-                    self._window.showMaximized()
-
-            def mousePressEvent(self, event):
-                if event.button() == Qt.MouseButton.LeftButton:
-                    self._drag_pos = self._event_pos(event) - self._window.frameGeometry().topLeft()
-                    event.accept()
-
-            def mouseMoveEvent(self, event):
-                if event.buttons() & Qt.MouseButton.LeftButton and not self._window.isMaximized():
-                    self._window.move(self._event_pos(event) - self._drag_pos)
-                    event.accept()
-
-            def mouseDoubleClickEvent(self, event):
-                if event.button() == Qt.MouseButton.LeftButton:
-                    self._toggle_maximized()
-                    event.accept()
-
-        def _apply_windows_rounded_corners(qwindow, maximized: bool = False):
-            if os.name != "nt":
-                return
-            try:
-                hwnd = int(qwindow.winId())
-                # Square window: DONOTROUND (1) in both states. Maximized
-                # frameless windows must not round either, otherwise DWM
-                # leaves a gap / cut border at the screen edges.
-                _ = maximized
-                preference = ctypes.c_int(1)
-                ctypes.windll.dwmapi.DwmSetWindowAttribute(
-                    ctypes.c_void_p(hwnd),
-                    ctypes.c_uint(33),
-                    ctypes.byref(preference),
-                    ctypes.sizeof(preference),
-                )
-            except Exception as exc:
-                flog_kv("MAIN", "desktop_rounded_corner_unavailable", "debug", error=str(exc))
-
-        _set_app_user_model_id()
-        try:
-            QCoreApplication.setApplicationName(APP_NAME)
-            QCoreApplication.setOrganizationName("Cronus")
-        except Exception:
-            pass
-        app_qt = QApplication.instance() or QApplication(sys.argv[:1])
-        _kanit_ok = _load_bundled_kanit_fonts()
-        try:
-            if _kanit_ok:
-                from PySide6.QtGui import QFont
-
-                app_qt.setFont(QFont("Inter", 9))
-        except Exception as exc:
-            flog_kv("MAIN", "desktop_font_apply_failed", "debug", error=str(exc))
-        icon_path = resource_path("assets", APP_ICON_FILE)
-        icon = QIcon(icon_path) if os.path.exists(icon_path) else QIcon()
-        if not icon.isNull():
-            app_qt.setWindowIcon(icon)
-        window = RoundedMainWindow()
-        window.setWindowTitle(APP_NAME)
-        window.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
-        # Opaque shell: WebView2 is a native HWND child and cannot be
-        # clipped by a translucent Qt mask (airspace). Translucency caused
-        # the buggy fringe/black corners. Outer rounding comes from DWM only.
-        window.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, False)
-        window.setStyleSheet("QMainWindow { background: #0b0c10; }")
-        if not icon.isNull():
-            window.setWindowIcon(icon)
-        # Opaque WebView2 view: no translucency, no alpha compositing.
-        # This is the main RAM/CPU win vs the old transparent QWebEngineView.
-        view = QtWebView2Widget(parent=window, url=str(url or ""))
-        view.setObjectName("CronusWebView")
-        view.setStyleSheet("#CronusWebView { background: #0b0c10; border: 0; }")
-        container = QWidget(window)
-        container.setObjectName("CronusWindowShell")
-        container.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        # Single outer edge: Qt draws the 1px border, square corners.
-        # The web `.app` is flat (no border / radius / inset ring).
-        _SHELL_QSS_NORMAL = (
-            "QWidget#CronusWindowShell {"
-            " background: #0b0c10;"
-            " border: 1px solid #20232c;"
-            " border-radius: 0px;"
-            "}"
-            "#CronusWebView { background: #0b0c10; border: 0; }"
+        title_timer = qt.QTimer(window)
+        desktop_runtime = _DesktopRuntime(farm, shutdown_event, title_timer, app_qt)
+        title_timer.timeout.connect(
+            functools.partial(_refresh_title_status, title_bar, desktop_runtime)
         )
-        _SHELL_QSS_MAXIMIZED = (
-            "QWidget#CronusWindowShell {"
-            " background: #0b0c10;"
-            " border: 0px;"
-            " border-radius: 0px;"
-            "}"
-            "#CronusWebView { background: #0b0c10; border: 0; }"
-        )
-        container.setStyleSheet(_SHELL_QSS_NORMAL)
-
-        def _sync_chrome(maximized: bool):
-            try:
-                container.setStyleSheet(_SHELL_QSS_MAXIMIZED if maximized else _SHELL_QSS_NORMAL)
-            except Exception:
-                pass
-            _apply_windows_rounded_corners(window, maximized=maximized)
-            # WebView2 JS bridge: only evaluate_js exists (ExecuteScriptAsync
-            # queued pre-init). Guard is_ready so a pre-init call is skipped
-            # instead of raising inside the bridge.
-            try:
-                if bool(getattr(view, "is_ready", False)):
-                    view.evaluate_js(
-                        "try{document.documentElement.classList.toggle"
-                        "('cronus-maximized', %s)}catch(e){}"
-                        % ("true" if maximized else "false")
-                    )
-            except Exception:
-                pass
-
-        window._cronus_sync_chrome = _sync_chrome
-        # NOTE: children are inset by 1px so they never paint over the outer
-        # ring. QSS border-radius does not clip child widgets, so without
-        # this the square titlebar/web corners cover the rounded border.
-        layout = QVBoxLayout(container)
-        layout.setContentsMargins(1, 1, 1, 1)
-        layout.setSpacing(0)
-        title_bar = TitleBar(window)
-        layout.addWidget(title_bar)
-        layout.addWidget(view, 1)
-        window.setCentralWidget(container)
-        _sync_chrome(bool(window.isMaximized()))
-        # Initial size matched to the Storm Launcher reference screenshot
-        # (compact ~4:3 login window, not wide 1280x820).
-        window.resize(1124, 843)
-        window.setMinimumSize(966, 659)
-        try:
-            _screen = app_qt.primaryScreen()
-            if _screen is not None:
-                _geo = _screen.availableGeometry()
-                window.move(_geo.center() - window.rect().center())
-        except Exception:
-            pass
-        _apply_windows_rounded_corners(window)
-        window.show()
-        window.raise_()
-        window.activateWindow()
-        try:
-            if callable(on_first_show):
-                on_first_show()
-        except Exception:
-            pass
-        _apply_windows_rounded_corners(window)
-        title_timer = QTimer(window)
-        shutting_down = False
-
-        def _stop_desktop_runtime(reason: str = "desktop_shutdown"):
-            nonlocal shutting_down
-            if shutting_down:
-                return
-            shutting_down = True
-            try:
-                shutdown_event.set()
-            except Exception:
-                pass
-            try:
-                title_timer.stop()
-            except Exception:
-                pass
-            # Fast close: window is already gone, never block on the full
-            # graceful stop() (sequential 2s joins = 10s+ hang). stop_fast()
-            # signals workers, kills Roblox, persists runtime, releases the
-            # guard — daemon threads die with the process exit in run_desktop.
-            try:
-                if farm is not None and bool(getattr(farm, "running", False)):
-                    fast_stop = getattr(farm, "stop_fast", None)
-                    if callable(fast_stop):
-                        fast_stop()
-                    else:
-                        farm.stop()
-            except Exception as exc:
-                flog_kv("MAIN", "desktop_shutdown_stop_farm_failed", "warning", reason=reason, error=str(exc))
-            try:
-                from desktop.instance_guard import _clear_instance_state
-
-                _clear_instance_state()
-            except Exception:
-                pass
-
-        def _refresh_title_status():
-            if shutting_down:
-                return
-            try:
-                running = bool(getattr(farm, "running", False))
-            except KeyboardInterrupt:
-                _stop_desktop_runtime("ctrl_c")
-                try:
-                    app_qt.quit()
-                except Exception:
-                    pass
-                return
-            except Exception:
-                running = False
-            title_bar.set_running(running)
-
-        title_timer.timeout.connect(_refresh_title_status)
         title_timer.start(500)
         window._cronus_title_timer = title_timer
-        _refresh_title_status()
+        _refresh_title_status(title_bar, desktop_runtime)
         from core import flog
 
         flog("[MAIN] Desktop window running (WebView2)")
         previous_sigint = signal.getsignal(signal.SIGINT)
-
-        def _handle_sigint(_signum, _frame):
-            from core import flog as _flog
-
-            _flog("[MAIN] Ctrl+C received - closing desktop window")
-            _stop_desktop_runtime("ctrl_c")
-            app_qt.quit()
-
         try:
-            signal.signal(signal.SIGINT, _handle_sigint)
+            signal.signal(
+                signal.SIGINT,
+                functools.partial(_handle_sigint, runtime=desktop_runtime),
+            )
         except Exception:
             previous_sigint = None
         try:
             app_qt.exec()
         except KeyboardInterrupt:
-            from core import flog as _flog
-
-            _flog("[MAIN] Ctrl+C received - closing desktop window")
-            _stop_desktop_runtime("ctrl_c")
+            _log_ctrl_c()
+            desktop_runtime.stop("ctrl_c")
         finally:
             if previous_sigint is not None:
                 try:
                     signal.signal(signal.SIGINT, previous_sigint)
                 except Exception:
-                    pass
-            _stop_desktop_runtime("desktop_window_closed")
+                    "intentional: ignore exception"
+            desktop_runtime.stop("desktop_window_closed")
         return True

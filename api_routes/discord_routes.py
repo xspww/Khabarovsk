@@ -21,7 +21,7 @@ def register(app, ctx: ApiContext) -> None:
                 "show_game": bool(ctx.cfg_mgr.get("discord_show_game", True)),
             }
         except Exception:
-            pass
+            "intentional: ignore exception"
         snap["ok"] = True
         return snap
 

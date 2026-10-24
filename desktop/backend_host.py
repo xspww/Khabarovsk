@@ -79,27 +79,38 @@ class BackendHost:
                 traceback=traceback.format_exc(),
             )
 
+    def _probe_status(self, url: str) -> tuple[bool, str, str]:
+        """Return (ready, status_text, error_text) for one readiness probe."""
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": APP_USER_AGENT})
+            with urllib.request.urlopen(req, timeout=0.8) as resp:
+                if 200 <= int(resp.status) < 500:
+                    return True, f"status={resp.status}", ""
+        except urllib.error.HTTPError as exc:
+            if 200 <= int(exc.code) < 500:
+                return True, f"status={exc.code}", ""
+            return False, "", f"HTTPError: {exc.code}"
+        except Exception as exc:
+            return False, "", f"{type(exc).__name__}: {exc}"
+        return False, "", ""
+
+    def _exit_message(self) -> str:
+        return self._error or "backend thread exited before ready"
+
     def wait_ready(self, server_thread: threading.Thread, timeout: float = 20.0) -> tuple[bool, str]:
         wait_seconds = max(1.0, float(timeout or 20.0))
-        started_at = time.time()
-        deadline = started_at + wait_seconds
+        deadline = time.time() + wait_seconds
         url = f"{self.base_url()}/api/status"
         last_error = ""
         while time.time() < deadline:
             if not server_thread.is_alive():
-                return False, self._error or "backend thread exited before ready"
-            try:
-                req = urllib.request.Request(url, headers={"User-Agent": APP_USER_AGENT})
-                with urllib.request.urlopen(req, timeout=0.8) as resp:
-                    if 200 <= int(resp.status) < 500:
-                        return True, f"status={resp.status}"
-            except urllib.error.HTTPError as exc:
-                if 200 <= int(exc.code) < 500:
-                    return True, f"status={exc.code}"
-                last_error = f"HTTPError: {exc.code}"
-            except Exception as exc:
-                last_error = f"{type(exc).__name__}: {exc}"
+                return False, self._exit_message()
+            ready, status_text, error_text = self._probe_status(url)
+            if ready:
+                return True, status_text
+            if error_text:
+                last_error = error_text
             time.sleep(0.25)
         if not server_thread.is_alive():
-            return False, self._error or "backend thread exited before ready"
+            return False, self._exit_message()
         return False, last_error or "backend readiness timeout"

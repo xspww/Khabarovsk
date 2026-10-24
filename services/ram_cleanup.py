@@ -34,10 +34,12 @@ import time
 from ctypes import wintypes
 from typing import Any
 
+from services._util import is_admin
+
 try:
-    import psutil  # type: ignore
+    import psutil
 except Exception:  # pragma: no cover
-    psutil = None  # type: ignore
+    psutil = None
 
 # ── NtSetSystemInformation classes / commands ──
 _SYS_MEMORY_LIST_INFO = 80
@@ -56,13 +58,6 @@ class _MemoryCombineInfoEx(ctypes.Structure):
         ("PagesCombined", ctypes.c_size_t),
         ("Flags", wintypes.DWORD),
     ]
-
-
-def is_admin() -> bool:
-    try:
-        return bool(ctypes.windll.shell32.IsUserAnAdmin())
-    except Exception:
-        return False
 
 
 class _Luid(ctypes.Structure):
@@ -183,6 +178,28 @@ def _ram_snapshot_mb() -> dict[str, float]:
         return {"used_mb": 0.0, "total_mb": 0.0, "percent": 0.0}
 
 
+def _auto_clean_trigger(threshold_hit: bool, interval_due: bool) -> str:
+    if threshold_hit and interval_due:
+        return "threshold+interval"
+    if threshold_hit:
+        return "threshold"
+    return "interval"
+
+
+def _registry_probe() -> tuple[int, dict[str, Any]]:
+    return _nt_set_info(_SYS_REGISTRY_RECONCILIATION, None, 0), {}
+
+
+def _combine_probe() -> tuple[int, dict[str, Any]]:
+    info = _MemoryCombineInfoEx()  # zero-initialized
+    status = _nt_set_info(
+        _SYS_COMBINE_PHYSICAL,
+        ctypes.byref(info),
+        ctypes.sizeof(info),
+    )
+    return status, {"pages_combined": int(info.PagesCombined)}
+
+
 class RamCleanupService:
     """Stateful wrapper: manual clean + auto-clean eligibility + stats."""
 
@@ -193,12 +210,6 @@ class RamCleanupService:
         self._interval_anchor_at = 0.0
         self._last_freed_mb = 0.0
         self._last_status: dict[str, Any] = {}
-
-    def current_percent(self) -> float:
-        try:
-            return float(_ram_snapshot_mb().get("percent", 0.0) or 0.0)
-        except Exception:
-            return 0.0
 
     def get_last_run_at(self) -> float:
         with self._lock:
@@ -254,18 +265,15 @@ class RamCleanupService:
             return max(0.0, _CLEANUP_COOLDOWN_SECONDS - (now - self._last_run_at)) \
                 if self._last_run_at else 0.0
 
-    def decide_auto_clean(self, cfg: dict[str, Any], now: float | None = None) -> dict[str, Any]:
-        """Independent dual-trigger decision.
-
-        - Threshold trigger: RAM percent >= threshold -> clean immediately,
-          no waiting for the interval.
-        - Interval trigger: time since last clean (or since first seen when
-          never cleaned) >= interval_min -> clean unconditionally.
-        """
-        now = now if now is not None else time.time()
-        if not bool(cfg.get("ram_cleanup_enabled", False)):
-            return {"eligible": False, "reason": "disabled", "trigger": "none"}
-        threshold = max(50.0, min(95.0, _num(cfg.get("ram_cleanup_threshold_pct", 85.0), 85.0)))
+    def _decision_context(
+        self,
+        cfg: dict[str, Any],
+        now: float,
+    ) -> tuple[float, float, bool, dict[str, Any]]:
+        threshold = max(
+            50.0,
+            min(95.0, _num(cfg.get("ram_cleanup_threshold_pct", 85.0), 85.0)),
+        )
         interval_min = _interval_min(cfg.get("ram_cleanup_interval_min", 15))
         snap = _ram_snapshot_mb()
         percent = float(snap.get("percent", 0.0) or 0.0)
@@ -277,19 +285,34 @@ class RamCleanupService:
             anchor = self._interval_anchor_at
         base = last_run or anchor
         interval_due = (now - base) >= (interval_min * 60.0) if base else False
-        threshold_hit = percent >= threshold
         next_clean_at = self._next_clean_at(True, interval_min, last_run, anchor)
         next_in = max(0, int(next_clean_at - now)) if next_clean_at else 0
-        common = {"percent": percent, "threshold": threshold,
-                  "interval_min": interval_min,
-                  "next_clean_in_seconds": next_in,
-                  "next_check_in_seconds": next_in}
+        common = {
+            "percent": percent,
+            "threshold": threshold,
+            "interval_min": interval_min,
+            "next_clean_in_seconds": next_in,
+            "next_check_in_seconds": next_in,
+        }
+        return percent, threshold, interval_due, common
+
+    def decide_auto_clean(self, cfg: dict[str, Any], now: float | None = None) -> dict[str, Any]:
+        """Independent dual-trigger decision.
+
+        - Threshold trigger: RAM percent >= threshold -> clean immediately,
+          no waiting for the interval.
+        - Interval trigger: time since last clean (or since first seen when
+          never cleaned) >= interval_min -> clean unconditionally.
+        """
+        now = now if now is not None else time.time()
+        if not bool(cfg.get("ram_cleanup_enabled", False)):
+            return {"eligible": False, "reason": "disabled", "trigger": "none"}
+        percent, threshold, interval_due, common = self._decision_context(cfg, now)
+        threshold_hit = percent >= threshold
         if not threshold_hit and not interval_due:
             return {"eligible": False, "reason": "below_threshold",
                     "trigger": "none", **common}
-        trigger = "threshold" if threshold_hit else "interval"
-        if threshold_hit and interval_due:
-            trigger = "threshold+interval"
+        trigger = _auto_clean_trigger(threshold_hit, interval_due)
         remaining = self._check_cooldown(now)
         if remaining > 0:
             return {"eligible": False, "reason": "cooldown",
@@ -305,6 +328,119 @@ class RamCleanupService:
         # Backward-compatible wrapper — now backed by the dual-trigger
         # decision (threshold immediate, interval unconditional).
         return self.decide_auto_clean(cfg, now)
+
+    def _run_memory_list_step(
+        self,
+        steps: dict[str, Any],
+        errors: list,
+        key: str,
+        command: int,
+        label: str,
+        error_label: str,
+    ) -> None:
+        try:
+            cmd = ctypes.c_int(command)
+            status = _nt_set_info(
+                _SYS_MEMORY_LIST_INFO,
+                ctypes.byref(cmd),
+                ctypes.sizeof(cmd),
+            )
+            steps[key] = {"ntstatus": status, "ok": status == 0}
+            if status != 0:
+                errors.append(f"{label} NTSTATUS=0x{status & 0xFFFFFFFF:08X}")
+        except Exception as exc:
+            steps[key] = {"ok": False, "error": str(exc)}
+            errors.append(f"{error_label}: {exc}")
+
+    def _run_file_cache_step(self, steps: dict[str, Any], errors: list) -> None:
+        try:
+            k32 = ctypes.windll.kernel32
+            fn = k32.SetSystemFileCacheSize
+            fn.restype = wintypes.BOOL
+            fn.argtypes = [ctypes.c_size_t, ctypes.c_size_t, wintypes.DWORD]
+            max_ws = ctypes.c_size_t(-1).value
+            cache_ok = bool(fn(max_ws, max_ws, 0))
+            steps["system_file_cache"] = {"ok": cache_ok}
+            if not cache_ok:
+                errors.append("SetSystemFileCacheSize failed")
+        except Exception as exc:
+            steps["system_file_cache"] = {"ok": False, "error": str(exc)}
+            errors.append(f"file_cache: {exc}")
+
+    def _run_optional_step(
+        self,
+        steps: dict[str, Any],
+        errors: list,
+        key: str,
+        supported: bool,
+        runner: Any,
+        label: str,
+        error_label: str,
+    ) -> None:
+        if not supported:
+            steps[key] = {"ok": True, "skipped": "os_too_old"}
+            return
+        try:
+            status, extra = runner()
+            steps[key] = {"ntstatus": status, "ok": status == 0, **extra}
+            if status != 0:
+                errors.append(f"{label} NTSTATUS=0x{status & 0xFFFFFFFF:08X}")
+        except Exception as exc:
+            steps[key] = {"ok": False, "error": str(exc)}
+            errors.append(f"{error_label}: {exc}")
+
+    def _finish_clean(
+        self,
+        source: str,
+        before: dict[str, Any],
+        after: dict[str, Any],
+        errors: list,
+        steps: dict[str, Any],
+    ) -> dict[str, Any]:
+        freed = max(0.0, before["used_mb"] - after["used_mb"])
+        core_ok = any(
+            steps.get(k, {}).get("ok")
+            for k in (
+                "working_set",
+                "system_file_cache",
+                "standby_priority0",
+                "combine",
+            )
+        )
+        if not core_ok:
+            return {
+                "ok": False,
+                "msg": "Cleanup had no effect — "
+                + ("; ".join(errors[:3]) or "all native calls failed"),
+                "freed_mb": 0.0,
+                "before": before,
+                "after": after,
+                "steps": steps,
+                "warnings": errors[:8],
+                "source": source,
+            }
+        now = time.time()
+        with self._lock:
+            self._last_run_at = now
+            self._last_freed_mb = freed
+            self._last_status = {
+                "source": source,
+                "freed_mb": round(freed, 1),
+                "before": before,
+                "after": after,
+                "steps": steps,
+                "warnings": errors[:8],
+            }
+        return {
+            "ok": True,
+            "msg": f"Cleaned {freed:.1f} MB",
+            "freed_mb": round(freed, 1),
+            "before": before,
+            "after": after,
+            "steps": steps,
+            "warnings": errors[:8],
+            "source": source,
+        }
 
     # -- core clean (MemReduct REDUCT_MASK_DEFAULT port) --
     def clean(self, source: str = "manual") -> dict[str, Any]:
@@ -324,107 +460,44 @@ class RamCleanupService:
         _enable_privilege("SeProfileSingleProcessPrivilege")
         _enable_privilege("SeIncreaseQuotaPrivilege")
 
-        # 1. Empty working sets
-        try:
-            cmd = ctypes.c_int(_MEM_EMPTY_WORKING_SETS)
-            st = _nt_set_info(_SYS_MEMORY_LIST_INFO, ctypes.byref(cmd), ctypes.sizeof(cmd))
-            steps["working_set"] = {"ntstatus": st, "ok": st == 0}
-            if st != 0:
-                errors.append(f"MemoryEmptyWorkingSets NTSTATUS=0x{st & 0xFFFFFFFF:08X}")
-        except Exception as exc:
-            steps["working_set"] = {"ok": False, "error": str(exc)}
-            errors.append(f"working_set: {exc}")
-
-        # 2. System file cache — documented kernel32 API. (The NtSet
-        # classes 21/81 MemReduct uses are length-gated with
-        # STATUS_INFO_LENGTH_MISMATCH on current Windows builds;
-        # SetSystemFileCacheSize(-1, -1, 0) is the supported equivalent.)
-        try:
-            k32 = ctypes.windll.kernel32
-            fn = k32.SetSystemFileCacheSize
-            fn.restype = wintypes.BOOL
-            fn.argtypes = [ctypes.c_size_t, ctypes.c_size_t, wintypes.DWORD]
-            max_ws = ctypes.c_size_t(-1).value
-            cache_ok = bool(fn(max_ws, max_ws, 0))
-            steps["system_file_cache"] = {"ok": cache_ok}
-            if not cache_ok:
-                errors.append("SetSystemFileCacheSize failed")
-        except Exception as exc:
-            steps["system_file_cache"] = {"ok": False, "error": str(exc)}
-            errors.append(f"file_cache: {exc}")
-
-        # 3. Standby priority-0 list
-        try:
-            cmd = ctypes.c_int(_MEM_PURGE_LOW_PRIORITY_STANDBY)
-            st = _nt_set_info(_SYS_MEMORY_LIST_INFO, ctypes.byref(cmd), ctypes.sizeof(cmd))
-            steps["standby_priority0"] = {"ntstatus": st, "ok": st == 0}
-            if st != 0:
-                errors.append(f"PurgeLowPriorityStandby NTSTATUS=0x{st & 0xFFFFFFFF:08X}")
-        except Exception as exc:
-            steps["standby_priority0"] = {"ok": False, "error": str(exc)}
-            errors.append(f"standby_prio0: {exc}")
-
-        # 4. Registry cache (win8.1+)
-        if _supports_registry_cache():
-            try:
-                st = _nt_set_info(_SYS_REGISTRY_RECONCILIATION, None, 0)
-                steps["registry_cache"] = {"ntstatus": st, "ok": st == 0}
-                if st != 0:
-                    errors.append(f"RegistryReconciliation NTSTATUS=0x{st & 0xFFFFFFFF:08X}")
-            except Exception as exc:
-                steps["registry_cache"] = {"ok": False, "error": str(exc)}
-                errors.append(f"registry: {exc}")
-        else:
-            steps["registry_cache"] = {"ok": True, "skipped": "os_too_old"}
-
-        # 5. Combine memory lists (win10+)
-        if _supports_combine():
-            try:
-                info = _MemoryCombineInfoEx()  # zero-initialized
-                st = _nt_set_info(_SYS_COMBINE_PHYSICAL, ctypes.byref(info), ctypes.sizeof(info))
-                steps["combine"] = {"ntstatus": st, "ok": st == 0,
-                                    "pages_combined": int(info.PagesCombined)}
-                if st != 0:
-                    errors.append(f"CombineMemory NTSTATUS=0x{st & 0xFFFFFFFF:08X}")
-            except Exception as exc:
-                steps["combine"] = {"ok": False, "error": str(exc)}
-                errors.append(f"combine: {exc}")
-        else:
-            steps["combine"] = {"ok": True, "skipped": "os_too_old"}
+        self._run_memory_list_step(
+            steps,
+            errors,
+            "working_set",
+            _MEM_EMPTY_WORKING_SETS,
+            "MemoryEmptyWorkingSets",
+            "working_set",
+        )
+        self._run_file_cache_step(steps, errors)
+        self._run_memory_list_step(
+            steps,
+            errors,
+            "standby_priority0",
+            _MEM_PURGE_LOW_PRIORITY_STANDBY,
+            "PurgeLowPriorityStandby",
+            "standby_prio0",
+        )
+        self._run_optional_step(
+            steps,
+            errors,
+            "registry_cache",
+            _supports_registry_cache(),
+            _registry_probe,
+            "RegistryReconciliation",
+            "registry",
+        )
+        self._run_optional_step(
+            steps,
+            errors,
+            "combine",
+            _supports_combine(),
+            _combine_probe,
+            "CombineMemory",
+            "combine",
+        )
 
         after = _ram_snapshot_mb()
-        freed = max(0.0, before["used_mb"] - after["used_mb"])
-        core_ok = any(steps.get(k, {}).get("ok")
-                      for k in ("working_set", "system_file_cache",
-                                "standby_priority0", "combine"))
-        if not core_ok:
-            return {
-                "ok": False,
-                "msg": "Cleanup had no effect — " + ("; ".join(errors[:3]) or "all native calls failed"),
-                "freed_mb": 0.0,
-                "before": before,
-                "after": after,
-                "steps": steps,
-                "warnings": errors[:8],
-                "source": source,
-            }
-        now = time.time()
-        with self._lock:
-            self._last_run_at = now
-            self._last_freed_mb = freed
-            self._last_status = {"source": source, "freed_mb": round(freed, 1),
-                                 "before": before, "after": after, "steps": steps,
-                                 "warnings": errors[:8]}
-        return {
-            "ok": True,
-            "msg": f"Cleaned {freed:.1f} MB",
-            "freed_mb": round(freed, 1),
-            "before": before,
-            "after": after,
-            "steps": steps,
-            "warnings": errors[:8],
-            "source": source,
-        }
+        return self._finish_clean(source, before, after, errors, steps)
 
 
 RAM_CLEANUP = RamCleanupService()

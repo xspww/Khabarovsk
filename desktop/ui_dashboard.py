@@ -26,17 +26,24 @@ def _load_html_ui() -> str:
 
 # Lazy dashboard shell. CSS and JavaScript live under ui/ and are served by FastAPI.
 # Loaded on first get_html_ui() call so importing this module stays cheap.
-_HTML_UI_CACHE: str | None = None
+class _HtmlUiCache:
+    def __init__(self) -> None:
+        self.html: str | None = None
+
+    def load(self) -> str:
+        try:
+            html = _load_html_ui()
+            self.html = html
+            return html
+        except Exception:
+            if self.html is not None:
+                return self.html
+            return _load_html_ui()
+
+
+_HTML_UI_CACHE = _HtmlUiCache()
 
 
 def get_html_ui() -> str:
     """Fresh HTML per call so edits to ui/index.html show up without a restart."""
-    global _HTML_UI_CACHE
-    try:
-        html = _load_html_ui()
-        _HTML_UI_CACHE = html
-        return html
-    except Exception:
-        if _HTML_UI_CACHE is not None:
-            return _HTML_UI_CACHE
-        return _load_html_ui()
+    return _HTML_UI_CACHE.load()

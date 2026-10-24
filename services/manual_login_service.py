@@ -30,7 +30,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 LOGIN_URL = "https://www.roblox.com/login"
 LOGIN_USERNAME_SELECTOR = "#login-username"
@@ -180,6 +180,129 @@ def _redact_line_for_audit(username: str) -> str:
     return str(username or "").strip() or "unknown"
 
 
+class _CredentialOutcomes(NamedTuple):
+    bad: str
+    banned: str
+    captcha: str
+    locked: str
+    recovery: str
+    transient: str
+    valid: str
+
+
+def _credential_outcomes() -> _CredentialOutcomes:
+    try:
+        from services.credential_check import (
+            BAD_CREDENTIALS,
+            BANNED,
+            CAPTCHA,
+            LOCKED,
+            RECOVERY,
+            TRANSIENT,
+            VALID,
+        )
+
+        return _CredentialOutcomes(BAD_CREDENTIALS, BANNED, CAPTCHA, LOCKED, RECOVERY, TRANSIENT, VALID)
+    except Exception:
+        return _CredentialOutcomes("bad_credentials", "banned", "captcha", "locked", "recovery", "transient", "valid")
+
+
+def _unknown_credentials() -> dict[str, str]:
+    return {"outcome": "unknown", "detail": "", "fresh_cookie": ""}
+
+
+def _credential_result(result: Any) -> dict[str, str]:
+    if isinstance(result, dict) and result.get("outcome"):
+        return {
+            "outcome": str(result.get("outcome") or "unknown"),
+            "detail": str(result.get("detail") or ""),
+            "fresh_cookie": str(result.get("fresh_cookie") or ""),
+        }
+    return {}
+
+
+def _precheck_failure(outcome: str, constants: _CredentialOutcomes) -> None:
+    if outcome == constants.bad:
+        raise ManualLoginBadCredentials(BAD_PASSWORD_DETAIL)
+    if outcome == constants.banned:
+        raise ManualLoginRejected(BANNED_DETAIL)
+
+
+def _precheck_note(outcome: str, constants: _CredentialOutcomes) -> tuple[str, str]:
+    if outcome == constants.locked:
+        return "", LOCKED_DETAIL
+    if outcome == constants.recovery:
+        return "", RECOVERY_DETAIL
+    if outcome == constants.captcha:
+        return "", CAPTCHA_DETAIL
+    return "", ""
+
+
+def _fresh_cookie_result(result: dict[str, str], entry: ManualLoginEntry) -> tuple[str, str]:
+    fresh = str(result.get("fresh_cookie") or "").strip()
+    if fresh:
+        entry.password = ""
+        return fresh, ""
+    return "", ""
+
+
+def _response_marks_login(response: Any, login_seen: threading.Event) -> None:
+    try:
+        url = str(getattr(response, "url", "") or "")
+        method = str(getattr(getattr(response, "request", None), "method", "") or "").upper()
+    except Exception:
+        return
+    if method != "POST":
+        return
+    low = url.lower()
+    if any(path in low for path in LOGIN_SUCCESS_PATHS) or TWO_STEP_RE.search(low):
+        login_seen.set()
+
+
+def _base_login_note(status_note: str) -> str:
+    return str(status_note or "").strip() or "Waiting for sign-in in the popup browser (2FA / captcha / passkey OK)..."
+
+
+def _wrong_password_note(page_error: str, polls: int) -> str:
+    return (
+        f"รหัสผิด? Roblox says: {page_error} "
+        f"— fix it in the popup or it auto-skips "
+        f"({polls}/{WRONG_PASSWORD_SKIP_AFTER_POLLS})..."
+    )
+
+
+def _notify_note(on_note: Callable[[str], None], text: str) -> None:
+    try:
+        on_note(text)
+    except Exception:
+        "intentional: ignore exception"
+
+
+def _exc_text(exc: BaseException, fallback: str) -> str:
+    return str(exc) or fallback
+
+
+def _check_wait_cancelled(cancel_event: threading.Event | None, skip_event: threading.Event | None) -> None:
+    if cancel_event is not None and cancel_event.is_set():
+        raise RuntimeError("Cancelled.")
+    if skip_event is not None and skip_event.is_set():
+        try:
+            skip_event.clear()
+        except Exception:
+            "intentional: ignore exception"
+        raise ManualLoginSkipped("Skipped by user.")
+
+
+def _check_popup_open(page: Any) -> None:
+    try:
+        if page.is_closed():
+            raise ManualLoginAborted("Popup closed before sign-in completed.")
+    except ManualLoginAborted:
+        raise
+    except Exception:
+        "intentional: ignore exception"
+
+
 class ManualLoginManager:
     """Owns Manual Login sessions and their background worker threads."""
 
@@ -229,7 +352,7 @@ class ManualLoginManager:
 
                 _audit_event(action, username=username, ok=ok, **fields)
         except Exception:
-            pass
+            "intentional: ignore exception"
 
     # -- public API ------------------------------------------------------
     def start_single(self, username: str = "", password: str = "") -> ManualLoginSession:
@@ -309,94 +432,122 @@ class ManualLoginManager:
         try:
             for entry in session.entries:
                 if session.cancel_event.is_set():
-                    with session.lock:
-                        if entry.status == "pending":
-                            entry.status = "cancelled"
-                            entry.detail = "cancelled"
+                    self._cancel_pending_entry(session, entry)
                     continue
                 with session.lock:
                     entry.status = "active"
                     entry.detail = "Waiting for sign-in in the popup browser..."
                 session.skip_event.clear()
-                try:
-                    # Fast path: when user:pass was pasted, ask Roblox directly
-                    # first. Wrong passwords / banned accounts are marked failed
-                    # + skipped without a popup; locked / recovery / captcha
-                    # notes are shown while the popup stays open for the user
-                    # to finish the step manually.
-                    precheck_cookie, status_note = self._precheck_credentials(
-                        session, entry, blocked=precheck_blocked,
-                    )
-                    if precheck_cookie == "__BLOCKED__":
-                        precheck_blocked = True
-                        precheck_cookie = ""
-                    if precheck_cookie:
-                        self._import_captured_cookie(session, entry, precheck_cookie)
-                        continue
-                    cookie = self._call_browser_login(
-                        session,
-                        entry,
-                        status_note=status_note,
-                    )
-                except ManualLoginUnavailable as exc:
-                    with session.lock:
-                        entry.status = "failed"
-                        entry.detail = str(exc) or PLAYWRIGHT_INSTALL_HINT
-                    self._set_state(session, "error", PLAYWRIGHT_INSTALL_HINT)
-                    self._emit_audit("manual_login_unavailable", username=_redact_line_for_audit(entry.username_hint), ok=False, mode=session.mode)
+                keep_going, precheck_blocked = self._attempt_login(session, entry, precheck_blocked)
+                if not keep_going:
                     break
-                except (ManualLoginBadCredentials, ManualLoginRejected) as exc:
-                    with session.lock:
-                        entry.status = "failed"
-                        entry.detail = str(exc) or BAD_PASSWORD_DETAIL
-                    self._emit_audit(
-                        "manual_login_rejected",
-                        username=_redact_line_for_audit(entry.username_hint),
-                        ok=False,
-                        mode=session.mode,
-                        detail=str(exc)[:200],
-                    )
-                    continue
-                except ManualLoginSkipped as exc:
-                    with session.lock:
-                        entry.status = "failed"
-                        entry.detail = str(exc) or "Skipped by user."
-                    self._emit_audit(
-                        "manual_login_skipped",
-                        username=_redact_line_for_audit(entry.username_hint),
-                        ok=False,
-                        mode=session.mode,
-                    )
-                    continue
-                except Exception as exc:
-                    with session.lock:
-                        entry.status = "failed" if not session.cancel_event.is_set() else "cancelled"
-                        entry.detail = str(exc) or "login failed"
-                    self._emit_audit(
-                        "manual_login_failed",
-                        username=_redact_line_for_audit(entry.username_hint),
-                        ok=False,
-                        mode=session.mode,
-                        detail=str(exc)[:200],
-                    )
-                    continue
-                finally:
-                    # Passwords are transient: never kept after the attempt.
-                    entry.password = ""
-                self._import_captured_cookie(session, entry, cookie)
-            with session.lock:
-                if session.state in {"running", "installing"}:
-                    if session.cancel_event.is_set():
-                        session.state = "cancelled"
-                    elif any(entry.status == "failed" for entry in session.entries):
-                        session.state = "done"
-                        session.note = session.note or "Finished with failures."
-                    else:
-                        session.state = "done"
-                        session.note = session.note or "All logins captured."
+            self._finish_session(session)
         except Exception as exc:
             self._set_state(session, "error", str(exc) or "manual login failed")
             self._emit_audit("manual_login_error", username="", ok=False, detail=str(exc)[:200])
+
+    def _cancel_pending_entry(self, session: ManualLoginSession, entry: ManualLoginEntry) -> None:
+        with session.lock:
+            if entry.status == "pending":
+                entry.status = "cancelled"
+                entry.detail = "cancelled"
+
+    def _fail_entry(
+        self,
+        session: ManualLoginSession,
+        entry: ManualLoginEntry,
+        detail: str,
+        status: str = "failed",
+    ) -> None:
+        with session.lock:
+            entry.status = status
+            entry.detail = detail
+
+    def _attempt_login(
+        self,
+        session: ManualLoginSession,
+        entry: ManualLoginEntry,
+        precheck_blocked: bool,
+    ) -> tuple[bool, bool]:
+        """Run one entry login attempt; returns (keep_going, precheck_blocked)."""
+        try:
+            # Fast path: when user:pass was pasted, ask Roblox directly
+            # first. Wrong passwords / banned accounts are marked failed
+            # + skipped without a popup; locked / recovery / captcha
+            # notes are shown while the popup stays open for the user
+            # to finish the step manually.
+            precheck_cookie, status_note = self._precheck_credentials(
+                session, entry, blocked=precheck_blocked,
+            )
+            if precheck_cookie == "__BLOCKED__":
+                precheck_blocked = True
+                precheck_cookie = ""
+            if precheck_cookie:
+                self._import_captured_cookie(session, entry, precheck_cookie)
+                return True, precheck_blocked
+            cookie = self._call_browser_login(
+                session,
+                entry,
+                status_note=status_note,
+            )
+        except ManualLoginUnavailable as exc:
+            self._fail_entry(session, entry, _exc_text(exc, PLAYWRIGHT_INSTALL_HINT))
+            self._set_state(session, "error", PLAYWRIGHT_INSTALL_HINT)
+            self._emit_audit(
+                "manual_login_unavailable",
+                username=_redact_line_for_audit(entry.username_hint),
+                ok=False,
+                mode=session.mode,
+            )
+            return False, precheck_blocked
+        except (ManualLoginBadCredentials, ManualLoginRejected) as exc:
+            self._fail_entry(session, entry, _exc_text(exc, BAD_PASSWORD_DETAIL))
+            self._emit_audit(
+                "manual_login_rejected",
+                username=_redact_line_for_audit(entry.username_hint),
+                ok=False,
+                mode=session.mode,
+                detail=str(exc)[:200],
+            )
+            return True, precheck_blocked
+        except ManualLoginSkipped as exc:
+            self._fail_entry(session, entry, _exc_text(exc, "Skipped by user."))
+            self._emit_audit(
+                "manual_login_skipped",
+                username=_redact_line_for_audit(entry.username_hint),
+                ok=False,
+                mode=session.mode,
+            )
+            return True, precheck_blocked
+        except Exception as exc:
+            status = "failed" if not session.cancel_event.is_set() else "cancelled"
+            self._fail_entry(session, entry, _exc_text(exc, "login failed"), status)
+            self._emit_audit(
+                "manual_login_failed",
+                username=_redact_line_for_audit(entry.username_hint),
+                ok=False,
+                mode=session.mode,
+                detail=str(exc)[:200],
+            )
+            return True, precheck_blocked
+        finally:
+            # Passwords are transient: never kept after the attempt.
+            entry.password = ""
+        self._import_captured_cookie(session, entry, cookie)
+        return True, precheck_blocked
+
+    def _finish_session(self, session: ManualLoginSession) -> None:
+        with session.lock:
+            if session.state not in {"running", "installing"}:
+                return
+            if session.cancel_event.is_set():
+                session.state = "cancelled"
+            elif any(entry.status == "failed" for entry in session.entries):
+                session.state = "done"
+                session.note = session.note or "Finished with failures."
+            else:
+                session.state = "done"
+                session.note = session.note or "All logins captured."
 
     def _set_entry_note(self, session: ManualLoginSession, entry: ManualLoginEntry, text: str) -> None:
         with session.lock:
@@ -429,7 +580,7 @@ class ManualLoginManager:
             if not any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values()):
                 full_kwargs = {k: v for k, v in full_kwargs.items() if k in params}
         except Exception:
-            pass
+            "intentional: ignore exception"
         return self._browser_login(**full_kwargs)
 
     def _classify_pasted_credentials(
@@ -445,30 +596,18 @@ class ManualLoginManager:
         if self._credential_check is not None:
             try:
                 result = self._credential_check(username, password, timeout=12.0)
-                if isinstance(result, dict) and result.get("outcome"):
-                    return {
-                        "outcome": str(result.get("outcome") or "unknown"),
-                        "detail": str(result.get("detail") or ""),
-                        "fresh_cookie": str(result.get("fresh_cookie") or ""),
-                    }
             except Exception:
-                pass
-            return {"outcome": "unknown", "detail": "", "fresh_cookie": ""}
+                return _unknown_credentials()
+            return _credential_result(result) or _unknown_credentials()
         try:
             from services.credential_check import check_credentials as _check
         except Exception:
-            return {"outcome": "unknown", "detail": "", "fresh_cookie": ""}
+            return _unknown_credentials()
         try:
             result = _check(username, password, timeout=12.0)
-            if isinstance(result, dict) and result.get("outcome"):
-                return {
-                    "outcome": str(result.get("outcome") or "unknown"),
-                    "detail": str(result.get("detail") or ""),
-                    "fresh_cookie": str(result.get("fresh_cookie") or ""),
-                }
         except Exception:
-            pass
-        return {"outcome": "unknown", "detail": "", "fresh_cookie": ""}
+            return _unknown_credentials()
+        return _credential_result(result) or _unknown_credentials()
 
     def _precheck_credentials(
         self,
@@ -492,85 +631,32 @@ class ManualLoginManager:
         if not username or not password or blocked:
             return "", ""
         self._set_entry_note(session, entry, "Checking username/password...")
-        try:
-            from services.credential_check import (
-                BAD_CREDENTIALS as _CC_BAD,
-            )
-            from services.credential_check import (
-                BANNED as _CC_BANNED,
-            )
-            from services.credential_check import (
-                CAPTCHA as _CC_CAPTCHA,
-            )
-            from services.credential_check import (
-                LOCKED as _CC_LOCKED,
-            )
-            from services.credential_check import (
-                RECOVERY as _CC_RECOVERY,
-            )
-            from services.credential_check import (
-                TRANSIENT as _CC_TRANSIENT,
-            )
-            from services.credential_check import (
-                VALID as _CC_VALID,
-            )
-        except Exception:
-            _CC_BAD = "bad_credentials"
-            _CC_BANNED = "banned"
-            _CC_CAPTCHA = "captcha"
-            _CC_LOCKED = "locked"
-            _CC_RECOVERY = "recovery"
-            _CC_TRANSIENT = "transient"
-            _CC_VALID = "valid"
+        constants = _credential_outcomes()
         result = self._classify_pasted_credentials(username, password)
         outcome = str(result.get("outcome") or "unknown")
-        if outcome == _CC_BAD:
-            raise ManualLoginBadCredentials(BAD_PASSWORD_DETAIL)
-        if outcome == _CC_BANNED:
-            raise ManualLoginRejected(BANNED_DETAIL)
-        if outcome == _CC_TRANSIENT:
+        _precheck_failure(outcome, constants)
+        if outcome == constants.transient:
             return "__BLOCKED__", ""
-        if outcome == _CC_VALID:
-            fresh = str(result.get("fresh_cookie") or "").strip()
-            if fresh:
-                entry.password = ""
-                return fresh, ""
-            return "", ""
-        if outcome == _CC_LOCKED:
-            return "", LOCKED_DETAIL
-        if outcome == _CC_RECOVERY:
-            return "", RECOVERY_DETAIL
-        if outcome == _CC_CAPTCHA:
-            return "", CAPTCHA_DETAIL
-        return "", ""
+        if outcome == constants.valid:
+            return _fresh_cookie_result(result, entry)
+        return _precheck_note(outcome, constants)
 
     def _import_captured_cookie(self, session: ManualLoginSession, entry: ManualLoginEntry, cookie: str) -> None:
         cookie = str(cookie or "").strip()
         hint = _redact_line_for_audit(entry.username_hint)
         if not cookie:
-            with session.lock:
-                entry.status = "failed"
-                entry.detail = "No cookie captured."
+            self._fail_entry(session, entry, "No cookie captured.")
             return
         line = f"{entry.username_hint}:{cookie}" if entry.username_hint else cookie
         try:
             result = self.store.import_cookie_lines([line], validator=self.validator)
         except Exception as exc:
-            with session.lock:
-                entry.status = "failed"
-                entry.detail = f"Import failed: {exc}"
+            self._fail_entry(session, entry, f"Import failed: {exc}")
             self._emit_audit("manual_login_import_failed", username=hint, ok=False, mode=session.mode, detail=str(exc)[:200])
             return
         errors = [str(e) for e in (result.get("errors") or []) if str(e).strip()]
         imported = int(result.get("imported") or 0)
-        with session.lock:
-            if imported > 0:
-                entry.status = "done"
-                entry.imported_as = hint
-                entry.detail = errors[0] if errors else "Imported."
-            else:
-                entry.status = "failed"
-                entry.detail = errors[0] if errors else "Cookie rejected."
+        self._apply_import_result(session, entry, hint, errors, imported)
         self._emit_audit(
             "manual_login_import",
             username=hint,
@@ -582,7 +668,24 @@ class ManualLoginManager:
             try:
                 self._on_imported()
             except Exception:
-                pass
+                "intentional: ignore exception"
+
+    def _apply_import_result(
+        self,
+        session: ManualLoginSession,
+        entry: ManualLoginEntry,
+        hint: str,
+        errors: list[str],
+        imported: int,
+    ) -> None:
+        with session.lock:
+            if imported > 0:
+                entry.status = "done"
+                entry.imported_as = hint
+                entry.detail = errors[0] if errors else "Imported."
+            else:
+                entry.status = "failed"
+                entry.detail = errors[0] if errors else "Cookie rejected."
 
     # -- Playwright popup browser -----------------------------------------
     def _playwright_login(
@@ -606,23 +709,10 @@ class ManualLoginManager:
                 context = browser.new_context(viewport={"width": 880, "height": 740})
                 page = context.new_page()
                 login_seen = threading.Event()
-
-                def _on_response(response: Any) -> None:
-                    try:
-                        url = str(getattr(response, "url", "") or "")
-                        method = str(getattr(getattr(response, "request", None), "method", "") or "").upper()
-                    except Exception:
-                        return
-                    if method != "POST":
-                        return
-                    low = url.lower()
-                    if any(path in low for path in LOGIN_SUCCESS_PATHS) or TWO_STEP_RE.search(low):
-                        login_seen.set()
-
                 try:
-                    page.on("response", _on_response)
+                    page.on("response", lambda response: _response_marks_login(response, login_seen))
                 except Exception:
-                    pass
+                    "intentional: ignore exception"
                 page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
                 self._prefill_login_page(page, username_hint, password)
                 password = ""
@@ -635,7 +725,7 @@ class ManualLoginManager:
                 try:
                     browser.close()
                 except Exception:
-                    pass
+                    "intentional: ignore exception"
 
     def _launch_chromium(self, playwright: Any, on_note: Callable[[str], None] | None = None) -> Any:
         launch_args = ["--disable-web-security"]
@@ -663,7 +753,7 @@ class ManualLoginManager:
             try:
                 on_note("First run: downloading Chromium for the login popup...")
             except Exception:
-                pass
+                "intentional: ignore exception"
         try:
             subprocess.run(
                 [sys.executable, "-m", "playwright", "install", "chromium"],
@@ -682,7 +772,7 @@ class ManualLoginManager:
         try:
             page.evaluate("document.body.classList.remove('light-theme');document.body.classList.add('dark-theme');")
         except Exception:
-            pass
+            "intentional: ignore exception"
         try:
             if username:
                 page.wait_for_selector(LOGIN_USERNAME_SELECTOR, timeout=5000)
@@ -693,7 +783,19 @@ class ManualLoginManager:
             if username and password:
                 page.click(LOGIN_BUTTON_SELECTOR)
         except Exception:
-            pass
+            "intentional: ignore exception"
+
+    @staticmethod
+    def _roblosecurity_value(item: Any) -> str:
+        try:
+            name = str(item.get("name") or "")
+            domain = str(item.get("domain") or "")
+            value = str(item.get("value") or "")
+        except Exception:
+            return ""
+        if name == ROBLOSECURITY_COOKIE and ROBLOX_COOKIE_DOMAIN in domain and value.startswith("_|WARNING:"):
+            return value
+        return ""
 
     @staticmethod
     def _read_roblosecurity(context: Any) -> str:
@@ -702,13 +804,8 @@ class ManualLoginManager:
         except Exception:
             return ""
         for item in cookies or []:
-            try:
-                name = str(item.get("name") or "")
-                domain = str(item.get("domain") or "")
-                value = str(item.get("value") or "")
-            except Exception:
-                continue
-            if name == ROBLOSECURITY_COOKIE and ROBLOX_COOKIE_DOMAIN in domain and value.startswith("_|WARNING:"):
+            value = ManualLoginManager._roblosecurity_value(item)
+            if value:
                 return value
         return ""
 
@@ -766,52 +863,23 @@ class ManualLoginManager:
     ) -> str:
         last_note = ""
         wrong_password_polls = 0
-        base_note = (
-            str(status_note or "").strip()
-            or "Waiting for sign-in in the popup browser (2FA / captcha / passkey OK)..."
-        )
+        base_note = _base_login_note(status_note)
         while time.time() < deadline:
-            if cancel_event is not None and cancel_event.is_set():
-                raise RuntimeError("Cancelled.")
-            if skip_event is not None and skip_event.is_set():
-                try:
-                    skip_event.clear()
-                except Exception:
-                    pass
-                raise ManualLoginSkipped("Skipped by user.")
-            try:
-                if page.is_closed():
-                    raise ManualLoginAborted("Popup closed before sign-in completed.")
-            except ManualLoginAborted:
-                raise
-            except Exception:
-                pass
+            _check_wait_cancelled(cancel_event, skip_event)
+            _check_popup_open(page)
             cookie = self._read_roblosecurity(context)
             if cookie:
                 return cookie
-            if login_seen.is_set():
-                # Login POST observed: re-check cookies immediately a few times
-                # before falling back to the regular poll.
-                login_seen.clear()
-                for _ in range(5):
-                    cookie = self._read_roblosecurity(context)
-                    if cookie:
-                        return cookie
-                    time.sleep(0.5)
+            cookie = self._poll_login_cookies(context, login_seen)
+            if cookie:
+                return cookie
             page_error = self._read_login_error(page)
             if page_error:
                 wrong_password_polls += 1
-                note = (
-                    f"รหัสผิด? Roblox says: {page_error} "
-                    f"— fix it in the popup or it auto-skips "
-                    f"({wrong_password_polls}/{WRONG_PASSWORD_SKIP_AFTER_POLLS})..."
-                )
+                note = _wrong_password_note(page_error, wrong_password_polls)
                 if on_note is not None:
                     last_note = note
-                    try:
-                        on_note(note)
-                    except Exception:
-                        pass
+                    _notify_note(on_note, note)
                 if wrong_password_polls >= WRONG_PASSWORD_SKIP_AFTER_POLLS:
                     raise ManualLoginBadCredentials(
                         f"{BAD_PASSWORD_DETAIL} (Roblox: {page_error})"
@@ -821,12 +889,20 @@ class ManualLoginManager:
             wrong_password_polls = 0
             if base_note != last_note and on_note is not None:
                 last_note = base_note
-                try:
-                    on_note(base_note)
-                except Exception:
-                    pass
+                _notify_note(on_note, base_note)
             time.sleep(LOGIN_POLL_INTERVAL_S)
         raise TimeoutError("Timed out waiting for sign-in.")
+
+    def _poll_login_cookies(self, context: Any, login_seen: threading.Event) -> str:
+        if not login_seen.is_set():
+            return ""
+        login_seen.clear()
+        for _ in range(5):
+            cookie = self._read_roblosecurity(context)
+            if cookie:
+                return cookie
+            time.sleep(0.5)
+        return ""
 
 
 MANUAL_LOGIN_MANAGER = ManualLoginManager()

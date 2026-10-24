@@ -51,7 +51,7 @@ def persist_config(ctx: ApiContext, updates: dict[str, Any], *, apply_snapshot: 
     try:
         farm.apply_config_snapshot()
     except Exception:
-        pass
+        "intentional: ignore exception"
 
 
 WINDOW_SIZE_PRESETS: dict[str, tuple[int, int]] = {
@@ -351,7 +351,76 @@ def _virtual_memory_status(ctx: ApiContext) -> dict[str, Any]:
     return payload
 
 
-def _migrate_account_games(ctx: ApiContext, accounts_to_update: list[Account]) -> int:
+def _games_module() -> Any | None:
+    try:
+        from domain import games
+    except Exception:
+        return None
+    return games
+
+
+def _snapshot_config(ctx: ApiContext) -> dict[str, Any] | None:
+    try:
+        cfg = ctx.cfg_mgr.snapshot()
+    except Exception:
+        return None
+    if not isinstance(cfg, dict):
+        return None
+    return cfg
+
+
+def _games_mode(games_api: Any, cfg: dict[str, Any]) -> str:
+    try:
+        return games_api.normalize_game_mode(cfg.get("game_mode", "shared"))
+    except Exception:
+        return "shared"
+
+
+def _ensure_games(games_api: Any, cfg: dict[str, Any]) -> list:
+    try:
+        return games_api.ensure_games_migrated(dict(cfg))
+    except Exception:
+        return []
+
+
+def _persist_games_migrated(ctx: ApiContext) -> None:
+    try:
+        persist_config(ctx, {"games_migrated": True})
+    except Exception:
+        "intentional: ignore exception"
+
+
+def _account_game_link(
+    acc: Account, games_api: Any, games: list, fallback: dict | None
+) -> tuple[bool, str]:
+    game = games_api.game_for_account("", getattr(acc, "place_id", ""), games)
+    if game is not None:
+        return True, str(game.get("id") or "")
+    has_place = bool(str(getattr(acc, "place_id", "") or "").strip())
+    has_links = bool(list(getattr(acc, "vip_links", []) or []))
+    if has_place or has_links or fallback is None:
+        return False, ""
+    return True, str(fallback.get("id") or "")
+
+
+def _link_account_game(
+    acc: Account, games_api: Any, games: list, fallback: dict | None
+) -> bool:
+    try:
+        if str(getattr(acc, "game_id", "") or "").strip():
+            return False
+        found, game_id = _account_game_link(acc, games_api, games, fallback)
+        if not found:
+            return False
+        acc.game_id = game_id
+        return True
+    except Exception:
+        return False
+
+
+def _migrate_account_games(
+    ctx: ApiContext, accounts_to_update: list[Account]
+) -> int:
     """One-time linking of existing accounts to games. Returns linked count.
 
     Links by id when present, otherwise by matching place_id. Accounts with
@@ -360,122 +429,159 @@ def _migrate_account_games(ctx: ApiContext, accounts_to_update: list[Account]) -
     set; accounts added afterwards without a game stay unassigned and are
     blocked at START with a warning (never silently join a wrong map).
     """
-    try:
-        from domain.games import default_game, ensure_games_migrated, game_for_account
-    except Exception:
+    games_api = _games_module()
+    if games_api is None:
         return 0
-    try:
-        cfg = ctx.cfg_mgr.snapshot()
-    except Exception:
-        return 0
-    if not isinstance(cfg, dict):
+    cfg = _snapshot_config(ctx)
+    if cfg is None:
         return 0
     if bool(cfg.get("games_migrated", False)):
         return 0
-    try:
-        games = ensure_games_migrated(dict(cfg))
-    except Exception:
-        games = []
+    games = _ensure_games(games_api, cfg)
     if not games:
         return 0
-    fallback = default_game(games)
+    fallback = games_api.default_game(games)
     linked = 0
     for acc in accounts_to_update or []:
-        try:
-            if str(getattr(acc, "game_id", "") or "").strip():
-                continue
-            game = game_for_account("", getattr(acc, "place_id", ""), games)
-            if game is None and not str(getattr(acc, "place_id", "") or "").strip() and not list(
-                getattr(acc, "vip_links", []) or []
-            ):
-                game = fallback
-            if game is not None:
-                acc.game_id = str(game.get("id") or "")
-                linked += 1
-        except Exception:
-            continue
+        if _link_account_game(acc, games_api, games, fallback):
+            linked += 1
     if linked:
-        try:
-            persist_config(ctx, {"games_migrated": True})
-        except Exception:
-            pass
+        _persist_games_migrated(ctx)
     return linked
 
 
-def _apply_game_defaults(ctx: ApiContext, accounts_to_update: list[Account], persist: bool = False) -> int:
+def _vip_link_place(link: Any) -> str:
+    return ProcessManager.parse_vip_link(str(link or "").strip())[0]
+
+
+def _filter_vip_links(links: list, place_id: str) -> list:
+    return [
+        link
+        for link in list(links or [])
+        if not _vip_link_place(link) or _vip_link_place(link) == place_id
+    ]
+
+
+def _apply_default_vip(acc: Account, game_vip: str) -> bool:
+    if game_vip and not list(acc.vip_links or []):
+        acc.vip_links = [game_vip]
+        return True
+    return False
+
+
+def _apply_game_vip(acc: Account, game: dict) -> bool:
+    place_id = str(game.get("place_id") or "").strip()
+    game_vip = str(game.get("private_server_url") or "").strip()
+    if not place_id:
+        return _apply_default_vip(acc, game_vip)
+    changed = False
+    filtered_links = _filter_vip_links(acc.vip_links, place_id)
+    active_place = _vip_link_place(acc.active_vip)
+    if active_place and active_place != place_id:
+        acc.active_vip = ""
+        changed = True
+    if filtered_links != list(acc.vip_links or []):
+        acc.vip_links = filtered_links
+        changed = True
+    if _apply_default_vip(acc, game_vip):
+        changed = True
+    return changed
+
+
+def _apply_account_game(acc: Account, games_api: Any, games: list) -> bool:
     try:
-        from domain.games import ensure_games_migrated, game_for_account, normalize_game_mode
+        game = games_api.game_for_account(
+            getattr(acc, "game_id", ""),
+            getattr(acc, "place_id", ""),
+            games,
+        )
     except Exception:
+        game = None
+    if game is None:
+        return False
+    changed = False
+    if not str(getattr(acc, "game_id", "") or "").strip():
+        acc.game_id = str(game.get("id") or "")
+        changed = True
+    if _apply_game_vip(acc, game):
+        changed = True
+    return changed
+
+
+def _save_game_defaults(
+    ctx: ApiContext, changed: int, linked: int, persist: bool
+) -> None:
+    if not persist or (not changed and not linked):
+        return
+    ctx.cfg_mgr.save_accounts(ctx.farm._accounts)
+    flog_kv(
+        "API", "game_defaults_applied", accounts=changed, migrated=linked
+    )
+
+
+def _apply_game_defaults(
+    ctx: ApiContext, accounts_to_update: list[Account], persist: bool = False
+) -> int:
+    games_api = _games_module()
+    if games_api is None or not hasattr(games_api, "normalize_game_mode"):
         return _apply_legacy_game_defaults(ctx, accounts_to_update, persist)
-    try:
-        cfg = ctx.cfg_mgr.snapshot()
-    except Exception:
+    cfg = _snapshot_config(ctx)
+    if cfg is None:
         cfg = {}
-    if not isinstance(cfg, dict):
-        cfg = {}
-    try:
-        mode = normalize_game_mode(cfg.get("game_mode", "shared"))
-    except Exception:
-        mode = "shared"
+    mode = _games_mode(games_api, cfg)
     if mode != "per_account":
         # Shared GAME mode: the pool is ignored at launch, so there is
         # nothing to sync. Accounts keep their assignments untouched for
         # when the user switches back to Per-account.
         return 0
-    try:
-        games = ensure_games_migrated(dict(cfg))
-    except Exception:
-        games = []
+    games = _ensure_games(games_api, cfg)
     if not games:
-        return _apply_legacy_game_defaults(ctx, accounts_to_update, persist, cfg=cfg)
-
+        return _apply_legacy_game_defaults(
+            ctx, accounts_to_update, persist, cfg=cfg
+        )
     linked = _migrate_account_games(ctx, accounts_to_update)
-
     changed = 0
     for acc in accounts_to_update:
-        try:
-            game = game_for_account(
-                getattr(acc, "game_id", ""), getattr(acc, "place_id", ""), games
-            )
-        except Exception:
-            game = None
-        if game is None:
-            # Unassigned account: leave alone so START blocks it with a
-            # warning instead of joining the wrong map.
-            continue
-        account_changed = False
-        if not str(getattr(acc, "game_id", "") or "").strip():
-            acc.game_id = str(game.get("id") or "")
-            account_changed = True
-        place_id = str(game.get("place_id") or "").strip()
-        game_vip = str(game.get("private_server_url") or "").strip()
-        if place_id:
-            filtered_links = [
-                link for link in list(acc.vip_links or [])
-                if not ProcessManager.parse_vip_link(str(link or "").strip())[0]
-                or ProcessManager.parse_vip_link(str(link or "").strip())[0] == place_id
-            ]
-            active_place = ProcessManager.parse_vip_link(str(acc.active_vip or "").strip())[0]
-            if active_place and active_place != place_id:
-                acc.active_vip = ""
-                account_changed = True
-            if filtered_links != list(acc.vip_links or []):
-                acc.vip_links = filtered_links
-                account_changed = True
-            # Per-account VIP links win; the game's VIP is only a default
-            # when the account has none of its own.
-            if game_vip and not list(acc.vip_links or []):
-                acc.vip_links = [game_vip]
-                account_changed = True
-        elif game_vip and not list(acc.vip_links or []):
-            acc.vip_links = [game_vip]
-            account_changed = True
-        if account_changed:
+        if _apply_account_game(acc, games_api, games):
             changed += 1
-    if (changed or linked) and persist:
-        ctx.cfg_mgr.save_accounts(ctx.farm._accounts)
-        flog_kv("API", "game_defaults_applied", accounts=changed, migrated=linked)
+    _save_game_defaults(ctx, changed, linked, persist)
     return changed + linked
+
+
+def _legacy_targets(cfg: dict[str, Any]) -> tuple[str, str]:
+    vip_url = str(cfg.get("game_private_server_url", "") or "").strip()
+    place_id = str(cfg.get("game_place_id", "") or "").strip()
+    if vip_url:
+        parsed_place, _link_code = ProcessManager.parse_vip_link(vip_url)
+        if parsed_place and not place_id:
+            place_id = str(parsed_place)
+    return vip_url, place_id
+
+
+def _apply_legacy_vip(acc: Account, vip_url: str) -> bool:
+    if vip_url and list(acc.vip_links or []) != [vip_url]:
+        acc.vip_links = [vip_url]
+        return True
+    return False
+
+
+def _apply_legacy_account(acc: Account, place_id: str, vip_url: str) -> bool:
+    changed = False
+    if place_id:
+        if str(acc.place_id or "").strip() != place_id:
+            acc.place_id = place_id
+            changed = True
+        filtered_links = _filter_vip_links(acc.vip_links, place_id)
+        active_place = _vip_link_place(acc.active_vip)
+        if active_place and active_place != place_id:
+            acc.active_vip = ""
+            changed = True
+        if not vip_url and filtered_links != list(acc.vip_links or []):
+            acc.vip_links = filtered_links
+            changed = True
+    if _apply_legacy_vip(acc, vip_url):
+        changed = True
+    return changed
 
 
 def _apply_legacy_game_defaults(
@@ -485,42 +591,15 @@ def _apply_legacy_game_defaults(
     cfg: dict[str, Any] | None = None,
 ) -> int:
     if cfg is None:
-        try:
-            cfg = ctx.cfg_mgr.snapshot()
-        except Exception:
-            cfg = {}
-    vip_url = str((cfg or {}).get("game_private_server_url", "") or "").strip()
-    place_id = str((cfg or {}).get("game_place_id", "") or "").strip()
-    if vip_url:
-        parsed_place, _link_code = ProcessManager.parse_vip_link(vip_url)
-        if parsed_place and not place_id:
-            place_id = str(parsed_place)
+        cfg = _snapshot_config(ctx) or {}
+    if not isinstance(cfg, dict):
+        cfg = {}
+    vip_url, place_id = _legacy_targets(cfg)
     if not vip_url and not place_id:
         return 0
-
     changed = 0
     for acc in accounts_to_update:
-        account_changed = False
-        if place_id:
-            if str(acc.place_id or "").strip() != place_id:
-                acc.place_id = place_id
-                account_changed = True
-            filtered_links = [
-                link for link in list(acc.vip_links or [])
-                if not ProcessManager.parse_vip_link(str(link or "").strip())[0]
-                or ProcessManager.parse_vip_link(str(link or "").strip())[0] == place_id
-            ]
-            active_place = ProcessManager.parse_vip_link(str(acc.active_vip or "").strip())[0]
-            if active_place and active_place != place_id:
-                acc.active_vip = ""
-                account_changed = True
-            if not vip_url and filtered_links != list(acc.vip_links or []):
-                acc.vip_links = filtered_links
-                account_changed = True
-        if vip_url and list(acc.vip_links or []) != [vip_url]:
-            acc.vip_links = [vip_url]
-            account_changed = True
-        if account_changed:
+        if _apply_legacy_account(acc, place_id, vip_url):
             changed += 1
     if changed and persist:
         ctx.cfg_mgr.save_accounts(ctx.farm._accounts)

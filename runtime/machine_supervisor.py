@@ -153,40 +153,74 @@ class MachineSupervisor:
         except Exception:
             return []
 
+    def _cache_hit(self, now: float, excluding: Any | None, force: bool) -> bool:
+        return bool(
+            not force
+            and excluding is None
+            and self._cached_snapshot
+            and (now - self._cached_at) < 2.0
+        )
+
+    def _resource_reasons(
+        self,
+        resource: dict[str, float],
+    ) -> tuple[float, float, list[str]]:
+        cpu = float(resource.get("cpu_percent", 0.0) or 0.0)
+        memory = float(resource.get("memory_percent", 0.0) or 0.0)
+        reasons: list[str] = []
+        if cpu >= _cfg_float(self._cfg, "machine_supervisor_cpu_high_percent", 96.0):
+            reasons.append("cpu_pressure")
+        if memory >= _cfg_float(self._cfg, "machine_supervisor_memory_high_percent", 96.0):
+            reasons.append("memory_pressure")
+        return cpu, memory, reasons
+
+    def _guard_status(self, guard: dict[str, Any]) -> tuple[str, list[str]]:
+        guard_state = str(guard.get("state") or "unknown").lower()
+        reasons: list[str] = []
+        if _cfg_bool(self._cfg, "multi_roblox_enabled", True) and guard_state not in {
+            "ready",
+            "disabled",
+        }:
+            reasons.append("multi_roblox_guard_not_ready")
+        return guard_state, reasons
+
+    def _account_counts(self, excluding: Any | None) -> dict[str, int]:
+        counts = {
+            "launching": 0,
+            "verifying": 0,
+            "in_game": 0,
+            "suspect": 0,
+            "queued": 0,
+        }
+        for acc in self._accounts:
+            if acc is excluding:
+                continue
+            state = _state_name(getattr(acc, "state", ""))
+            if state == "LAUNCHING":
+                counts["launching"] += 1
+            elif state == "VERIFY":
+                counts["verifying"] += 1
+            elif state == "IN_GAME":
+                counts["in_game"] += 1
+            elif state == "QUEUED":
+                counts["queued"] += 1
+            liveness = str(getattr(acc, "liveness_state", "") or "").lower()
+            if liveness in {"suspect_frozen", "missing", "unbound"}:
+                counts["suspect"] += 1
+        return counts
+
     def snapshot(self, *, excluding: Any | None = None, force: bool = False) -> MachineSnapshot:
         with self._lock:
             now = self._clock()
-            if not force and excluding is None and self._cached_snapshot and (now - self._cached_at) < 2.0:
+            if self._cache_hit(now, excluding, force):
                 return self._cached_snapshot
             resource = self._resource_probe()
             guard = self._guard_probe()
             live_processes = self._process_probe()
-            reasons: list[str] = []
-            cpu = float(resource.get("cpu_percent", 0.0) or 0.0)
-            memory = float(resource.get("memory_percent", 0.0) or 0.0)
-            if cpu >= _cfg_float(self._cfg, "machine_supervisor_cpu_high_percent", 96.0):
-                reasons.append("cpu_pressure")
-            if memory >= _cfg_float(self._cfg, "machine_supervisor_memory_high_percent", 96.0):
-                reasons.append("memory_pressure")
-            guard_state = str(guard.get("state") or "unknown").lower()
-            if _cfg_bool(self._cfg, "multi_roblox_enabled", True) and guard_state not in {"ready", "disabled"}:
-                reasons.append("multi_roblox_guard_not_ready")
-
-            counts = {"launching": 0, "verifying": 0, "in_game": 0, "suspect": 0, "queued": 0}
-            for acc in self._accounts:
-                if acc is excluding:
-                    continue
-                state = _state_name(getattr(acc, "state", ""))
-                if state == "LAUNCHING":
-                    counts["launching"] += 1
-                elif state == "VERIFY":
-                    counts["verifying"] += 1
-                elif state == "IN_GAME":
-                    counts["in_game"] += 1
-                elif state == "QUEUED":
-                    counts["queued"] += 1
-                if str(getattr(acc, "liveness_state", "") or "").lower() in {"suspect_frozen", "missing", "unbound"}:
-                    counts["suspect"] += 1
+            cpu, memory, reasons = self._resource_reasons(resource)
+            guard_state, guard_reasons = self._guard_status(guard)
+            reasons.extend(guard_reasons)
+            counts = self._account_counts(excluding)
 
             snapshot = MachineSnapshot(
                 checked_at=now,

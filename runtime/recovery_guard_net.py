@@ -145,6 +145,32 @@ class RecoveryGuardNetMixin:
                 )
 
 
+    def _clear_guard_account_locked(self, acc: Account) -> None:
+        if acc.last_crash_reason == "multi_roblox_guard_failed":
+            acc.last_crash_reason = ""
+        if "guard" in str(acc.manual_status or "").lower():
+            acc.manual_status = ""
+        if "guard" in str(acc.last_error or "").lower():
+            acc.last_error = ""
+        acc.fail_count = 0
+        acc.retry_count = 0
+        acc.launch_fail_count = 0
+        acc.recovery_budget_attempts.clear()
+
+    def _reset_guard_binding_locked(self, acc: Account) -> None:
+        self._runtime_state.clear_process_binding(
+            acc,
+            reason="multi_roblox_guard_self_heal_requeue",
+            increment_generation=True,
+        )
+        self._runtime_state.set_cooldown(acc, 0.0, reason="multi_roblox_guard_self_heal_requeue")
+        self._runtime_state.set_recovery(
+            acc,
+            status="queued",
+            reason="multi_roblox_guard_self_heal_requeue",
+            inflight=True,
+        )
+
     def _requeue_after_multi_roblox_guard_recovery(self) -> int:
         requeued = 0
         for acc in list(self._accounts):
@@ -156,29 +182,14 @@ class RecoveryGuardNetMixin:
             if auth_gate.blocked:
                 continue
             with acc._lock:
-                if acc.last_crash_reason == "multi_roblox_guard_failed":
-                    acc.last_crash_reason = ""
-                if "guard" in str(acc.manual_status or "").lower():
-                    acc.manual_status = ""
-                if "guard" in str(acc.last_error or "").lower():
-                    acc.last_error = ""
-                acc.fail_count = 0
-                acc.retry_count = 0
-                acc.launch_fail_count = 0
-                acc.recovery_budget_attempts.clear()
-                self._runtime_state.clear_process_binding(
-                    acc,
-                    reason="multi_roblox_guard_self_heal_requeue",
-                    increment_generation=True,
-                )
-                self._runtime_state.set_cooldown(acc, 0.0, reason="multi_roblox_guard_self_heal_requeue")
-                self._runtime_state.set_recovery(
-                    acc,
-                    status="queued",
-                    reason="multi_roblox_guard_self_heal_requeue",
-                    inflight=True,
-                )
-            self._state_mgr.transition(acc, AccountState.READY, reason="multi_roblox_guard_self_heal_requeue", force=True)
+                self._clear_guard_account_locked(acc)
+                self._reset_guard_binding_locked(acc)
+            self._state_mgr.transition(
+                acc,
+                AccountState.READY,
+                reason="multi_roblox_guard_self_heal_requeue",
+                force=True,
+            )
             self._queue_account(acc, "multi_roblox_guard_self_heal_requeue")
             requeued += 1
         return requeued
@@ -220,6 +231,31 @@ class RecoveryGuardNetMixin:
         self._persist_runtime()
 
 
+    @staticmethod
+    def _restore_expedite(acc: Account) -> bool:
+        return (
+            acc.state in {AccountState.NETWORK_LOST, AccountState.COOLDOWN, AccountState.CRASH}
+            or acc.recovery_status in {"network_lost", "cooldown", "scheduled"}
+            or bool(acc.cooldown_until)
+        )
+
+    def _reset_restored_account_locked(self, acc: Account) -> bool:
+        acc.network_retry_count = 0
+        expedite = self._restore_expedite(acc)
+        if expedite:
+            self._runtime_state.set_cooldown(acc, 0.0, reason="network_restored")
+            acc.recovery_scheduled_at = 0.0
+            acc.scheduler_slot = ""
+        if acc.recovery_status == "network_lost" or expedite:
+            self._runtime_state.set_recovery(
+                acc,
+                status="network_restored",
+                reason="network_restored",
+                inflight=True,
+            )
+            acc.sync_runtime("network_restored")
+        return expedite
+
     def on_network_restored(self, accounts: list[Account]):
         if not self._cfg.get("auto_rejoin", True):
             flog("[RECOVERY] Auto rejoin disabled - skip reconcile on network restore", "warning")
@@ -228,19 +264,7 @@ class RecoveryGuardNetMixin:
             if acc.desired_state != AccountState.IN_GAME or acc.state == AccountState.FAILED:
                 continue
             with acc._lock:
-                acc.network_retry_count = 0
-                expedite = (
-                    acc.state in {AccountState.NETWORK_LOST, AccountState.COOLDOWN, AccountState.CRASH}
-                    or acc.recovery_status in {"network_lost", "cooldown", "scheduled"}
-                    or bool(acc.cooldown_until)
-                )
-                if expedite:
-                    self._runtime_state.set_cooldown(acc, 0.0, reason="network_restored")
-                    acc.recovery_scheduled_at = 0.0
-                    acc.scheduler_slot = ""
-                if acc.recovery_status == "network_lost" or expedite:
-                    self._runtime_state.set_recovery(acc, status="network_restored", reason="network_restored", inflight=True)
-                    acc.sync_runtime("network_restored")
+                expedite = self._reset_restored_account_locked(acc)
             if expedite:
                 self._scheduler.cancel(f"recovery:{acc._config_username}", reason="network_restored")
             self._log_recovery_decision("network_restored", acc, "network_restored", expedited=expedite)

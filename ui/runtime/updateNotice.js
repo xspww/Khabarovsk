@@ -9,24 +9,24 @@
 (function () {
   "use strict";
 
-  var POLL_MS = 15 * 60 * 1000;
-  var STATUS_POLL_MS = 1000;
-  var timer = 0;
-  var statusTimer = 0;
-  var working = false;
-  var lastRefreshAt = 0;
+  let POLL_MS = 15 * 60 * 1000;
+  let STATUS_POLL_MS = 1000;
+  let timer = 0;
+  let statusTimer = 0;
+  let working = false;
+  let lastRefreshAt = 0;
 
   function token() {
     try {
-      var m = document.querySelector('meta[name="cronus-api-token"]');
+      let m = document.querySelector('meta[name="cronus-api-token"]');
       return (m && m.content) || "";
     } catch (e) { return ""; }
   }
 
   function apiHeaders(json) {
-    var h = {};
+    let h = {};
     if (json) h["Content-Type"] = "application/json";
-    var t = token();
+    let t = token();
     if (t) h["X-Cronus-Token"] = t;
     return h;
   }
@@ -50,7 +50,7 @@
   function button() { return document.getElementById("cronus-update-btn"); }
 
   function removeButton() {
-    var b = button();
+    let b = button();
     if (!b) return;
     // Keep static placeholder but hide it so CSS stays loaded and
     // the next ensureButton does not need to recreate the node.
@@ -64,7 +64,7 @@
   }
 
   function ensureButton() {
-    var b = button();
+    let b = button();
     if (b) {
       try { b.hidden = false; b.style.display = ""; } catch (e) {}
       return b;
@@ -72,14 +72,14 @@
     b = document.createElement("button");
     b.id = "cronus-update-btn";
     b.className = "cronus-update-btn";
-    var anchor = document.querySelector(".side-launch");
+    let anchor = document.querySelector(".side-launch");
     if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(b, anchor.nextSibling);
     else (document.querySelector(".sidebar") || document.body).appendChild(b);
     return b;
   }
 
   function setLabel(text, title, disabled) {
-    var b = ensureButton();
+    let b = ensureButton();
     b.disabled = !!disabled;
     // Preserve arrow icon when the label is the update-available state;
     // render() sets innerHTML with the icon, so text updates use textContent.
@@ -92,14 +92,14 @@
   }
 
   function esc(v) {
-    return String(v == null ? "" : v).replace(/[&<>"']/g, function (c) {
+    return String(v === null || v === undefined ? "" : v).replace(/[&<>"']/g, function (c) {
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
   }
 
   function closeModal() {
     try {
-      var m = document.getElementById("modal-backdrop");
+      let m = document.getElementById("modal-backdrop");
       if (m) m.hidden = true;
     } catch (e) {}
   }
@@ -110,13 +110,13 @@
       document.getElementById("modal-title").textContent = "Update to v" + version + "?";
       document.getElementById("modal-body").innerHTML =
         "<div>The farm is running. Updating will <b>stop the farm</b> and restart the app into the new version.</div>";
-      var foot = document.getElementById("modal-foot");
+      let foot = document.getElementById("modal-foot");
       foot.innerHTML = "";
-      var no = document.createElement("button");
+      let no = document.createElement("button");
       no.className = "btn ghost";
       no.textContent = "Cancel";
       no.onclick = closeModal;
-      var yes = document.createElement("button");
+      let yes = document.createElement("button");
       yes.className = "btn good";
       yes.textContent = "Update";
       yes.onclick = function () { closeModal(); onYes(); };
@@ -128,23 +128,23 @@
     }
   }
 
-  var overlayVersion = "";
+  let overlayVersion = "";
   function setProgress(pct) {
     // Sidebar button fill + overlay bar share one value.
     try {
-      var b = button();
+      let b = button();
       if (b && pct != null) {
         b.style.setProperty("--p", pct + "%");
         b.classList.add("is-downloading");
       }
-      var fill = document.getElementById("cronus-updating-fill");
+      let fill = document.getElementById("cronus-updating-fill");
       if (fill && pct != null) fill.style.width = pct + "%";
-      var pctEl = document.getElementById("cronus-updating-pct");
+      let pctEl = document.getElementById("cronus-updating-pct");
       if (pctEl && pct != null) pctEl.textContent = pct + "%";
     } catch (e) {}
   }
   function progressPct(job) {
-    var m = /(\d{1,3})\s*%/.exec(job.progress || "");
+    let m = /(\d{1,3})\s*%/.exec(job.progress || "");
     if (m) return Math.max(0, Math.min(100, parseInt(m[1], 10)));
     if (job.state === "verifying") return 100;
     return null;
@@ -153,7 +153,7 @@
     if (version) overlayVersion = version;
     if (document.getElementById("cronus-updating-overlay")) return;
     try {
-      var st = document.createElement("style");
+      let st = document.createElement("style");
       st.textContent = "#cronus-updating-overlay{position:fixed;inset:0;z-index:99999;display:flex;align-items:center;justify-content:center;background:rgba(11,12,16,.94);animation:cronus-ov-in .25s ease}"
         + "@keyframes cronus-ov-in{from{opacity:0}to{opacity:1}}"
         + "#cronus-updating-overlay .cronus-updating-box{width:min(420px,calc(100vw - 48px));background:#0f1117;border:1px solid rgba(99,102,241,.35);border-radius:14px;padding:28px 30px;animation:cronus-box-in .35s cubic-bezier(.16,1,.3,1)}"
@@ -171,7 +171,7 @@
         + "@keyframes cronus-blink{0%,100%{opacity:.25}50%{opacity:1}}"
         + "#cronus-updating-overlay .cronus-updating-sub{font-size:12px;color:#6c7079;margin-top:12px;line-height:1.6}";
       document.head.appendChild(st);
-      var ov = document.createElement("div");
+      let ov = document.createElement("div");
       ov.id = "cronus-updating-overlay";
       ov.innerHTML = '<div class="cronus-updating-box">'
         + '<div class="cronus-updating-prompt">&gt; cronus update</div>'
@@ -187,7 +187,7 @@
     if (statusTimer) clearTimeout(statusTimer);
     statusTimer = 0;
     get("/api/update/status").then(function (snap) {
-      var job = (snap && snap.job) || {};
+      let job = (snap && snap.job) || {};
       if (job.state === "restarting") showUpdatingOverlay(job.version);
       if (!job.active) {
         if (job.state === "failed") {
@@ -206,7 +206,7 @@
         schedule();
         return;
       }
-      var label = job.progress || job.state || "updating";
+      let label = job.progress || job.state || "updating";
       setLabel(label.charAt(0).toUpperCase() + label.slice(1) + "…", job.msg || "", true);
       setProgress(progressPct(job));
       // Hidden tab: 5s cadence is enough for a progress bar nobody sees.
@@ -254,7 +254,7 @@
     });
   }
 
-  var latestSnap = null;
+  let latestSnap = null;
   function renderLatest() {
     if (latestSnap) render(latestSnap);
   }
@@ -278,7 +278,7 @@
       removeButton();
       if (snap && snap.check_error) {
         try { console.warn("[update] check_error:", snap.check_error); } catch (e) {}
-        var retry = ensureButton();
+        let retry = ensureButton();
         retry.disabled = false;
         retry.classList.remove("is-available", "is-downloading", "is-failed");
         retry.classList.add("is-check-failed");
@@ -292,7 +292,7 @@
       }
       return;
     }
-    var b = ensureButton();
+    let b = ensureButton();
     b.disabled = false;
     b.hidden = false;
     b.style.display = "";
@@ -304,12 +304,12 @@
     b.onclick = function () { onButton(snap.latest_version, snap.latest_url); };
   }
 
-  var failCount = 0;
+  let failCount = 0;
   function schedule() {
     if (timer) clearTimeout(timer);
     // A failed check retries soon (1m, 2m, ... capped at 15m); successes
     // re-check every POLL_MS (15m) so a new release shows within minutes.
-    var wait = failCount > 0 ? Math.min(15 * 60 * 1000, 60000 * failCount) : POLL_MS;
+    let wait = failCount > 0 ? Math.min(15 * 60 * 1000, 60000 * failCount) : POLL_MS;
     timer = setTimeout(refresh, wait);
   }
 
@@ -346,7 +346,7 @@
   document.addEventListener("visibilitychange", function () {
     try {
       if (!document.hidden && !working) {
-        var age = Date.now() - lastRefreshAt;
+        let age = Date.now() - lastRefreshAt;
         if (!button() || age > 60000) refresh();
         else if (latestSnap && latestSnap.check_error) refresh();
       }
@@ -355,7 +355,7 @@
   window.addEventListener("focus", function () {
     try {
       if (!working) {
-        var age2 = Date.now() - lastRefreshAt;
+        let age2 = Date.now() - lastRefreshAt;
         if (age2 > 60000) refresh();
       }
     } catch (e) {}

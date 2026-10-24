@@ -37,39 +37,56 @@ def normalize_texts(texts: Iterable[Any]) -> list[str]:
     return out
 
 
+def _has_connection(joined_lower: str) -> bool:
+    return any(keyword in joined_lower for keyword in CONNECTION_KEYWORDS)
+
+
+def _server_full(joined_lower: str) -> bool:
+    return (
+        "server is full" in joined_lower
+        or "experience is full" in joined_lower
+        or "requested game is full" in joined_lower
+    )
+
+
+def _teleport_failed(joined_lower: str) -> bool:
+    return "teleport failed" in joined_lower or "teleport timeout" in joined_lower
+
+
+def _matched(features: dict[str, Any]) -> bool:
+    return bool(
+        features["error_code"]
+        or features["has_disconnected"]
+        or features["has_reconnect"]
+        or features["has_connection"]
+        or features["has_server_full"]
+        or features["has_teleport"]
+        or features["has_captcha"]
+        or features["has_locked"]
+        or features["has_recovery"]
+    )
+
+
 def detect_text_features(texts: Iterable[Any]) -> dict[str, Any]:
     normalized = normalize_texts(texts)
     joined_lower = " | ".join(text.lower() for text in normalized)
     matched_code = re.search(r"error\s*code\s*[:#]?\s*(\d+)", joined_lower, flags=re.IGNORECASE)
     error_code = str(matched_code.group(1) or "").strip() if matched_code else ""
-    has_disconnected = "disconnected" in joined_lower
-    has_leave = "leave" in joined_lower
-    has_reconnect = "reconnect" in joined_lower
-    has_connection = any(keyword in joined_lower for keyword in CONNECTION_KEYWORDS)
-    has_server_full = (
-        "server is full" in joined_lower
-        or "experience is full" in joined_lower
-        or "requested game is full" in joined_lower
-    )
-    has_teleport = "teleport failed" in joined_lower or "teleport timeout" in joined_lower
-    has_same_account = "same account launched" in joined_lower
-    has_captcha = is_captcha_window_texts(normalized)
-    has_locked = is_locked_window_texts(normalized)
-    has_recovery = is_recovery_window_texts(normalized)
-    return {
+    features = {
         "texts": normalized,
         "joined": joined_lower,
         "error_code": error_code,
-        "has_disconnected": has_disconnected,
-        "has_leave": has_leave,
-        "has_reconnect": has_reconnect,
-        "has_connection": has_connection,
-        "has_server_full": has_server_full,
-        "has_teleport": has_teleport,
-        "has_same_account": has_same_account,
-        "has_captcha": has_captcha,
-        "has_locked": has_locked,
-        "has_recovery": has_recovery,
-        "matched": bool(error_code or has_disconnected or has_reconnect or has_connection or has_server_full or has_teleport or has_captcha or has_locked or has_recovery),
-        "detail": " | ".join(normalized[:4]) if normalized else "",
+        "has_disconnected": "disconnected" in joined_lower,
+        "has_leave": "leave" in joined_lower,
+        "has_reconnect": "reconnect" in joined_lower,
+        "has_connection": _has_connection(joined_lower),
+        "has_server_full": _server_full(joined_lower),
+        "has_teleport": _teleport_failed(joined_lower),
+        "has_same_account": "same account launched" in joined_lower,
+        "has_captcha": is_captcha_window_texts(normalized),
+        "has_locked": is_locked_window_texts(normalized),
+        "has_recovery": is_recovery_window_texts(normalized),
     }
+    features["matched"] = _matched(features)
+    features["detail"] = " | ".join(normalized[:4]) if normalized else ""
+    return features

@@ -97,6 +97,51 @@ def _account_pid(account: Any) -> int:
         return 0
 
 
+def _same_create_time(record: Any, create_time: Any) -> bool:
+    if not record:
+        return False
+    return float(record.get("create_time") or 0.0) == float(create_time or 0.0)
+
+
+def _soft_nice(proc: Any) -> Any:
+    try:
+        return proc.nice()
+    except Exception:
+        return None
+
+
+def _soft_affinity(proc: Any) -> Any:
+    try:
+        if not hasattr(proc, "cpu_affinity"):
+            return None
+        return proc.cpu_affinity()
+    except Exception:
+        return None
+
+
+def _cpu_indexes(psutil: Any) -> list[int]:
+    return list(range(psutil.cpu_count(logical=True) or 1))
+
+
+def _snapshot_status(row: dict[str, Any], enabled: bool, previous: dict[str, Any]) -> dict[str, str]:
+    if not enabled:
+        return {"status": "Off", "message": ""}
+    if not row["enabled"]:
+        return {"status": "Disabled", "message": ""}
+    if not row["pid"]:
+        return {"status": "No PID", "message": "Roblox is not running for this account."}
+    return _previous_snapshot_status(row, previous)
+
+
+def _previous_snapshot_status(row: dict[str, Any], previous: dict[str, Any]) -> dict[str, str]:
+    if int(previous.get("pid") or 0) != int(row["pid"] or 0):
+        return {"status": row["status"], "message": ""}
+    return {
+        "status": str(previous.get("status") or row["status"]),
+        "message": str(previous.get("message") or ""),
+    }
+
+
 class CpuLimiter:
     def __init__(self):
         self._lock = threading.RLock()
@@ -136,9 +181,37 @@ class CpuLimiter:
         try:
             self._set_job_cpu_rate(handle, CPU_LIMIT_MAX, enabled=False)
         except Exception:
-            pass
+            "intentional: ignore exception"
         self._close_handle(handle)
         return True
+
+    def _apply_account_row(
+        self,
+        account: Any,
+        settings: dict[str, Any],
+        active_pids: set[int],
+    ) -> dict[str, Any]:
+        row = self._row_base(account, settings)
+        username = row["username"]
+        if not row["enabled"]:
+            if row["pid"]:
+                self.release_pid(int(row["pid"]))
+            row.update({"status": "Disabled", "message": ""})
+            return row
+        pid = int(row["pid"] or 0)
+        if not pid:
+            row.update({"status": "No PID", "message": "Roblox is not running for this account."})
+            return row
+        if not self._is_roblox_pid(pid):
+            self.release_pid(pid)
+            row.update({"status": "Failed", "message": "PID is not a live Roblox process."})
+            return row
+        active_pids.add(pid)
+        result = self._apply_pid(pid, row["limit_percent"], settings["mode"])
+        row.update(result)
+        with self._lock:
+            self._last_rows[username] = dict(row)
+        return row
 
     def apply(self, accounts: Iterable[Any], settings: dict[str, Any]) -> dict[str, Any]:
         normalized = normalize_cpu_limiter_settings(settings)
@@ -148,33 +221,10 @@ class CpuLimiter:
             rows = self._build_rows(account_list, normalized, {})
             return {"ok": True, **normalized, "rows": rows, "applied": 0, "fallback": 0, "failed": 0}
 
-        rows = []
-        active_pids = set()
+        rows: list[dict[str, Any]] = []
+        active_pids: set[int] = set()
         for account in account_list:
-            row = self._row_base(account, normalized)
-            username = row["username"]
-            if not row["enabled"]:
-                if row["pid"]:
-                    self.release_pid(int(row["pid"]))
-                row.update({"status": "Disabled", "message": ""})
-                rows.append(row)
-                continue
-            pid = int(row["pid"] or 0)
-            if not pid:
-                row.update({"status": "No PID", "message": "Roblox is not running for this account."})
-                rows.append(row)
-                continue
-            if not self._is_roblox_pid(pid):
-                self.release_pid(pid)
-                row.update({"status": "Failed", "message": "PID is not a live Roblox process."})
-                rows.append(row)
-                continue
-            active_pids.add(pid)
-            result = self._apply_pid(pid, row["limit_percent"], normalized["mode"])
-            row.update(result)
-            rows.append(row)
-            with self._lock:
-                self._last_rows[username] = dict(row)
+            rows.append(self._apply_account_row(account, normalized, active_pids))
 
         with self._lock:
             for pid in list(self._job_handles):
@@ -210,23 +260,19 @@ class CpuLimiter:
             "message": "",
         }
 
+    def _row_for_snapshot(
+        self,
+        account: Any,
+        settings: dict[str, Any],
+        last_rows: dict[str, dict[str, Any]],
+    ) -> dict[str, Any]:
+        row = self._row_base(account, settings)
+        previous = last_rows.get(row["username"]) or {}
+        row.update(_snapshot_status(row, settings["enabled"], previous))
+        return row
+
     def _build_rows(self, accounts: Iterable[Any], settings: dict[str, Any], last_rows: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
-        rows = []
-        for account in accounts:
-            row = self._row_base(account, settings)
-            if not settings["enabled"]:
-                row.update({"status": "Off", "message": ""})
-            elif not row["enabled"]:
-                row.update({"status": "Disabled", "message": ""})
-            elif not row["pid"]:
-                row.update({"status": "No PID", "message": "Roblox is not running for this account."})
-            else:
-                previous = last_rows.get(row["username"]) or {}
-                if int(previous.get("pid") or 0) == int(row["pid"] or 0):
-                    row["status"] = str(previous.get("status") or row["status"])
-                    row["message"] = str(previous.get("message") or "")
-            rows.append(row)
-        return rows
+        return [self._row_for_snapshot(account, settings, last_rows) for account in accounts]
 
     def _apply_pid(self, pid: int, limit_percent: int, mode: str) -> dict[str, str]:
         if mode == "soft":
@@ -241,6 +287,37 @@ class CpuLimiter:
                 return {"status": "Fallback", "message": f"Hard cap failed; soft limit applied. {hard_error}"}
             return {"status": "Failed", "message": f"Hard cap failed: {hard_error}; soft limit failed: {soft_msg}"}
 
+    def _reuse_job(self, record: dict[str, Any] | None, limit_percent: int) -> bool:
+        if not record:
+            return False
+        job = int(record.get("handle") or 0)
+        self._set_job_cpu_rate(job, limit_percent, enabled=True)
+        self._verify_job_cpu_rate(job, limit_percent)
+        return True
+
+    def _create_job_for_pid(self, kernel32: Any, pid: int, create_time: float, limit_percent: int) -> None:
+        job = kernel32.CreateJobObjectW(None, f"CronusCpuLimiter_{os.getpid()}_{pid}")
+        if not job:
+            raise ctypes.WinError(ctypes.get_last_error())
+        self._set_job_cpu_rate(job, limit_percent, enabled=True)
+        self._verify_job_cpu_rate(job, limit_percent)
+        process = kernel32.OpenProcess(
+            _PROCESS_SET_QUOTA | _PROCESS_TERMINATE | _PROCESS_QUERY_LIMITED_INFORMATION,
+            False,
+            int(pid),
+        )
+        if not process:
+            self._close_handle(job)
+            raise ctypes.WinError(ctypes.get_last_error())
+        try:
+            if not kernel32.AssignProcessToJobObject(job, process):
+                error = ctypes.get_last_error()
+                self._close_handle(job)
+                raise ctypes.WinError(error)
+        finally:
+            self._close_handle(process)
+        self._job_handles[pid] = {"handle": int(job), "create_time": float(create_time or 0.0)}
+
     def _apply_hard(self, pid: int, limit_percent: int) -> None:
         if sys.platform != "win32":
             raise RuntimeError("Hard cap is Windows-only")
@@ -252,32 +329,9 @@ class CpuLimiter:
                 self._close_handle(int(record.get("handle") or 0))
                 self._job_handles.pop(pid, None)
                 record = None
-            if record:
-                job = int(record.get("handle") or 0)
-                self._set_job_cpu_rate(job, limit_percent, enabled=True)
-                self._verify_job_cpu_rate(job, limit_percent)
-            else:
-                job = kernel32.CreateJobObjectW(None, f"CronusCpuLimiter_{os.getpid()}_{pid}")
-                if not job:
-                    raise ctypes.WinError(ctypes.get_last_error())
-                self._set_job_cpu_rate(job, limit_percent, enabled=True)
-                self._verify_job_cpu_rate(job, limit_percent)
-                process = kernel32.OpenProcess(
-                    _PROCESS_SET_QUOTA | _PROCESS_TERMINATE | _PROCESS_QUERY_LIMITED_INFORMATION,
-                    False,
-                    int(pid),
-                )
-                if not process:
-                    self._close_handle(job)
-                    raise ctypes.WinError(ctypes.get_last_error())
-                try:
-                    if not kernel32.AssignProcessToJobObject(job, process):
-                        error = ctypes.get_last_error()
-                        self._close_handle(job)
-                        raise ctypes.WinError(error)
-                finally:
-                    self._close_handle(process)
-                self._job_handles[pid] = {"handle": int(job), "create_time": float(create_time or 0.0)}
+            if self._reuse_job(record, limit_percent):
+                return
+            self._create_job_for_pid(kernel32, pid, create_time, limit_percent)
 
     def _set_job_cpu_rate(self, job_handle: int, limit_percent: int, enabled: bool) -> None:
         if not job_handle:
@@ -312,6 +366,17 @@ class CpuLimiter:
         if int(info.CpuRate) != expected or (int(info.ControlFlags) & expected_flags) != expected_flags:
             raise RuntimeError(f"CPU hard cap verify failed: rate={int(info.CpuRate)} flags={int(info.ControlFlags)}")
 
+    def _capture_soft_original(self, proc: Any, pid: int, create_time: float) -> None:
+        with self._lock:
+            current = self._soft_originals.get(int(pid))
+            if _same_create_time(current, create_time):
+                return
+            self._soft_originals[int(pid)] = {
+                "create_time": float(create_time or 0.0),
+                "nice": _soft_nice(proc),
+                "affinity": _soft_affinity(proc),
+            }
+
     def _apply_soft(self, pid: int, limit_percent: int) -> tuple[bool, str]:
         try:
             import psutil
@@ -320,23 +385,10 @@ class CpuLimiter:
         try:
             proc = psutil.Process(int(pid))
             create_time = self._process_create_time(pid)
-            with self._lock:
-                current = self._soft_originals.get(int(pid))
-                if not current or float(current.get("create_time") or 0.0) != float(create_time or 0.0):
-                    original: dict[str, Any] = {"create_time": float(create_time or 0.0)}
-                    try:
-                        original["nice"] = proc.nice()
-                    except Exception:
-                        original["nice"] = None
-                    try:
-                        if hasattr(proc, "cpu_affinity"):
-                            original["affinity"] = proc.cpu_affinity()
-                    except Exception:
-                        original["affinity"] = None
-                    self._soft_originals[int(pid)] = original
+            self._capture_soft_original(proc, pid, create_time)
             if sys.platform == "win32" and hasattr(psutil, "IDLE_PRIORITY_CLASS"):
                 proc.nice(psutil.IDLE_PRIORITY_CLASS)
-            cpus = list(range(psutil.cpu_count(logical=True) or 1))
+            cpus = _cpu_indexes(psutil)
             keep = max(1, min(len(cpus), round(len(cpus) * (int(limit_percent) / 100.0))))
             if hasattr(proc, "cpu_affinity") and cpus:
                 proc.cpu_affinity(cpus[:keep])
@@ -344,23 +396,28 @@ class CpuLimiter:
         except Exception as exc:
             return False, str(exc)
 
+    def _take_soft_original(self, pid: int) -> dict[str, Any] | None:
+        with self._lock:
+            return self._soft_originals.pop(int(pid or 0), None)
+
+    def _restore_soft_values(self, proc: Any, original: dict[str, Any]) -> None:
+        if original.get("nice") is not None:
+            proc.nice(original["nice"])
+        if original.get("affinity") and hasattr(proc, "cpu_affinity"):
+            proc.cpu_affinity(original["affinity"])
+
     def _restore_soft(self, pid: int) -> bool:
         try:
             import psutil
         except ImportError:
             return False
-        with self._lock:
-            original = self._soft_originals.pop(int(pid or 0), None)
+        original = self._take_soft_original(pid)
         if not original:
             return False
         try:
-            if float(original.get("create_time") or 0.0) != float(self._process_create_time(pid) or 0.0):
+            if not _same_create_time(original, self._process_create_time(pid)):
                 return False
-            proc = psutil.Process(int(pid))
-            if original.get("nice") is not None:
-                proc.nice(original["nice"])
-            if original.get("affinity") and hasattr(proc, "cpu_affinity"):
-                proc.cpu_affinity(original["affinity"])
+            self._restore_soft_values(psutil.Process(int(pid)), original)
             return True
         except Exception:
             return False
@@ -415,7 +472,7 @@ class CpuLimiter:
         try:
             self._kernel32().CloseHandle(handle)
         except Exception:
-            pass
+            "intentional: ignore exception"
 
 
 CPU_LIMITER = CpuLimiter()

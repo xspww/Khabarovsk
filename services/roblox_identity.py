@@ -4,10 +4,55 @@ from __future__ import annotations
 import base64
 import re
 import time
+from typing import Any
 
 from services.account_hybrid import ACCOUNT_STORE
 from services.roblox_http import USERS_BASE, RobloxHTTP
 from services.roblox_moderation import fetch_ban_status_by_username
+
+
+def _cookie_candidates(token: str) -> list[str]:
+    payload = token.rsplit("|_", 1)[-1].strip() if "|_" in token else token
+    candidates = [payload]
+    if payload.startswith("_"):
+        # Tolerate a separator variant that leaves a stray leading "_".
+        candidates.append(payload[1:])
+    return candidates
+
+
+def _decode_cookie_payload(candidate: str) -> bytes | None:
+    if len(candidate) < 32 or not re.fullmatch(r"[A-Za-z0-9+/=_-]+", candidate):
+        return None
+    try:
+        return base64.urlsafe_b64decode(candidate + "=" * (-len(candidate) % 4))
+    except Exception:
+        return None
+
+
+def _decode_cookie_name(raw: bytes) -> str:
+    try:
+        # `..` must span arbitrary tag/length bytes (0x0A is common), so
+        # [\s\S] is used instead of `.` which skips newlines.
+        name_match = re.search(rb"uname[\s\S]{2}([A-Za-z0-9_]{3,20})", raw)
+        username = name_match.group(1).decode("ascii") if name_match else ""
+    except Exception:
+        username = ""
+    if username and not re.fullmatch(r"[A-Za-z0-9_]{3,20}", username):
+        username = ""
+    return username
+
+
+def _decode_cookie_uid(raw: bytes) -> str:
+    try:
+        # `duid` (device id) also contains "uid" — require a non-letter
+        # before it so the device id is never mistaken for the user id.
+        uid_match = re.search(rb"(?<![A-Za-z])uid[\s\S]{2}(\d{4,15})", raw)
+        user_id = uid_match.group(1).decode("ascii") if uid_match else ""
+    except Exception:
+        user_id = ""
+    if user_id and not user_id.isdigit():
+        user_id = ""
+    return user_id
 
 
 def cookie_embedded_identity(cookie: str) -> tuple[str, str]:
@@ -24,41 +69,23 @@ def cookie_embedded_identity(cookie: str) -> tuple[str, str]:
     token = str(cookie or "").strip()
     if not token:
         return "", ""
-    # The token separator is "|_" (pipe-underscore): "...items.|_CAEQ...".
-    # A payload-only paste (no header) is used as-is.
-    payload = token.rsplit("|_", 1)[-1].strip() if "|_" in token else token
-    candidates = [payload]
-    if payload.startswith("_"):
-        # Tolerate a separator variant that leaves a stray leading "_".
-        candidates.append(payload[1:])
-    for candidate in candidates:
-        if len(candidate) < 32 or not re.fullmatch(r"[A-Za-z0-9+/=_-]+", candidate):
+    for candidate in _cookie_candidates(token):
+        raw = _decode_cookie_payload(candidate)
+        if raw is None:
             continue
-        try:
-            raw = base64.urlsafe_b64decode(candidate + "=" * (-len(candidate) % 4))
-        except Exception:
-            continue
-        try:
-            # `..` must span arbitrary tag/length bytes (0x0A is common), so
-            # [\s\S] is used instead of `.` which skips newlines.
-            name_match = re.search(rb"uname[\s\S]{2}([A-Za-z0-9_]{3,20})", raw)
-            username = name_match.group(1).decode("ascii") if name_match else ""
-        except Exception:
-            username = ""
-        try:
-            # `duid` (device id) also contains "uid" — require a non-letter
-            # before it so the device id is never mistaken for the user id.
-            uid_match = re.search(rb"(?<![A-Za-z])uid[\s\S]{2}(\d{4,15})", raw)
-            user_id = uid_match.group(1).decode("ascii") if uid_match else ""
-        except Exception:
-            user_id = ""
-        if username and not re.fullmatch(r"[A-Za-z0-9_]{3,20}", username):
-            username = ""
-        if user_id and not user_id.isdigit():
-            user_id = ""
+        username = _decode_cookie_name(raw)
+        user_id = _decode_cookie_uid(raw)
         if username or user_id:
             return username, user_id
     return "", ""
+
+
+def _record_cookie(record: Any) -> str:
+    return str((record or {}).get("cookie") or "").strip()
+
+
+def _record_username(record: Any) -> str:
+    return str((record or {}).get("username") or "").strip()
 
 
 def username_for_cookie_in_store(cookie: str) -> str:
@@ -72,14 +99,22 @@ def username_for_cookie_in_store(cookie: str) -> str:
         return ""
     try:
         for record in ACCOUNT_STORE.read_records(include_cookies=True):
-            if str((record or {}).get("cookie") or "").strip() != token:
+            if _record_cookie(record) != token:
                 continue
-            name = str((record or {}).get("username") or "").strip()
+            name = _record_username(record)
             if name:
                 return name
     except Exception:
-        pass
+        "intentional: ignore exception"
     return ""
+
+
+def _resolve_cookie_name(cookie: str, username_hint: str) -> str:
+    return (
+        str(username_hint or "").strip()
+        or username_for_cookie_in_store(cookie)
+        or cookie_embedded_identity(cookie)[0]
+    )
 
 
 def resolve_ban_for_dead_cookie(cookie: str, username_hint: str = "", timeout: float = 8.0) -> tuple[bool | None, str, str]:
@@ -88,11 +123,7 @@ def resolve_ban_for_dead_cookie(cookie: str, username_hint: str = "", timeout: f
     The dead cookie cannot prove anything, so fall back to the public API by
     username. Returns (is_banned_or_None, username, user_id). None = unknown.
     """
-    name = (
-        str(username_hint or "").strip()
-        or username_for_cookie_in_store(cookie)
-        or cookie_embedded_identity(cookie)[0]
-    )
+    name = _resolve_cookie_name(cookie, username_hint)
     if not name:
         return None, "", ""
     banned, uid, _detail = fetch_ban_status_by_username(name, timeout=timeout)
@@ -120,6 +151,18 @@ def moderated_only_detail(detail: str) -> bool:
     return True
 
 
+def _uid_text(uid: Any) -> str:
+    return str(uid or "")
+
+
+def _locked_block_reason() -> str:
+    try:
+        from services.verify_guard import LOCKED_BLOCK_REASON as message
+    except Exception:
+        message = "Account locked - face/ID verification required. Verify manually, then click Resume."
+    return message
+
+
 def resolve_moderated_dead_cookie(
     cookie: str, username_hint: str = "", timeout: float = 8.0
 ) -> tuple[str | None, str, str, str]:
@@ -130,11 +173,7 @@ def resolve_moderated_dead_cookie(
     the account is alive and not banned, so the moderation response comes
     from a non-ban hold (verification lock or similar). None = unknown.
     """
-    name = (
-        str(username_hint or "").strip()
-        or username_for_cookie_in_store(cookie)
-        or cookie_embedded_identity(cookie)[0]
-    )
+    name = _resolve_cookie_name(cookie, username_hint)
     if not name:
         return None, "", "", ""
     try:
@@ -142,14 +181,32 @@ def resolve_moderated_dead_cookie(
     except Exception:
         return None, "", name, ""
     if banned is True:
-        return "banned", (ban_detail or "Account banned (Roblox isBanned=true)"), name, str(uid or "")
+        return "banned", (ban_detail or "Account banned (Roblox isBanned=true)"), name, _uid_text(uid)
     if banned is False:
-        try:
-            from services.verify_guard import LOCKED_BLOCK_REASON as _LM
-        except Exception:
-            _LM = "Account locked - face/ID verification required. Verify manually, then click Resume."
-        return "locked", _LM, name, str(uid or "")
-    return None, "", name, str(uid or "")
+        return "locked", _locked_block_reason(), name, _uid_text(uid)
+    return None, "", name, _uid_text(uid)
+
+
+def _sleep_delay(delay: Any) -> None:
+    try:
+        time.sleep(max(0.0, float(delay or 0.0)))
+    except Exception:
+        "intentional: ignore exception"
+
+
+def _is_moderation_probe(status: Any, body: Any) -> bool:
+    text = str(body or "").lower()
+    return int(status or 0) == 403 and "moderat" in text and "suspend" not in text
+
+
+def _moderation_probe(client: RobloxHTTP) -> tuple[int, str]:
+    try:
+        status, body, _headers = client.request(USERS_BASE + "v1/users/authenticated", method="GET", retry_csrf=False)
+    except Exception:
+        return 0, ""
+    if _is_moderation_probe(status, body):
+        return int(status or 0), str(body or "")
+    return 0, ""
 
 
 def reprobe_moderation_response(cookie: str, attempts: int = 3, delay: float = 1.5, timeout: float = 8.0) -> tuple[int, str]:
@@ -170,14 +227,8 @@ def reprobe_moderation_response(cookie: str, attempts: int = 3, delay: float = 1
     except Exception:
         return 0, ""
     for _ in range(tries):
-        try:
-            status, body, _headers = client.request(USERS_BASE + "v1/users/authenticated", method="GET", retry_csrf=False)
-        except Exception:
-            status, body = 0, ""
-        if int(status or 0) == 403 and "moderat" in str(body or "").lower() and "suspend" not in str(body or "").lower():
-            return int(status), str(body or "")
-        try:
-            time.sleep(max(0.0, float(delay or 0.0)))
-        except Exception:
-            pass
+        status, body = _moderation_probe(client)
+        if status:
+            return status, body
+        _sleep_delay(delay)
     return 0, ""

@@ -8,6 +8,7 @@ import re
 import sqlite3
 import time
 from ctypes import wintypes
+from typing import Any
 
 from core import flog
 from infra.app_paths import USER_DATA_ROOT
@@ -96,6 +97,319 @@ class IsolationManager:
         flog(f"[ISO] Instance path for {username}: {path}")
         return path
 
+    @staticmethod
+    def _read_json_object(
+        path: str,
+        encoding: str | None = None,
+    ) -> dict[str, Any]:
+        if not os.path.exists(path):
+            return {}
+        try:
+            with open(path, encoding=encoding) as f:
+                return json.load(f)
+        except Exception:
+            return {}
+
+    @classmethod
+    def _write_json_target(
+        cls,
+        path: str,
+        cookie: str,
+        username: str,
+        ledger: CookieArtifactLedger,
+        encoding: str | None = None,
+    ) -> None:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        data = cls._read_json_object(path, encoding)
+        data[".ROBLOSECURITY"] = cookie
+        with open(path, "w", encoding=encoding) as f:
+            json.dump(data, f, indent=2)
+        ledger.record_json_cookie(username, path, cookie)
+
+    @classmethod
+    def _inject_instance_json(
+        cls,
+        username: str,
+        cookie: str,
+        ledger: CookieArtifactLedger,
+        written: list[str],
+    ) -> None:
+        instance = cls.setup(username)
+        json_targets = [
+            os.path.join(
+                instance,
+                "Roblox",
+                "LocalStorage",
+                "RobloxLocalStorage.json",
+            ),
+        ]
+        for path in json_targets:
+            try:
+                cls._write_json_target(path, cookie, username, ledger)
+                written.append(f"json:{path}")
+            except Exception as e:
+                flog(f"[ISO] json inject error: {e}", "warning")
+
+    @classmethod
+    def _inject_default_json(
+        cls,
+        local_appdata: str,
+        username: str,
+        cookie: str,
+        ledger: CookieArtifactLedger,
+        written: list[str],
+    ) -> None:
+        default_path = os.path.join(
+            local_appdata,
+            "Roblox",
+            "LocalStorage",
+            "RobloxLocalStorage.json",
+        )
+        try:
+            cls._write_json_target(
+                default_path,
+                cookie,
+                username,
+                ledger,
+            )
+            written.append(f"localappdata:{default_path}")
+        except Exception as e:
+            flog(f"[ISO] localappdata inject error: {e}", "warning")
+
+    @classmethod
+    def _inject_store_json(
+        cls,
+        local_appdata: str,
+        username: str,
+        cookie: str,
+        ledger: CookieArtifactLedger,
+        written: list[str],
+    ) -> None:
+        for package_name in cls.STORE_PACKAGE_FOLDERS:
+            store_path = os.path.join(
+                local_appdata,
+                "Packages",
+                package_name,
+                "LocalState",
+                "LocalStorage",
+                "RobloxLocalStorage.json",
+            )
+            try:
+                cls._write_json_target(
+                    store_path,
+                    cookie,
+                    username,
+                    ledger,
+                    encoding="utf-8",
+                )
+                written.append(f"store:{store_path}")
+            except Exception as e:
+                flog(
+                    f"[ISO] store localstorage inject error: {e}",
+                    "warning",
+                )
+
+    @staticmethod
+    def _replace_webview_cookie(
+        conn: sqlite3.Connection,
+        encrypted_cookie: bytes,
+        now_utc: int,
+        expires_utc: int,
+    ) -> None:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            DELETE FROM cookies
+            WHERE host_key = ? AND name = ?
+            """,
+            (".roblox.com", ".ROBLOSECURITY"),
+        )
+        cur.execute(
+            """
+            INSERT INTO cookies (
+                creation_utc, host_key, top_frame_site_key, name, value,
+                encrypted_value, path, expires_utc, is_secure, is_httponly,
+                last_access_utc, has_expires, is_persistent, priority, samesite,
+                source_scheme, source_port, last_update_utc, source_type,
+                has_cross_site_ancestor, is_edgelegacycookie, browser_provenance
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                now_utc,
+                ".roblox.com",
+                "",
+                ".ROBLOSECURITY",
+                "",
+                sqlite3.Binary(encrypted_cookie),
+                "/",
+                expires_utc,
+                1,
+                1,
+                now_utc,
+                1,
+                1,
+                1,
+                -1,
+                2,
+                443,
+                now_utc,
+                1,
+                0,
+                0,
+                0,
+            ),
+        )
+        conn.commit()
+
+    @classmethod
+    def _inject_webview2(
+        cls,
+        local_appdata: str,
+        username: str,
+        cookie: str,
+        ledger: CookieArtifactLedger,
+    ) -> str | None:
+        local_state_path = os.path.join(
+            local_appdata,
+            "Roblox",
+            "UniversalApp",
+            "WebView2",
+            "EBWebView",
+            "Local State",
+        )
+        webview_cookie_db = os.path.join(
+            local_appdata,
+            "Roblox",
+            "UniversalApp",
+            "WebView2",
+            "EBWebView",
+            "Default",
+            "Network",
+            "Cookies",
+        )
+        try:
+            os.makedirs(
+                os.path.dirname(webview_cookie_db),
+                exist_ok=True,
+            )
+            encrypted_cookie = cls._encrypt_webview2_cookie(
+                cookie,
+                local_state_path,
+            )
+            now_utc = cls._chrome_utc_now()
+            expires_utc = now_utc + (400 * 24 * 60 * 60 * 1_000_000)
+            conn = sqlite3.connect(webview_cookie_db, timeout=5)
+            try:
+                cls._replace_webview_cookie(
+                    conn,
+                    encrypted_cookie,
+                    now_utc,
+                    expires_utc,
+                )
+            finally:
+                conn.close()
+            ledger.record_artifact(
+                username,
+                "webview2",
+                webview_cookie_db,
+                cookie,
+            )
+            return webview_cookie_db
+        except Exception as e:
+            flog(f"[ISO] webview2 cookie inject error: {e}", "warning")
+            return None
+
+    @classmethod
+    def _inject_local_appdata_targets(
+        cls,
+        username: str,
+        cookie: str,
+        ledger: CookieArtifactLedger,
+        written: list[str],
+    ) -> None:
+        local_appdata = os.environ.get("LOCALAPPDATA", "")
+        if not local_appdata:
+            return
+        cls._inject_default_json(
+            local_appdata,
+            username,
+            cookie,
+            ledger,
+            written,
+        )
+        cls._inject_store_json(
+            local_appdata,
+            username,
+            cookie,
+            ledger,
+            written,
+        )
+        webview_target = cls._inject_webview2(
+            local_appdata,
+            username,
+            cookie,
+            ledger,
+        )
+        if webview_target:
+            written.append(f"webview2:{webview_target}")
+
+    @classmethod
+    def _inject_registry(
+        cls,
+        username: str,
+        cookie: str,
+        ledger: CookieArtifactLedger,
+    ) -> str | None:
+        try:
+            import winreg
+        except ImportError:
+            flog(
+                "[ISO] winreg not available — skip registry inject",
+                "warning",
+            )
+            return None
+        except Exception as e:
+            flog(f"[ISO] registry inject error: {e}", "warning")
+            return None
+        try:
+            key_path = (
+                r"Software\ROBLOX Corporation\Environments"
+                r"\www.roblox.com\Global"
+            )
+            try:
+                key = winreg.OpenKey(
+                    winreg.HKEY_CURRENT_USER,
+                    key_path,
+                    0,
+                    winreg.KEY_SET_VALUE,
+                )
+            except FileNotFoundError:
+                key = winreg.CreateKey(
+                    winreg.HKEY_CURRENT_USER,
+                    key_path,
+                )
+            with key:
+                winreg.SetValueEx(
+                    key,
+                    ".ROBLOSECURITY",
+                    0,
+                    winreg.REG_SZ,
+                    cookie,
+                )
+            ledger.record_artifact(
+                username,
+                "registry",
+                (
+                    r"HKCU\Software\ROBLOX Corporation\Environments"
+                    r"\www.roblox.com\Global"
+                ),
+                cookie,
+            )
+            return r"registry:HKCU\...\www.roblox.com\Global"
+        except Exception as e:
+            flog(f"[ISO] registry inject error: {e}", "warning")
+            return None
+
     @classmethod
     def inject_cookie(cls, username: str, cookie: str) -> tuple[bool, str]:
         """
@@ -111,179 +425,26 @@ class IsolationManager:
         cookie = cookie.strip()
         written = []
         ledger = CookieArtifactLedger()
-
-        # ── 1. Per-instance LocalStorage JSON ─────────────────────────────
-        instance = cls.setup(username)
-        json_targets = [
-            os.path.join(instance, "Roblox", "LocalStorage", "RobloxLocalStorage.json"),
-        ]
-        for path in json_targets:
-            try:
-                os.makedirs(os.path.dirname(path), exist_ok=True)
-                data = {}
-                if os.path.exists(path):
-                    try:
-                        with open(path) as f:
-                            data = json.load(f)
-                    except Exception:
-                        pass
-                data[".ROBLOSECURITY"] = cookie
-                with open(path, "w") as f:
-                    json.dump(data, f, indent=2)
-                ledger.record_json_cookie(username, path, cookie)
-                written.append(f"json:{path}")
-            except Exception as e:
-                flog(f"[ISO] json inject error: {e}", "warning")
-
-        # ── 2. Default %LOCALAPPDATA%\Roblox\LocalStorage ─────────────────
-        local_appdata = os.environ.get("LOCALAPPDATA", "")
-        if local_appdata:
-            default_path = os.path.join(
-                local_appdata, "Roblox", "LocalStorage", "RobloxLocalStorage.json"
-            )
-            try:
-                os.makedirs(os.path.dirname(default_path), exist_ok=True)
-                data = {}
-                if os.path.exists(default_path):
-                    try:
-                        with open(default_path) as f:
-                            data = json.load(f)
-                    except Exception:
-                        pass
-                data[".ROBLOSECURITY"] = cookie
-                with open(default_path, "w") as f:
-                    json.dump(data, f, indent=2)
-                ledger.record_json_cookie(username, default_path, cookie)
-                written.append(f"localappdata:{default_path}")
-            except Exception as e:
-                flog(f"[ISO] localappdata inject error: {e}", "warning")
-
-        # ── 2b. Microsoft Store Roblox LocalStorage ───────────────────────
-        if local_appdata:
-            for package_name in cls.STORE_PACKAGE_FOLDERS:
-                store_path = os.path.join(
-                    local_appdata,
-                    "Packages",
-                    package_name,
-                    "LocalState",
-                    "LocalStorage",
-                    "RobloxLocalStorage.json",
-                )
-                try:
-                    os.makedirs(os.path.dirname(store_path), exist_ok=True)
-                    data = {}
-                    if os.path.exists(store_path):
-                        try:
-                            with open(store_path, encoding="utf-8") as f:
-                                data = json.load(f)
-                        except Exception:
-                            pass
-                    data[".ROBLOSECURITY"] = cookie
-                    with open(store_path, "w", encoding="utf-8") as f:
-                        json.dump(data, f, indent=2)
-                    ledger.record_json_cookie(username, store_path, cookie)
-                    written.append(f"store:{store_path}")
-                except Exception as e:
-                    flog(f"[ISO] store localstorage inject error: {e}", "warning")
-
-        # ── 2c. Roblox WebView2 cookie store ───────────────────────────────
-        if local_appdata:
-            local_state_path = os.path.join(
-                local_appdata,
-                "Roblox",
-                "UniversalApp",
-                "WebView2",
-                "EBWebView",
-                "Local State",
-            )
-            webview_cookie_db = os.path.join(
-                local_appdata,
-                "Roblox",
-                "UniversalApp",
-                "WebView2",
-                "EBWebView",
-                "Default",
-                "Network",
-                "Cookies",
-            )
-            try:
-                os.makedirs(os.path.dirname(webview_cookie_db), exist_ok=True)
-                encrypted_cookie = cls._encrypt_webview2_cookie(cookie, local_state_path)
-                now_utc = cls._chrome_utc_now()
-                expires_utc = now_utc + (400 * 24 * 60 * 60 * 1_000_000)
-                conn = sqlite3.connect(webview_cookie_db, timeout=5)
-                try:
-                    cur = conn.cursor()
-                    cur.execute(
-                        """
-                        DELETE FROM cookies
-                        WHERE host_key = ? AND name = ?
-                        """,
-                        (".roblox.com", ".ROBLOSECURITY"),
-                    )
-                    cur.execute(
-                        """
-                        INSERT INTO cookies (
-                            creation_utc, host_key, top_frame_site_key, name, value,
-                            encrypted_value, path, expires_utc, is_secure, is_httponly,
-                            last_access_utc, has_expires, is_persistent, priority, samesite,
-                            source_scheme, source_port, last_update_utc, source_type,
-                            has_cross_site_ancestor, is_edgelegacycookie, browser_provenance
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        """,
-                        (
-                            now_utc,
-                            ".roblox.com",
-                            "",
-                            ".ROBLOSECURITY",
-                            "",
-                            sqlite3.Binary(encrypted_cookie),
-                            "/",
-                            expires_utc,
-                            1,
-                            1,
-                            now_utc,
-                            1,
-                            1,
-                            1,
-                            -1,
-                            2,
-                            443,
-                            now_utc,
-                            1,
-                            0,
-                            0,
-                            0,
-                        ),
-                    )
-                    conn.commit()
-                finally:
-                    conn.close()
-                ledger.record_artifact(username, "webview2", webview_cookie_db, cookie)
-                written.append(f"webview2:{webview_cookie_db}")
-            except Exception as e:
-                flog(f"[ISO] webview2 cookie inject error: {e}", "warning")
-
-        # ── 3. Windows Registry (HKCU\Software\ROBLOX Corporation\Environments\www.roblox.com) ──
-        try:
-            import winreg
-            key_path = r"Software\ROBLOX Corporation\Environments\www.roblox.com\Global"
-            try:
-                key = winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path,
-                                     0, winreg.KEY_SET_VALUE)
-            except FileNotFoundError:
-                key = winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path)
-            with key:
-                winreg.SetValueEx(key, ".ROBLOSECURITY", 0, winreg.REG_SZ, cookie)
-            ledger.record_artifact(username, "registry", "HKCU\\Software\\ROBLOX Corporation\\Environments\\www.roblox.com\\Global", cookie)
-            written.append("registry:HKCU\\...\\www.roblox.com\\Global")
-        except ImportError:
-            flog("[ISO] winreg not available — skip registry inject", "warning")
-        except Exception as e:
-            flog(f"[ISO] registry inject error: {e}", "warning")
+        cls._inject_instance_json(username, cookie, ledger, written)
+        cls._inject_local_appdata_targets(
+            username,
+            cookie,
+            ledger,
+            written,
+        )
+        registry_target = cls._inject_registry(
+            username,
+            cookie,
+            ledger,
+        )
+        if registry_target:
+            written.append(registry_target)
 
         if written:
-            flog(f"[ISO] Cookie injected for {username}: {len(written)} targets")
+            flog(
+                f"[ISO] Cookie injected for {username}: "
+                f"{len(written)} targets"
+            )
             return True, f"Injected to {len(written)} targets"
         return False, "ไม่สามารถ inject cookie ได้"
 

@@ -5,6 +5,34 @@ import time
 from typing import Any
 
 
+def _timeline_item(
+    event: dict[str, Any],
+    account_snapshot: dict[str, Any] | None,
+    account_id: str,
+) -> dict[str, Any]:
+    item = dict(event or {})
+    item.setdefault("ts", time.time())
+    item.setdefault("severity", "info")
+    item.setdefault("event_type", item.get("kind", "runtime_event"))
+    item.setdefault("reason", "")
+    item.setdefault("account", account_id or item.get("account", ""))
+    item.setdefault("thread_name", threading.current_thread().name)
+    item.setdefault("lifecycle_owner", item.get("lifecycle_owner", "farm"))
+
+    if account_snapshot:
+        item.setdefault("pid", account_snapshot.get("pid"))
+        item.setdefault("session_id", account_snapshot.get("session_id", ""))
+        item.setdefault("launch_nonce", account_snapshot.get("launch_nonce", ""))
+        item.setdefault("account_runtime_id", account_snapshot.get("account_runtime_id", ""))
+        item.setdefault("rejoin_transaction_id", account_snapshot.get("rejoin_transaction_id", ""))
+        item.setdefault("runtime_state", account_snapshot.get("runtime_state", ""))
+        item.setdefault("public_state", account_snapshot.get("public_state", ""))
+        item.setdefault("runtime_generation", account_snapshot.get("runtime_generation", 0))
+        item.setdefault("recovery_generation", account_snapshot.get("recovery_generation", 0))
+        item.setdefault("command_generation", account_snapshot.get("command_generation", 0))
+    return item
+
+
 class RuntimeTimeline:
     """Thin structured runtime event writer over RuntimeStore and in-memory log."""
 
@@ -28,7 +56,30 @@ class RuntimeTimeline:
         try:
             self._logger("RUNTIME", event_type, "warning", account=account_id, error=str(error))
         except Exception:
-            pass
+            "intentional: ignore exception"
+
+    def _append_memory(self, item: dict[str, Any]) -> None:
+        if self._memory_log is None:
+            return
+        with self._memory_lock:
+            self._memory_log.append(item)
+            if len(self._memory_log) > self._memory_limit:
+                del self._memory_log[:-self._memory_limit]
+
+    def _record_store(
+        self,
+        item: dict[str, Any],
+        account_snapshot: dict[str, Any] | None,
+        account_id: str,
+    ) -> None:
+        if not self._store:
+            return
+        try:
+            self._store.record_event(item)
+            if account_snapshot and (account_id or item.get("account")):
+                self._store.record_account_snapshot(account_id or str(item.get("account", "")), account_snapshot)
+        except Exception as exc:
+            self._log_error("store_event_failed", exc, str(account_id or item.get("account", "")))
 
     def record(
         self,
@@ -36,39 +87,8 @@ class RuntimeTimeline:
         account_snapshot: dict[str, Any] | None = None,
         account_id: str = "",
     ) -> dict[str, Any]:
-        item = dict(event or {})
-        item.setdefault("ts", time.time())
-        item.setdefault("severity", "info")
-        item.setdefault("event_type", item.get("kind", "runtime_event"))
-        item.setdefault("reason", "")
-        item.setdefault("account", account_id or item.get("account", ""))
-        item.setdefault("thread_name", threading.current_thread().name)
-        item.setdefault("lifecycle_owner", item.get("lifecycle_owner", "farm"))
-
-        if account_snapshot:
-            item.setdefault("pid", account_snapshot.get("pid"))
-            item.setdefault("session_id", account_snapshot.get("session_id", ""))
-            item.setdefault("launch_nonce", account_snapshot.get("launch_nonce", ""))
-            item.setdefault("account_runtime_id", account_snapshot.get("account_runtime_id", ""))
-            item.setdefault("rejoin_transaction_id", account_snapshot.get("rejoin_transaction_id", ""))
-            item.setdefault("runtime_state", account_snapshot.get("runtime_state", ""))
-            item.setdefault("public_state", account_snapshot.get("public_state", ""))
-            item.setdefault("runtime_generation", account_snapshot.get("runtime_generation", 0))
-            item.setdefault("recovery_generation", account_snapshot.get("recovery_generation", 0))
-            item.setdefault("command_generation", account_snapshot.get("command_generation", 0))
-
-        if self._memory_log is not None:
-            with self._memory_lock:
-                self._memory_log.append(item)
-                if len(self._memory_log) > self._memory_limit:
-                    del self._memory_log[:-self._memory_limit]
-
-        if self._store:
-            try:
-                self._store.record_event(item)
-                if account_snapshot and (account_id or item.get("account")):
-                    self._store.record_account_snapshot(account_id or str(item.get("account", "")), account_snapshot)
-            except Exception as exc:
-                self._log_error("store_event_failed", exc, str(account_id or item.get("account", "")))
+        item = _timeline_item(event, account_snapshot, account_id)
+        self._append_memory(item)
+        self._record_store(item, account_snapshot, account_id)
         return item
 

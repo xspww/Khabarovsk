@@ -21,12 +21,13 @@ carries the username only.
 """
 from __future__ import annotations
 
+import importlib
 import json
 import re
 import time
 import urllib.error
 import urllib.request
-from typing import Any
+from typing import Any, NamedTuple
 
 from infra import net_tls
 
@@ -76,6 +77,18 @@ TWOSTEP_MARKERS = (
     "two factor",
 )
 
+LOCK_MARKERS = (
+    "account locked",
+    "account is locked",
+    "your account has been locked",
+    "temporarily locked",
+    "locked for verification",
+    "บัญชีถูกล็อค",
+    "บัญชีติดล็อค",
+    "บัญชีถูกล็อก",
+    "บัญชีติดล็อก",
+)
+
 
 def _compact(text: str) -> str:
     return re.sub(r"[^a-z0-9]", "", text.lower())
@@ -114,7 +127,7 @@ def challenge_type_of(headers: dict[str, str]) -> str:
             if str(key or "").strip().lower() == "rblx-challenge-type":
                 return str(value or "").strip()[:120]
     except Exception:
-        pass
+        "intentional: ignore exception"
     return ""
 
 
@@ -124,7 +137,7 @@ def has_challenge_headers(headers: dict[str, str]) -> bool:
             if str(key or "").strip().lower().startswith("rblx-challenge-"):
                 return True
     except Exception:
-        pass
+        "intentional: ignore exception"
     return False
 
 
@@ -145,7 +158,7 @@ def _log_unknown_login(username: str, status: int, challenge_type: str, body_hea
             detail=str(body_head or "")[:180],
         )
     except Exception:
-        pass
+        "intentional: ignore exception"
 
 
 def _header_names(headers: dict[str, str]) -> str:
@@ -153,6 +166,127 @@ def _header_names(headers: dict[str, str]) -> str:
         return ",".join(sorted(str(k or "").strip().lower() for k in dict(headers or {}) if str(k or "").strip()))
     except Exception:
         return ""
+
+
+class _LoginAttempt(NamedTuple):
+    status: int
+    body: str
+    headers: dict[str, str]
+    set_cookies: list[str]
+
+
+def _login_credentials(
+    username: Any,
+    password: Any,
+) -> tuple[str, str] | None:
+    name = str(username or "").strip()
+    secret = str(password or "")
+    if not name or not secret:
+        return None
+    return name, secret
+
+
+def _login_headers(csrf_token: str) -> dict[str, str]:
+    headers = dict(BROWSER_HEADERS)
+    if csrf_token:
+        headers["X-CSRF-TOKEN"] = csrf_token
+    return headers
+
+
+def _login_request(
+    payload: bytes,
+    headers: dict[str, str],
+) -> urllib.request.Request:
+    return urllib.request.Request(
+        LOGIN_URL,
+        data=payload,
+        method="POST",
+        headers=headers,
+    )
+
+
+def _response_headers(response: Any) -> dict[str, str]:
+    try:
+        raw_headers = dict(response.headers.items())
+    except Exception:
+        raw_headers = {}
+    return {str(k): str(v) for k, v in raw_headers.items()}
+
+
+def _response_status(response: Any) -> int:
+    try:
+        return int(getattr(response, "status", 200) or 200)
+    except Exception:
+        return 200
+
+
+def _response_body(response: Any) -> str:
+    try:
+        return response.read().decode("utf-8", errors="replace")
+    except Exception:
+        return ""
+
+
+def _response_set_cookies(
+    response: Any,
+    raw_headers: dict[str, str],
+) -> list[str]:
+    try:
+        return [
+            str(cookie)
+            for cookie in (response.headers.get_all("Set-Cookie") or [])
+        ]
+    except Exception:
+        single = (
+            raw_headers.get("Set-Cookie")
+            or raw_headers.get("set-cookie")
+            or ""
+        )
+        return [str(single)] if single else []
+
+
+def _login_success(response: Any) -> _LoginAttempt:
+    status = _response_status(response)
+    raw_headers = _response_headers(response)
+    set_cookies = _response_set_cookies(response, raw_headers)
+    body = _response_body(response)
+    return _LoginAttempt(
+        status=status,
+        body=body,
+        headers=raw_headers,
+        set_cookies=set_cookies,
+    )
+
+
+def _login_retry_token(exc: Any) -> str:
+    headers = _response_headers(exc)
+    return str(
+        headers.get("x-csrf-token")
+        or headers.get("X-CSRF-TOKEN")
+        or ""
+    )
+
+
+def _http_error_response(exc: Any) -> _LoginAttempt:
+    headers = _response_headers(exc)
+    body = _response_body(exc)
+    return _LoginAttempt(
+        status=int(exc.code or 0),
+        body=body,
+        headers=headers,
+        set_cookies=[],
+    )
+
+
+def _login_result(
+    attempt: _LoginAttempt,
+) -> tuple[int, str, dict[str, str], list[str]]:
+    return (
+        attempt.status,
+        attempt.body,
+        attempt.headers,
+        attempt.set_cookies,
+    )
 
 
 def login_with_credentials(
@@ -165,51 +299,300 @@ def login_with_credentials(
     Never raises: network failures come back as status 0 (transient).
     The password is only sent to Roblox over TLS, never returned.
     """
-    name = str(username or "").strip()
-    secret = str(password or "")
-    if not name or not secret:
+    credentials = _login_credentials(username, password)
+    if credentials is None:
         return 0, "missing username or password", {}, []
-    payload = json.dumps({"ctype": "Username", "cvalue": name, "password": secret}).encode("utf-8")
+    name, secret = credentials
+    payload = json.dumps(
+        {
+            "ctype": "Username",
+            "cvalue": name,
+            "password": secret,
+        }
+    ).encode("utf-8")
     csrf_token = ""
     for attempt in (0, 1):
-        headers = dict(BROWSER_HEADERS)
-        if csrf_token:
-            headers["X-CSRF-TOKEN"] = csrf_token
-        req = urllib.request.Request(LOGIN_URL, data=payload, method="POST", headers=headers)
+        headers = _login_headers(csrf_token)
+        request = _login_request(payload, headers)
         try:
-            with net_tls.urlopen(req, timeout=timeout) as resp:
-                status = int(getattr(resp, "status", 200) or 200)
-                try:
-                    raw_headers = dict(resp.headers.items())
-                except Exception:
-                    raw_headers = {}
-                try:
-                    set_cookies = list(resp.headers.get_all("Set-Cookie") or [])
-                except Exception:
-                    single = raw_headers.get("Set-Cookie") or raw_headers.get("set-cookie") or ""
-                    set_cookies = [single] if single else []
-                try:
-                    body = resp.read().decode("utf-8", errors="replace")
-                except Exception:
-                    body = ""
-                return status, body, {str(k): str(v) for k, v in raw_headers.items()}, [str(c) for c in set_cookies]
+            with net_tls.urlopen(request, timeout=timeout) as response:
+                return _login_result(_login_success(response))
         except urllib.error.HTTPError as exc:
-            try:
-                response_headers = dict(exc.headers.items())
-            except Exception:
-                response_headers = {}
-            token = response_headers.get("x-csrf-token") or response_headers.get("X-CSRF-TOKEN")
+            token = _login_retry_token(exc)
             if token and attempt == 0:
-                csrf_token = str(token)
+                csrf_token = token
                 continue
-            try:
-                body_text = exc.read().decode("utf-8", errors="replace")
-            except Exception:
-                body_text = ""
-            return int(exc.code or 0), body_text, {str(k): str(v) for k, v in response_headers.items()}, []
+            return _login_result(_http_error_response(exc))
         except Exception as exc:
             return 0, f"login transient: {exc}", {}, []
     return 0, "login transient: csrf retry exhausted", {}, []
+
+
+class _CheckContext(NamedTuple):
+    name: str
+    status: int
+    body_text: str
+    headers: dict[str, str]
+    challenge: str
+    is_captcha: Any
+    timeout: float
+    set_cookies: list[str]
+
+
+def _import_guards(
+    module: str,
+    names: tuple[str, ...],
+    fallbacks: tuple[Any, ...],
+) -> tuple[Any, ...]:
+    try:
+        imported = importlib.import_module(module)
+        return tuple(getattr(imported, name) for name in names)
+    except Exception:
+        return fallbacks
+
+
+def _captcha_guards() -> tuple[Any, ...]:
+    return _import_guards(
+        "services.captcha_guard",
+        ("captcha_detail", "is_captcha_text"),
+        (lambda *a, **k: "", lambda *a, **k: False),
+    )
+
+
+def _verify_guards() -> tuple[Any, ...]:
+    return _import_guards(
+        "services.verify_guard",
+        ("is_locked_text", "is_recovery_text"),
+        (lambda *a, **k: False, lambda *a, **k: False),
+    )
+
+
+def _ban_guard() -> Any:
+    return _import_guards(
+        "services.ban_guard",
+        ("is_banned_text",),
+        (lambda *a, **k: False,),
+    )[0]
+
+
+def _outcome(
+    outcome: str,
+    detail: str,
+    fresh_cookie: str = "",
+    challenge_type: str | None = None,
+) -> dict[str, Any]:
+    result = {
+        "outcome": outcome,
+        "detail": detail,
+        "fresh_cookie": fresh_cookie,
+    }
+    if challenge_type is not None:
+        result["challenge_type"] = challenge_type
+    return result
+
+
+def _transient_result(
+    status: int,
+    body_text: str,
+) -> dict[str, Any] | None:
+    if status == 0 or status == 429 or status >= 500:
+        detail = (
+            body_text.strip()[:180] or f"HTTP {status}"
+        ).strip()
+        return _outcome(TRANSIENT, detail)
+    return None
+
+
+def _locked_result(
+    lowered: str,
+    body_text: str,
+) -> dict[str, Any] | None:
+    if any(marker in lowered for marker in LOCK_MARKERS):
+        return _outcome(
+            LOCKED,
+            body_text.strip()[:220] or "account locked",
+        )
+    return None
+
+
+def _safe_captcha_detail(
+    captcha_detail: Any,
+    status: int,
+    body_text: str,
+    headers: dict[str, str],
+) -> str:
+    try:
+        return captcha_detail(status, body_text, headers)
+    except Exception:
+        return ""
+
+
+def _challenge_kind(lowered_type: str) -> str:
+    if (
+        "captcha" in lowered_type
+        or "arkose" in lowered_type
+        or "funcaptcha" in lowered_type
+    ):
+        return CAPTCHA
+    if any(
+        key in lowered_type
+        for key in ("identity", "face", "selfie", "id-verify", "idverify")
+    ):
+        return LOCKED
+    if any(
+        key in lowered_type
+        for key in (
+            "passkey",
+            "webauthn",
+            "twostep",
+            "two-step",
+            "two step",
+            "2fa",
+            "authenticator",
+            "verification",
+        )
+    ):
+        return RECOVERY
+    return ""
+
+
+def _challenge_outcome(
+    ctx: _CheckContext,
+) -> dict[str, Any] | None:
+    challenge_type = challenge_type_of(ctx.headers)
+    if not has_challenge_headers(ctx.headers) or ctx.is_captcha(
+        ctx.body_text,
+        headers=ctx.headers,
+    ):
+        return None
+    kind = _challenge_kind(str(challenge_type or "").lower())
+    if kind == CAPTCHA:
+        detail = (
+            ctx.challenge
+            or f"Roblox challenge required ({challenge_type})"
+        )[:220]
+        return _outcome(CAPTCHA, detail)
+    if kind == LOCKED:
+        return _outcome(
+            LOCKED,
+            f"Roblox challenge required ({challenge_type})",
+        )
+    if kind == RECOVERY:
+        return _outcome(
+            RECOVERY,
+            "Roblox challenge required "
+            f"({challenge_type or 'verification'})",
+        )
+    if challenge_type:
+        _log_unknown_login(
+            ctx.name,
+            ctx.status,
+            challenge_type,
+            ctx.body_text.strip()[:180],
+            _header_names(ctx.headers),
+        )
+        return _outcome(
+            UNKNOWN,
+            f"Roblox challenge required ({challenge_type})",
+            challenge_type=challenge_type,
+        )
+    return None
+
+
+def _unknown_response(
+    ctx: _CheckContext,
+    fallback: str,
+) -> dict[str, Any]:
+    challenge_type = challenge_type_of(ctx.headers)
+    _log_unknown_login(
+        ctx.name,
+        ctx.status,
+        challenge_type,
+        ctx.body_text.strip()[:180],
+        _header_names(ctx.headers),
+    )
+    detail = (ctx.body_text.strip()[:180] or fallback).strip()
+    return _outcome(
+        UNKNOWN,
+        detail,
+        challenge_type=challenge_type,
+    )
+
+
+def _confirm_ban_by_username(name: str, timeout: float) -> bool:
+    fetch_status = _import_guards(
+        "services.roblox_moderation",
+        ("fetch_ban_status_by_username",),
+        (None,),
+    )[0]
+    if fetch_status is None:
+        return False
+    try:
+        confirmed, _user_id, _detail = fetch_status(
+            name,
+            timeout=timeout,
+        )
+        return confirmed is True
+    except Exception:
+        return False
+
+
+def _recovery_detail(body_text: str, fallback: str) -> str:
+    return body_text.strip()[:220] or fallback
+
+
+def _classify_ok(ctx: _CheckContext) -> dict[str, Any]:
+    if _looks_like_twostep(ctx.body_text):
+        return _outcome(
+            RECOVERY,
+            "login requires two-step verification",
+        )
+    is_locked, is_recovery = _verify_guards()
+    if is_recovery(ctx.body_text):
+        return _outcome(RECOVERY, ctx.body_text.strip()[:220])
+    if is_locked(ctx.body_text):
+        return _outcome(LOCKED, ctx.body_text.strip()[:220])
+    fresh = extract_security_cookie(ctx.set_cookies)
+    if fresh:
+        return _outcome(VALID, "login ok", fresh_cookie=fresh)
+    return _unknown_response(
+        ctx,
+        "login ok without session cookie",
+    )
+
+
+def _classify_error(ctx: _CheckContext) -> dict[str, Any]:
+    if _ban_guard()(ctx.body_text) or _looks_like_deleted(
+        ctx.body_text
+    ):
+        if _confirm_ban_by_username(ctx.name, ctx.timeout):
+            return _outcome(
+                BANNED,
+                "Account banned (Roblox isBanned=true)",
+            )
+        return _unknown_response(ctx, f"HTTP {ctx.status}")
+    if _looks_like_wrong_password(ctx.body_text):
+        return _outcome(
+            BAD_CREDENTIALS,
+            "incorrect username or password",
+        )
+    is_locked, is_recovery = _verify_guards()
+    if is_locked(ctx.body_text):
+        return _outcome(LOCKED, ctx.body_text.strip()[:220])
+    if is_recovery(ctx.body_text) or _looks_like_twostep(
+        ctx.body_text
+    ):
+        return _outcome(
+            RECOVERY,
+            _recovery_detail(
+                ctx.body_text,
+                "login requires verification",
+            ),
+        )
+    if ctx.is_captcha(ctx.body_text, headers=ctx.headers):
+        detail = (ctx.challenge or ctx.body_text.strip())[:220]
+        return _outcome(CAPTCHA, detail)
+    return _unknown_response(ctx, f"HTTP {ctx.status}")
 
 
 def check_credentials(
@@ -222,122 +605,52 @@ def check_credentials(
     Returns {"outcome": ..., "detail": ..., "fresh_cookie": ...}.
     `fresh_cookie` is set only on a fully successful login.
     """
-    name = str(username or "").strip()
-    if not name or not str(password or ""):
-        return {"outcome": UNKNOWN, "detail": "missing username or password", "fresh_cookie": ""}
-    status, body, headers, set_cookies = login_with_credentials(name, password, timeout=timeout)
+    credentials = _login_credentials(username, password)
+    if credentials is None:
+        return _outcome(
+            UNKNOWN,
+            "missing username or password",
+        )
+    name, secret = credentials
+    status, body, headers, set_cookies = login_with_credentials(
+        name,
+        secret,
+        timeout=timeout,
+    )
     body_text = str(body or "")
     lowered = body_text.lower()
+    transient = _transient_result(status, body_text)
+    if transient is not None:
+        return transient
 
-    if status == 0 or status == 429 or status >= 500:
-        return {"outcome": TRANSIENT, "detail": (body_text.strip()[:180] or f"HTTP {status}").strip(), "fresh_cookie": ""}
-
-    try:
-        from services.captcha_guard import captcha_detail as _captcha_detail
-        from services.captcha_guard import is_captcha_text as _is_captcha
-    except Exception:
-        _captcha_detail = lambda *a, **k: ""  # type: ignore
-        _is_captcha = lambda *a, **k: False  # type: ignore
-
-    # Roblox challenge headers (captcha / device verification, ...).
-    challenge = ""
-    try:
-        challenge = _captcha_detail(status, body_text, headers)
-    except Exception:
-        challenge = ""
-    # An account-level lock screen ("Account Locked ... verify you're
-    # human") outranks the captcha mechanism used to unlock it — this
-    # matches the Status priority (Locked > Captcha) everywhere else.
-    _lock_markers = (
-        "account locked",
-        "account is locked",
-        "your account has been locked",
-        "temporarily locked",
-        "locked for verification",
-        "บัญชีถูกล็อค",
-        "บัญชีติดล็อค",
-        "บัญชีถูกล็อก",
-        "บัญชีติดล็อก",
+    captcha_detail, is_captcha = _captcha_guards()
+    challenge = _safe_captcha_detail(
+        captcha_detail,
+        status,
+        body_text,
+        headers,
     )
-    if any(marker in lowered for marker in _lock_markers):
-        return {"outcome": LOCKED, "detail": body_text.strip()[:220] or "account locked", "fresh_cookie": ""}
-    if challenge and _is_captcha(body_text, headers=headers):
-        return {"outcome": CAPTCHA, "detail": challenge[:220], "fresh_cookie": ""}
-    # A non-captcha challenge type names what Roblox wants next. Classify it
-    # by its own wording instead of falling through to unknown.
-    challenge_type = challenge_type_of(headers)
-    challenge_headers = has_challenge_headers(headers)
-    if challenge_headers and not _is_captcha(body_text, headers=headers):
-        lowered_type = str(challenge_type or "").lower()
-        if "captcha" in lowered_type or "arkose" in lowered_type or "funcaptcha" in lowered_type:
-            return {"outcome": CAPTCHA, "detail": (challenge or f"Roblox challenge required ({challenge_type})")[:220], "fresh_cookie": ""}
-        if any(k in lowered_type for k in ("identity", "face", "selfie", "id-verify", "idverify")):
-            return {"outcome": LOCKED, "detail": f"Roblox challenge required ({challenge_type})", "fresh_cookie": ""}
-        if any(k in lowered_type for k in ("passkey", "webauthn", "twostep", "two-step", "two step", "2fa", "authenticator", "verification")):
-            return {"outcome": RECOVERY, "detail": f"Roblox challenge required ({challenge_type or 'verification'})", "fresh_cookie": ""}
-        if challenge_type:
-            _log_unknown_login(name, status, challenge_type, body_text.strip()[:180], _header_names(headers))
-            return {"outcome": UNKNOWN, "detail": f"Roblox challenge required ({challenge_type})", "fresh_cookie": "", "challenge_type": challenge_type}
-
+    ctx = _CheckContext(
+        name=name,
+        status=status,
+        body_text=body_text,
+        headers=headers,
+        challenge=challenge,
+        is_captcha=is_captcha,
+        timeout=timeout,
+        set_cookies=set_cookies,
+    )
+    locked = _locked_result(lowered, body_text)
+    if locked is not None:
+        return locked
+    if challenge and is_captcha(body_text, headers=headers):
+        return _outcome(CAPTCHA, challenge[:220])
+    challenge_result = _challenge_outcome(ctx)
+    if challenge_result is not None:
+        return challenge_result
     if status == 200:
-        if _looks_like_twostep(body_text):
-            return {"outcome": RECOVERY, "detail": "login requires two-step verification", "fresh_cookie": ""}
-        try:
-            from services.verify_guard import is_locked_text as _is_locked
-            from services.verify_guard import is_recovery_text as _is_recovery
-        except Exception:
-            _is_locked = lambda *a, **k: False  # type: ignore
-            _is_recovery = lambda *a, **k: False  # type: ignore
-        if _is_recovery(body_text):
-            return {"outcome": RECOVERY, "detail": body_text.strip()[:220], "fresh_cookie": ""}
-        if _is_locked(body_text):
-            return {"outcome": LOCKED, "detail": body_text.strip()[:220], "fresh_cookie": ""}
-        fresh = extract_security_cookie(set_cookies)
-        if fresh:
-            return {"outcome": VALID, "detail": "login ok", "fresh_cookie": fresh}
-        _log_unknown_login(name, status, challenge_type_of(headers), body_text.strip()[:180], _header_names(headers))
-        return {"outcome": UNKNOWN, "detail": (body_text.strip()[:180] or "login ok without session cookie"), "fresh_cookie": "", "challenge_type": challenge_type_of(headers)}
-
-    # Error statuses: classify by explicit wording only (never guess). A ban
-    # mark is only ever set with public-API confirmation — an unconfirmed
-    # "deleted" message stays unknown so one flaky response can never mark
-    # a healthy account as banned.
-    try:
-        from services.ban_guard import is_banned_text as _is_banned
-    except Exception:
-        _is_banned = lambda *a, **k: False  # type: ignore
-    if _is_banned(body_text) or _looks_like_deleted(body_text):
-        confirmed = False
-        try:
-            from services.roblox_moderation import fetch_ban_status_by_username as _ban_by_name
-
-            _b, _uid, _detail = _ban_by_name(name, timeout=timeout)
-            confirmed = _b is True
-        except Exception:
-            confirmed = False
-        if confirmed:
-            return {"outcome": BANNED, "detail": "Account banned (Roblox isBanned=true)", "fresh_cookie": ""}
-        _log_unknown_login(name, status, challenge_type_of(headers), body_text.strip()[:180], _header_names(headers))
-        return {"outcome": UNKNOWN, "detail": (body_text.strip()[:180] or f"HTTP {status}").strip(), "fresh_cookie": "", "challenge_type": challenge_type_of(headers)}
-
-    if _looks_like_wrong_password(body_text):
-        return {"outcome": BAD_CREDENTIALS, "detail": "incorrect username or password", "fresh_cookie": ""}
-
-    try:
-        from services.verify_guard import is_locked_text as _is_locked2
-        from services.verify_guard import is_recovery_text as _is_recovery2
-    except Exception:
-        _is_locked2 = lambda *a, **k: False  # type: ignore
-        _is_recovery2 = lambda *a, **k: False  # type: ignore
-    if _is_locked2(body_text):
-        return {"outcome": LOCKED, "detail": body_text.strip()[:220], "fresh_cookie": ""}
-    if _is_recovery2(body_text) or _looks_like_twostep(body_text):
-        return {"outcome": RECOVERY, "detail": body_text.strip()[:220] or "login requires verification", "fresh_cookie": ""}
-    if _is_captcha(body_text, headers=headers):
-        return {"outcome": CAPTCHA, "detail": (challenge or body_text.strip())[:220], "fresh_cookie": ""}
-
-    _log_unknown_login(name, status, challenge_type_of(headers), body_text.strip()[:180], _header_names(headers))
-    return {"outcome": UNKNOWN, "detail": (body_text.strip()[:180] or f"HTTP {status}").strip(), "fresh_cookie": "", "challenge_type": challenge_type_of(headers)}
+        return _classify_ok(ctx)
+    return _classify_error(ctx)
 
 
 def paced_check_credentials(username: str, password: str, timeout: float = 12.0, pace_seconds: float = 1.0) -> dict[str, Any]:
@@ -346,5 +659,5 @@ def paced_check_credentials(username: str, password: str, timeout: float = 12.0,
         if pace_seconds > 0:
             time.sleep(max(0.0, float(pace_seconds)))
     except Exception:
-        pass
+        "intentional: ignore exception"
     return check_credentials(username, password, timeout=timeout)

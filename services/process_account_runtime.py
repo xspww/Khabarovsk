@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from typing import Any
 
 from core import flog_kv
@@ -14,6 +15,101 @@ from services.process_proof_policy import (
 )
 
 _RUNTIME_STATE = RuntimeStateManager(logger=flog_kv)
+
+
+def _text(value: Any) -> str:
+    return str(value or "")
+
+
+def _number(value: Any) -> float:
+    return float(value or 0.0)
+
+
+def _fallback_text(value: Any, default: str) -> str:
+    return str(value or default)
+
+
+def _first_text(first: Any, second: Any, default: str) -> str:
+    return str(first or second or default)
+
+
+def _sync_runtime_quietly(account: Any, reason: str) -> None:
+    try:
+        account.sync_runtime(reason)
+    except Exception:
+        "intentional: ignore exception"
+
+
+def _with_account_lock(account: Any, write: Callable[[], None]) -> None:
+    lock = getattr(account, "_lock", None)
+    if lock:
+        with lock:
+            write()
+    else:
+        write()
+
+
+def _write_process_diagnostics(
+    account: Any,
+    decision: str,
+    confidence: float,
+    reject_reason: str,
+    owner_claim: str,
+    proof_level: str,
+    proof_reason: str,
+    reason: str,
+) -> None:
+    account.binding_decision = _text(decision)
+    account.process_binding_confidence = _number(confidence)
+    account.process_reject_reason = _text(reject_reason)
+    account.process_owner_claim = _text(owner_claim)
+    if proof_level:
+        account.process_proof_level = normalize_process_proof_level(proof_level)
+    if proof_reason and reject_reason:
+        account.process_reject_reason = str(reject_reason or proof_reason)
+    _sync_runtime_quietly(account, _first_text(reason, decision, "process_diagnostics"))
+
+
+def _write_quarantine(account: Any, reason: str, validation: dict[str, Any], proof: dict[str, Any]) -> None:
+    _RUNTIME_STATE.set_binding_status(
+        account,
+        "process_proof_quarantine",
+        reason=_fallback_text(reason, "process_proof_quarantine"),
+    )
+    account.binding_decision = "quarantined"
+    account.process_binding_confidence = _number(validation.get("confidence"))
+    account.process_proof_level = _fallback_text(proof.get("process_proof_level"), PROOF_UNTRUSTED)
+    account.process_reject_reason = "process_proof_insufficient"
+    account.process_owner_claim = _text(validation.get("owner"))
+    _sync_runtime_quietly(account, _fallback_text(reason, "process_proof_quarantine"))
+
+
+def _write_adopt_diagnostics(account: Any, pids: list[int], candidate_pid: int | None, reject_reason: str) -> None:
+    account.unmanaged_live_process_count = len(pids)
+    account.unmanaged_live_pids = pids
+    candidate = int(candidate_pid or 0)
+    account.adopt_candidate_pid = candidate or None
+    account.adopt_reject_reason = _text(reject_reason)
+    _sync_runtime_quietly(account, _fallback_text(reject_reason, "adopt_diagnostics"))
+
+
+def _write_process_proof(account: Any, proof: str, confidence: float | None, status: str, reason: str) -> None:
+    account.process_proof_level = proof
+    if confidence is not None:
+        value = _number(confidence)
+        account.process_binding_confidence = value
+        account.ownership_confidence = value
+        account.last_signal_confidence = value
+    if status:
+        _RUNTIME_STATE.set_binding_status(
+            account,
+            str(status),
+            reason=_fallback_text(reason, "process_proof"),
+        )
+    if proof == PROOF_STRONG:
+        account.binding_decision = "verified"
+        account.process_reject_reason = ""
+    _sync_runtime_quietly(account, _fallback_text(reason, "process_proof"))
 
 
 def account_key(acc: Any) -> str:
@@ -77,49 +173,26 @@ def set_process_diagnostics(
     proof_reason: str = "",
     reason: str = "",
 ) -> None:
-    lock = getattr(account, "_lock", None)
-
-    def _write() -> None:
-        account.binding_decision = str(decision or "")
-        account.process_binding_confidence = float(confidence or 0.0)
-        account.process_reject_reason = str(reject_reason or "")
-        account.process_owner_claim = str(owner_claim or "")
-        if proof_level:
-            account.process_proof_level = normalize_process_proof_level(proof_level)
-        if proof_reason and reject_reason:
-            account.process_reject_reason = str(reject_reason or proof_reason)
-        try:
-            account.sync_runtime(reason or decision or "process_diagnostics")
-        except Exception:
-            pass
-
-    if lock:
-        with lock:
-            _write()
-    else:
-        _write()
+    _with_account_lock(
+        account,
+        lambda: _write_process_diagnostics(
+            account,
+            decision,
+            confidence,
+            reject_reason,
+            owner_claim,
+            proof_level,
+            proof_reason,
+            reason,
+        ),
+    )
 
 
 def quarantine_process_match(account: Any, reason: str, validation: dict[str, Any], proof: dict[str, Any]) -> None:
-    lock = getattr(account, "_lock", None)
-
-    def _write() -> None:
-        _RUNTIME_STATE.set_binding_status(account, "process_proof_quarantine", reason=reason or "process_proof_quarantine")
-        account.binding_decision = "quarantined"
-        account.process_binding_confidence = float(validation.get("confidence") or 0.0)
-        account.process_proof_level = str(proof.get("process_proof_level") or PROOF_UNTRUSTED)
-        account.process_reject_reason = "process_proof_insufficient"
-        account.process_owner_claim = str(validation.get("owner") or "")
-        try:
-            account.sync_runtime(reason or "process_proof_quarantine")
-        except Exception:
-            pass
-
-    if lock:
-        with lock:
-            _write()
-    else:
-        _write()
+    _with_account_lock(
+        account,
+        lambda: _write_quarantine(account, reason, validation, proof),
+    )
 
 
 def set_adopt_diagnostics(
@@ -128,24 +201,11 @@ def set_adopt_diagnostics(
     candidate_pid: int | None = None,
     reject_reason: str = "",
 ) -> None:
-    lock = getattr(account, "_lock", None)
     pids = [int(item.get("pid") or 0) for item in live if item.get("pid")]
-
-    def _write() -> None:
-        account.unmanaged_live_process_count = len(pids)
-        account.unmanaged_live_pids = pids
-        account.adopt_candidate_pid = int(candidate_pid or 0) or None
-        account.adopt_reject_reason = str(reject_reason or "")
-        try:
-            account.sync_runtime(reject_reason or "adopt_diagnostics")
-        except Exception:
-            pass
-
-    if lock:
-        with lock:
-            _write()
-    else:
-        _write()
+    _with_account_lock(
+        account,
+        lambda: _write_adopt_diagnostics(account, pids, candidate_pid, reject_reason),
+    )
 
 
 def mark_account_process_proof(
@@ -156,34 +216,15 @@ def mark_account_process_proof(
     status: str = "",
 ) -> None:
     proof = normalize_process_proof_level(proof_level)
-    lock = getattr(account, "_lock", None)
-
-    def _write() -> None:
-        account.process_proof_level = proof
-        if confidence is not None:
-            account.process_binding_confidence = float(confidence or 0.0)
-            account.ownership_confidence = float(confidence or 0.0)
-            account.last_signal_confidence = float(confidence or 0.0)
-        if status:
-            _RUNTIME_STATE.set_binding_status(account, str(status), reason=reason or "process_proof")
-        if proof == PROOF_STRONG:
-            account.binding_decision = "verified"
-            account.process_reject_reason = ""
-        try:
-            account.sync_runtime(reason or "process_proof")
-        except Exception:
-            pass
-
-    if lock:
-        with lock:
-            _write()
-    else:
-        _write()
+    _with_account_lock(
+        account,
+        lambda: _write_process_proof(account, proof, confidence, status, reason),
+    )
     flog_kv(
         "PROC",
         "process_proof_marked",
         account=account_name(account),
-        pid=getattr(account, "pid", None) or "",
+        pid=_text(getattr(account, "pid", None)),
         reason=reason,
         process_proof_level=proof,
         confidence=getattr(account, "process_binding_confidence", 0.0),

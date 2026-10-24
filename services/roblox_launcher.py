@@ -27,7 +27,7 @@ from domain.roblox_private_servers import (
 from domain.roblox_private_servers import (
     ensure_owned_private_server as _ensure_owned_private_server,
 )
-from services.account_hybrid import ACCOUNT_STORE, decrypt_cookie
+from services.account_hybrid import ACCOUNT_STORE, COOKIE_UNREADABLE_REASON, decrypt_cookie
 from services.roblox_http import RobloxHTTP, open_roblox_uri
 from services.roblox_multibox import ensure_multi_roblox_guard, release_multi_roblox_guard
 from services.roblox_validation import validate_record_cookie_identity
@@ -58,30 +58,76 @@ def ensure_owned_private_server(
     )
 
 
-def _merge_owned_private_server(records: list[dict[str, Any]], server: dict[str, Any]) -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    incoming_id = str(server.get("private_server_id") or "").strip()
-    incoming_key = (
-        str(server.get("owner_user_id") or ""),
-        str(server.get("place_id") or ""),
-        str(server.get("universe_id") or ""),
+_ERROR_FALLBACK_KEYS = ("private_server_id", "link", "join_code", "access_code", "source", "name")
+
+
+def _fill_missing_fields(combined: dict[str, Any], old: dict[str, Any]) -> None:
+    """Keep old values when an errored refresh blanks a field."""
+    for key in _ERROR_FALLBACK_KEYS:
+        if combined.get(key) in (None, "") and old.get(key) not in (None, ""):
+            combined[key] = old.get(key)
+
+
+def _log_private_public_fallback(
+    username: str, place_id: str, reason: str, *, joined_existing_vip: bool | None = None
+) -> None:
+    """Log why a private-server launch fell back; logging must never raise."""
+    try:
+        from core import flog_kv
+
+        fields: dict[str, Any] = {"account": username, "place_id": place_id, "reason": reason}
+        if joined_existing_vip is not None:
+            fields["joined_existing_vip"] = joined_existing_vip
+        flog_kv("LAUNCH", "private_server_public_fallback", "warning", **fields)
+    except Exception:
+        "intentional: ignore exception"
+
+
+def _pick_fallback_link(link_candidates: list[str], place_id: str) -> str:
+    """Return the first candidate link that can still join this place."""
+    for candidate in link_candidates:
+        if not candidate:
+            continue
+        cand_place, cand_code = parse_vip_link(candidate)
+        if cand_place and cand_place != str(place_id):
+            continue
+        if not cand_code:
+            continue
+        return candidate
+    return ""
+
+
+def _private_server_identity(server: dict[str, Any]) -> tuple[str, tuple[str, str, str]]:
+    return (
+        str(server.get("private_server_id") or "").strip(),
+        (
+            str(server.get("owner_user_id") or ""),
+            str(server.get("place_id") or ""),
+            str(server.get("universe_id") or ""),
+        ),
     )
+
+
+def _is_same_private_server(old: dict[str, Any], incoming_id: str, incoming_key: tuple[str, str, str]) -> bool:
+    old_id, old_key = _private_server_identity(old)
+    return (incoming_id and old_id == incoming_id) or (incoming_key[0] and old_key == incoming_key)
+
+
+def _merge_private_server_record(old: dict[str, Any], server: dict[str, Any]) -> dict[str, Any]:
+    combined = dict(old)
+    combined.update(dict(server))
+    if str(server.get("status") or "").lower() == "error":
+        _fill_missing_fields(combined, old)
+    return combined
+
+
+def _merge_owned_private_server(records: list[dict[str, Any]], server: dict[str, Any]) -> list[dict[str, Any]]:
+    incoming_id, incoming_key = _private_server_identity(server)
+    merged: list[dict[str, Any]] = []
     replaced = False
     for old in records or []:
-        old_id = str(old.get("private_server_id") or "").strip()
-        old_key = (
-            str(old.get("owner_user_id") or ""),
-            str(old.get("place_id") or ""),
-            str(old.get("universe_id") or ""),
-        )
-        if (incoming_id and old_id == incoming_id) or (incoming_key[0] and old_key == incoming_key):
-            combined = dict(old)
-            combined.update(dict(server))
-            if str(server.get("status") or "").lower() == "error":
-                for key in ("private_server_id", "link", "join_code", "access_code", "source", "name"):
-                    if combined.get(key) in (None, "") and old.get(key) not in (None, ""):
-                        combined[key] = old.get(key)
-            merged.append(combined)
+        if _is_same_private_server(old, incoming_id, incoming_key):
+            merged.append(_merge_private_server_record(old, server))
             replaced = True
         else:
             merged.append(dict(old))
@@ -142,56 +188,84 @@ class HybridLauncher:
                 continue
         return {"ok": True, "killed": killed, "count": len(killed)}
 
+    @staticmethod
+    def _hydrate_launch_record(record: dict[str, Any]) -> tuple[dict[str, Any], str]:
+        data = dict(record or {})
+        username = str(data.get("username") or "").strip()
+        if not username:
+            return data, username
+        try:
+            stored = next(
+                (
+                    item
+                    for item in ACCOUNT_STORE.read_records(include_cookies=False)
+                    if str(item.get("username") or "").strip().lower() == username.lower()
+                ),
+                None,
+            )
+        except Exception:
+            stored = None
+        if not stored:
+            return data, username
+        for key in ("owned_private_servers", "place_id", "job_id", "browser_tracker_id", "global_vip_link"):
+            if not data.get(key) and stored.get(key):
+                data[key] = stored[key]
+        data_links = data.get("vip_links") if isinstance(data.get("vip_links"), list) else []
+        stored_links = stored.get("vip_links") if isinstance(stored.get("vip_links"), list) else []
+        links = list(
+            dict.fromkeys(
+                str(link or "").strip()
+                for link in [*data_links, *stored_links]
+                if str(link or "").strip()
+            )
+        )
+        if links:
+            data["vip_links"] = links
+        return data, username
+
+    @staticmethod
+    def _resolve_launch_cookie(data: dict[str, Any]) -> tuple[str, dict[str, Any] | None]:
+        cookie = str(data.get("cookie") or "")
+        if not cookie and data.get("encrypted_cookie"):
+            cookie = decrypt_cookie(str(data.get("encrypted_cookie") or ""), strict=False)
+            if not cookie:
+                return "", {"ok": False, "fatal": True, "msg": COOKIE_UNREADABLE_REASON}
+        if not cookie:
+            return "", {"ok": False, "msg": "No .ROBLOSECURITY cookie for account"}
+        return cookie, None
+
+    @classmethod
+    def _prepare_instances(cls, browser_tracker_id: str, multi_roblox: bool) -> tuple[bool, str, dict[str, Any]] | dict[str, Any]:
+        if multi_roblox:
+            guard_ok, guard_detail = ensure_multi_roblox_guard()
+            if not guard_ok:
+                return {"ok": False, "fatal": True, "msg": f"Multi Roblox guard failed: {guard_detail}"}
+            return guard_ok, guard_detail, cls.kill_duplicate_instances(browser_tracker_id)
+        release_multi_roblox_guard()
+        # Stays lazy on purpose: launcher → process_service → process_backend
+        # → launch_service → hybrid → launcher is a cycle at import time.
+        from services.process_service import ProcessManager
+
+        killed_count = ProcessManager.kill_all_roblox_clients(wait_seconds=2.5)
+        return False, "", {"ok": True, "killed": [], "count": int(killed_count), "all_instances_closed": int(killed_count)}
+
     @classmethod
     def launch_record(cls, record: dict[str, Any], target: dict[str, Any] | None = None, multi_roblox: bool = True) -> dict[str, Any]:
-        data = dict(record or {})
+        data, username = cls._hydrate_launch_record(record)
         target = dict(target or {})
-        username = str(data.get("username") or "").strip()
-        if username:
-            try:
-                for stored in ACCOUNT_STORE.read_records(include_cookies=False):
-                    if str(stored.get("username") or "").strip().lower() != username.lower():
-                        continue
-                    for key in ("owned_private_servers", "place_id", "job_id", "browser_tracker_id", "global_vip_link"):
-                        if not data.get(key) and stored.get(key):
-                            data[key] = stored.get(key)
-                    stored_links = stored.get("vip_links") if isinstance(stored.get("vip_links"), list) else []
-                    data_links = data.get("vip_links") if isinstance(data.get("vip_links"), list) else []
-                    merged_links = []
-                    for link in list(data_links or []) + list(stored_links or []):
-                        text = str(link or "").strip()
-                        if text and text not in merged_links:
-                            merged_links.append(text)
-                    if merged_links:
-                        data["vip_links"] = merged_links
-                    break
-            except Exception:
-                pass
-        cookie = data.get("cookie") or ""
-        if not cookie and data.get("encrypted_cookie"):
-            cookie = decrypt_cookie(str(data.get("encrypted_cookie") or ""))
-        if not cookie:
-            return {"ok": False, "msg": "No .ROBLOSECURITY cookie for account"}
+        cookie, cookie_error = cls._resolve_launch_cookie(data)
+        if cookie_error:
+            return cookie_error
         identity = validate_record_cookie_identity(data, cookie, update_store=True)
         if not identity.get("ok"):
             return {"ok": False, "fatal": True, "msg": identity.get("msg", "cookie identity mismatch"), **identity}
         browser_tracker_id = str(target.get("browser_tracker_id") or data.get("browser_tracker_id") or "").strip()
         if not browser_tracker_id:
             browser_tracker_id = str(secrets.randbelow(75_000) + 100_000) + str(secrets.randbelow(800_000) + 100_000)
-        guard_ok = False
-        guard_detail = ""
-        if multi_roblox:
-            guard_ok, guard_detail = ensure_multi_roblox_guard()
-            if not guard_ok:
-                return {"ok": False, "fatal": True, "msg": f"Multi Roblox guard failed: {guard_detail}"}
-            close_result = cls.kill_duplicate_instances(browser_tracker_id)
-        else:
-            release_multi_roblox_guard()
-            # Stays lazy on purpose: see duplicate_pids_for_tracker above.
-            from services.process_service import ProcessManager
-
-            killed_count = ProcessManager.kill_all_roblox_clients(wait_seconds=2.5)
-            close_result = {"ok": True, "killed": [], "count": int(killed_count), "all_instances_closed": int(killed_count)}
+        instance_setup = cls._prepare_instances(browser_tracker_id, multi_roblox)
+        if isinstance(instance_setup, dict):
+            return instance_setup
+        guard_ok, guard_detail, close_result = instance_setup
         place_id = str(target.get("place_id") or data.get("place_id") or "").strip()
         job_id = str(target.get("job_id") or data.get("job_id") or "").strip()
         explicit_vip_link = str(target.get("vip_link") or target.get("vip_url") or "").strip()
@@ -316,54 +390,21 @@ class HybridLauncher:
                 # when there is genuinely nothing to join.
                 if vip_unavailable_permanently(private_failure_msg):
                     auto_private_enabled = False
-                    fallback_link = ""
-                    for candidate in link_candidates:
-                        if not candidate:
-                            continue
-                        cand_place, cand_code = parse_vip_link(candidate)
-                        if cand_place and cand_place != str(place_id):
-                            continue
-                        if not cand_code:
-                            continue
-                        fallback_link = candidate
-                        break
+                    fallback_link = _pick_fallback_link(link_candidates, place_id)
                     if fallback_link:
                         vip_link = fallback_link
                         vip_resolution = {}
                         vip_resolved = False
                         private_fallback_reason = private_failure_msg
-                        try:
-                            from core import flog_kv
-
-                            flog_kv(
-                                "LAUNCH",
-                                "private_server_public_fallback",
-                                "warning",
-                                account=username,
-                                place_id=place_id,
-                                reason=private_failure_msg,
-                                joined_existing_vip=True,
-                            )
-                        except Exception:
-                            pass
+                        _log_private_public_fallback(
+                            username, place_id, private_failure_msg, joined_existing_vip=True
+                        )
                     else:
                         private_fallback_reason = private_failure_msg
                         vip_link = ""
                         links = []
                         global_vip_link = ""
-                        try:
-                            from core import flog_kv
-
-                            flog_kv(
-                                "LAUNCH",
-                                "private_server_public_fallback",
-                                "warning",
-                                account=username,
-                                place_id=place_id,
-                                reason=private_failure_msg,
-                            )
-                        except Exception:
-                            pass
+                        _log_private_public_fallback(username, place_id, private_failure_msg)
                 else:
                     return {
                         "ok": False,

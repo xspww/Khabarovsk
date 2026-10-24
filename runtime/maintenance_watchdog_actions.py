@@ -65,60 +65,104 @@ def log_memory_pressure_hold(acc: Any, pid: Any, pressure: dict[str, Any], hold_
     )
 
 
-def handle_disconnect_dialog_rejoin(owner: Any, acc: Any, pid: Any, dialog: dict[str, Any]) -> None:
-    reason_key = str(dialog.get("reason_key") or "connection_error")
-    detail = str(dialog.get("detail") or "")
-    error_code = str(dialog.get("error_code") or "")
+def _request_moderation_probe(
+    owner: Any,
+    acc: Any,
+    detail: str,
+    reason_key: str,
+    error_code: str,
+) -> None:
     # Ban/suspend kick shows up as a 267/273 disconnect first — prioritise a
     # live moderation probe so the RT monitor confirms Suspended vs Banned
     # on the next tick instead of waiting out the full 15 min interval.
     try:
         lowered = f"{detail} {reason_key}".lower()
-        if error_code in {"267", "268", "273"} or "bann" in lowered or "suspend" in lowered or "terminat" in lowered:
-            prio = getattr(owner, "request_moderation_check", None)
-            if callable(prio):
+        if (
+            error_code in {"267", "268", "273"}
+            or "bann" in lowered
+            or "suspend" in lowered
+            or "terminat" in lowered
+        ):
+            probe = getattr(owner, "request_moderation_check", None)
+            if callable(probe):
                 try:
-                    prio(getattr(acc, "_config_username", "") or getattr(acc, "username", ""))
+                    probe(
+                        getattr(acc, "_config_username", "")
+                        or getattr(acc, "username", "")
+                    )
                 except Exception:
-                    pass
+                    "intentional: ignore exception"
     except Exception:
-        pass
+        "intentional: ignore exception"
+
+
+def _disconnect_dialog_log_fields(
+    dialog: dict[str, Any],
+    reason_key: str,
+    error_code: str,
+    detail: str,
+) -> dict[str, Any]:
+    return {
+        "reason": reason_key,
+        "error_code": error_code,
+        "confidence": f"{float(dialog.get('popup_confidence') or 0.0):.2f}",
+        "source": dialog.get("evidence_source", ""),
+        "visual_source": dialog.get("visual_evidence_source", ""),
+        "detail": detail,
+        "reconnecting_for": f"{float(dialog.get('reconnecting_for') or 0.0):.1f}",
+        "runtime_generation": dialog.get("runtime_generation"),
+        "session_id": dialog.get("session_id"),
+        "transaction_id": dialog.get("transaction_id"),
+    }
+
+
+def _disconnect_dialog_payload(
+    dialog: dict[str, Any],
+    pid: Any,
+    detail: str,
+    error_code: str,
+) -> dict[str, Any]:
+    return {
+        "trigger": "watchdog_popup",
+        "detail": f"PID={pid} UI={detail}",
+        "reason_msg": f"PID={pid} UI={detail}",
+        "popup_code": error_code,
+        "popup_confidence": dialog.get("popup_confidence", 0.0),
+        "disconnect_category": dialog.get("disconnect_category", ""),
+        "visual_disconnect": bool(dialog.get("visual_disconnect", False)),
+        "evidence_source": dialog.get("evidence_source", ""),
+        "visual_evidence_source": dialog.get("visual_evidence_source", ""),
+    }
+
+
+def _dialog_signal_kwargs(dialog: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "expected_runtime_generation": int(dialog.get("runtime_generation") or 0),
+        "expected_session_id": str(dialog.get("session_id") or ""),
+        "expected_launch_nonce": str(dialog.get("launch_nonce") or ""),
+        "expected_transaction_id": str(dialog.get("transaction_id") or ""),
+    }
+
+
+def handle_disconnect_dialog_rejoin(owner: Any, acc: Any, pid: Any, dialog: dict[str, Any]) -> None:
+    reason_key = str(dialog.get("reason_key") or "connection_error")
+    detail = str(dialog.get("detail") or "")
+    error_code = str(dialog.get("error_code") or "")
+    _request_moderation_probe(owner, acc, detail, reason_key, error_code)
     flog_kv(
         "WATCHDOG",
         "disconnect_dialog_rejoin_signal",
         "warning",
         account=acc.display_name,
         pid=pid,
-        reason=reason_key,
-        error_code=error_code,
-        confidence=f"{float(dialog.get('popup_confidence') or 0.0):.2f}",
-        source=dialog.get("evidence_source", ""),
-        visual_source=dialog.get("visual_evidence_source", ""),
-        detail=detail,
-        reconnecting_for=f"{float(dialog.get('reconnecting_for') or 0.0):.1f}",
-        runtime_generation=dialog.get("runtime_generation"),
-        session_id=dialog.get("session_id"),
-        transaction_id=dialog.get("transaction_id"),
+        **_disconnect_dialog_log_fields(dialog, reason_key, error_code, detail),
     )
     owner._runtime_signal(
         acc,
         "disconnect_detected",
         reason_key,
-        payload={
-            "trigger": "watchdog_popup",
-            "detail": f"PID={pid} UI={detail}",
-            "reason_msg": f"PID={pid} UI={detail}",
-            "popup_code": error_code,
-            "popup_confidence": dialog.get("popup_confidence", 0.0),
-            "disconnect_category": dialog.get("disconnect_category", ""),
-            "visual_disconnect": bool(dialog.get("visual_disconnect", False)),
-            "evidence_source": dialog.get("evidence_source", ""),
-            "visual_evidence_source": dialog.get("visual_evidence_source", ""),
-        },
-        expected_runtime_generation=int(dialog.get("runtime_generation") or 0),
-        expected_session_id=str(dialog.get("session_id") or ""),
-        expected_launch_nonce=str(dialog.get("launch_nonce") or ""),
-        expected_transaction_id=str(dialog.get("transaction_id") or ""),
+        payload=_disconnect_dialog_payload(dialog, pid, detail, error_code),
+        **_dialog_signal_kwargs(dialog),
     )
 
 

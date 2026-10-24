@@ -46,6 +46,65 @@ from services.process_proof_policy import (
 Logger = Callable[..., None]
 
 
+def _identity_mismatch(acc: Any, attr: str, expected: str) -> bool:
+    if not expected:
+        return False
+    return str(getattr(acc, attr, "") or "") != str(expected)
+
+
+def _increment(acc: Any, attr: str) -> None:
+    setattr(acc, attr, int(getattr(acc, attr, 0) or 0) + 1)
+
+
+def _increment_bucket_counter(acc: Any, bucket_name: str) -> None:
+    if bucket_name == "network":
+        _increment(acc, "network_retry_count")
+    elif bucket_name == "launch":
+        _increment(acc, "launch_fail_count")
+    elif bucket_name == "session":
+        _increment(acc, "session_retry_count")
+    elif bucket_name != "manual":
+        _increment(acc, "crash_retry_count")
+
+
+def _pid_changed(old_pid: Any, pid: int) -> bool:
+    return bool(old_pid and int(old_pid) != int(pid))
+
+
+def _begin_recovery_fields(acc: Any, status: str, reason: str) -> None:
+    acc.recovery_inflight = True
+    acc.recovery_status = str(status or "recovering")
+    acc.last_recovery_reason = str(reason or "")
+    acc.last_crash_reason = str(reason or "")
+
+
+def _bind_process_fields(
+    acc: Any,
+    pid: int,
+    process_name: str,
+    process_identity: str,
+    confidence: float,
+    process_proof_level: str,
+) -> None:
+    acc.pid = int(pid)
+    acc.bound_process_name = process_name or "RobloxPlayerBeta.exe"
+    acc.bound_process_identity = process_identity or ""
+    acc.pid_missing_since = 0.0
+    acc.last_pid_change_at = time.time()
+    acc.ownership_confidence = float(confidence or 0.0)
+    acc.last_signal_confidence = float(confidence or 0.0)
+    acc.process_binding_status = "verified"
+    acc.binding_decision = "verified"
+    acc.process_binding_confidence = float(confidence or 0.0)
+    acc.process_proof_level = normalize_process_proof_level(process_proof_level) or PROOF_UNTRUSTED
+    acc.process_reject_reason = ""
+    acc.unmanaged_live_process_count = 0
+    acc.unmanaged_live_pids = []
+    acc.adopt_candidate_pid = None
+    acc.adopt_reject_reason = ""
+    acc.orphan_confidence = 0.0
+
+
 class RuntimeStateManager:
     """Single-writer helper for lifecycle-critical Account runtime fields."""
 
@@ -129,6 +188,29 @@ class RuntimeStateManager:
         )
         return False
 
+    def _reject_session_identity(
+        self,
+        acc: Any,
+        reason: str,
+        field: str,
+        attr: str,
+        expected: str,
+    ) -> bool:
+        self._emit(
+            "RUNTIME",
+            "stale_work_rejected",
+            "warning",
+            **self._runtime_log_fields(
+                acc,
+                reason=reason,
+                **{
+                    f"expected_{field}": expected,
+                    f"current_{field}": getattr(acc, attr, ""),
+                },
+            ),
+        )
+        return False
+
     def guard_session_identity(
         self,
         acc: Any,
@@ -140,45 +222,30 @@ class RuntimeStateManager:
     ) -> bool:
         if not self.guard_runtime_generation(acc, expected_generation, reason or "session_guard"):
             return False
-        if expected_session_id and str(getattr(acc, "session_id", "") or "") != str(expected_session_id):
-            self._emit(
-                "RUNTIME",
-                "stale_work_rejected",
-                "warning",
-                **self._runtime_log_fields(
-                    acc,
-                    reason=reason or "session_mismatch",
-                    expected_session_id=expected_session_id,
-                    current_session_id=getattr(acc, "session_id", ""),
-                ),
+        if _identity_mismatch(acc, "session_id", expected_session_id):
+            return self._reject_session_identity(
+                acc,
+                reason or "session_mismatch",
+                "session_id",
+                "session_id",
+                expected_session_id,
             )
-            return False
-        if expected_launch_nonce and str(getattr(acc, "launch_nonce", "") or "") != str(expected_launch_nonce):
-            self._emit(
-                "RUNTIME",
-                "stale_work_rejected",
-                "warning",
-                **self._runtime_log_fields(
-                    acc,
-                    reason=reason or "launch_nonce_mismatch",
-                    expected_launch_nonce=expected_launch_nonce,
-                    current_launch_nonce=getattr(acc, "launch_nonce", ""),
-                ),
+        if _identity_mismatch(acc, "launch_nonce", expected_launch_nonce):
+            return self._reject_session_identity(
+                acc,
+                reason or "launch_nonce_mismatch",
+                "launch_nonce",
+                "launch_nonce",
+                expected_launch_nonce,
             )
-            return False
-        if expected_transaction_id and str(getattr(acc, "rejoin_transaction_id", "") or "") != str(expected_transaction_id):
-            self._emit(
-                "RUNTIME",
-                "stale_work_rejected",
-                "warning",
-                **self._runtime_log_fields(
-                    acc,
-                    reason=reason or "transaction_mismatch",
-                    expected_transaction_id=expected_transaction_id,
-                    current_transaction_id=getattr(acc, "rejoin_transaction_id", ""),
-                ),
+        if _identity_mismatch(acc, "rejoin_transaction_id", expected_transaction_id):
+            return self._reject_session_identity(
+                acc,
+                reason or "transaction_mismatch",
+                "transaction_id",
+                "rejoin_transaction_id",
+                expected_transaction_id,
             )
-            return False
         return True
 
     def bump_runtime_generation(self, acc: Any, reason: str = "") -> int:
@@ -222,98 +289,119 @@ class RuntimeStateManager:
             emit=self._emit,
         )
 
-    def transition_public(
+    def _emit_state_rejected(
         self,
         acc: Any,
+        old_state: AccountState,
         new_state: AccountState,
-        reason: str = "",
-        force: bool = False,
-        expected_generation: int | None = None,
-        increment_generation: bool = False,
-    ) -> bool:
-        if not self.guard_runtime_generation(acc, expected_generation, reason or "transition"):
-            return False
-        old_state = acc.state
-        old_runtime = runtime_state_for_public(old_state)
-        new_runtime = runtime_state_for_public(new_state)
-        if new_runtime == RuntimeState.RUNNING:
-            proof_level = normalize_process_proof_level(getattr(acc, "process_proof_level", PROOF_UNTRUSTED))
-            if not process_proof_allowed_for_state(proof_level, new_state):
-                acc.process_reject_reason = "process_proof_insufficient"
-                acc.binding_decision = "rejected"
-                acc.sync_runtime(reason or "process_proof_insufficient")
-                self._emit(
-                    "STATE",
-                    "state_write_rejected",
-                    "warning",
-                    **self._runtime_log_fields(
-                        acc,
-                        reason=reason or "process_proof_insufficient",
-                        old=getattr(old_state, "name", old_state),
-                        new=new_state.name,
-                        old_runtime=old_runtime.value,
-                        new_runtime=new_runtime.value,
-                        reject="process_proof_insufficient",
-                        process_proof_level=proof_level,
-                        required_process_proof=required_process_proof_for_state(new_state),
-                        caller=self._caller(),
-                    ),
-                )
-                return False
-        blockers = [] if (force and new_runtime not in {RuntimeState.RUNNING, RuntimeState.BACKOFF, RuntimeState.RECOVERING}) else _transition_invariant_blockers(self._log, acc, new_runtime, reason or "transition")
-        if blockers:
-            self._emit(
-                "STATE",
-                "state_write_rejected",
-                "warning",
-                **self._runtime_log_fields(
-                    acc,
-                    reason=reason or "transition_invariant",
-                    old=getattr(old_state, "name", old_state),
-                    new=new_state.name,
-                    old_runtime=old_runtime.value,
-                    new_runtime=new_runtime.value,
-                    reject="invariant_violation",
-                    blockers=blockers,
-                    snapshot=invariant_snapshot(acc, runtime_state=new_runtime),
-                    caller=self._caller(),
-                ),
-            )
-            return False
-        if not force and not is_valid_runtime_transition(old_runtime, new_runtime):
-            self._emit(
-                "STATE",
-                "state_write_rejected",
-                "warning",
-                **self._runtime_log_fields(
-                    acc,
-                    reason=reason,
-                    old=old_state.name,
-                    new=new_state.name,
-                    old_runtime=old_runtime.value,
-                    new_runtime=new_runtime.value,
-                    session_id=getattr(acc, "session_id", ""),
-                    transaction_id=getattr(acc, "rejoin_transaction_id", ""),
-                    caller=self._caller(),
-                ),
-            )
-            self._emit(
-                "STATE",
-                "invalid_transition",
-                "warning",
-                **self._runtime_log_fields(
-                    acc,
-                    reason=reason,
-                    old=old_state.name,
-                    new=new_state.name,
-                    old_runtime=old_runtime.value,
-                    new_runtime=new_runtime.value,
-                    caller=self._caller(),
-                    snapshot=self.snapshot(acc),
-                ),
-            )
-            return False
+        old_runtime: RuntimeState,
+        new_runtime: RuntimeState,
+        reason: str,
+        **extra: Any,
+    ) -> None:
+        self._emit(
+            "STATE",
+            "state_write_rejected",
+            "warning",
+            **self._runtime_log_fields(
+                acc,
+                reason=reason,
+                old=getattr(old_state, "name", old_state),
+                new=new_state.name,
+                old_runtime=old_runtime.value,
+                new_runtime=new_runtime.value,
+                **extra,
+            ),
+        )
 
+    def _apply_proof_guard(
+        self,
+        acc: Any,
+        old_state: AccountState,
+        new_state: AccountState,
+        new_runtime: RuntimeState,
+        reason: str,
+    ) -> bool:
+        proof_level = normalize_process_proof_level(getattr(acc, "process_proof_level", PROOF_UNTRUSTED))
+        if process_proof_allowed_for_state(proof_level, new_state):
+            return True
+        acc.process_reject_reason = "process_proof_insufficient"
+        acc.binding_decision = "rejected"
+        acc.sync_runtime(reason or "process_proof_insufficient")
+        self._emit_state_rejected(
+            acc,
+            old_state,
+            new_state,
+            runtime_state_for_public(old_state),
+            new_runtime,
+            reason or "process_proof_insufficient",
+            reject="process_proof_insufficient",
+            process_proof_level=proof_level,
+            required_process_proof=required_process_proof_for_state(new_state),
+            caller=self._caller(),
+        )
+        return False
+
+    def _transition_blockers(
+        self,
+        acc: Any,
+        new_runtime: RuntimeState,
+        reason: str,
+        force: bool,
+    ) -> list[Any]:
+        skip = force and new_runtime not in {RuntimeState.RUNNING, RuntimeState.BACKOFF, RuntimeState.RECOVERING}
+        if skip:
+            return []
+        return _transition_invariant_blockers(self._log, acc, new_runtime, reason or "transition")
+
+    def _reject_invalid_transition(
+        self,
+        acc: Any,
+        old_state: AccountState,
+        new_state: AccountState,
+        old_runtime: RuntimeState,
+        new_runtime: RuntimeState,
+        reason: str,
+    ) -> None:
+        session_id = getattr(acc, "session_id", "")
+        transaction_id = getattr(acc, "rejoin_transaction_id", "")
+        self._emit_state_rejected(
+            acc,
+            old_state,
+            new_state,
+            old_runtime,
+            new_runtime,
+            reason,
+            session_id=session_id,
+            transaction_id=transaction_id,
+            caller=self._caller(),
+        )
+        self._emit(
+            "STATE",
+            "invalid_transition",
+            "warning",
+            **self._runtime_log_fields(
+                acc,
+                reason=reason,
+                old=old_state.name,
+                new=new_state.name,
+                old_runtime=old_runtime.value,
+                new_runtime=new_runtime.value,
+                caller=self._caller(),
+                snapshot=self.snapshot(acc),
+            ),
+        )
+
+    def _apply_transition(
+        self,
+        acc: Any,
+        old_state: AccountState,
+        new_state: AccountState,
+        old_runtime: RuntimeState,
+        new_runtime: RuntimeState,
+        reason: str,
+        increment_generation: bool,
+    ) -> None:
         acc.state = new_state
         acc.last_state_reason = str(reason or "")
         acc.last_state_change_at = time.time()
@@ -334,6 +422,51 @@ class RuntimeStateManager:
             ),
         )
         self._emit_invariant_violations(acc, reason or "post_transition", runtime_state=new_runtime)
+
+    def transition_public(
+        self,
+        acc: Any,
+        new_state: AccountState,
+        reason: str = "",
+        force: bool = False,
+        expected_generation: int | None = None,
+        increment_generation: bool = False,
+    ) -> bool:
+        if not self.guard_runtime_generation(acc, expected_generation, reason or "transition"):
+            return False
+        old_state = acc.state
+        old_runtime = runtime_state_for_public(old_state)
+        new_runtime = runtime_state_for_public(new_state)
+        if new_runtime == RuntimeState.RUNNING:
+            if not self._apply_proof_guard(acc, old_state, new_state, new_runtime, reason):
+                return False
+        blockers = self._transition_blockers(acc, new_runtime, reason, force)
+        if blockers:
+            self._emit_state_rejected(
+                acc,
+                old_state,
+                new_state,
+                old_runtime,
+                new_runtime,
+                reason or "transition_invariant",
+                reject="invariant_violation",
+                blockers=blockers,
+                snapshot=invariant_snapshot(acc, runtime_state=new_runtime),
+                caller=self._caller(),
+            )
+            return False
+        if not force and not is_valid_runtime_transition(old_runtime, new_runtime):
+            self._reject_invalid_transition(acc, old_state, new_state, old_runtime, new_runtime, reason)
+            return False
+        self._apply_transition(
+            acc,
+            old_state,
+            new_state,
+            old_runtime,
+            new_runtime,
+            reason,
+            increment_generation,
+        )
         return True
 
     def set_desired(self, acc: Any, desired: AccountState, reason: str = "", increment_generation: bool = False) -> None:
@@ -519,25 +652,15 @@ class RuntimeStateManager:
     ) -> int:
         event_ts = float(now if now is not None else time.time())
         generation = self.bump_recovery_generation(acc, reason or status or "recovery_begin", now=event_ts)
-        acc.recovery_inflight = True
-        acc.recovery_status = str(status or "recovering")
-        acc.last_recovery_reason = str(reason or "")
-        acc.last_crash_reason = str(reason or "")
+        _begin_recovery_fields(acc, status, reason)
         if count_retry:
-            acc.retry_count = int(getattr(acc, "retry_count", 0) or 0) + 1
+            _increment(acc, "retry_count")
         if count_crash:
-            acc.crash_count = int(getattr(acc, "crash_count", 0) or 0) + 1
+            _increment(acc, "crash_count")
         bucket_name = str(bucket or "crash")
-        if bucket_name == "network":
-            acc.network_retry_count = int(getattr(acc, "network_retry_count", 0) or 0) + 1
-        elif bucket_name == "launch":
-            acc.launch_fail_count = int(getattr(acc, "launch_fail_count", 0) or 0) + 1
-        elif bucket_name == "session":
-            acc.session_retry_count = int(getattr(acc, "session_retry_count", 0) or 0) + 1
-        elif bucket_name != "manual":
-            acc.crash_retry_count = int(getattr(acc, "crash_retry_count", 0) or 0) + 1
+        _increment_bucket_counter(acc, bucket_name)
         if count_fail:
-            acc.fail_count = int(getattr(acc, "fail_count", 0) or 0) + 1
+            _increment(acc, "fail_count")
         acc.sync_runtime(status or reason or "recovery_begin")
         self._emit(
             "RECOVERY",
@@ -685,24 +808,8 @@ class RuntimeStateManager:
         increment_generation: bool = True,
     ) -> None:
         old_pid = getattr(acc, "pid", None)
-        acc.pid = int(pid)
-        acc.bound_process_name = process_name or "RobloxPlayerBeta.exe"
-        acc.bound_process_identity = process_identity or ""
-        acc.pid_missing_since = 0.0
-        acc.last_pid_change_at = time.time()
-        acc.ownership_confidence = float(confidence or 0.0)
-        acc.last_signal_confidence = float(confidence or 0.0)
-        acc.process_binding_status = "verified"
-        acc.binding_decision = "verified"
-        acc.process_binding_confidence = float(confidence or 0.0)
-        acc.process_proof_level = normalize_process_proof_level(process_proof_level) or PROOF_UNTRUSTED
-        acc.process_reject_reason = ""
-        acc.unmanaged_live_process_count = 0
-        acc.unmanaged_live_pids = []
-        acc.adopt_candidate_pid = None
-        acc.adopt_reject_reason = ""
-        acc.orphan_confidence = 0.0
-        if increment_generation and old_pid and int(old_pid) != int(pid):
+        _bind_process_fields(acc, pid, process_name, process_identity, confidence, process_proof_level)
+        if increment_generation and _pid_changed(old_pid, pid):
             self.bump_runtime_generation(acc, reason or "process_bind_replace")
         else:
             acc.sync_runtime(reason or "process_bind")

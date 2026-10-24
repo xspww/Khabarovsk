@@ -6,7 +6,7 @@ import os
 import threading
 import time
 from ctypes import wintypes
-from typing import Any
+from typing import Any, NamedTuple
 
 from runtime.popup_detector.popup_classifier import PopupClassification, classify_popup_observation
 from runtime.recovery_context import VISUAL_DISCONNECT
@@ -275,6 +275,19 @@ class PopupWindowSampler:
             return None
 
 
+class _SampleTally(NamedTuple):
+    samples: list[PopupClassification]
+    candidates: list[PopupClassification]
+    positive: list[PopupClassification]
+    coded: list[PopupClassification]
+    text_confirmed: list[PopupClassification]
+    visual_positive: list[PopupClassification]
+    captcha_confirmed: list[PopupClassification]
+    best: PopupClassification
+    visual_recovery_confirmed: bool
+    confirmed: bool
+
+
 class PopupObserver:
     def __init__(
         self,
@@ -289,14 +302,17 @@ class PopupObserver:
         self.stable_samples = max(1, int(stable_samples or 2))
         self.sampler = PopupWindowSampler()
 
-    def _is_recoverable_visual_candidate(self, item: PopupClassification) -> bool:
-        if not (
+    def _is_strong_visual_disconnect(self, item: PopupClassification) -> bool:
+        return bool(
             item.matched
             and item.visual_disconnect
             and item.evidence_source == "visual_strong"
             and item.visual_strength == "strong"
             and item.confidence >= self.threshold
-        ):
+        )
+
+    def _is_recoverable_visual_candidate(self, item: PopupClassification) -> bool:
+        if not self._is_strong_visual_disconnect(item):
             return False
         if item.visual_stage not in {"modal_button", "structural_button"}:
             return False
@@ -345,7 +361,172 @@ class PopupObserver:
             with open(meta_path, "w", encoding="utf-8") as handle:
                 json.dump(meta, handle, ensure_ascii=False, indent=2)
         except Exception:
-            pass
+            "intentional: ignore exception"
+
+    def _resolve_hwnd(self, pid: int, prepared: dict[str, Any]) -> int:
+        hwnd = int((prepared.get("hwnd") if prepared else 0) or 0)
+        if not hwnd:
+            windows = self.sampler.windows_for_pid(pid, include_hidden=True)
+            hwnd = int((windows[0].get("hwnd") if windows else 0) or 0)
+        return hwnd
+
+    def _maybe_save_captcha(
+        self,
+        pid: int,
+        hwnd: int,
+        texts: list[str],
+        screenshot: Any,
+        classification: PopupClassification,
+    ) -> None:
+        if classification.reason_key != CAPTCHA_REASON:
+            return
+        if screenshot is None and hwnd:
+            screenshot = self.sampler.capture_window_image(hwnd)
+        self._maybe_save_captcha_sample(pid, texts, screenshot, classification)
+
+    def _collect_samples(
+        self,
+        pid: int,
+        hwnd: int,
+        sample_total: int,
+        interval: float,
+        process_idle: bool,
+    ) -> list[PopupClassification]:
+        samples: list[PopupClassification] = []
+        for index in range(sample_total):
+            if not hwnd:
+                hwnd = self._resolve_hwnd(pid, {})
+            texts = self.sampler.read_texts(hwnd) if hwnd else []
+            screenshot = None
+            classification = classify_popup_observation(
+                texts,
+                {},
+                process_idle=process_idle,
+                threshold=self.threshold,
+            )
+            if not classification.matched:
+                screenshot = self.sampler.capture_window_image(hwnd) if hwnd else None
+                classification = classify_popup_observation(
+                    texts,
+                    _detect_visual_features_lazy(screenshot),
+                    process_idle=process_idle,
+                    threshold=self.threshold,
+                )
+            samples.append(classification)
+            self._maybe_save_captcha(pid, hwnd, texts, screenshot, classification)
+            if index < sample_total - 1 and interval > 0:
+                if classification.error_code:
+                    break
+                time.sleep(interval)
+        return samples
+
+    def _positive_item(
+        self,
+        item: PopupClassification,
+        candidates: list[PopupClassification],
+    ) -> bool:
+        if not item.matched:
+            return False
+        if item.recovery_allowed and (
+            item.confidence >= self.threshold or item.visual_disconnect
+        ):
+            return True
+        return item in candidates
+
+    def _is_confirmed(
+        self,
+        coded: list[PopupClassification],
+        text_confirmed: list[PopupClassification],
+        visual_positive: list[PopupClassification],
+        captcha_confirmed: list[PopupClassification],
+        visual_recovery_confirmed: bool,
+    ) -> bool:
+        return bool(
+            coded
+            or len(text_confirmed) >= self.stable_samples
+            or len(visual_positive) >= self.stable_samples
+            or len(captcha_confirmed) >= self.stable_samples
+            or visual_recovery_confirmed
+        )
+
+    def _tally_samples(self, samples: list[PopupClassification]) -> _SampleTally:
+        candidates = [
+            item for item in samples
+            if self._is_recoverable_visual_candidate(item)
+        ]
+        positive = [
+            item for item in samples
+            if self._positive_item(item, candidates)
+        ]
+        coded = [item for item in samples if item.error_code]
+        text_confirmed = [
+            item for item in samples
+            if item.recovery_allowed and item.evidence_source == "text"
+        ]
+        visual_positive = [
+            item for item in positive
+            if item.evidence_source == "visual_strong"
+        ]
+        captcha_confirmed = [
+            item for item in samples
+            if item.reason_key == "captcha_required"
+        ]
+        best = max(samples, key=lambda item: item.confidence, default=PopupClassification(False))
+        visual_recovery_confirmed = len(candidates) >= self.stable_samples
+        confirmed = self._is_confirmed(
+            coded,
+            text_confirmed,
+            visual_positive,
+            captcha_confirmed,
+            visual_recovery_confirmed,
+        )
+        return _SampleTally(
+            samples,
+            candidates,
+            positive,
+            coded,
+            text_confirmed,
+            visual_positive,
+            captcha_confirmed,
+            best,
+            visual_recovery_confirmed,
+            confirmed,
+        )
+
+    def _inspection_result(
+        self,
+        tally: _SampleTally,
+        prepared: dict[str, Any],
+    ) -> dict[str, Any]:
+        result = tally.best.to_dict()
+        if tally.visual_recovery_confirmed and not result.get("recovery_allowed"):
+            visual_best = max(tally.candidates, key=lambda item: item.confidence)
+            result = visual_best.to_dict()
+            result.update({
+                "action": "rejoin",
+                "reason_key": "connection_error",
+                "disconnect_category": VISUAL_DISCONNECT,
+                "recovery_allowed": True,
+            })
+        recovery_allowed = bool(result.get("recovery_allowed"))
+        result.update({
+            "matched": bool(tally.confirmed),
+            "recovery_allowed": bool(tally.confirmed and recovery_allowed),
+            "sample_count": len(tally.samples),
+            "positive_samples": len(tally.positive),
+            "samples_confirmed": len(tally.coded) or len(tally.text_confirmed) or len(tally.visual_positive) or len(tally.captcha_confirmed),
+            "visual_positive_samples": len(tally.visual_positive),
+            "text_positive_samples": len(tally.text_confirmed),
+            "captcha_samples": len(tally.captcha_confirmed),
+            "prepared": prepared,
+            "stable_required": self.stable_samples,
+        })
+        if not tally.confirmed:
+            result["action"] = ""
+            result["reason_key"] = ""
+            result["disconnect_category"] = ""
+            result["error_code"] = tally.best.error_code
+        return result
 
     def inspect_pid(
         self,
@@ -360,108 +541,17 @@ class PopupObserver:
             return {"matched": False, "action": "", "reason_key": "", "detail": "", "error_code": ""}
         sample_total = max(1, int(sample_count or self.sample_count))
         interval = max(0.0, float(self.sample_interval if sample_interval is None else sample_interval))
-        prepared: dict[str, Any] = {}
-        if prepare:
-            prepared = self.sampler.prepare_popup_inspection(pid)
+        prepared = self.sampler.prepare_popup_inspection(pid) if prepare else {}
         try:
-            samples: list[PopupClassification] = []
-            hwnd = int((prepared.get("hwnd") if prepared else 0) or 0)
-            for index in range(sample_total):
-                if not hwnd:
-                    windows = self.sampler.windows_for_pid(pid, include_hidden=True)
-                    hwnd = int((windows[0].get("hwnd") if windows else 0) or 0)
-                texts = self.sampler.read_texts(hwnd) if hwnd else []
-                screenshot = None
-                classification = classify_popup_observation(
-                    texts,
-                    {},
-                    process_idle=process_idle,
-                    threshold=self.threshold,
-                )
-                if not classification.matched:
-                    screenshot = self.sampler.capture_window_image(hwnd) if hwnd else None
-                    classification = classify_popup_observation(
-                        texts,
-                        _detect_visual_features_lazy(screenshot),
-                        process_idle=process_idle,
-                        threshold=self.threshold,
-                    )
-                samples.append(classification)
-                if classification.reason_key == CAPTCHA_REASON:
-                    if screenshot is None and hwnd:
-                        screenshot = self.sampler.capture_window_image(hwnd)
-                    self._maybe_save_captcha_sample(pid, texts, screenshot, classification)
-                if index < sample_total - 1 and interval > 0:
-                    if classification.error_code:
-                        break
-                    time.sleep(interval)
-
-            visual_recovery_candidates = [
-                item for item in samples
-                if self._is_recoverable_visual_candidate(item)
-            ]
-            positive = [
-                item for item in samples
-                if item.matched
-                and (
-                    (
-                        item.recovery_allowed
-                        and (item.confidence >= self.threshold or item.visual_disconnect)
-                    )
-                    or item in visual_recovery_candidates
-                )
-            ]
-            coded = [item for item in samples if item.error_code]
-            text_confirmed = [
-                item for item in samples
-                if item.recovery_allowed and item.evidence_source == "text"
-            ]
-            visual_positive = [
-                item for item in positive
-                if item.evidence_source == "visual_strong"
-            ]
-            captcha_confirmed = [
-                item for item in samples
-                if item.reason_key == "captcha_required"
-            ]
-            best = max(samples, key=lambda item: item.confidence, default=PopupClassification(False))
-            visual_recovery_confirmed = len(visual_recovery_candidates) >= self.stable_samples
-            confirmed = bool(
-                coded
-                or len(text_confirmed) >= self.stable_samples
-                or len(visual_positive) >= self.stable_samples
-                or len(captcha_confirmed) >= self.stable_samples
-                or visual_recovery_confirmed
+            hwnd = self._resolve_hwnd(pid, prepared)
+            samples = self._collect_samples(
+                pid,
+                hwnd,
+                sample_total,
+                interval,
+                process_idle,
             )
-            result = best.to_dict()
-            if visual_recovery_confirmed and not result.get("recovery_allowed"):
-                visual_best = max(visual_recovery_candidates, key=lambda item: item.confidence)
-                result = visual_best.to_dict()
-                result.update({
-                    "action": "rejoin",
-                    "reason_key": "connection_error",
-                    "disconnect_category": VISUAL_DISCONNECT,
-                    "recovery_allowed": True,
-                })
-            recovery_allowed = bool(result.get("recovery_allowed"))
-            result.update({
-                "matched": bool(confirmed),
-                "recovery_allowed": bool(confirmed and recovery_allowed),
-                "sample_count": len(samples),
-                "positive_samples": len(positive),
-                "samples_confirmed": len(coded) or len(text_confirmed) or len(visual_positive) or len(captcha_confirmed),
-                "visual_positive_samples": len(visual_positive),
-                "text_positive_samples": len(text_confirmed),
-                "captcha_samples": len(captcha_confirmed),
-                "prepared": prepared,
-                "stable_required": self.stable_samples,
-            })
-            if not confirmed:
-                result["action"] = ""
-                result["reason_key"] = ""
-                result["disconnect_category"] = ""
-                result["error_code"] = best.error_code
-            return result
+            return self._inspection_result(self._tally_samples(samples), prepared)
         finally:
             if prepare:
                 _release_inspection_hold(pid)

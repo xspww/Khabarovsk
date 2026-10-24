@@ -24,9 +24,9 @@ from ctypes import wintypes
 from typing import Any
 
 try:
-    import psutil  # type: ignore
+    import psutil
 except Exception:  # pragma: no cover
-    psutil = None  # type: ignore
+    psutil = None
 
 ROBLOX_PROCESS_NAME = "robloxplayerbeta.exe"
 
@@ -145,7 +145,7 @@ def trim_pid(pid: int) -> bool:
             try:
                 kernel32.CloseHandle(handle)
             except Exception:
-                pass
+                "intentional: ignore exception"
     except Exception:
         return False
 
@@ -169,7 +169,7 @@ class ProcessTrimService:
             if last_global and (now - last_global) < TRIM_GLOBAL_CLEAN_GAP_SEC:
                 return max(0.0, TRIM_GLOBAL_CLEAN_GAP_SEC - (now - last_global))
         except Exception:
-            pass
+            "intentional: ignore exception"
         return 0.0
 
     def snapshot(self, cfg: dict[str, Any]) -> dict[str, Any]:
@@ -192,10 +192,12 @@ class ProcessTrimService:
             "last": last,
         }
 
-    def apply(self, accounts: Iterable[Any], cfg: dict[str, Any], now: float | None = None,
-              bypass_throttle: bool = False) -> dict[str, Any]:
-        settings = normalize_process_trim_settings(cfg)
-        now = now if now is not None else time.time()
+    def _apply_guard(
+        self,
+        settings: dict[str, Any],
+        now: float,
+        bypass_throttle: bool,
+    ) -> dict[str, Any] | None:
         if not settings["enabled"]:
             return {"ok": True, **settings, "trimmed": 0, "skipped": 0, "rows": [], "reason": "disabled"}
         if os.name != "nt":
@@ -212,39 +214,62 @@ class ProcessTrimService:
         if gap_remaining > 0:
             return {"ok": True, **settings, "trimmed": 0, "reason": "global_clean_recent",
                     "gap_remaining_sec": round(gap_remaining, 1), "rows": []}
+        return None
 
+    def _candidate(
+        self,
+        account: Any,
+        now: float,
+        threshold: float,
+        cooldown: float,
+    ) -> tuple[bool, dict[str, Any] | None]:
+        pid = _account_pid(account)
+        if not pid:
+            return False, None
+        if not is_roblox_pid(pid):
+            return False, None
+        age = get_pid_age_sec(pid)
+        if age < TRIM_MIN_PID_AGE_SEC:
+            return True, None
+        with self._lock:
+            last_trim = float(self._last_trim_at.get(pid) or 0.0)
+        if last_trim and (now - last_trim) < cooldown:
+            return True, None
+        rss = get_pid_rss_mb(pid)
+        if rss < threshold:
+            return True, None
+        return False, {
+            "account": _account_username(account),
+            "display": _account_display(account),
+            "pid": pid,
+            "rss_mb": round(rss, 1),
+        }
+
+    def _collect_candidates(
+        self,
+        accounts: Iterable[Any],
+        now: float,
+        settings: dict[str, Any],
+    ) -> tuple[list[dict[str, Any]], int, int]:
         threshold = float(settings["threshold_mb"])
         cooldown = float(settings["cooldown_sec"])
         candidates: list[dict[str, Any]] = []
         skipped = 0
         for account in list(accounts or []):
-            pid = _account_pid(account)
-            if not pid:
-                continue
-            if not is_roblox_pid(pid):
-                continue
-            age = get_pid_age_sec(pid)
-            if age < TRIM_MIN_PID_AGE_SEC:
+            skip, candidate = self._candidate(account, now, threshold, cooldown)
+            if candidate is not None:
+                candidates.append(candidate)
+            elif skip:
                 skipped += 1
-                continue
-            with self._lock:
-                last_trim = float(self._last_trim_at.get(pid) or 0.0)
-            if last_trim and (now - last_trim) < cooldown:
-                skipped += 1
-                continue
-            rss = get_pid_rss_mb(pid)
-            if rss < threshold:
-                skipped += 1
-                continue
-            candidates.append({
-                "account": _account_username(account),
-                "display": _account_display(account),
-                "pid": pid,
-                "rss_mb": round(rss, 1),
-            })
         candidates.sort(key=lambda r: float(r.get("rss_mb") or 0.0), reverse=True)
         targets = candidates[: int(settings["max_per_cycle"])]
+        return targets, skipped, len(candidates)
 
+    def _trim_targets(
+        self,
+        targets: list[dict[str, Any]],
+        now: float,
+    ) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
         for item in targets:
             pid = int(item["pid"])
@@ -266,6 +291,9 @@ class ProcessTrimService:
                 "after_mb": round(after, 1),
                 "freed_mb": round(freed, 1),
             })
+        return rows
+
+    def _prune_dead_pids(self) -> None:
         #  prune dead pids จาก cooldown map กันโตไม่จำกัด
         try:
             with self._lock:
@@ -277,19 +305,38 @@ class ProcessTrimService:
                     if not alive:
                         self._last_trim_at.pop(pid, None)
         except Exception:
-            pass
+            "intentional: ignore exception"
 
+    def _apply_result(
+        self,
+        settings: dict[str, Any],
+        rows: list[dict[str, Any]],
+        skipped: int,
+        candidate_count: int,
+    ) -> dict[str, Any]:
         trimmed_ok = sum(1 for r in rows if r.get("ok"))
         if rows and trimmed_ok == 0:
             reason = "trim_failed"
         else:
             reason = "ok" if rows else "below_threshold"
         result = {"ok": True, **settings, "trimmed": trimmed_ok,
-                  "skipped": skipped, "candidates": len(candidates), "rows": rows,
+                  "skipped": skipped, "candidates": candidate_count, "rows": rows,
                   "reason": reason}
         with self._lock:
             self._last_result = dict(result)
         return result
+
+    def apply(self, accounts: Iterable[Any], cfg: dict[str, Any], now: float | None = None,
+              bypass_throttle: bool = False) -> dict[str, Any]:
+        settings = normalize_process_trim_settings(cfg)
+        now = now if now is not None else time.time()
+        blocked = self._apply_guard(settings, now, bypass_throttle)
+        if blocked is not None:
+            return blocked
+        targets, skipped, candidate_count = self._collect_candidates(accounts, now, settings)
+        rows = self._trim_targets(targets, now)
+        self._prune_dead_pids()
+        return self._apply_result(settings, rows, skipped, candidate_count)
 
     def trim_now(self, pid: int) -> dict[str, Any]:
         pid = int(pid or 0)

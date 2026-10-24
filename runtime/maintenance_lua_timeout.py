@@ -34,7 +34,7 @@ def emit_lua_wait_timeout_recovery(
         if detect_and_hold_verify(owner, acc, pid, captcha_probe):
             return True
     except Exception:
-        pass
+        "intentional: ignore exception"
     flog_kv(
         "MAINT",
         log_event,
@@ -62,6 +62,40 @@ def emit_lua_wait_timeout_recovery(
     return True
 
 
+def _verify_reasons() -> set[str]:
+    try:
+        from services.verify_guard import LOCKED_REASON as _LOCKED_R
+        from services.verify_guard import RECOVERY_REASON as _REC_R
+
+        return {_LOCKED_R, _REC_R}
+    except Exception:
+        return set()
+
+
+def _lua_wait_blocked(acc: Any, now: float, lua_timeout: float) -> bool:
+    if acc.recovery_inflight or str(acc.recovery_status or "") in ({CAPTCHA_REASON} | _verify_reasons()):
+        return True
+    if account_lua_online(acc, now=now, timeout=lua_timeout):
+        return True
+    return False
+
+
+def _wait_reference(acc: Any, now: float) -> float:
+    return float(acc.last_state_change_at or acc.in_game_since or acc.last_launch_at or now)
+
+
+def _bound_pid_live(acc: Any, pid: Any, identity: Any) -> bool:
+    return bool(
+        pid
+        and ProcessManager.is_bound_game_alive(
+            pid,
+            owner_key=acc._config_username,
+            expected_identity=identity,
+            expected_browser_tracker_id=acc.browser_tracker_id,
+        )
+    )
+
+
 def handle_in_game_lua_wait_timeout(owner: Any, acc: Any, cfg: dict[str, Any], now: float) -> bool:
     if not lua_liveness_required(cfg):
         return False
@@ -70,20 +104,10 @@ def handle_in_game_lua_wait_timeout(owner: Any, acc: Any, cfg: dict[str, Any], n
     with acc._lock:
         if acc.state != AccountState.IN_GAME or acc.desired_state != AccountState.IN_GAME:
             return False
-        try:
-            from services.verify_guard import LOCKED_REASON as _LOCKED_R
-            from services.verify_guard import RECOVERY_REASON as _REC_R
-
-            _verify_reasons = {_LOCKED_R, _REC_R}
-        except Exception:
-            _verify_reasons = set()
-        if acc.recovery_inflight or str(acc.recovery_status or "") in ({CAPTCHA_REASON} | _verify_reasons):
-            return False
-        if account_lua_online(acc, now=now, timeout=lua_timeout):
+        if _lua_wait_blocked(acc, now, lua_timeout):
             return False
 
-        wait_reference = float(acc.last_state_change_at or acc.in_game_since or acc.last_launch_at or now)
-        missing_age = max(0.0, now - wait_reference)
+        missing_age = max(0.0, now - _wait_reference(acc, now))
         if missing_age < lua_timeout:
             return False
 
@@ -94,13 +118,7 @@ def handle_in_game_lua_wait_timeout(owner: Any, acc: Any, cfg: dict[str, Any], n
         launch_nonce = acc.launch_nonce
         transaction_id = acc.rejoin_transaction_id
 
-    pid_live = bool(pid and ProcessManager.is_bound_game_alive(
-        pid,
-        owner_key=acc._config_username,
-        expected_identity=identity,
-        expected_browser_tracker_id=acc.browser_tracker_id,
-    ))
-    if not pid_live:
+    if not _bound_pid_live(acc, pid, identity):
         return False
     return emit_lua_wait_timeout_recovery(
         owner,

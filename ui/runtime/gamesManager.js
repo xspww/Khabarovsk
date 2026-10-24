@@ -18,7 +18,15 @@
   // the MutationObserver below would ping-pong on our own writes forever
   // and freeze the page.
   function gamesSig() {
-    return GAMES.map((g) => [g.id, g.name, g.place_id, g.private_server_url, !!g.auto_create_private_server_enabled].join("|")).join(";");
+    return GAMES.map((g) =>
+      [
+        g.id,
+        g.name,
+        g.place_id,
+        g.private_server_url,
+        !!g.auto_create_private_server_enabled,
+      ].join("|"),
+    ).join(";");
   }
 
   function esc(value) {
@@ -29,7 +37,8 @@
 
   function apiHeaders(json) {
     const headers = {};
-    const token = document.querySelector('meta[name="cronus-api-token"]')?.content || "";
+    const token =
+      document.querySelector('meta[name="cronus-api-token"]')?.content || "";
     if (token) headers["X-Cronus-Token"] = token;
     if (json) headers["Content-Type"] = "application/json";
     return headers;
@@ -43,27 +52,45 @@
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const payload = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(payload.detail || payload.msg || response.statusText || "Request failed");
+    if (!response.ok)
+      throw new Error(
+        payload.detail ||
+          payload.msg ||
+          response.statusText ||
+          "Request failed",
+      );
     return payload;
   }
 
   // Project-style notifications: same stacked .toast-item cards as
   // components/feedback.js (success/warning/error/info + icons, max 4, 3.2s).
   const TOAST_ICONS = {
-    success: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#22c55e"/><path d="M8.2 12.2l2.6 2.6 4.5-5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
-    warning: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#f59e0b"/><path d="M12 7.5v5.2" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16.2" r="1.2" fill="white"/></svg>',
-    error: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#ef4444"/><path d="M15 9l-6 6M9 9l6 6" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>',
+    success:
+      '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#22c55e"/><path d="M8.2 12.2l2.6 2.6 4.5-5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    warning:
+      '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#f59e0b"/><path d="M12 7.5v5.2" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="16.2" r="1.2" fill="white"/></svg>',
+    error:
+      '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#ef4444"/><path d="M15 9l-6 6M9 9l6 6" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>',
     info: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#3b82f6"/><path d="M12 11v5" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="8" r="1.2" fill="white"/></svg>',
   };
 
   function pickToastKind(message) {
     const s = String(message || "").toLowerCase();
     if (s.includes("farm started")) {
-      if (s.includes("blocked") || s.includes("skipped") || s.includes("unavailable")) return "warning";
+      if (
+        s.includes("blocked") ||
+        s.includes("skipped") ||
+        s.includes("unavailable")
+      )
+        return "warning";
       return "success";
     }
     if (s.includes("unsaved") || s.includes("save changes")) return "warning";
-    if (/error|failed|invalid|cannot|denied|missing|not found|required|0 valid/i.test(s)) {
+    if (
+      /error|failed|invalid|cannot|denied|missing|not found|required|0 valid/i.test(
+        s,
+      )
+    ) {
       if (s.includes("blocked") && s.includes("launchable")) return "warning";
       if (s.includes("blocked") && s.includes("farm started")) return "warning";
       return "error";
@@ -93,8 +120,17 @@
   }
 
   function gameById(id) {
-    const wanted = String(id || "").trim().toLowerCase();
-    return GAMES.find((g) => String(g.id || "").trim().toLowerCase() === wanted) || null;
+    const wanted = String(id || "")
+      .trim()
+      .toLowerCase();
+    return (
+      GAMES.find(
+        (g) =>
+          String(g.id || "")
+            .trim()
+            .toLowerCase() === wanted,
+      ) || null
+    );
   }
 
   function gameLabel(game) {
@@ -129,9 +165,13 @@
   }
 
   function setGameMode(mode, preview = false) {
-    const next = String(mode || "").trim().toLowerCase().replace("-", "_") === "per_account"
-      ? "per_account"
-      : "shared";
+    const next =
+      String(mode || "")
+        .trim()
+        .toLowerCase()
+        .replace("-", "_") === "per_account"
+        ? "per_account"
+        : "shared";
     GAME_MODE_PREVIEW = preview ? next : "";
     GAME_MODE = next;
     applyGameMode();
@@ -161,7 +201,9 @@
       const data = await api("/accounts");
       const next = {};
       (Array.isArray(data) ? data : []).forEach((acc) => {
-        const user = String(acc.username || "").trim().toLowerCase();
+        const user = String(acc.username || "")
+          .trim()
+          .toLowerCase();
         if (user) next[user] = String(acc.game_id || "");
       });
       ACCOUNT_GAMES = next;
@@ -176,7 +218,8 @@
   async function placeInfo(placeId) {
     const pid = String(placeId || "").trim();
     if (!pid) return { name: "", image_url: "" };
-    if (PLACE_NAMES[pid] !== undefined) return { name: PLACE_NAMES[pid], image_url: PLACE_THUMBS[pid] || "" };
+    if (PLACE_NAMES[pid] !== undefined)
+      return { name: PLACE_NAMES[pid], image_url: PLACE_THUMBS[pid] || "" };
     PLACE_NAMES[pid] = "";
     PLACE_THUMBS[pid] = "";
     try {
@@ -192,11 +235,21 @@
 
   // ── Game pool inside the Game card (screenshot layout) ──────────
   // Collection card removed by design: pool lives in #game-pool-list.
-  function notifyGamesChanged() { try { document.dispatchEvent(new CustomEvent("cronus:games-changed")); } catch (_) {} }
+  function notifyGamesChanged() {
+    try {
+      document.dispatchEvent(new CustomEvent("cronus:games-changed"));
+    } catch (_) {}
+  }
 
   function removeLegacyCollectionCard() {
-    ["#cronus-games-panel", "#cronus-games-card", "#cronus-game-modal-overlay"].forEach((sel) => {
-      try { document.querySelector(sel)?.remove(); } catch (_) {}
+    [
+      "#cronus-games-panel",
+      "#cronus-games-card",
+      "#cronus-game-modal-overlay",
+    ].forEach((sel) => {
+      try {
+        document.querySelector(sel)?.remove();
+      } catch (_) {}
     });
   }
 
@@ -210,7 +263,10 @@
     if (input && !input.dataset.wired) {
       input.dataset.wired = "1";
       input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") { e.preventDefault(); onAddPoolGame(); }
+        if (e.key === "Enter") {
+          e.preventDefault();
+          onAddPoolGame();
+        }
       });
     }
   }
@@ -261,7 +317,28 @@
 
   function poolDisplayName(game) {
     const pid = String(game?.place_id || "").trim();
-    return String(PLACE_NAMES[pid] || "").trim() || String(game?.name || "").trim() || (pid ? `Place ${pid}` : "New game");
+    return (
+      String(PLACE_NAMES[pid] || "").trim() ||
+      String(game?.name || "").trim() ||
+      (pid ? `Place ${pid}` : "New game")
+    );
+  }
+
+  function updateGamePoolMetadata(item, placeId) {
+    if (!placeId) return;
+    placeInfo(placeId).then(({ name, image_url }) => {
+      if (!document.contains(item)) return;
+      const thumb = item.querySelector('[data-role="thumb"]');
+      const nameNode = item.querySelector('[data-role="name"]');
+      const freshName = String(name || "").trim();
+      if (freshName && nameNode && nameNode.textContent !== freshName)
+        nameNode.textContent = freshName;
+      if (!image_url || !thumb) return;
+      const image = thumb.querySelector("img");
+      if (!image)
+        thumb.innerHTML = `<img src="${esc(image_url)}" alt="" loading="lazy" onerror="this.remove()">`;
+      else if (image.getAttribute("src") !== image_url) image.src = image_url;
+    });
   }
 
   function renderGamesCard() {
@@ -272,7 +349,10 @@
     const list = document.querySelector("#game-pool-list");
     if (!list) return;
     const sig = gamesSig();
-    if (list.dataset.sig === sig) { refreshAssignCounts(); return; }
+    if (list.dataset.sig === sig) {
+      refreshAssignCounts();
+      return;
+    }
     list.dataset.sig = sig;
     list.innerHTML = "";
     if (!GAMES.length) {
@@ -290,34 +370,25 @@
       item.className = "game-pool-item";
       item.dataset.gameId = gid;
       const thumb = PLACE_THUMBS[pid] || "";
-      const dname = String(PLACE_NAMES[pid] || "").trim() || String(game.name || "").trim() || (pid ? `Place ${pid}` : "Game");
+      const dname =
+        String(PLACE_NAMES[pid] || "").trim() ||
+        String(game.name || "").trim() ||
+        (pid ? `Place ${pid}` : "Game");
       const img = thumb
         ? `<img src="${esc(thumb)}" alt="" loading="lazy" onerror="this.remove()">`
-        : `<span class="game-pool-glyph" aria-hidden="true">${esc((dname.trim().charAt(0).toUpperCase() || "?"))}</span>`;
+        : `<span class="game-pool-glyph" aria-hidden="true">${esc(dname.trim().charAt(0).toUpperCase() || "?")}</span>`;
       item.innerHTML = `
         <span class="game-pool-thumb" data-role="thumb">${img}</span>
         <span class="game-pool-copy"><span class="game-pool-name" data-role="name">${esc(dname)}</span><span class="game-pool-sub" data-role="sub">${esc(pid || "No place set")}</span></span>
         <button type="button" class="game-pool-del" data-action="delete" title="Delete game"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>`;
-      item.querySelector('[data-action="delete"]').addEventListener("click", (e) => {
-        e.stopPropagation();
-        onDeletePoolGame(gid, item);
-      });
-      list.appendChild(item);
-      if (pid) {
-        placeInfo(pid).then(({ name, image_url }) => {
-          if (!document.contains(item)) return;
-          const thumbEl = item.querySelector('[data-role="thumb"]');
-          const nameEl = item.querySelector('[data-role="name"]');
-          const fresh = String(name || "").trim();
-          if (fresh && nameEl && nameEl.textContent !== fresh) nameEl.textContent = fresh;
-          if (image_url && thumbEl && !thumbEl.querySelector("img")) {
-            thumbEl.innerHTML = `<img src="${esc(image_url)}" alt="" loading="lazy" onerror="this.remove()">`;
-          } else if (image_url && thumbEl) {
-            const imgEl = thumbEl.querySelector("img");
-            if (imgEl && imgEl.getAttribute("src") !== image_url) imgEl.src = image_url;
-          }
+      item
+        .querySelector('[data-action="delete"]')
+        .addEventListener("click", (e) => {
+          e.stopPropagation();
+          onDeletePoolGame(gid, item);
         });
-      }
+      list.appendChild(item);
+      updateGamePoolMetadata(item, pid);
     });
     refreshAssignCounts();
   }
@@ -326,13 +397,26 @@
     const input = document.querySelector("#game-pool-input");
     const btn = document.querySelector("#game-pool-add-btn");
     const pid = String(input?.value || "").trim();
-    if (!pid) { toast("Enter a Place ID first", "info"); input?.focus?.(); return; }
-    if (!/^\d+$/.test(pid)) { toast("Place ID must be numeric", "error"); input?.focus?.(); return; }
-    if (GAMES.some((g) => String(g.place_id || "").trim() === pid)) { toast("Place ID already in pool", "info"); return; }
+    if (!pid) {
+      toast("Enter a Place ID first", "info");
+      input?.focus?.();
+      return;
+    }
+    if (!/^\d+$/.test(pid)) {
+      toast("Place ID must be numeric", "error");
+      input?.focus?.();
+      return;
+    }
+    if (GAMES.some((g) => String(g.place_id || "").trim() === pid)) {
+      toast("Place ID already in pool", "info");
+      return;
+    }
     try {
       if (btn) btn.disabled = true;
       const autoName = String(PLACE_NAMES[pid] || "").trim() || `Place ${pid}`;
-      const payload = await api("/games", "POST", { game: { place_id: pid, name: autoName } });
+      const payload = await api("/games", "POST", {
+        game: { place_id: pid, name: autoName },
+      });
       GAMES = Array.isArray(payload.games) ? payload.games : GAMES;
       if (input) input.value = "";
       const list = document.querySelector("#game-pool-list");
@@ -341,8 +425,11 @@
       refreshAccountGames();
       notifyGamesChanged();
       toast("Game added");
-    } catch (error) { toast(error.message); }
-    finally { if (btn) btn.disabled = false; }
+    } catch (error) {
+      toast(error.message);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 
   async function onDeletePoolGame(id, rowEl) {
@@ -362,7 +449,10 @@
       return;
     }
     try {
-      const payload = await api("/games/delete", "POST", { id: gid, force: true });
+      const payload = await api("/games/delete", "POST", {
+        id: gid,
+        force: true,
+      });
       GAMES = Array.isArray(payload.games) ? payload.games : GAMES;
       const list = document.querySelector("#game-pool-list");
       if (list) delete list.dataset.sig;
@@ -370,7 +460,9 @@
       refreshAccountGames();
       notifyGamesChanged();
       toast("Game deleted");
-    } catch (error) { toast(error.message); }
+    } catch (error) {
+      toast(error.message);
+    }
   }
 
   // ── Bulk game picker: one click applies to ALL accounts ─────────────
@@ -382,7 +474,9 @@
     // Union DOM rows + ACCOUNT_GAMES map: filter/search may hide rows
     // from the DOM, but "all" must still cover every account.
     // Dedupe case-insensitively, preferring the DOM's original casing.
-    const fromRows = Array.from(document.querySelectorAll('#accounts-table tr[data-user]'))
+    const fromRows = Array.from(
+      document.querySelectorAll("#accounts-table tr[data-user]"),
+    )
       .map((row) => String(row.dataset.user || "").trim())
       .filter(Boolean);
     const fromMap = Object.keys(ACCOUNT_GAMES || {})
@@ -433,23 +527,40 @@
   }
 
   function currentGameId(user) {
-    return String(ACCOUNT_GAMES[String(user || "").trim().toLowerCase()] || "");
+    return String(
+      ACCOUNT_GAMES[
+        String(user || "")
+          .trim()
+          .toLowerCase()
+      ] || "",
+    );
   }
 
   async function assignGame(user, gameId) {
-    const payload = await api("/account/" + encodeURIComponent(user) + "/game", "POST", { game_id: String(gameId || "") });
+    const payload = await api(
+      "/account/" + encodeURIComponent(user) + "/game",
+      "POST",
+      { game_id: String(gameId || "") },
+    );
     ACCOUNT_GAMES[String(user).toLowerCase()] = String(gameId || "");
     return payload;
   }
 
   function closePop() {
-    if (pop) { pop.remove(); pop = null; }
+    if (pop) {
+      pop.remove();
+      pop = null;
+    }
     popUser = "";
   }
 
   function displayGameName(g) {
     const pid = String(g?.place_id || "").trim();
-    return String(PLACE_NAMES[pid] || "").trim() || String(g?.name || "").trim() || String(g?.id || "Game");
+    return (
+      String(PLACE_NAMES[pid] || "").trim() ||
+      String(g?.name || "").trim() ||
+      String(g?.id || "Game")
+    );
   }
   function gameItemHtml(g, isCurrent) {
     const gid = String(g.id || "");
@@ -470,8 +581,12 @@
     const rect = anchor?.getBoundingClientRect?.();
     const pw = Math.min(pop.offsetWidth || 320, 360);
     let left = (rect?.right ?? 0) + 8;
-    if (left + pw > window.innerWidth - 8) left = Math.max(8, window.innerWidth - pw - 8);
-    let top = Math.min(rect?.top ?? 0, window.innerHeight - pop.offsetHeight - 8);
+    if (left + pw > window.innerWidth - 8)
+      left = Math.max(8, window.innerWidth - pw - 8);
+    let top = Math.min(
+      rect?.top ?? 0,
+      window.innerHeight - pop.offsetHeight - 8,
+    );
     pop.style.left = left + "px";
     pop.style.top = Math.max(8, top) + "px";
   }
@@ -488,7 +603,10 @@
   }
 
   function wirePopItems(onPick) {
-    pop.querySelector('[data-close="1"]').addEventListener("click", (e) => { e.stopPropagation(); closePop(); });
+    pop.querySelector('[data-close="1"]').addEventListener("click", (e) => {
+      e.stopPropagation();
+      closePop();
+    });
     pop.querySelectorAll(".cronus-gitem").forEach((btn) => {
       btn.addEventListener("click", async (e) => {
         e.stopPropagation();
@@ -506,31 +624,51 @@
   }
 
   function openPop(user, anchor) {
-    const key = String(user || "").trim().toLowerCase();
+    const key = String(user || "")
+      .trim()
+      .toLowerCase();
     if (!key) return;
-    if (pop && popUser === key) { closePop(); return; } // toggle
+    if (pop && popUser === key) {
+      closePop();
+      return;
+    } // toggle
     closePop();
     popUser = key;
     const current = currentGameId(key);
     pop = document.createElement("div");
     pop.className = "online-popover cronus-game-pop";
     pop.dataset.user = key;
-    pop.innerHTML = `<div class="cronus-gpop-head"><span>Game · ${esc(user)}</span><button type="button" data-close="1" title="Close">✕</button></div>`
-      + GAMES.map((g) => gameItemHtml(g, !!String(g.id || "") && String(g.id).toLowerCase() === String(current).toLowerCase())).join("")
-      + noGameHtml(!gameById(current));
+    pop.innerHTML =
+      `<div class="cronus-gpop-head"><span>Game · ${esc(user)}</span><button type="button" data-close="1" title="Close">✕</button></div>` +
+      GAMES.map((g) =>
+        gameItemHtml(
+          g,
+          !!String(g.id || "") &&
+            String(g.id).toLowerCase() === String(current).toLowerCase(),
+        ),
+      ).join("") +
+      noGameHtml(!gameById(current));
     wirePopItems(async (gid) => {
       const payload = await assignGame(user, gid);
       refreshRowBadges();
       notifyGamesChanged();
-      if (Array.isArray(payload && payload.game_stopped) && payload.game_stopped.length) {
+      if (
+        Array.isArray(payload && payload.game_stopped) &&
+        payload.game_stopped.length
+      ) {
         toast(`No game set - stopped ${user} now`, "info");
-      } else if (Array.isArray(payload && payload.game_rejoined) && payload.game_rejoined.length) {
+      } else if (
+        Array.isArray(payload && payload.game_rejoined) &&
+        payload.game_rejoined.length
+      ) {
         toast(`Game changed - switching ${user} now`, "info");
       }
     });
     preloadThumbs(key, () => {
       closePop();
-      const anchorNow = document.querySelector(`#accounts-table tr[data-user="${CSS.escape(user)}"] .game-cell`);
+      const anchorNow = document.querySelector(
+        `#accounts-table tr[data-user="${CSS.escape(user)}"] .game-cell`,
+      );
       if (anchorNow) openPop(user, anchorNow);
     });
     document.body.appendChild(pop);
@@ -544,25 +682,48 @@
       toast("No accounts yet", "info");
       return;
     }
-    if (pop && popUser === "bulk") { closePop(); return; } // toggle
+    if (pop && popUser === "bulk") {
+      closePop();
+      return;
+    } // toggle
     closePop();
     popUser = "bulk";
-    const allSame = (gid) => !!gid && users.every((u) => currentGameId(u).toLowerCase() === String(gid).toLowerCase());
+    const allSame = (gid) =>
+      !!gid &&
+      users.every(
+        (u) => currentGameId(u).toLowerCase() === String(gid).toLowerCase(),
+      );
     const noneSet = users.every((u) => !gameById(currentGameId(u)));
     pop = document.createElement("div");
     pop.className = "online-popover cronus-game-pop";
     pop.dataset.user = "bulk";
-    pop.innerHTML = `<div class="cronus-gpop-head"><span>Set game · All ${users.length}</span><button type="button" data-close="1" title="Close">✕</button></div>`
-      + GAMES.map((g) => gameItemHtml(g, allSame(String(g.id || "")))).join("")
-      + noGameHtml(noneSet);
+    pop.innerHTML =
+      `<div class="cronus-gpop-head"><span>Set game · All ${users.length}</span><button type="button" data-close="1" title="Close">✕</button></div>` +
+      GAMES.map((g) => gameItemHtml(g, allSame(String(g.id || "")))).join("") +
+      noGameHtml(noneSet);
     wirePopItems(async (gid) => {
-      const payload = await api("/accounts/assign-game", "POST", { usernames: users, game_id: gid });
-      users.forEach((u) => { ACCOUNT_GAMES[String(u).toLowerCase()] = String(gid || ""); });
+      const payload = await api("/accounts/assign-game", "POST", {
+        usernames: users,
+        game_id: gid,
+      });
+      users.forEach((u) => {
+        ACCOUNT_GAMES[String(u).toLowerCase()] = String(gid || "");
+      });
       refreshRowBadges();
       notifyGamesChanged();
-      const switching = Array.isArray(payload && payload.game_rejoined) ? payload.game_rejoined.length : 0;
-      const stopping = Array.isArray(payload && payload.game_stopped) ? payload.game_stopped.length : 0;
-      toast((gid ? `Game set for ${users.length} accounts` : `Cleared game for ${users.length} accounts`) + (stopping ? ` - stopped ${stopping} now` : "") + (switching ? ` - switching ${switching} now` : ""));
+      const switching = Array.isArray(payload && payload.game_rejoined)
+        ? payload.game_rejoined.length
+        : 0;
+      const stopping = Array.isArray(payload && payload.game_stopped)
+        ? payload.game_stopped.length
+        : 0;
+      toast(
+        (gid
+          ? `Game set for ${users.length} accounts`
+          : `Cleared game for ${users.length} accounts`) +
+          (stopping ? ` - stopped ${stopping} now` : "") +
+          (switching ? ` - switching ${switching} now` : ""),
+      );
     });
     preloadThumbs("bulk", () => {
       closePop();
@@ -579,27 +740,36 @@
     // Clicking anywhere in the GAME cell opens the picker (the per-row
     // button is gone by design). Stop propagation so the row is not
     // selected/deselected as a side effect.
-    ["mousedown", "click"].forEach((type) => document.addEventListener(type, (e) => {
-      const cell = e.target?.closest?.("#accounts-table .game-cell");
-      if (!cell) {
-        if (type === "click" && pop && !pop.contains(e.target)) closePop();
-        return;
-      }
-      const tr = cell.closest("tr[data-user]");
-      if (!tr || !tr.dataset.user) return;
-      e.stopPropagation();
-      if (GAME_MODE !== "per_account") {
-        if (type === "click") {
-          e.preventDefault();
-          toast("Shared game mode — switch Game Mode to Per-account to assign games", "info");
-        }
-        return;
-      }
-      if (type === "click") {
-        e.preventDefault();
-        openPop(tr.dataset.user, cell);
-      }
-    }, true));
+    ["mousedown", "click"].forEach((type) =>
+      document.addEventListener(
+        type,
+        (e) => {
+          const cell = e.target?.closest?.("#accounts-table .game-cell");
+          if (!cell) {
+            if (type === "click" && pop && !pop.contains(e.target)) closePop();
+            return;
+          }
+          const tr = cell.closest("tr[data-user]");
+          if (!tr || !tr.dataset.user) return;
+          e.stopPropagation();
+          if (GAME_MODE !== "per_account") {
+            if (type === "click") {
+              e.preventDefault();
+              toast(
+                "Shared game mode — switch Game Mode to Per-account to assign games",
+                "info",
+              );
+            }
+            return;
+          }
+          if (type === "click") {
+            e.preventDefault();
+            openPop(tr.dataset.user, cell);
+          }
+        },
+        true,
+      ),
+    );
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape") closePop();
     });
@@ -627,17 +797,23 @@
 
   // Per-game sub-line sync for pool rows.
   function refreshAssignCounts() {
-    document.querySelectorAll('#game-pool-list .game-pool-item').forEach((item) => {
-      const gid = String(item.dataset.gameId || "").trim().toLowerCase();
-      const game = GAMES.find((g) => String(g.id || "").toLowerCase() === gid);
-      const sub = item.querySelector('[data-role="sub"]');
-      if (sub && game) {
-        const pid = String(game.place_id || "").trim();
-        const full = pid || "No place set";
-        if (sub.textContent !== full) sub.textContent = full;
-        sub.title = full;
-      }
-    });
+    document
+      .querySelectorAll("#game-pool-list .game-pool-item")
+      .forEach((item) => {
+        const gid = String(item.dataset.gameId || "")
+          .trim()
+          .toLowerCase();
+        const game = GAMES.find(
+          (g) => String(g.id || "").toLowerCase() === gid,
+        );
+        const sub = item.querySelector('[data-role="sub"]');
+        if (sub && game) {
+          const pid = String(game.place_id || "").trim();
+          const full = pid || "No place set";
+          if (sub.textContent !== full) sub.textContent = full;
+          sub.title = full;
+        }
+      });
   }
 
   // Debounced + self-muted: dashboard re-renders the table on every status
@@ -651,11 +827,17 @@
       try {
         decorateRows();
       } finally {
-        observer.observe(document.documentElement, { childList: true, subtree: true });
+        observer.observe(document.documentElement, {
+          childList: true,
+          subtree: true,
+        });
       }
     }, 120);
   });
-  observer.observe(document.documentElement, { childList: true, subtree: true });
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+  });
 
   refreshGames();
   refreshAccountGames();

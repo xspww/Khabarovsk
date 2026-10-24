@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import Any
 
 from domain.account_model import Account
 from domain.states import LIFECYCLE_ALLOWED_TRANSITIONS, LIFECYCLE_STATE, AccountState, runtime_state_for_public
@@ -74,109 +75,125 @@ ALLOWED_STATE_TRANSITIONS: dict[AccountState, set[AccountState]] = {
     },
 }
 
+def _text(value: Any) -> str:
+    return str(value or "")
+
+
+def _number(value: Any) -> float:
+    return float(value or 0.0)
+
+
+def _fallback_text(value: Any, default: str) -> str:
+    return str(value or default)
+
+
+def _increment_generation(kwargs: dict[str, Any], new_state: AccountState) -> bool:
+    return bool(kwargs.get("increment_generation", False) or new_state == AccountState.FAILED)
+
+
+def _mark_ingame_since(acc: Account, reason: str) -> None:
+    if acc.state == AccountState.IN_GAME and not acc.in_game_since:
+        acc.in_game_since = time.time()
+        acc.sync_runtime(_fallback_text(reason, "bind_process_ingame"))
+
+
 class StateManager:
     def __init__(self, bus: EventBus):
         self._bus = bus
         self._runtime = RuntimeStateManager(logger=flog_kv)
 
-    def transition(self, acc: Account, new_state: AccountState, force: bool = False, **kwargs) -> bool:
-        with acc._lock:
-            old = acc.state
-            if old == new_state:
-                return True
+    def _emit_invalid(self, acc: Account, old: AccountState, new_state: AccountState, kwargs: dict[str, Any]) -> None:
+        self._bus.emit(
+            EventName.INVALID_TRANSITION,
+            account=acc,
+            old_state=old,
+            new_state=new_state,
+            **kwargs,
+        )
 
-            allowed = ALLOWED_STATE_TRANSITIONS.get(old, set())
-            if not force and new_state not in allowed:
-                flog_kv(
-                    "STATE",
-                    "invalid_transition",
-                    "warning",
-                    event_type="invalid_transition",
-                    account=acc.display_name,
-                    account_id=acc._config_username,
-                    old=old.name,
-                    new=new_state.name,
-                    reason=kwargs.get("reason", ""),
-                    runtime_state=runtime_state_for_public(old).value,
-                    public_state=old.name,
-                    runtime_generation=acc.runtime_generation,
-                    recovery_generation=acc.recovery_generation,
-                    command_generation=acc.command_generation,
-                    PID=acc.pid,
-                    pid=acc.pid,
-                    thread_name=threading.current_thread().name,
-                    snapshot=acc.runtime_snapshot(),
-                )
-                self._bus.emit(
-                    EventName.INVALID_TRANSITION,
-                    account=acc,
-                    old_state=old,
-                    new_state=new_state,
-                    **kwargs,
-                )
-                return False
+    def _reject_invalid_transition(
+        self,
+        acc: Account,
+        old: AccountState,
+        new_state: AccountState,
+        kwargs: dict[str, Any],
+    ) -> bool:
+        flog_kv(
+            "STATE",
+            "invalid_transition",
+            "warning",
+            event_type="invalid_transition",
+            account=acc.display_name,
+            account_id=acc._config_username,
+            old=old.name,
+            new=new_state.name,
+            reason=kwargs.get("reason", ""),
+            runtime_state=runtime_state_for_public(old).value,
+            public_state=old.name,
+            runtime_generation=acc.runtime_generation,
+            recovery_generation=acc.recovery_generation,
+            command_generation=acc.command_generation,
+            PID=acc.pid,
+            pid=acc.pid,
+            thread_name=threading.current_thread().name,
+            snapshot=acc.runtime_snapshot(),
+        )
+        self._emit_invalid(acc, old, new_state, kwargs)
+        return False
 
-            old_lifecycle = LIFECYCLE_STATE.get(old, "INIT")
-            new_lifecycle = LIFECYCLE_STATE.get(new_state, "INIT")
-            lifecycle_allowed = LIFECYCLE_ALLOWED_TRANSITIONS.get(old_lifecycle, set())
-            if old_lifecycle != new_lifecycle and new_lifecycle not in lifecycle_allowed:
-                flog_kv(
-                    "STATE",
-                    "lifecycle_jump",
-                    "warning",
-                    event_type="lifecycle_jump",
-                    account=acc.display_name,
-                    account_id=acc._config_username,
-                    old=old.name,
-                    new=new_state.name,
-                    old_lifecycle=old_lifecycle,
-                    new_lifecycle=new_lifecycle,
-                    force=force,
-                    reason=kwargs.get("reason", ""),
-                    runtime_state=old_lifecycle,
-                    public_state=old.name,
-                    runtime_generation=acc.runtime_generation,
-                    recovery_generation=acc.recovery_generation,
-                    command_generation=acc.command_generation,
-                    PID=acc.pid,
-                    pid=acc.pid,
-                    thread_name=threading.current_thread().name,
-                    snapshot=acc.runtime_snapshot(),
-                )
-                if not force:
-                    self._bus.emit(
-                        EventName.INVALID_TRANSITION,
-                        account=acc,
-                        old_state=old,
-                        new_state=new_state,
-                        **kwargs,
-                    )
-                    return False
+    def _handle_lifecycle_jump(
+        self,
+        acc: Account,
+        old: AccountState,
+        new_state: AccountState,
+        old_lifecycle: str,
+        new_lifecycle: str,
+        force: bool,
+        kwargs: dict[str, Any],
+    ) -> bool:
+        flog_kv(
+            "STATE",
+            "lifecycle_jump",
+            "warning",
+            event_type="lifecycle_jump",
+            account=acc.display_name,
+            account_id=acc._config_username,
+            old=old.name,
+            new=new_state.name,
+            old_lifecycle=old_lifecycle,
+            new_lifecycle=new_lifecycle,
+            force=force,
+            reason=kwargs.get("reason", ""),
+            runtime_state=old_lifecycle,
+            public_state=old.name,
+            runtime_generation=acc.runtime_generation,
+            recovery_generation=acc.recovery_generation,
+            command_generation=acc.command_generation,
+            PID=acc.pid,
+            pid=acc.pid,
+            thread_name=threading.current_thread().name,
+            snapshot=acc.runtime_snapshot(),
+        )
+        if force:
+            return True
+        self._emit_invalid(acc, old, new_state, kwargs)
+        return False
 
-            changed = self._runtime.transition_public(
-                acc,
-                new_state,
-                reason=str(kwargs.get("reason", "")),
-                force=force,
-                expected_generation=kwargs.get("expected_generation"),
-                increment_generation=bool(kwargs.get("increment_generation", False) or new_state == AccountState.FAILED),
-            )
-            if not changed:
-                self._bus.emit(
-                    EventName.INVALID_TRANSITION,
-                    account=acc,
-                    old_state=old,
-                    new_state=new_state,
-                    **kwargs,
-                )
-                return False
+    @staticmethod
+    def _apply_ingame_time(acc: Account, old: AccountState, new_state: AccountState) -> None:
+        if new_state == AccountState.IN_GAME and old != AccountState.IN_GAME:
+            acc.in_game_since = time.time()
+        elif new_state != AccountState.IN_GAME:
+            acc.in_game_since = None
 
-            if new_state == AccountState.IN_GAME and old != AccountState.IN_GAME:
-                acc.in_game_since = time.time()
-            elif new_state != AccountState.IN_GAME:
-                acc.in_game_since = None
-            acc.sync_runtime(acc.last_state_reason)
-
+    @staticmethod
+    def _log_transition(
+        acc: Account,
+        old: AccountState,
+        new_state: AccountState,
+        force: bool,
+        kwargs: dict[str, Any],
+    ) -> None:
         flog_kv(
             "STATE",
             "transition",
@@ -198,6 +215,48 @@ class StateManager:
             pid=acc.pid,
             thread_name=threading.current_thread().name,
         )
+
+    def transition(self, acc: Account, new_state: AccountState, force: bool = False, **kwargs) -> bool:
+        with acc._lock:
+            old = acc.state
+            if old == new_state:
+                return True
+
+            allowed = ALLOWED_STATE_TRANSITIONS.get(old, set())
+            if not force and new_state not in allowed:
+                return self._reject_invalid_transition(acc, old, new_state, kwargs)
+
+            old_lifecycle = LIFECYCLE_STATE.get(old, "INIT")
+            new_lifecycle = LIFECYCLE_STATE.get(new_state, "INIT")
+            lifecycle_allowed = LIFECYCLE_ALLOWED_TRANSITIONS.get(old_lifecycle, set())
+            if old_lifecycle != new_lifecycle and new_lifecycle not in lifecycle_allowed:
+                if not self._handle_lifecycle_jump(
+                    acc,
+                    old,
+                    new_state,
+                    old_lifecycle,
+                    new_lifecycle,
+                    force,
+                    kwargs,
+                ):
+                    return False
+
+            changed = self._runtime.transition_public(
+                acc,
+                new_state,
+                reason=str(kwargs.get("reason", "")),
+                force=force,
+                expected_generation=kwargs.get("expected_generation"),
+                increment_generation=_increment_generation(kwargs, new_state),
+            )
+            if not changed:
+                self._emit_invalid(acc, old, new_state, kwargs)
+                return False
+
+            self._apply_ingame_time(acc, old, new_state)
+            acc.sync_runtime(acc.last_state_reason)
+
+        self._log_transition(acc, old, new_state, force, kwargs)
         self._bus.emit(
             EventName.STATE_CHANGE,
             account=acc,
@@ -300,6 +359,14 @@ class StateManager:
             command_generation=acc.command_generation,
         )
 
+    def _apply_binding_status(self, acc: Account, status: str, reason: str) -> None:
+        if status and acc.process_binding_status != status:
+            self._runtime.set_binding_status(
+                acc,
+                str(status),
+                _fallback_text(reason, "bind_process_status"),
+            )
+
     def bind_process(
         self,
         acc: Account,
@@ -317,28 +384,25 @@ class StateManager:
             self._runtime.bind_process(
                 acc,
                 int(pid),
-                process_name or "RobloxPlayerBeta.exe",
-                str(identity or ""),
-                reason or "bind_process",
-                confidence=float(confidence or 0.0),
+                _fallback_text(process_name, "RobloxPlayerBeta.exe"),
+                _text(identity),
+                _fallback_text(reason, "bind_process"),
+                confidence=_number(confidence),
                 process_proof_level=process_proof_level,
                 increment_generation=increment_generation,
             )
-            if status and acc.process_binding_status != status:
-                self._runtime.set_binding_status(acc, str(status), reason or "bind_process_status")
+            self._apply_binding_status(acc, status, reason)
             acc.last_reconcile_at = time.time()
-            if acc.state == AccountState.IN_GAME and not acc.in_game_since:
-                acc.in_game_since = time.time()
-                acc.sync_runtime(reason or "bind_process_ingame")
+            _mark_ingame_since(acc, reason)
         flog_kv(
             "STATE",
             "process_bind_verified",
             account=acc.display_name,
             pid=pid,
-            old_pid=old_pid or "",
+            old_pid=_text(old_pid),
             identity=identity,
             status=status,
-            confidence=f"{float(confidence or 0.0):.1f}",
+            confidence=f"{_number(confidence):.1f}",
             reason=reason,
             runtime_generation=acc.runtime_generation,
             recovery_generation=acc.recovery_generation,

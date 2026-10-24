@@ -189,6 +189,300 @@ DEFAULTS: dict[str, Any] = {
     "runtime_state":            {},
 }
 
+def _restore_vip_scores(account: Account, saved: dict[str, Any]) -> None:
+    """Restore persisted VIP scores/blacklists onto the account tracker."""
+    if not (account._vip_tracker and "vip_scores" in saved):
+        return
+    try:
+        now = time.time()
+        with account._vip_tracker._lock:
+            for item in saved["vip_scores"]:
+                link = item.get("link")
+                if not link or link not in account._vip_tracker._scores:
+                    continue
+                if "score" in item:
+                    account._vip_tracker._scores[link] = float(item["score"])
+                remaining_raw = item.get("blacklist_remaining", 0)
+                remaining = int(remaining_raw) if remaining_raw else 0
+                if remaining > 0:
+                    account._vip_tracker._blacklist[link] = now + remaining
+    except Exception:
+        "intentional: ignore exception"
+
+
+def _saved_int(saved: dict[str, Any], key: str) -> int:
+    return int(saved.get(key) or 0)
+
+
+def _saved_float(saved: dict[str, Any], key: str) -> float:
+    return float(saved.get(key) or 0.0)
+
+
+def _saved_max_float(saved: dict[str, Any], key: str) -> float:
+    return max(0.0, _saved_float(saved, key))
+
+
+def _saved_str(saved: dict[str, Any], key: str, default: str = "") -> str:
+    return str(saved.get(key) or default)
+
+
+def _restore_retry_counters(account: Any, saved: dict[str, Any], now: float) -> None:
+    account.retry_count = _saved_int(saved, "retry")
+    account.fail_count = _saved_int(saved, "fail")
+    account.launch_fail_count = _saved_int(saved, "launch_fail_count")
+    account.crash_retry_count = _saved_int(saved, "crash_retry_count")
+    account.network_retry_count = _saved_int(saved, "network_retry_count")
+    account.session_retry_count = _saved_int(saved, "session_retry_count")
+    account.cooldown_until = _saved_max_float(saved, "cooldown_until")
+    if account.cooldown_until <= now:
+        account.cooldown_until = 0.0
+    account.rapid_relaunch_count = _saved_int(saved, "rapid_relaunch_count")
+    last_network = saved.get("last_network_lost_at")
+    account.last_network_lost_at = float(last_network) if last_network else None
+
+
+def _restore_recovery_state(account: Any, saved: dict[str, Any], now: float) -> None:
+    account.recovery_status = _saved_str(saved, "recovery_status")
+    if account.recovery_status in {"recovering", "queued", "launch_backoff", "due"}:
+        account.recovery_status = "restored"
+    account.last_recovery_reason = _saved_str(saved, "last_recovery_reason")
+    account.recovery_scheduled_at = _saved_max_float(saved, "recovery_scheduled_at")
+    if account.recovery_scheduled_at and account.recovery_scheduled_at <= now:
+        account.recovery_scheduled_at = 0.0
+    account.recovery_generation = _saved_int(saved, "recovery_generation")
+    account.runtime_generation = _saved_int(saved, "runtime_generation")
+    account.command_generation = _saved_int(saved, "command_generation")
+    account.current_command_id = ""
+    account.current_command = ""
+    account.command_inflight_started_at = 0.0
+    account.last_recovery_at = _saved_max_float(saved, "last_recovery_at")
+
+
+def _restore_process_binding(account: Any, saved: dict[str, Any]) -> None:
+    account.pid = _saved_int(saved, "bound_pid") or None
+    account.bound_process_name = _saved_str(saved, "bound_process_name")
+    account.bound_process_identity = _saved_str(saved, "bound_process_identity")
+    account.last_pid_change_at = _saved_max_float(saved, "last_pid_change_at")
+    account.last_launch_at = _saved_max_float(saved, "last_relaunch_at") or None
+    account.process_binding_status = _saved_str(saved, "process_binding_status", "restored")
+    account.binding_decision = _saved_str(saved, "binding_decision")
+    account.process_binding_confidence = _saved_float(saved, "process_binding_confidence")
+    account.process_reject_reason = _saved_str(saved, "process_reject_reason")
+    account.process_owner_claim = _saved_str(saved, "process_owner_claim")
+    account.unmanaged_live_process_count = _saved_int(saved, "unmanaged_live_process_count")
+    live_pids = saved.get("unmanaged_live_pids", [])
+    account.unmanaged_live_pids = list(live_pids) if isinstance(live_pids, list) else []
+    account.adopt_candidate_pid = _saved_int(saved, "adopt_candidate_pid") or None
+    account.adopt_reject_reason = _saved_str(saved, "adopt_reject_reason")
+
+
+def _restore_identity_state(account: Any, saved: dict[str, Any]) -> None:
+    account.liveness_state = _saved_str(saved, "liveness_state", "unknown")
+    account.liveness_score = _saved_float(saved, "liveness_score")
+    account.session_id = _saved_str(saved, "session_id")
+    account.launch_nonce = _saved_str(saved, "launch_nonce")
+    account.account_runtime_id = _saved_str(saved, "account_runtime_id")
+    account.rejoin_transaction_id = _saved_str(saved, "rejoin_transaction_id")
+    account.server_validation = _saved_str(saved, "server_validation", "restored")
+    account.destination_validation = str(
+        saved.get("destination_validation") or account.server_validation or "restored"
+    )
+    account.scheduler_slot = _saved_str(saved, "scheduler_slot")
+    account.supervisor_state = _saved_str(saved, "supervisor_state", "restored")
+    if account.supervisor_state in {"transaction_pending", "launching", "rejoining", "process_bound", "verifying"}:
+        account.supervisor_state = "restored"
+
+
+def _restore_transaction_state(account: Any, saved: dict[str, Any]) -> None:
+    account.last_transaction_status = _saved_str(saved, "last_transaction_status")
+    account.last_transaction_step = _saved_str(saved, "last_transaction_step")
+    account.last_transaction_failure_reason = _saved_str(saved, "last_transaction_failure_reason")
+    if account.last_transaction_status in {"pending", "launching", "process_bound", "verifying", "binding_verified"}:
+        account.last_transaction_status = "rolled_back_on_restart"
+        account.last_transaction_step = "rolled_back_on_restart"
+        account.last_transaction_failure_reason = "backend_restart"
+    account.last_transaction_reason = _saved_str(saved, "last_transaction_reason")
+    account.last_transaction_started_at = max(
+        0.0,
+        float(saved.get("last_transaction_started_at", 0.0) or saved.get("session_started_at", 0.0) or 0.0),
+    )
+    account.last_transaction_completed_at = _saved_max_float(saved, "last_transaction_completed_at")
+    account.session_started_at = _saved_max_float(saved, "session_started_at")
+    account.last_transaction_at = _saved_max_float(saved, "last_transaction_at")
+
+
+def _restore_launch_intent(account: Any, saved: dict[str, Any]) -> None:
+    launch_intent = saved.get("launch_intent", {})
+    account.launch_intent = launch_intent if isinstance(launch_intent, dict) else {}
+    launch_intent_summary = saved.get("launch_intent_summary", {})
+    if not isinstance(launch_intent_summary, dict):
+        launch_intent_summary = {}
+    account.launch_intent_summary = launch_intent_summary or dict(
+        account.launch_intent.get("launch_intent_summary", {}) or {}
+    )
+
+
+def _restore_fresh_fields(account: Any, saved: dict[str, Any], now: float) -> None:
+    _restore_retry_counters(account, saved, now)
+    _restore_recovery_state(account, saved, now)
+    _restore_process_binding(account, saved)
+    _restore_identity_state(account, saved)
+    _restore_transaction_state(account, saved)
+    _restore_launch_intent(account, saved)
+
+
+def _reset_stale_counters(account: Any) -> None:
+    account.retry_count = 0
+    account.fail_count = 0
+    account.launch_fail_count = 0
+    account.crash_retry_count = 0
+    account.network_retry_count = 0
+    account.session_retry_count = 0
+    account.cooldown_until = 0.0
+    account.rapid_relaunch_count = 0
+    account.last_network_lost_at = None
+    account.recovery_status = ""
+    account.last_recovery_reason = ""
+    account.recovery_scheduled_at = 0.0
+    account.recovery_generation = 0
+    account.binding_decision = ""
+    account.process_binding_confidence = 0.0
+    account.process_reject_reason = ""
+    account.process_owner_claim = ""
+    account.unmanaged_live_process_count = 0
+    account.unmanaged_live_pids = []
+    account.adopt_candidate_pid = None
+    account.adopt_reject_reason = ""
+    account.destination_validation = "unverified"
+    account.launch_intent = {}
+    account.launch_intent_summary = {}
+
+
+def _reset_stale_runtime(account: Any) -> None:
+    account.runtime_generation = 0
+    account.command_generation = 0
+    account.current_command_id = ""
+    account.current_command = ""
+    account.command_inflight_started_at = 0.0
+    account.pid = None
+    account.bound_process_name = ""
+    account.bound_process_identity = ""
+    account.last_pid_change_at = 0.0
+    account.last_launch_at = None
+    account.process_binding_status = "unbound"
+    account.liveness_state = "unknown"
+    account.liveness_score = 0.0
+    account.session_id = ""
+    account.launch_nonce = ""
+    account.account_runtime_id = ""
+    account.rejoin_transaction_id = ""
+    account.server_validation = "unverified"
+    account.scheduler_slot = ""
+    account.supervisor_state = "stopped"
+    account.last_transaction_status = ""
+    account.last_transaction_step = ""
+    account.last_transaction_reason = ""
+    account.last_transaction_started_at = 0.0
+    account.last_transaction_completed_at = 0.0
+    account.last_transaction_failure_reason = ""
+    account.session_started_at = 0.0
+    account.last_transaction_at = 0.0
+    account.launch_intent = {}
+
+
+def _log_restored_runtime(account: Any, fresh: bool) -> None:
+    _flog_kv(
+        "RUNTIME",
+        "restored",
+        account=account.display_name,
+        fresh=fresh,
+        crash=account.crash_count,
+        fail=account.fail_count,
+        retry=account.retry_count,
+        cooldown_left=max(0, int(account.cooldown_until - time.time())) if account.cooldown_until else 0,
+        reason=account.last_recovery_reason or account.last_crash_reason,
+    )
+    if not fresh:
+        _flog_kv(
+            "STATE",
+            "forced_reset",
+            account=account.display_name,
+            account_id=account._config_username,
+            runtime_generation=account.runtime_generation,
+            recovery_generation=account.recovery_generation,
+            command_generation=account.command_generation,
+            runtime_state=account.runtime.lifecycle_state.value,
+            public_state=account.state.name,
+            PID=account.pid or "",
+            reason="restore_runtime_expired",
+            thread_name=threading.current_thread().name,
+        )
+
+
+def _migrate_volume_level(raw: dict[str, Any]) -> None:
+    try:
+        legacy_volume = raw.get("roblox_volume_level")
+        if isinstance(legacy_volume, bool):
+            pass
+        elif isinstance(legacy_volume, (int, float)) and float(legacy_volume) > 10:
+            raw["roblox_volume_level"] = int(round(float(legacy_volume) / 10.0))
+    except Exception:
+        "intentional: ignore exception"
+
+
+def _migrate_auto_close(raw: dict[str, Any]) -> None:
+    try:
+        seconds = max(0.0, float(raw.get("auto_close_seconds") or 0))
+        raw["auto_close_minutes"] = int((seconds + 59) // 60) if seconds > 0 else 0
+    except Exception:
+        raw["auto_close_minutes"] = 0
+
+
+def _apply_lua_legacy_keys(
+    raw: dict[str, Any],
+    had_lua_enabled: bool,
+    had_lua_timeout: bool,
+    legacy_use_lua: Any,
+    legacy_lua_wait_timeout: Any,
+) -> None:
+    if not had_lua_enabled and legacy_use_lua is not None:
+        raw["lua_enabled"] = bool(legacy_use_lua)
+    if not had_lua_timeout and legacy_lua_wait_timeout is not None:
+        try:
+            raw["lua_timeout_seconds"] = max(1, min(300, int(float(legacy_lua_wait_timeout))))
+        except Exception:
+            raw["lua_timeout_seconds"] = 60
+
+
+def _apply_other_legacy_keys(raw: dict[str, Any]) -> None:
+    if "zombie_timeout" in raw and "not_responding_timeout" not in raw:
+        raw["not_responding_timeout"] = raw["zombie_timeout"]
+    if "auto_close_minutes" not in raw and "auto_close_seconds" in raw:
+        _migrate_auto_close(raw)
+
+
+def _migrate_games(cfg: dict[str, Any]) -> None:
+    try:
+        from domain.games import ensure_games_migrated
+
+        ensure_games_migrated(cfg)
+    except Exception:
+        if not isinstance(cfg.get("games"), list):
+            cfg["games"] = []
+
+
+def _read_json_body(path: str) -> tuple[bool, Any]:
+    """Return (has_body, parsed) for a JSON file; an empty file parses to nothing."""
+    with open(path, encoding="utf-8") as handle:
+        body = handle.read().strip()
+    if not body:
+        return False, None
+    return True, json.loads(body)
+
+
+_MISSING = object()
+
+
 class ConfigManager:
     def __init__(self):
         self._cfg: dict[str, Any] = {}
@@ -205,42 +499,22 @@ class ConfigManager:
         legacy_lua_wait_timeout = raw.get("lua_wait_timeout")
         # Migrate volume scale 0-100 (percent) to 0-10 (in-game menu scale).
         # Runs before validation clamps, so e.g. stored 50 becomes 5, not 10.
-        try:
-            _legacy_vol = raw.get("roblox_volume_level")
-            if isinstance(_legacy_vol, bool):
-                pass
-            elif isinstance(_legacy_vol, (int, float)) and float(_legacy_vol) > 10:
-                raw["roblox_volume_level"] = int(round(float(_legacy_vol) / 10.0))
-        except Exception:
-            pass
+        _migrate_volume_level(raw)
         raw = validate_config_payload(raw, DEFAULTS)
 
         # Migration from old config filenames/keys
-        if not had_lua_enabled and legacy_use_lua is not None:
-            raw["lua_enabled"] = bool(legacy_use_lua)
-        if not had_lua_timeout and legacy_lua_wait_timeout is not None:
-            try:
-                raw["lua_timeout_seconds"] = max(1, min(300, int(float(legacy_lua_wait_timeout))))
-            except Exception:
-                raw["lua_timeout_seconds"] = 60
-        if "zombie_timeout" in raw and "not_responding_timeout" not in raw:
-            raw["not_responding_timeout"] = raw["zombie_timeout"]
-        if "auto_close_minutes" not in raw and "auto_close_seconds" in raw:
-            try:
-                seconds = max(0.0, float(raw.get("auto_close_seconds") or 0))
-                raw["auto_close_minutes"] = int((seconds + 59) // 60) if seconds > 0 else 0
-            except Exception:
-                raw["auto_close_minutes"] = 0
+        _apply_lua_legacy_keys(
+            raw,
+            had_lua_enabled,
+            had_lua_timeout,
+            legacy_use_lua,
+            legacy_lua_wait_timeout,
+        )
+        _apply_other_legacy_keys(raw)
         with self._lock:
             self._cfg = {k: raw.get(k, v) for k, v in DEFAULTS.items()}
             self._cfg["schema_version"] = int(raw.get("schema_version") or CONFIG_SCHEMA_VERSION)
-            try:
-                from domain.games import ensure_games_migrated
-
-                ensure_games_migrated(self._cfg)
-            except Exception:
-                if not isinstance(self._cfg.get("games"), list):
-                    self._cfg["games"] = []
+            _migrate_games(self._cfg)
 
     def save(self):
         with self._lock:
@@ -264,29 +538,35 @@ class ConfigManager:
     def _read_text_json(self, path: str, fallback):
         if not os.path.exists(path):
             return fallback
-        backup_path = f"{path}.bak"
         try:
             with self._io_lock:
-                with open(path, encoding="utf-8") as f:
-                    body = f.read().strip()
-                if not body:
-                    return fallback
-                return json.loads(body)
+                has_body, parsed = _read_json_body(path)
+            if not has_body:
+                return fallback
+            return parsed
         except Exception as e:
             _flog(f"Text store load error ({path}): {e}", "warning")
-            if os.path.exists(backup_path):
-                try:
-                    with self._io_lock:
-                        with open(backup_path, encoding="utf-8") as f:
-                            body = f.read().strip()
-                        if body:
-                            recovered = json.loads(body)
-                            _flog_kv("CONFIG", "json_recovered_from_backup", "warning", path=path)
-                            return recovered
-                except Exception as backup_error:
-                    _flog(f"Text store backup load error ({backup_path}): {backup_error}", "warning")
-            _flog_kv("CONFIG", "json_corrupt_using_fallback", "warning", path=path)
-            return fallback
+            recovered = self._read_backup_json(path, f"{path}.bak")
+            if recovered is _MISSING:
+                _flog_kv("CONFIG", "json_corrupt_using_fallback", "warning", path=path)
+                return fallback
+            return recovered
+
+    def _read_backup_json(self, path: str, backup_path: str) -> Any:
+        if not os.path.exists(backup_path):
+            return _MISSING
+        try:
+            with self._io_lock:
+                with open(backup_path, encoding="utf-8") as handle:
+                    body = handle.read().strip()
+                if not body:
+                    return _MISSING
+                recovered = json.loads(body)
+            _flog_kv("CONFIG", "json_recovered_from_backup", "warning", path=path)
+            return recovered
+        except Exception as backup_error:
+            _flog(f"Text store backup load error ({backup_path}): {backup_error}", "warning")
+            return _MISSING
 
     def _write_text_json(self, path: str, payload):
         tmp_path = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
@@ -310,7 +590,7 @@ class ConfigManager:
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
             except Exception:
-                pass
+                "intentional: ignore exception"
     def get_accounts(self) -> list[Account]:
         from core import Account
 
@@ -407,7 +687,7 @@ class ConfigManager:
                 try:
                     entry["vip_scores"] = a._vip_tracker.status()
                 except Exception:
-                    pass
+                    "intentional: ignore exception"
             state[a._config_username] = entry
         self.update({"runtime_state": {}})
         self.save()
@@ -422,177 +702,18 @@ class ConfigManager:
         restore_window = max(0.0, float(self.get("recovery_restore_window", 3600) or 3600))
         for a in accounts:
             key = a._config_username
-            if key in state:
-                s = state[key]
-                saved_at = float(s.get("runtime_saved_at") or 0.0)
-                fresh = bool(saved_at and (now - saved_at) <= restore_window)
-                a.crash_count = int(s.get("crash", 0) or 0)
-                a.last_crash_reason = str(s.get("last_crash_reason", "") or "")
-                if fresh:
-                    a.retry_count = int(s.get("retry", 0) or 0)
-                    a.fail_count = int(s.get("fail",  0) or 0)
-                    a.launch_fail_count = int(s.get("launch_fail_count", 0) or 0)
-                    a.crash_retry_count = int(s.get("crash_retry_count", 0) or 0)
-                    a.network_retry_count = int(s.get("network_retry_count", 0) or 0)
-                    a.session_retry_count = int(s.get("session_retry_count", 0) or 0)
-                    a.cooldown_until = max(0.0, float(s.get("cooldown_until", 0.0) or 0.0))
-                    if a.cooldown_until <= now:
-                        a.cooldown_until = 0.0
-                    a.rapid_relaunch_count = int(s.get("rapid_relaunch_count", 0) or 0)
-                    last_network = s.get("last_network_lost_at")
-                    a.last_network_lost_at = float(last_network) if last_network else None
-                    a.recovery_status = str(s.get("recovery_status", "") or "")
-                    if a.recovery_status in {"recovering", "queued", "launch_backoff", "due"}:
-                        a.recovery_status = "restored"
-                    a.last_recovery_reason = str(s.get("last_recovery_reason", "") or "")
-                    a.recovery_scheduled_at = max(0.0, float(s.get("recovery_scheduled_at", 0.0) or 0.0))
-                    if a.recovery_scheduled_at and a.recovery_scheduled_at <= now:
-                        a.recovery_scheduled_at = 0.0
-                    a.recovery_generation = int(s.get("recovery_generation", 0) or 0)
-                    a.runtime_generation = int(s.get("runtime_generation", 0) or 0)
-                    a.command_generation = int(s.get("command_generation", 0) or 0)
-                    a.current_command_id = ""
-                    a.current_command = ""
-                    a.command_inflight_started_at = 0.0
-                    a.last_recovery_at = max(0.0, float(s.get("last_recovery_at", 0.0) or 0.0))
-                    a.pid = int(s.get("bound_pid") or 0) or None
-                    a.bound_process_name = str(s.get("bound_process_name", "") or "")
-                    a.bound_process_identity = str(s.get("bound_process_identity", "") or "")
-                    a.last_pid_change_at = max(0.0, float(s.get("last_pid_change_at", 0.0) or 0.0))
-                    a.last_launch_at = max(0.0, float(s.get("last_relaunch_at", 0.0) or 0.0)) or None
-                    a.process_binding_status = str(s.get("process_binding_status", "") or "restored")
-                    a.binding_decision = str(s.get("binding_decision", "") or "")
-                    a.process_binding_confidence = float(s.get("process_binding_confidence", 0.0) or 0.0)
-                    a.process_reject_reason = str(s.get("process_reject_reason", "") or "")
-                    a.process_owner_claim = str(s.get("process_owner_claim", "") or "")
-                    a.unmanaged_live_process_count = int(s.get("unmanaged_live_process_count", 0) or 0)
-                    live_pids = s.get("unmanaged_live_pids", [])
-                    a.unmanaged_live_pids = list(live_pids) if isinstance(live_pids, list) else []
-                    a.adopt_candidate_pid = int(s.get("adopt_candidate_pid") or 0) or None
-                    a.adopt_reject_reason = str(s.get("adopt_reject_reason", "") or "")
-                    a.liveness_state = str(s.get("liveness_state", "") or "unknown")
-                    a.liveness_score = float(s.get("liveness_score", 0.0) or 0.0)
-                    a.session_id = str(s.get("session_id", "") or "")
-                    a.launch_nonce = str(s.get("launch_nonce", "") or "")
-                    a.account_runtime_id = str(s.get("account_runtime_id", "") or "")
-                    a.rejoin_transaction_id = str(s.get("rejoin_transaction_id", "") or "")
-                    a.server_validation = str(s.get("server_validation", "") or "restored")
-                    a.destination_validation = str(s.get("destination_validation", "") or a.server_validation or "restored")
-                    a.scheduler_slot = str(s.get("scheduler_slot", "") or "")
-                    a.supervisor_state = str(s.get("supervisor_state", "") or "restored")
-                    if a.supervisor_state in {"transaction_pending", "launching", "rejoining", "process_bound", "verifying"}:
-                        a.supervisor_state = "restored"
-                    a.last_transaction_status = str(s.get("last_transaction_status", "") or "")
-                    a.last_transaction_step = str(s.get("last_transaction_step", "") or "")
-                    a.last_transaction_failure_reason = str(s.get("last_transaction_failure_reason", "") or "")
-                    if a.last_transaction_status in {"pending", "launching", "process_bound", "verifying", "binding_verified"}:
-                        a.last_transaction_status = "rolled_back_on_restart"
-                        a.last_transaction_step = "rolled_back_on_restart"
-                        a.last_transaction_failure_reason = "backend_restart"
-                    a.last_transaction_reason = str(s.get("last_transaction_reason", "") or "")
-                    a.last_transaction_started_at = max(0.0, float(s.get("last_transaction_started_at", 0.0) or s.get("session_started_at", 0.0) or 0.0))
-                    a.last_transaction_completed_at = max(0.0, float(s.get("last_transaction_completed_at", 0.0) or 0.0))
-                    a.session_started_at = max(0.0, float(s.get("session_started_at", 0.0) or 0.0))
-                    a.last_transaction_at = max(0.0, float(s.get("last_transaction_at", 0.0) or 0.0))
-                    launch_intent = s.get("launch_intent", {})
-                    a.launch_intent = launch_intent if isinstance(launch_intent, dict) else {}
-                    launch_intent_summary = s.get("launch_intent_summary", {})
-                    if not isinstance(launch_intent_summary, dict):
-                        launch_intent_summary = {}
-                    a.launch_intent_summary = launch_intent_summary or dict(a.launch_intent.get("launch_intent_summary", {}) or {})
-                else:
-                    a.retry_count = 0
-                    a.fail_count = 0
-                    a.launch_fail_count = 0
-                    a.crash_retry_count = 0
-                    a.network_retry_count = 0
-                    a.session_retry_count = 0
-                    a.cooldown_until = 0.0
-                    a.rapid_relaunch_count = 0
-                    a.last_network_lost_at = None
-                    a.recovery_status = ""
-                    a.last_recovery_reason = ""
-                    a.recovery_scheduled_at = 0.0
-                    a.recovery_generation = 0
-                    a.binding_decision = ""
-                    a.process_binding_confidence = 0.0
-                    a.process_reject_reason = ""
-                    a.process_owner_claim = ""
-                    a.unmanaged_live_process_count = 0
-                    a.unmanaged_live_pids = []
-                    a.adopt_candidate_pid = None
-                    a.adopt_reject_reason = ""
-                    a.destination_validation = "unverified"
-                    a.launch_intent = {}
-                    a.launch_intent_summary = {}
-                    a.runtime_generation = 0
-                    a.command_generation = 0
-                    a.current_command_id = ""
-                    a.current_command = ""
-                    a.command_inflight_started_at = 0.0
-                    a.pid = None
-                    a.bound_process_name = ""
-                    a.bound_process_identity = ""
-                    a.last_pid_change_at = 0.0
-                    a.last_launch_at = None
-                    a.process_binding_status = "unbound"
-                    a.liveness_state = "unknown"
-                    a.liveness_score = 0.0
-                    a.session_id = ""
-                    a.launch_nonce = ""
-                    a.account_runtime_id = ""
-                    a.rejoin_transaction_id = ""
-                    a.server_validation = "unverified"
-                    a.scheduler_slot = ""
-                    a.supervisor_state = "stopped"
-                    a.last_transaction_status = ""
-                    a.last_transaction_step = ""
-                    a.last_transaction_reason = ""
-                    a.last_transaction_started_at = 0.0
-                    a.last_transaction_completed_at = 0.0
-                    a.last_transaction_failure_reason = ""
-                    a.session_started_at = 0.0
-                    a.last_transaction_at = 0.0
-                    a.launch_intent = {}
-                a.sync_runtime("restore_runtime")
-                if a._vip_tracker and "vip_scores" in s:
-                    try:
-                        now = time.time()
-                        with a._vip_tracker._lock:
-                            for item in s["vip_scores"]:
-                                link = item.get("link")
-                                if not link or link not in a._vip_tracker._scores:
-                                    continue
-                                if "score" in item:
-                                    a._vip_tracker._scores[link] = float(item["score"])
-                                remaining = int(item.get("blacklist_remaining", 0) or 0)
-                                if remaining > 0:
-                                    a._vip_tracker._blacklist[link] = now + remaining
-                    except Exception:
-                        pass
-                _flog_kv(
-                    "RUNTIME",
-                    "restored",
-                    account=a.display_name,
-                    fresh=fresh,
-                    crash=a.crash_count,
-                    fail=a.fail_count,
-                    retry=a.retry_count,
-                    cooldown_left=max(0, int(a.cooldown_until - time.time())) if a.cooldown_until else 0,
-                    reason=a.last_recovery_reason or a.last_crash_reason,
-                )
-                if not fresh:
-                    _flog_kv(
-                        "STATE",
-                        "forced_reset",
-                        account=a.display_name,
-                        account_id=a._config_username,
-                        runtime_generation=a.runtime_generation,
-                        recovery_generation=a.recovery_generation,
-                        command_generation=a.command_generation,
-                        runtime_state=a.runtime.lifecycle_state.value,
-                        public_state=a.state.name,
-                        PID=a.pid or "",
-                        reason="restore_runtime_expired",
-                        thread_name=threading.current_thread().name,
-                    )
+            if key not in state:
+                continue
+            saved = state[key]
+            saved_at = _saved_float(saved, "runtime_saved_at")
+            fresh = bool(saved_at and (now - saved_at) <= restore_window)
+            a.crash_count = _saved_int(saved, "crash")
+            a.last_crash_reason = _saved_str(saved, "last_crash_reason")
+            if fresh:
+                _restore_fresh_fields(a, saved, now)
+            else:
+                _reset_stale_counters(a)
+                _reset_stale_runtime(a)
+            a.sync_runtime("restore_runtime")
+            _restore_vip_scores(a, saved)
+            _log_restored_runtime(a, fresh)

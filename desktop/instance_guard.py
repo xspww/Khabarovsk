@@ -17,12 +17,55 @@ from infra.app_paths import APP_DATA_DIR, APP_ROOT_DIR, IS_COMPILED, path_target
 BASE_DIR = APP_ROOT_DIR
 HOST = LOOPBACK_HOST
 INSTANCE_TOKEN = secrets.token_urlsafe(32)
-_APP_MUTEX = None
-_INSTANCE_SOCKET = None
 _INSTANCE_STATE_FILE = os.path.join(APP_DATA_DIR, "cronus_rt_instance.json")
 _PYTHON_ENTRYPOINTS: tuple[tuple[str, ...], ...] = (
     ("main.py",),
 )
+
+
+class _InstanceResources:
+    """Process-wide handles kept alive so the single-instance locks stay held."""
+
+    def __init__(self) -> None:
+        self.app_mutex: Any = None
+        self.instance_socket: Any = None
+
+    def acquire_mutex(self) -> bool:
+        try:
+            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+            create_mutex = kernel32.CreateMutexW
+            create_mutex.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p)
+            create_mutex.restype = ctypes.c_void_p
+            close_handle = kernel32.CloseHandle
+            close_handle.argtypes = (ctypes.c_void_p,)
+            close_handle.restype = ctypes.c_bool
+            ctypes.set_last_error(0)
+            mutex = create_mutex(None, False, "Local\\Cronus_RT_1_0")
+            if not mutex:
+                return True
+            if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
+                # CreateMutex still returns a handle when the named mutex exists.
+                # Close our reference so a later retry can observe the previous
+                # instance's handle being released instead of seeing our own.
+                close_handle(mutex)
+                return False
+            self.app_mutex = mutex
+            return True
+        except Exception:
+            return True
+
+    def acquire_socket(self) -> bool:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.bind((HOST, INSTANCE_LOCK_PORT))
+            sock.listen(1)
+            self.instance_socket = sock
+            return True
+        except OSError:
+            return False
+
+
+_INSTANCE_RESOURCES = _InstanceResources()
 
 
 def _find_free_port(start: int = DEFAULT_PORT) -> int:
@@ -87,6 +130,31 @@ def _cmdline_targets_this_app(cmdline: list[str], cwd: str = "") -> bool:
     return False
 
 
+def _process_identity(proc: Any) -> tuple[str, str, str, list[str], str]:
+    """Read name/exe/cmdline/cwd from a psutil process, empty on access errors."""
+    try:
+        proc_name = os.path.basename(str(proc.name() or "")).lower()
+        proc_exe_path = str(proc.exe() or "")
+        proc_exe = os.path.basename(proc_exe_path).lower()
+    except Exception:
+        proc_name = ""
+        proc_exe_path = ""
+        proc_exe = ""
+    try:
+        cmdline = proc.cmdline()
+        cwd = proc.cwd()
+    except Exception:
+        cmdline = []
+        cwd = ""
+    return proc_name, proc_exe_path, proc_exe, cmdline, cwd
+
+
+def _compiled_process_matches(proc_exe_path: str, cmdline: list[str], cwd: str) -> bool:
+    if path_targets_current_exe(proc_exe_path, cwd):
+        return True
+    return any(path_targets_current_exe(part, cwd) for part in cmdline)
+
+
 def _is_same_cronus_process(pid: int) -> bool:
     if not pid or int(pid) == os.getpid():
         return False
@@ -94,26 +162,9 @@ def _is_same_cronus_process(pid: int) -> bool:
         import psutil
 
         proc = psutil.Process(int(pid))
-        try:
-            proc_name = os.path.basename(str(proc.name() or "")).lower()
-            proc_exe_path = str(proc.exe() or "")
-            proc_exe = os.path.basename(proc_exe_path).lower()
-        except Exception:
-            proc_name = ""
-            proc_exe_path = ""
-            proc_exe = ""
-        try:
-            cmdline = proc.cmdline()
-            cwd = proc.cwd()
-        except Exception:
-            cmdline = []
-            cwd = ""
+        proc_name, proc_exe_path, proc_exe, cmdline, cwd = _process_identity(proc)
         if IS_COMPILED:
-            if path_targets_current_exe(proc_exe_path, cwd):
-                return True
-            if any(path_targets_current_exe(part, cwd) for part in cmdline):
-                return True
-            return False
+            return _compiled_process_matches(proc_exe_path, cmdline, cwd)
         if "python" not in proc_name and "python" not in proc_exe:
             return False
         return _cmdline_targets_this_app(cmdline, cwd)
@@ -166,7 +217,7 @@ def _clear_instance_state() -> None:
             if os.path.exists(_INSTANCE_STATE_FILE):
                 os.remove(_INSTANCE_STATE_FILE)
     except Exception:
-        pass
+        "intentional: ignore exception"
 
 
 def _request_instance_shutdown(port: int, token: str) -> bool:
@@ -201,26 +252,36 @@ def _terminate_instance_tree(pid: int) -> bool:
             try:
                 child.terminate()
             except Exception:
-                pass
+                "intentional: ignore exception"
         proc.terminate()
         _gone, alive = psutil.wait_procs([proc, *children], timeout=4.0)
         for item in alive:
             try:
                 item.kill()
             except Exception:
-                pass
+                "intentional: ignore exception"
         return True
     except Exception as exc:
         flog_kv("MAIN", "instance_tree_terminate_failed", "warning", pid=pid, error=str(exc))
         return False
 
 
-def _stop_previous_instance(wait_seconds: float = 8.0) -> bool:
-    state = _read_instance_state()
+def _instance_state_values(state: dict[str, Any]) -> tuple[int, int, str]:
     pid = int(state.get("pid") or 0)
     port = int(state.get("port") or 0)
     token = str(state.get("token") or "")
-    if not pid or not _is_pid_alive(pid) or not _is_same_cronus_process(pid):
+    return pid, port, token
+
+
+def _previous_instance_running(pid: int) -> bool:
+    if not pid or not _is_pid_alive(pid):
+        return False
+    return _is_same_cronus_process(pid)
+
+
+def _stop_previous_instance(wait_seconds: float = 8.0) -> bool:
+    pid, port, token = _instance_state_values(_read_instance_state())
+    if not _previous_instance_running(pid):
         return False
     flog_kv("MAIN", "previous_instance_detected", pid=pid, port=port)
     if port and token:
@@ -267,41 +328,11 @@ def _find_same_app_process() -> int | None:
 
 
 def _acquire_single_instance_mutex() -> bool:
-    global _APP_MUTEX
-    try:
-        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-        create_mutex = kernel32.CreateMutexW
-        create_mutex.argtypes = (ctypes.c_void_p, ctypes.c_int, ctypes.c_wchar_p)
-        create_mutex.restype = ctypes.c_void_p
-        close_handle = kernel32.CloseHandle
-        close_handle.argtypes = (ctypes.c_void_p,)
-        close_handle.restype = ctypes.c_bool
-        ctypes.set_last_error(0)
-        mutex = create_mutex(None, False, "Local\\Cronus_RT_1_0")
-        if not mutex:
-            return True
-        if ctypes.get_last_error() == 183:  # ERROR_ALREADY_EXISTS
-            # CreateMutex still returns a handle when the named mutex exists.
-            # Close our reference so a later retry can observe the previous
-            # instance's handle being released instead of seeing our own.
-            close_handle(mutex)
-            return False
-        _APP_MUTEX = mutex
-        return True
-    except Exception:
-        return True
+    return _INSTANCE_RESOURCES.acquire_mutex()
 
 
 def _acquire_instance_socket() -> bool:
-    global _INSTANCE_SOCKET
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.bind((HOST, INSTANCE_LOCK_PORT))
-        sock.listen(1)
-        _INSTANCE_SOCKET = sock
-        return True
-    except OSError:
-        return False
+    return _INSTANCE_RESOURCES.acquire_socket()
 
 
 clear_instance_state = _clear_instance_state

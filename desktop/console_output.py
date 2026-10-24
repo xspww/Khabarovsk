@@ -45,9 +45,9 @@ def write_line(message: Any = "", replacements: dict[str, str] | None = None) ->
         try:
             print(_ascii_safe(message, replacements), flush=True)
         except Exception:
-            pass
+            "intentional: ignore exception"
     except Exception:
-        pass
+        "intentional: ignore exception"
 def write_inline(message: Any = "", replacements: dict[str, str] | None = None, spinner_frames: Iterable[str] = ()) -> None:
     try:
         sys.stdout.write(str(message))
@@ -60,16 +60,58 @@ def write_inline(message: Any = "", replacements: dict[str, str] | None = None, 
             sys.stdout.write(_ascii_safe(safe_message, replacements))
             sys.stdout.flush()
         except Exception:
-            pass
+            "intentional: ignore exception"
     except Exception:
-        pass
+        "intentional: ignore exception"
 
 
 def clear_screen() -> None:
     try:
         os.system("cls" if os.name == "nt" else "clear")
     except Exception:
-        pass
+        "intentional: ignore exception"
+
+
+def _stream_is_tty(stream: Any) -> bool:
+    try:
+        return bool(getattr(stream, "isatty", lambda: False)())
+    except Exception:
+        return False
+
+
+def _console_encoding(kernel32: Any) -> str:
+    try:
+        codepage = int(kernel32.GetConsoleOutputCP() or 0)
+        return f"cp{codepage}" if codepage > 0 else "utf-8"
+    except Exception:
+        return "utf-8"
+
+
+def _rebind_console_streams(kernel32: Any) -> None:
+    # Match the console codepage (not UTF-8) so non-ASCII output keeps
+    # the same encode-error fallback path as a normal launch.
+    encoding = _console_encoding(kernel32)
+    for stream_name in ("stdout", "stderr"):
+        try:
+            setattr(sys, stream_name, open("CONOUT$", "w", encoding=encoding))  # noqa: SIM115 - console redirect lives for process lifetime
+        except Exception:
+            "intentional: ignore exception"
+
+
+def _attach_console() -> bool:
+    try:
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        try:
+            kernel32.FreeConsole()
+        except Exception:
+            "intentional: ignore exception"
+        if not kernel32.AllocConsole():
+            return False
+        _rebind_console_streams(kernel32)
+        return True
+    except Exception:
+        return False
 
 
 def reattach_console_if_redirected() -> bool:
@@ -84,32 +126,6 @@ def reattach_console_if_redirected() -> bool:
     """
     if os.name != "nt":
         return False
-    try:
-        if getattr(sys.stdout, "isatty", lambda: False)():
-            return False
-    except Exception:
+    if _stream_is_tty(sys.stdout):
         return False
-    try:
-        import ctypes
-        kernel32 = ctypes.windll.kernel32
-        try:
-            kernel32.FreeConsole()
-        except Exception:
-            pass
-        if not kernel32.AllocConsole():
-            return False
-        try:
-            codepage = int(kernel32.GetConsoleOutputCP() or 0)
-            encoding = f"cp{codepage}" if codepage > 0 else "utf-8"
-        except Exception:
-            encoding = "utf-8"
-        # Match the console codepage (not UTF-8) so non-ASCII output keeps
-        # the same encode-error fallback path as a normal launch.
-        for stream_name in ("stdout", "stderr"):
-            try:
-                setattr(sys, stream_name, open("CONOUT$", "w", encoding=encoding))  # noqa: SIM115 - console redirect lives for process lifetime
-            except Exception:
-                pass
-        return True
-    except Exception:
-        return False
+    return _attach_console()

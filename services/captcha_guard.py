@@ -3,6 +3,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from services._util import _lower
+from services.hold_clear import clear_account_hold
+
 CAPTCHA_REASON = "captcha_required"
 CAPTCHA_LABEL = "Captcha"
 CAPTCHA_BLOCK_REASON = "CAPTCHA required. Solve it manually, then click Resume or Reload Cookies."
@@ -42,10 +45,6 @@ CHALLENGE_HEADER_KEYS = (
 )
 
 
-def _lower(value: Any) -> str:
-    return str(value or "").strip().lower()
-
-
 def challenge_header_summary(headers: Mapping[str, Any] | None = None) -> str:
     if not headers:
         return ""
@@ -77,7 +76,7 @@ def is_captcha_text(*values: Any, headers: Mapping[str, Any] | None = None) -> b
                 return True
             return False
     except Exception:
-        pass
+        "intentional: ignore exception"
     if "rblx-challenge-type" in combined and "captcha" in combined:
         return True
     return any(keyword in combined for keyword in CAPTCHA_KEYWORDS)
@@ -175,7 +174,7 @@ def persist_account_captcha_status(account: Any, active: bool = True) -> None:
             }
         ACCOUNT_STORE.update_record(username, updates)
     except Exception:
-        pass
+        "intentional: ignore exception"
 
 
 def _apply_runtime_captcha_hold(account: Any, runtime_writer: Any = None, reason: str = "") -> None:
@@ -188,7 +187,7 @@ def _apply_runtime_captcha_hold(account: Any, runtime_writer: Any = None, reason
     try:
         account.sync_runtime(reason or CAPTCHA_REASON)
     except Exception:
-        pass
+        "intentional: ignore exception"
 
 
 def _apply_runtime_captcha_clear(account: Any, runtime_writer: Any = None, reason: str = "manual_resume") -> None:
@@ -203,7 +202,7 @@ def _apply_runtime_captcha_clear(account: Any, runtime_writer: Any = None, reaso
     try:
         account.sync_runtime(reason)
     except Exception:
-        pass
+        "intentional: ignore exception"
 
 
 def set_account_captcha_hold(account: Any, detail: str = "", source: str = "", runtime_writer: Any = None) -> None:
@@ -231,51 +230,23 @@ def set_account_captcha_hold(account: Any, detail: str = "", source: str = "", r
     persist_account_captcha_status(account, active=True)
 
 
+def _clear_captcha_suspicion(account: Any) -> None:
+    try:
+        account._captcha_suspected_at = 0.0
+        account._captcha_suspected_pid = 0
+    except Exception:
+        "intentional: ignore exception"
+
+
 def clear_account_captcha_hold(account: Any, runtime_writer: Any = None) -> bool:
-    was_captcha = is_account_captcha_required(account)
-    lock = getattr(account, "_lock", None)
-
-    def _clear() -> None:
-        if is_captcha_status_text(getattr(account, "manual_status", "")):
-            account.manual_status = ""
-        if is_captcha_status_text(getattr(account, "last_error", "")):
-            account.last_error = ""
-        if _lower(getattr(account, "last_crash_reason", "")) == CAPTCHA_REASON:
-            account.last_crash_reason = ""
-        if _lower(getattr(account, "last_recovery_reason", "")) == CAPTCHA_REASON:
-            account.last_recovery_reason = ""
-        if is_captcha_status_text(getattr(account, "last_state_reason", "")):
-            account.last_state_reason = ""
-        if is_captcha_status_text(getattr(account, "import_status", "")):
-            account.import_status = ""
-        account.recovery_scheduled_at = 0.0
-        account.session_checked = False
-        account.session_valid = False
-        account.session_wait_started_at = 0.0
-        try:
-            account._captcha_suspected_at = 0.0
-            account._captcha_suspected_pid = 0
-        except Exception:
-            pass
-        account.retry_count = 0
-        account.fail_count = 0
-        account.launch_fail_count = 0
-        account.crash_retry_count = 0
-        account.network_retry_count = 0
-        account.session_retry_count = 0
-        _apply_runtime_captcha_clear(account, runtime_writer, "manual_resume")
-        try:
-            account.runtime.last_error = ""
-            account.runtime.recovery_reason = ""
-            account.runtime.recovery_active = False
-        except Exception:
-            pass
-
-    if lock:
-        with lock:
-            _clear()
-    else:
-        _clear()
-    if was_captcha:
-        persist_account_captcha_status(account, active=False)
-    return was_captcha
+    return clear_account_hold(
+        account,
+        runtime_writer,
+        is_account_captcha_required(account),
+        persist_account_captcha_status,
+        is_captcha_status_text,
+        CAPTCHA_REASON,
+        _apply_runtime_captcha_clear,
+        "manual_resume",
+        extra_clear=_clear_captcha_suspicion,
+    )

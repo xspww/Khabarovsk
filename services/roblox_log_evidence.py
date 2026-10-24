@@ -48,16 +48,7 @@ def default_log_dir() -> Path:
     return Path(os.environ.get("LOCALAPPDATA", "")) / "Roblox" / "logs"
 
 
-def collect_recent_log_evidence(
-    log_dir: Any | None = None,
-    since_seconds: float = 180.0,
-    max_files: int = 4,
-    max_lines: int = 1000,
-) -> dict[str, Any]:
-    root = Path(log_dir) if log_dir is not None else default_log_dir()
-    if not root.exists():
-        return {"matched": False, "source": "roblox_log", "reason": "log_dir_missing"}
-
+def _recent_log_paths(root: Path, since_seconds: float) -> list[tuple[float, Path]]:
     now = time.time()
     candidates = []
     for path in root.glob("*.log"):
@@ -68,22 +59,42 @@ def collect_recent_log_evidence(
         if (now - modified) <= max(30.0, float(since_seconds or 180.0)):
             candidates.append((modified, path))
     candidates.sort(reverse=True)
+    return candidates
 
+
+def _scan_log_file(path: Path, max_lines: int, best: dict[str, Any]) -> tuple[dict[str, Any], bool]:
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-max(20, int(max_lines or 20)):]
+    except OSError:
+        return best, False
+    for line in reversed(lines):
+        evidence = classify_log_line(line)
+        if evidence.get("confidence", 0.0) > float(best.get("confidence", 0.0) or 0.0):
+            best = dict(evidence)
+            best["file"] = path.name
+        if evidence.get("matched"):
+            best = dict(evidence)
+            best["file"] = path.name
+            return best, True
+    return best, False
+
+
+def collect_recent_log_evidence(
+    log_dir: Any | None = None,
+    since_seconds: float = 180.0,
+    max_files: int = 4,
+    max_lines: int = 1000,
+) -> dict[str, Any]:
+    root = Path(log_dir) if log_dir is not None else default_log_dir()
+    if not root.exists():
+        return {"matched": False, "source": "roblox_log", "reason": "log_dir_missing"}
+
+    candidates = _recent_log_paths(root, since_seconds)
     best: dict[str, Any] = {"matched": False, "source": "roblox_log", "reason": "no_recent_disconnect_evidence"}
     for _modified, path in candidates[: max(1, int(max_files or 1))]:
-        try:
-            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()[-max(20, int(max_lines or 20)):]
-        except OSError:
-            continue
-        for line in reversed(lines):
-            evidence = classify_log_line(line)
-            if evidence.get("confidence", 0.0) > float(best.get("confidence", 0.0) or 0.0):
-                best = dict(evidence)
-                best["file"] = path.name
-            if evidence.get("matched"):
-                best = dict(evidence)
-                best["file"] = path.name
-                return best
+        best, matched = _scan_log_file(path, max_lines, best)
+        if matched:
+            return best
     return best
 
 

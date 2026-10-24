@@ -85,6 +85,18 @@ def normalize_game(raw: Any, index: int = 0) -> dict[str, Any]:
     }
 
 
+def _game_is_empty(game: dict[str, Any]) -> bool:
+    return not (game["id"] or game["name"] or game["place_id"] or game["private_server_url"])
+
+
+def _unique_game_id(game: dict[str, Any], seen: set, count: int) -> str:
+    key = game["id"].lower()
+    if key in seen:
+        game["id"] = f"{game['id']}-{count + 1}"
+        key = game["id"].lower()
+    return key
+
+
 def normalize_games(raw: Any) -> list[dict[str, Any]]:
     """Clean a games list, dropping empties and de-duplicating ids."""
     if isinstance(raw, dict):
@@ -97,14 +109,11 @@ def normalize_games(raw: Any) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             continue
         game = normalize_game(item, len(games))
-        if not (game["id"] or game["name"] or game["place_id"] or game["private_server_url"]):
+        if _game_is_empty(game):
             continue
-        key = game["id"].lower()
+        key = _unique_game_id(game, seen, len(games))
         if key in seen:
-            game["id"] = f"{game['id']}-{len(games) + 1}"
-            key = game["id"].lower()
-            if key in seen:
-                continue
+            continue
         seen.add(key)
         games.append(game)
     return games
@@ -201,18 +210,6 @@ def new_game_id(games: Any) -> str:
     return f"game-{index}"
 
 
-def new_game_template(games: Any) -> dict[str, Any]:
-    count = len(normalize_games(games))
-    return {
-        "id": new_game_id(games),
-        "name": f"Game {count + 1}",
-        "place_id": "",
-        "private_server_url": "",
-        "auto_create_private_server_enabled": False,
-        "auto_create_private_server_free_only": True,
-    }
-
-
 def effective_place(
     account_place_id: Any,
     game: Mapping[str, Any] | None,
@@ -273,10 +270,3 @@ def effective_auto_flags(
     return {"enabled": legacy_on, "free_only": _bool(legacy_free_only, True)}
 
 
-def describe_target(game: Mapping[str, Any] | None, place_id: Any = "") -> str:
-    if game:
-        label = _text(game.get("name")) or _text(game.get("id"))
-        place = _text(place_id) or _text(game.get("place_id"))
-        return f"{label} ({place})" if place else label
-    place = _text(place_id)
-    return f"Place {place}" if place else "no game"

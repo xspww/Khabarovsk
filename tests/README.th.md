@@ -26,6 +26,8 @@
 | `test_vip_links.py` | helper ลิงก์ VIP (กรองราย place, shared-direct) | `domain/roblox_private_servers.py` |
 | `test_game_switch.py` | สลับเกมขณะรัน: เทียบ target + rejoin/stop เมื่อ assign/config/แก้เกม | `services/game_switch.py`, `api_routes/games_routes.py`, `api_routes/config_routes.py` |
 | `test_farm_runtime_reset.py` | ลำดับ reset runtime ของ farm ตอน stop/Finished (kill → reset → bump revision) | `runtime/farm.py` |
+| `test_console_activity.py` | กุญแจ identity ของคอนโซล, ตัวนับ, แจ้ง start ล้มเหลว, redact ก่อนออกจอ | `infra/console_activity.py`, `infra/core_logging.py` |
+| `test_cookie_decrypt_recovery.py` | blob `dpapi:v1` จากเครื่องอื่น/เสียหาย: อ่านไฟล์ทั้งไฟล์ได้ต่อ, blob ยังอยู่, `cookie_state` รายงาน `unreadable` | `services/account_hybrid.py` |
 
 ### สรุป
 

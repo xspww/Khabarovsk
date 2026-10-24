@@ -26,6 +26,44 @@ def _int_pid(value: Any) -> int:
         return 0
 
 
+def _orphan_attrs(account: Any) -> tuple[int, str, float, float]:
+    return (
+        _int_pid(getattr(account, "orphan_pid", None)),
+        str(getattr(account, "orphan_identity", "") or ""),
+        float(getattr(account, "orphan_confidence", 0.0) or 0.0),
+        float(getattr(account, "orphan_verify_after", 0.0) or 0.0),
+    )
+
+
+def _read_orphan_fields(account: Any) -> tuple[int, str, float, float]:
+    lock = getattr(account, "_lock", None)
+    if lock:
+        with lock:
+            return _orphan_attrs(account)
+    return _orphan_attrs(account)
+
+
+def _live_claim_owner(entry: dict[str, Any], process_manager: Any, pid: int) -> str:
+    return str(entry.get("owner") or process_manager.get_pid_owner(pid) or "")
+
+
+def _is_claim_candidate(pid: int, account: Any, is_active: Any) -> bool:
+    if not pid or account is None or is_active(account):
+        return False
+    return _int_pid(getattr(account, "pid", None)) != pid
+
+
+def _claim_entry(account: Any, entry: dict[str, Any], pid: int) -> dict[str, Any]:
+    return {
+        "account": account,
+        "pid": pid,
+        "identity": str(entry.get("identity") or ""),
+        "confidence": float(entry.get("confidence") or 100.0),
+        "reason": "inactive_account_owner_claim",
+        "source": "process_owner_claim",
+    }
+
+
 class RuntimeOrphanSweeper:
     """Conservative cleanup for verified account-owned orphan Roblox processes."""
 
@@ -100,18 +138,7 @@ class RuntimeOrphanSweeper:
         return candidates
 
     def _account_orphan_candidate(self, account: Any, now: float, min_confidence: float) -> dict[str, Any]:
-        lock = getattr(account, "_lock", None)
-        if lock:
-            with lock:
-                pid = _int_pid(getattr(account, "orphan_pid", None))
-                identity = str(getattr(account, "orphan_identity", "") or "")
-                confidence = float(getattr(account, "orphan_confidence", 0.0) or 0.0)
-                verify_after = float(getattr(account, "orphan_verify_after", 0.0) or 0.0)
-        else:
-            pid = _int_pid(getattr(account, "orphan_pid", None))
-            identity = str(getattr(account, "orphan_identity", "") or "")
-            confidence = float(getattr(account, "orphan_confidence", 0.0) or 0.0)
-            verify_after = float(getattr(account, "orphan_verify_after", 0.0) or 0.0)
+        pid, identity, confidence, verify_after = _read_orphan_fields(account)
         if not pid or confidence < min_confidence or (verify_after and now < verify_after):
             return {}
         return {
@@ -131,20 +158,11 @@ class RuntimeOrphanSweeper:
         candidates = []
         for entry in live or []:
             pid = _int_pid(entry.get("pid"))
-            owner = str(entry.get("owner") or self._process_manager.get_pid_owner(pid) or "")
+            owner = _live_claim_owner(entry, self._process_manager, pid)
             account = accounts.get(owner)
-            if not pid or account is None or self._account_is_active(account):
+            if not _is_claim_candidate(pid, account, self._account_is_active):
                 continue
-            if _int_pid(getattr(account, "pid", None)) == pid:
-                continue
-            candidates.append({
-                "account": account,
-                "pid": pid,
-                "identity": str(entry.get("identity") or ""),
-                "confidence": float(entry.get("confidence") or 100.0),
-                "reason": "inactive_account_owner_claim",
-                "source": "process_owner_claim",
-            })
+            candidates.append(_claim_entry(account, entry, pid))
         return candidates
 
     def _account_is_active(self, account: Any) -> bool:

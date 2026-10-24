@@ -83,32 +83,51 @@ def create_signature_manifest(path: str, version: str, private_key_pem: bytes) -
     }, sort_keys=True, separators=(",", ":")).encode("ascii") + b"\n"
 
 
+def _manifest_header_ok(manifest: Any) -> bool:
+    if not isinstance(manifest, dict):
+        return False
+    if type(manifest.get("schema")) is not int or manifest["schema"] != 1:
+        return False
+    if manifest.get("product") != "CronusLauncher":
+        return False
+    return True
+
+
+def _manifest_digest_ok(path: str, manifest: dict[str, Any]) -> tuple[bool, str]:
+    digest_hex = manifest.get("sha256")
+    if not isinstance(digest_hex, str) or _digest_file(path).hex() != digest_hex:
+        return False, ""
+    return True, digest_hex
+
+
+def _manifest_signature_valid(manifest: dict[str, Any], version: str, filename: str, digest_hex: str) -> bool:
+    message = _signed_message(version, filename, digest_hex)
+    signature = base64.b64decode(manifest.get("signature", ""), validate=True)
+    public_key = serialization.load_pem_public_key(RELEASE_PUBLIC_KEY_PEM)
+    if not isinstance(public_key, rsa.RSAPublicKey) or public_key.key_size < 3072:
+        return False
+    public_key.verify(
+        signature,
+        message,
+        padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
+        hashes.SHA256(),
+    )
+    return True
+
+
 def verify_signature_manifest(path: str, manifest_data: bytes, version: str, filename: str) -> bool:
     if not os.path.isfile(path) or len(manifest_data) > _MAX_SIGNATURE_MANIFEST_BYTES:
         return False
     try:
         manifest: dict[str, Any] = json.loads(manifest_data.decode("ascii"))
-        if not isinstance(manifest, dict) or type(manifest.get("schema")) is not int or manifest["schema"] != 1:
-            return False
-        if manifest.get("product") != "CronusLauncher":
+        if not _manifest_header_ok(manifest):
             return False
         if manifest.get("version") != version or manifest.get("filename") != filename:
             return False
-        digest_hex = manifest.get("sha256")
-        if not isinstance(digest_hex, str) or _digest_file(path).hex() != digest_hex:
+        digest_ok, digest_hex = _manifest_digest_ok(path, manifest)
+        if not digest_ok:
             return False
-        message = _signed_message(version, filename, digest_hex)
-        signature = base64.b64decode(manifest.get("signature", ""), validate=True)
-        public_key = serialization.load_pem_public_key(RELEASE_PUBLIC_KEY_PEM)
-        if not isinstance(public_key, rsa.RSAPublicKey) or public_key.key_size < 3072:
-            return False
-        public_key.verify(
-            signature,
-            message,
-            padding.PSS(mgf=padding.MGF1(hashes.SHA256()), salt_length=padding.PSS.MAX_LENGTH),
-            hashes.SHA256(),
-        )
-        return True
+        return _manifest_signature_valid(manifest, version, filename, digest_hex)
     except (InvalidSignature, ValueError, TypeError, KeyError, UnicodeError, json.JSONDecodeError):
         return False
 

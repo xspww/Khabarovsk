@@ -7,6 +7,43 @@ from typing import Any
 from runtime.recovery_context import RecoveryAttemptContext
 from runtime.recovery_policy import active_recovery_block_reason
 
+_REPLACE_REASONS = {"launch_fail", "game_unavailable", "watchdog_timeout"}
+_REPLACE_STATES = {"LAUNCHING", "VERIFY"}
+
+
+def _int_value(value: Any) -> int:
+    return int(value or 0)
+
+
+def _text(value: Any) -> str:
+    return str(value or "")
+
+
+def _owner_details(owner: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "owner_reason": owner.get("reason", ""),
+        "owner_runtime_generation": owner.get("runtime_generation", 0),
+        "owner_recovery_generation": owner.get("recovery_generation", 0),
+    }
+
+
+def _generation_match(
+    owner: dict[str, Any],
+    runtime_generation: int,
+    recovery_generation: int,
+) -> tuple[bool, bool]:
+    same_runtime = int(owner.get("runtime_generation", -1)) == int(runtime_generation or 0)
+    same_recovery = int(owner.get("recovery_generation", -1)) == int(recovery_generation or 0)
+    return same_runtime, same_recovery
+
+
+def _can_replace(reason: str, state_name: str) -> bool:
+    return str(reason or "") in _REPLACE_REASONS and state_name in _REPLACE_STATES
+
+
+def _reject_owner(owner: dict[str, Any], reject: str) -> dict[str, Any]:
+    return {"accepted": False, "reject": reject, **_owner_details(owner)}
+
 
 class RecoveryOwnerRegistry:
     """Owns active recovery ownership and generation-safe release checks."""
@@ -34,6 +71,15 @@ class RecoveryOwnerRegistry:
         owner = self.get(account_key)
         return active_recovery_block_reason(owner, ctx)
 
+    def _replace_owner(self, account_id: str, state_name: str) -> dict[str, Any]:
+        replaced = self._active_recoveries.pop(account_id, None) or {}
+        return {
+            "accepted": True,
+            "replaced": True,
+            **_owner_details(replaced),
+            "state": state_name,
+        }
+
     def check_start(
         self,
         account_key: str,
@@ -43,39 +89,22 @@ class RecoveryOwnerRegistry:
         current_state: Any,
         force: bool = False,
     ) -> dict[str, Any]:
-        account_id = str(account_key or "")
+        account_id = _text(account_key)
         state_name = str(getattr(current_state, "name", current_state or ""))
         with self._lock:
             owner = self._active_recoveries.get(account_id)
             if not owner or force:
                 return {"accepted": True}
-            same_runtime = int(owner.get("runtime_generation", -1)) == int(runtime_generation or 0)
-            same_recovery = int(owner.get("recovery_generation", -1)) == int(recovery_generation or 0)
-            if same_runtime and same_recovery:
-                if str(reason or "") in {"launch_fail", "game_unavailable", "watchdog_timeout"} and state_name in {"LAUNCHING", "VERIFY"}:
-                    replaced = self._active_recoveries.pop(account_id, None) or {}
-                    return {
-                        "accepted": True,
-                        "replaced": True,
-                        "owner_reason": replaced.get("reason", ""),
-                        "owner_runtime_generation": replaced.get("runtime_generation", 0),
-                        "owner_recovery_generation": replaced.get("recovery_generation", 0),
-                        "state": state_name,
-                    }
-                return {
-                    "accepted": False,
-                    "reject": "active_recovery_owner_duplicate",
-                    "owner_reason": owner.get("reason", ""),
-                    "owner_runtime_generation": owner.get("runtime_generation", 0),
-                    "owner_recovery_generation": owner.get("recovery_generation", 0),
-                }
-            return {
-                "accepted": False,
-                "reject": "active_recovery_owner_exists",
-                "owner_reason": owner.get("reason", ""),
-                "owner_runtime_generation": owner.get("runtime_generation", 0),
-                "owner_recovery_generation": owner.get("recovery_generation", 0),
-            }
+            same_runtime, same_recovery = _generation_match(
+                owner,
+                runtime_generation,
+                recovery_generation,
+            )
+            if not (same_runtime and same_recovery):
+                return _reject_owner(owner, "active_recovery_owner_exists")
+            if _can_replace(reason, state_name):
+                return self._replace_owner(account_id, state_name)
+            return _reject_owner(owner, "active_recovery_owner_duplicate")
 
     def acquire(
         self,
@@ -92,21 +121,21 @@ class RecoveryOwnerRegistry:
         token: str = "",
         now: float | None = None,
     ) -> dict[str, Any]:
-        account_id = str(account_key or "")
+        account_id = _text(account_key)
         started_at = time.time() if now is None else float(now)
         owner = {
             "account_id": account_id,
-            "runtime_generation": int(runtime_generation or 0),
-            "recovery_generation": int(recovery_generation or 0),
-            "command_generation": int(command_generation or 0),
-            "session_id": str(session_id or ""),
-            "transaction_id": str(transaction_id or ""),
-            "reason": str(reason or ""),
-            "status": str(status or ""),
+            "runtime_generation": _int_value(runtime_generation),
+            "recovery_generation": _int_value(recovery_generation),
+            "command_generation": _int_value(command_generation),
+            "session_id": _text(session_id),
+            "transaction_id": _text(transaction_id),
+            "reason": _text(reason),
+            "status": _text(status),
             "started_at": started_at,
-            "bucket": str(bucket or ""),
-            "priority": int(priority or 0),
-            "token": str(token or ""),
+            "bucket": _text(bucket),
+            "priority": _int_value(priority),
+            "token": _text(token),
         }
         with self._lock:
             self._active_recoveries[account_id] = owner

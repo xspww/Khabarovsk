@@ -10,6 +10,7 @@ from fastapi import HTTPException, Request
 from fastapi.responses import PlainTextResponse
 
 from core import flog_kv
+from domain.games import _text
 from infra.app_paths import resource_path
 from runtime.lua_identity import resolve_lua_account
 from services.lua_session_tokens import (
@@ -44,10 +45,6 @@ _STATE_CHANGING_EVENTS = {
     "mark_finished",
 }
 _LUA_EVENT_REPLAY_CACHE = LuaEventReplayCache()
-
-
-def _text(value: Any) -> str:
-    return str(value or "").strip()
 
 
 def _lua_literal(value: Any) -> str:
@@ -364,25 +361,26 @@ def _reject_lua_helper_request(
     raise HTTPException(status_code, detail)
 
 
-def _validate_lua_bootstrap_access(ctx: ApiContext, request: Request, account: str) -> dict[str, str] | None:
-    if not _query_enabled(request, "bootstrap"):
-        return None
-    if not _is_loopback_request(request):
-        _reject_lua_helper_request(request, account, "bootstrap_non_loopback")
+def _farm_accounts(farm: Any) -> list:
+    return getattr(farm, "_accounts", []) or []
 
-    payload = {
-        "account": str(account or request.query_params.get("account") or ""),
-        "username": str(request.query_params.get("username") or account or ""),
-        "configured_account": str(request.query_params.get("configured_account") or account or ""),
-        "user_id": str(request.query_params.get("user_id") or ""),
-        "pid": str(request.query_params.get("pid") or ""),
+
+def _bootstrap_payload(request: Request, account: str) -> dict[str, str]:
+    params = request.query_params
+    return {
+        "account": str(account or params.get("account") or ""),
+        "username": str(params.get("username") or account or ""),
+        "configured_account": str(
+            params.get("configured_account") or account or ""
+        ),
+        "user_id": str(params.get("user_id") or ""),
+        "pid": str(params.get("pid") or ""),
     }
-    resolution = resolve_lua_account(getattr(ctx.farm, "_accounts", []) or [], payload)
-    if resolution.ambiguous:
-        _reject_lua_helper_request(request, account, "bootstrap_ambiguous_account")
-    if not resolution.account:
-        _reject_lua_helper_request(request, account, "bootstrap_account_not_found")
 
+
+def _bootstrap_scope(
+    request: Request, account: str, resolution: Any
+) -> dict[str, str]:
     scope = {
         "account": resolution.account_key,
         **_account_session_fields(resolution.account),
@@ -395,11 +393,45 @@ def _validate_lua_bootstrap_access(ctx: ApiContext, request: Request, account: s
             status_code=409,
             detail="Lua bootstrap requires an active Cronus launch session",
         )
-
-    if resolution.bound_pid and resolution.identity.pid is not None and not resolution.pid_match:
+    if (
+        resolution.bound_pid
+        and resolution.identity.pid is not None
+        and not resolution.pid_match
+    ):
         _reject_lua_helper_request(request, account, "bootstrap_pid_mismatch")
+    return scope
 
+
+def _validate_lua_bootstrap_access(
+    ctx: ApiContext, request: Request, account: str
+) -> dict[str, str] | None:
+    if not _query_enabled(request, "bootstrap"):
+        return None
+    if not _is_loopback_request(request):
+        _reject_lua_helper_request(request, account, "bootstrap_non_loopback")
+    resolution = resolve_lua_account(
+        _farm_accounts(ctx.farm), _bootstrap_payload(request, account)
+    )
+    if resolution.ambiguous:
+        _reject_lua_helper_request(
+            request, account, "bootstrap_ambiguous_account"
+        )
+    if not resolution.account:
+        _reject_lua_helper_request(
+            request, account, "bootstrap_account_not_found"
+        )
+    scope = _bootstrap_scope(request, account, resolution)
     return _issue_lua_token_for_scope(ctx, scope)
+
+
+def _local_fallback_identity(body: dict[str, Any]) -> str:
+    return str(
+        body.get("username")
+        or body.get("account")
+        or body.get("configured_account")
+        or body.get("user_id")
+        or ""
+    ).strip()
 
 
 def _local_fallback_allowed(request: Request, body: dict[str, Any], transport: str) -> bool:
@@ -411,14 +443,7 @@ def _local_fallback_allowed(request: Request, body: dict[str, Any], transport: s
     helper_version = str(body.get("helper_version") or "").strip()
     if not helper_version.startswith("1.7"):
         return False
-    identity = str(
-        body.get("username")
-        or body.get("account")
-        or body.get("configured_account")
-        or body.get("user_id")
-        or ""
-    ).strip()
-    return bool(identity)
+    return bool(_local_fallback_identity(body))
 
 
 def _state_changing_get_rejected(body: dict[str, Any], transport: str) -> bool:
@@ -426,7 +451,44 @@ def _state_changing_get_rejected(body: dict[str, Any], transport: str) -> bool:
     return transport == "get_fallback" and event_name in _STATE_CHANGING_EVENTS
 
 
-def _validate_lua_session_auth(ctx: ApiContext, farm: Any, body: dict[str, Any], supplied_token: str) -> str:
+def _token_grace_ok(
+    ctx: ApiContext, scope: dict[str, str], supplied_token: str, validation: Any
+) -> bool:
+    if (validation.reason or "") != "expired":
+        return False
+    return token_session_binding_matches(
+        str(ctx.instance_token or ""),
+        supplied_token,
+        account=scope["account"],
+        session_id=scope["session_id"],
+        launch_nonce=scope["launch_nonce"],
+    )
+
+
+def _body_session_mismatch(scope: dict[str, str], body: dict[str, Any]) -> str:
+    body_session_id = _text(body.get("session_id"))
+    body_launch_nonce = _text(body.get("launch_nonce"))
+    if body_session_id and body_session_id != scope["session_id"]:
+        return "body_session_id_mismatch"
+    if body_launch_nonce and body_launch_nonce != scope["launch_nonce"]:
+        return "body_launch_nonce_mismatch"
+    return ""
+
+
+def _replay_rejection(scope: dict[str, str], body: dict[str, Any]) -> str:
+    replay = _LUA_EVENT_REPLAY_CACHE.check_and_record(
+        scope["account"],
+        _text(body.get("event_id")),
+        body.get("ts") or body.get("timestamp") or body.get("event_ts"),
+    )
+    if not replay.ok:
+        return replay.reason or "lua_event_replay_rejected"
+    return ""
+
+
+def _validate_lua_session_auth(
+    ctx: ApiContext, farm: Any, body: dict[str, Any], supplied_token: str
+) -> str:
     scope = _lua_scope_for_payload(farm, body)
     if not scope:
         return "lua_account_not_found"
@@ -443,13 +505,7 @@ def _validate_lua_session_auth(ctx: ApiContext, farm: Any, body: dict[str, Any],
         # session. Session rotation changes the expected session_id/nonce,
         # so tokens from previous launches still fail here. Accept with a
         # warning instead of blinding disconnect/error_code detection.
-        if (validation.reason or "") == "expired" and token_session_binding_matches(
-            str(ctx.instance_token or ""),
-            supplied_token,
-            account=scope["account"],
-            session_id=scope["session_id"],
-            launch_nonce=scope["launch_nonce"],
-        ):
+        if _token_grace_ok(ctx, scope, supplied_token, validation):
             flog_kv(
                 "LUA",
                 "rejoin_event_token_expired_grace",
@@ -460,21 +516,10 @@ def _validate_lua_session_auth(ctx: ApiContext, farm: Any, body: dict[str, Any],
         else:
             return validation.reason or "invalid_lua_session_token"
 
-    body_session_id = _text(body.get("session_id"))
-    body_launch_nonce = _text(body.get("launch_nonce"))
-    if body_session_id and body_session_id != scope["session_id"]:
-        return "body_session_id_mismatch"
-    if body_launch_nonce and body_launch_nonce != scope["launch_nonce"]:
-        return "body_launch_nonce_mismatch"
-
-    replay = _LUA_EVENT_REPLAY_CACHE.check_and_record(
-        scope["account"],
-        _text(body.get("event_id")),
-        body.get("ts") or body.get("timestamp") or body.get("event_ts"),
-    )
-    if not replay.ok:
-        return replay.reason or "lua_event_replay_rejected"
-    return ""
+    mismatch = _body_session_mismatch(scope, body)
+    if mismatch:
+        return mismatch
+    return _replay_rejection(scope, body)
 
 
 def _query_payload(request: Request) -> dict[str, Any]:
@@ -485,7 +530,117 @@ def _query_payload(request: Request) -> dict[str, Any]:
     return payload
 
 
-def _handle_lua_rejoin_event(ctx: ApiContext, farm: Any, request: Request, body: dict[str, Any], transport: str) -> dict[str, Any]:
+def _rejoin_event_identity(body: dict[str, Any]) -> dict[str, str]:
+    return {
+        "lua_event": str(body.get("event") or ""),
+        "account": str(body.get("username") or body.get("account") or ""),
+    }
+
+
+def _local_fallback_fields(
+    body: dict[str, Any], transport: str, reason: str, supplied_token: str
+) -> dict[str, Any]:
+    return {
+        "reason": reason,
+        "transport": transport,
+        **_rejoin_event_identity(body),
+        "helper_version": str(body.get("helper_version") or ""),
+        "supplied_token_len": len(str(supplied_token or "")),
+    }
+
+
+def _reject_rejoin_event(
+    request: Request,
+    body: dict[str, Any],
+    transport: str,
+    supplied_token: str,
+    reason: str,
+) -> None:
+    if _local_fallback_allowed(request, body, transport):
+        flog_kv(
+            "LUA",
+            "rejoin_event_local_fallback",
+            "warning",
+            **_local_fallback_fields(body, transport, reason, supplied_token),
+        )
+        return
+    status_code = 409 if reason == "duplicate_event" else 403
+    flog_kv(
+        "LUA",
+        "rejoin_event_rejected",
+        "warning",
+        reason=reason,
+        transport=transport,
+        **_rejoin_event_identity(body),
+    )
+    raise HTTPException(status_code, "Invalid Lua session token")
+
+
+def _handle_invalid_backend_token(
+    ctx: ApiContext,
+    farm: Any,
+    request: Request,
+    body: dict[str, Any],
+    transport: str,
+    supplied_token: str,
+) -> None:
+    reason = _validate_lua_session_auth(ctx, farm, body, supplied_token)
+    if not reason:
+        return
+    _reject_rejoin_event(request, body, transport, supplied_token, reason)
+
+
+def _require_rejoin_event_token(
+    ctx: ApiContext,
+    farm: Any,
+    request: Request,
+    body: dict[str, Any],
+    transport: str,
+) -> str:
+    supplied_token = _lua_request_token(request, body)
+    expected_token = str(ctx.instance_token or "")
+    backend_token_valid = bool(
+        expected_token
+        and supplied_token
+        and secrets.compare_digest(supplied_token, expected_token)
+    )
+    if not backend_token_valid and supplied_token:
+        _handle_invalid_backend_token(
+            ctx, farm, request, body, transport, supplied_token
+        )
+        return supplied_token
+    if not backend_token_valid:
+        if _local_fallback_allowed(request, body, transport):
+            flog_kv(
+                "LUA",
+                "rejoin_event_local_fallback",
+                "warning",
+                **_local_fallback_fields(
+                    body,
+                    transport,
+                    "invalid_token_local_fallback",
+                    supplied_token,
+                ),
+            )
+        else:
+            flog_kv(
+                "LUA",
+                "rejoin_event_rejected",
+                "warning",
+                reason="invalid_token",
+                transport=transport,
+            )
+            raise HTTPException(403, "Invalid API token")
+    return supplied_token
+
+
+def _handle_lua_rejoin_event(
+    ctx: ApiContext,
+    farm: Any,
+    request: Request,
+    body: dict[str, Any],
+    transport: str,
+) -> dict[str, Any]:
     if _state_changing_get_rejected(body, transport):
         flog_kv(
             "LUA",
@@ -493,62 +648,19 @@ def _handle_lua_rejoin_event(ctx: ApiContext, farm: Any, request: Request, body:
             "warning",
             reason="state_changing_get_requires_post",
             transport=transport,
-            lua_event=str(body.get("event") or ""),
-            account=str(body.get("username") or body.get("account") or ""),
+            **_rejoin_event_identity(body),
         )
         raise HTTPException(403, "Lua state-changing events require POST")
 
-    supplied_token = _lua_request_token(request, body)
-    expected_token = str(ctx.instance_token or "")
-    backend_token_valid = bool(expected_token and supplied_token and secrets.compare_digest(supplied_token, expected_token))
-    if not backend_token_valid and supplied_token:
-        lua_session_reject_reason = _validate_lua_session_auth(ctx, farm, body, supplied_token)
-        if lua_session_reject_reason:
-            if _local_fallback_allowed(request, body, transport):
-                flog_kv(
-                    "LUA",
-                    "rejoin_event_local_fallback",
-                    "warning",
-                    reason=lua_session_reject_reason,
-                    transport=transport,
-                    lua_event=str(body.get("event") or ""),
-                    account=str(body.get("username") or body.get("account") or ""),
-                    helper_version=str(body.get("helper_version") or ""),
-                    supplied_token_len=len(str(supplied_token or "")),
-                )
-            else:
-                status_code = 409 if lua_session_reject_reason == "duplicate_event" else 403
-                flog_kv(
-                    "LUA",
-                    "rejoin_event_rejected",
-                    "warning",
-                    reason=lua_session_reject_reason,
-                    transport=transport,
-                    lua_event=str(body.get("event") or ""),
-                    account=str(body.get("username") or body.get("account") or ""),
-                )
-                raise HTTPException(status_code, "Invalid Lua session token")
-    elif not backend_token_valid:
-        if _local_fallback_allowed(request, body, transport):
-            flog_kv(
-                "LUA",
-                "rejoin_event_local_fallback",
-                "warning",
-                reason="invalid_token_local_fallback",
-                transport=transport,
-                lua_event=str(body.get("event") or ""),
-                account=str(body.get("username") or body.get("account") or ""),
-                helper_version=str(body.get("helper_version") or ""),
-                supplied_token_len=len(str(supplied_token or "")),
-            )
-        else:
-            flog_kv("LUA", "rejoin_event_rejected", "warning", reason="invalid_token", transport=transport)
-            raise HTTPException(403, "Invalid API token")
-
-    result: dict[str, Any] = farm.handle_lua_rejoin_event(_strip_token_fields(body))
+    _require_rejoin_event_token(ctx, farm, request, body, transport)
+    result: dict[str, Any] = farm.handle_lua_rejoin_event(
+        _strip_token_fields(body)
+    )
     status = 200 if result.get("ok") else int(result.get("status_code") or 400)
     if status >= 400:
-        raise HTTPException(status, result.get("msg") or "Lua rejoin event rejected")
+        raise HTTPException(
+            status, result.get("msg") or "Lua rejoin event rejected"
+        )
     flog_kv(
         "LUA",
         "rejoin_event_api",
@@ -561,61 +673,111 @@ def _handle_lua_rejoin_event(ctx: ApiContext, farm: Any, request: Request, body:
     return result
 
 
-def register(app, ctx: ApiContext) -> None:
-    farm = ctx.farm
+def _api_lua_executor_loader(ctx: ApiContext, request: Request) -> dict:
+    require_api_token(request, ctx)
+    if not os.path.exists(_EXECUTOR_LOADER_PATH):
+        raise HTTPException(404, "Lua executor loader not found")
+    return {"ok": True, "source": _load_executor_loader()}
 
+
+def _api_lua_rejoin_helper(
+    ctx: ApiContext,
+    request: Request,
+    account: str,
+    port: int,
+    shutdown_delay: float,
+) -> PlainTextResponse:
+    if not os.path.exists(_SCRIPT_PATH):
+        raise HTTPException(404, "Lua helper template not found")
+    token_scope = _validate_lua_helper_access(ctx, request, account)
+    script = _render_rejoin_helper(
+        ctx, request, account, port, shutdown_delay, token_scope
+    )
+    version_match = re.search(r'Version="([^"]+)"', script)
+    flog_kv(
+        "LUA",
+        "rejoin_helper_served",
+        account=str(account or ""),
+        port=_selected_lua_port(request, port),
+        client=str(getattr(getattr(request, "client", None), "host", "") or ""),
+        helper_version=version_match.group(1) if version_match else "",
+    )
+    return _lua_text_response(script)
+
+
+def _api_lua_account_module(
+    ctx: ApiContext, request: Request, account: str, port: int
+) -> PlainTextResponse:
+    if not os.path.exists(_ACCOUNT_MODULE_PATH):
+        raise HTTPException(404, "Lua account module template not found")
+    token_scope = _validate_lua_helper_access(ctx, request, account)
+    script = _render_account_module(ctx, request, account, port, token_scope)
+    flog_kv(
+        "LUA",
+        "account_module_served",
+        account=str(account or ""),
+        port=_selected_lua_port(request, port),
+        client=str(getattr(getattr(request, "client", None), "host", "") or ""),
+    )
+    return _lua_text_response(script)
+
+
+async def _api_lua_rejoin_event(
+    ctx: ApiContext, request: Request
+) -> dict[str, Any]:
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(400, "Expected JSON object")
+    if not isinstance(body, dict):
+        raise HTTPException(400, "Expected JSON object")
+    return _handle_lua_rejoin_event(ctx, ctx.farm, request, body, "post")
+
+
+async def _api_lua_rejoin_event_get(
+    ctx: ApiContext, request: Request
+) -> dict[str, Any]:
+    body = _query_payload(request)
+    if not body:
+        raise HTTPException(400, "Expected Lua event query")
+    return _handle_lua_rejoin_event(
+        ctx, ctx.farm, request, body, "get_fallback"
+    )
+
+
+def _register_lua_helpers(app, ctx: ApiContext) -> None:
     @app.get("/api/lua/executor-loader")
     def api_lua_executor_loader(request: Request):
-        require_api_token(request, ctx)
-        if not os.path.exists(_EXECUTOR_LOADER_PATH):
-            raise HTTPException(404, "Lua executor loader not found")
-        return {"ok": True, "source": _load_executor_loader()}
+        return _api_lua_executor_loader(ctx, request)
 
     @app.get("/api/lua/rejoin-helper", response_class=PlainTextResponse)
-    def api_lua_rejoin_helper(request: Request, account: str = "", port: int = 0, shutdown_delay: float = 3.0):
-        if not os.path.exists(_SCRIPT_PATH):
-            raise HTTPException(404, "Lua helper template not found")
-        token_scope = _validate_lua_helper_access(ctx, request, account)
-        script = _render_rejoin_helper(ctx, request, account, port, shutdown_delay, token_scope)
-        _version_match = re.search(r'Version="([^"]+)"', script)
-        flog_kv(
-            "LUA",
-            "rejoin_helper_served",
-            account=str(account or ""),
-            port=_selected_lua_port(request, port),
-            client=str(getattr(getattr(request, "client", None), "host", "") or ""),
-            helper_version=_version_match.group(1) if _version_match else "",
+    def api_lua_rejoin_helper(
+        request: Request,
+        account: str = "",
+        port: int = 0,
+        shutdown_delay: float = 3.0,
+    ):
+        return _api_lua_rejoin_helper(
+            ctx, request, account, port, shutdown_delay
         )
-        return _lua_text_response(script)
 
     @app.get("/api/lua/account-module", response_class=PlainTextResponse)
-    def api_lua_account_module(request: Request, account: str = "", port: int = 0):
-        if not os.path.exists(_ACCOUNT_MODULE_PATH):
-            raise HTTPException(404, "Lua account module template not found")
-        token_scope = _validate_lua_helper_access(ctx, request, account)
-        script = _render_account_module(ctx, request, account, port, token_scope)
-        flog_kv(
-            "LUA",
-            "account_module_served",
-            account=str(account or ""),
-            port=_selected_lua_port(request, port),
-            client=str(getattr(getattr(request, "client", None), "host", "") or ""),
-        )
-        return _lua_text_response(script)
+    def api_lua_account_module(
+        request: Request, account: str = "", port: int = 0
+    ):
+        return _api_lua_account_module(ctx, request, account, port)
 
+
+def _register_lua_events(app, ctx: ApiContext) -> None:
     @app.post("/api/lua/rejoin-event")
     async def api_lua_rejoin_event(request: Request):
-        try:
-            body = await request.json()
-        except Exception:
-            raise HTTPException(400, "Expected JSON object")
-        if not isinstance(body, dict):
-            raise HTTPException(400, "Expected JSON object")
-        return _handle_lua_rejoin_event(ctx, farm, request, body, "post")
+        return await _api_lua_rejoin_event(ctx, request)
 
     @app.get("/api/lua/rejoin-event")
     async def api_lua_rejoin_event_get(request: Request):
-        body = _query_payload(request)
-        if not body:
-            raise HTTPException(400, "Expected Lua event query")
-        return _handle_lua_rejoin_event(ctx, farm, request, body, "get_fallback")
+        return await _api_lua_rejoin_event_get(ctx, request)
+
+
+def register(app, ctx: ApiContext) -> None:
+    _register_lua_helpers(app, ctx)
+    _register_lua_events(app, ctx)

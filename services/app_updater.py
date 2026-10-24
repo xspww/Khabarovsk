@@ -39,7 +39,7 @@ import threading
 import time
 import urllib.request
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NamedTuple
 from urllib.parse import urlparse
 
 from infra import app_paths, net_tls
@@ -174,6 +174,83 @@ def sha256_file(path: str) -> str:
 DOWNLOAD_RETRIES = 3
 
 
+def _resume_offset(tmp: str) -> int:
+    try:
+        if os.path.exists(tmp):
+            return max(0, int(os.path.getsize(tmp)))
+    except Exception:
+        return 0
+    return 0
+
+
+def _response_meta(response: Any) -> tuple[int, int]:
+    try:
+        status = int(getattr(response, "status", 200) or 200)
+    except Exception:
+        status = 200
+    try:
+        total = int(response.headers.get("Content-Length") or 0)
+    except Exception:
+        total = 0
+    return status, total
+
+
+def _download_mode(status: int, resume_from: int) -> tuple[str, int]:
+    mode = "ab" if (status == 206 and resume_from > 0) else "wb"
+    received = resume_from if mode == "ab" else 0
+    return mode, received
+
+
+def _adjusted_total(
+    total: int,
+    mode: str,
+    resume_from: int,
+    expected_size: int,
+) -> int:
+    if mode == "ab":
+        total = total + resume_from if total > 0 else 0
+    if expected_size > 0:
+        total = expected_size
+    return total
+
+
+def _stream_download(
+    response: Any,
+    handle: Any,
+    received: int,
+    total: int,
+    max_size: int,
+    progress: Callable[[int, int], None] | None,
+) -> int:
+    while True:
+        chunk = response.read(_PROGRESS_CHUNK)
+        if not chunk:
+            break
+        handle.write(chunk)
+        received += len(chunk)
+        if max_size > 0 and received > max_size:
+            raise RuntimeError(f"download exceeds size limit ({max_size} bytes)")
+        if progress:
+            try:
+                progress(received, total)
+            except Exception:
+                "intentional: ignore exception"
+    return received
+
+
+def _validate_download_size(
+    received: int,
+    total: int,
+    expected_size: int,
+) -> None:
+    if total > 0 and received != total:
+        raise RuntimeError(f"truncated download ({received}/{total} bytes)")
+    if expected_size > 0 and received != expected_size:
+        raise RuntimeError(
+            f"unexpected asset size ({received}/{expected_size} bytes)"
+        )
+
+
 def _download_once(
     url: str,
     dest: str,
@@ -183,56 +260,39 @@ def _download_once(
     max_size: int = 0,
 ) -> None:
     tmp = dest + ".part"
-    resume_from = 0
-    try:
-        if os.path.exists(tmp):
-            resume_from = max(0, int(os.path.getsize(tmp)))
-    except Exception:
-        resume_from = 0
+    resume_from = _resume_offset(tmp)
     headers = {"User-Agent": UPDATE_USER_AGENT}
     if resume_from > 0:
         headers["Range"] = f"bytes={resume_from}-"
-    request = urllib.request.Request(_validate_release_asset_url(url), headers=headers)
+    request = urllib.request.Request(
+        _validate_release_asset_url(url),
+        headers=headers,
+    )
     # The shared TLS context matters here: without it the download trusted
     # ssl.create_default_context(), which on a frozen build can carry no CA
     # at all, and the update died with CERTIFICATE_VERIFY_FAILED on user
     # machines even though the version check (certifi) had just succeeded.
     opener = urllib.request.build_opener(
-        _HttpsOnlyRedirectHandler(), net_tls.https_handler()
+        _HttpsOnlyRedirectHandler(),
+        net_tls.https_handler(),
     )
-    with opener.open(request, timeout=max(120.0, float(HTTP_TIMEOUT_SECONDS or 20.0))) as response:
-        try:
-            status = int(getattr(response, "status", 200) or 200)
-        except Exception:
-            status = 200
-        try:
-            total = int(response.headers.get("Content-Length") or 0)
-        except Exception:
-            total = 0
-        mode = "ab" if (status == 206 and resume_from > 0) else "wb"
-        received = resume_from if mode == "ab" else 0
-        if mode == "ab":
-            total = total + resume_from if total > 0 else 0
-        if expected_size > 0:
-            total = expected_size
+    with opener.open(
+        request,
+        timeout=max(120.0, float(HTTP_TIMEOUT_SECONDS or 20.0)),
+    ) as response:
+        status, total = _response_meta(response)
+        mode, received = _download_mode(status, resume_from)
+        total = _adjusted_total(total, mode, resume_from, expected_size)
         with open(tmp, mode) as handle:
-            while True:
-                chunk = response.read(_PROGRESS_CHUNK)
-                if not chunk:
-                    break
-                handle.write(chunk)
-                received += len(chunk)
-                if max_size > 0 and received > max_size:
-                    raise RuntimeError(f"download exceeds size limit ({max_size} bytes)")
-                if progress:
-                    try:
-                        progress(received, total)
-                    except Exception:
-                        pass
-        if total > 0 and received != total:
-            raise RuntimeError(f"truncated download ({received}/{total} bytes)")
-        if expected_size > 0 and received != expected_size:
-            raise RuntimeError(f"unexpected asset size ({received}/{expected_size} bytes)")
+            received = _stream_download(
+                response,
+                handle,
+                received,
+                total,
+                max_size,
+                progress,
+            )
+        _validate_download_size(received, total, expected_size)
     os.replace(tmp, dest)
 
 
@@ -251,7 +311,7 @@ def _download(
         if os.path.exists(part):
             os.remove(part)
     except Exception:
-        pass
+        "intentional: ignore exception"
     for attempt in range(1, DOWNLOAD_RETRIES + 1):
         try:
             _download_once(url, dest, progress, expected_size=expected_size, max_size=max_size)
@@ -274,7 +334,7 @@ def _download(
                 try:
                     progress(0, 0)
                 except Exception:
-                    pass
+                    "intentional: ignore exception"
             time.sleep(2.0 * attempt)
     raise RuntimeError(f"download failed after {DOWNLOAD_RETRIES} tries: {last_exc}")
 
@@ -692,7 +752,99 @@ try {
 """.replace("__TIMEOUT__", str(int(SWAP_TIMEOUT_SECONDS)))
 
 
+class _UpdatePlan(NamedTuple):
+    version: str
+    exe_url: str
+    sums_url: str
+    signature_url: str
+    exe_size: int
+    sums_size: int
+    signature_size: int
+    requires_elevation: bool
+
+
+class _UpdateStage(NamedTuple):
+    stage: str
+    exe_name: str
+    staged_exe: str
+    staged_sums: str
+    staged_signature: str
+
+
+def _sizes_within_limits(
+    exe_size: int,
+    sums_size: int,
+    signature_size: int,
+) -> bool:
+    return (
+        0 < exe_size <= MAX_EXE_SIZE_BYTES
+        and 0 < sums_size <= MAX_CHECKSUMS_SIZE_BYTES
+        and 0 < signature_size <= MAX_SIGNATURE_SIZE_BYTES
+    )
+
+
+def _requires_elevation() -> bool:
+    try:
+        install_dir = os.path.dirname(os.path.abspath(app_paths.EXECUTABLE_PATH))
+        with tempfile.NamedTemporaryFile(
+            prefix=".cronus-update-check-",
+            dir=install_dir,
+            delete=False,
+        ) as probe:
+            probe_path = probe.name
+        os.remove(probe_path)
+    except Exception:
+        return True
+    return False
+
+
+def _app_args() -> str:
+    app_args = "--post-update"
+    if "--autostart" in sys.argv:
+        app_args += " --autostart"
+    return app_args
+
+
+def _swap_args(
+    script: str,
+    version: str,
+    new_exe: str,
+    stage: _UpdateStage,
+    log_file: str,
+    boot_log: str,
+    expected: str,
+    app_args: str,
+) -> list[str]:
+    return [
+        "-NoProfile",
+        "-NonInteractive",
+        "-WindowStyle",
+        "Normal",
+        "-ExecutionPolicy",
+        "Bypass",
+        "-File",
+        script,
+        "-ParentPid",
+        str(os.getpid()),
+        "-CurrentExe",
+        new_exe,
+        "-StagedExe",
+        stage.staged_exe,
+        "-LogFile",
+        log_file,
+        "-Version",
+        version,
+        "-AppArgs",
+        app_args,
+        "-ExpectedHash",
+        expected,
+        "-BootLog",
+        boot_log,
+    ]
+
+
 class AppUpdater:
+
     """Small interface, deep implementation: start_update() + status()."""
 
     def __init__(self, farm: Any, logger: Callable[..., None] | None = None):
@@ -736,64 +888,368 @@ class AppUpdater:
 
     def start_update(self, confirm_stop_farm: bool = False) -> dict[str, Any]:
         if not app_paths.IS_COMPILED:
-            return {"ok": False, "accepted": False, "msg": "Source run: pull the latest code instead"}
+            return {
+                "ok": False,
+                "accepted": False,
+                "msg": "Source run: pull the latest code instead",
+            }
         with self._lock:
             if self._job.get("active"):
-                return {"ok": True, "accepted": False, "duplicate": True,
-                        "msg": "Update already running", "job": dict(self._job)}
-            self._job = self._new_job("starting", active=True, ok=False, started_at=time.time())
+                return {
+                    "ok": True,
+                    "accepted": False,
+                    "duplicate": True,
+                    "msg": "Update already running",
+                    "job": dict(self._job),
+                }
+            self._job = self._new_job(
+                "starting",
+                active=True,
+                ok=False,
+                started_at=time.time(),
+            )
         snap = check_app_update()
+        plan, error = self._update_plan(snap)
+        if error is not None:
+            return error
+        assert plan is not None
+        farm_running = bool(getattr(self._farm, "running", False))
+        if farm_running and not confirm_stop_farm:
+            self._set_job(
+                active=False,
+                state="idle",
+                ok=False,
+                need_confirm_stop=True,
+                msg="Farm is running",
+                version=plan.version,
+            )
+            return {
+                "ok": False,
+                "accepted": False,
+                "need_confirm_stop": True,
+                "msg": "Farm is running. Confirm to stop it and update.",
+                "version": plan.version,
+            }
+        self._set_job(
+            state="downloading",
+            version=plan.version,
+            msg=f"Downloading v{plan.version}",
+        )
+        thread = threading.Thread(
+            target=self._run,
+            args=(
+                plan.version,
+                plan.exe_url,
+                plan.sums_url,
+                plan.signature_url,
+                plan.exe_size,
+                plan.sums_size,
+                plan.signature_size,
+                bool(farm_running and confirm_stop_farm),
+                plan.requires_elevation,
+            ),
+            name="CronusAppUpdate",
+            daemon=True,
+        )
+        thread.start()
+        return {
+            "ok": True,
+            "accepted": True,
+            "msg": f"Updating to v{plan.version}",
+            "job": self.status()["job"],
+        }
+
+    def _update_plan(
+        self,
+        snap: dict[str, Any],
+    ) -> tuple[_UpdatePlan | None, dict[str, Any] | None]:
         version = str(snap.get("latest_version") or "")
         if not snap.get("update_available") or not version:
-            self._set_job(active=False, state="idle", ok=False, msg="No update available")
-            return {"ok": False, "accepted": False, "msg": "No update available"}
+            self._set_job(
+                active=False,
+                state="idle",
+                ok=False,
+                msg="No update available",
+            )
+            return None, {
+                "ok": False,
+                "accepted": False,
+                "msg": "No update available",
+            }
         if not re.fullmatch(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?", version):
             message = "Update rejected: invalid release version"
-            self._set_job(active=False, state="failed", ok=False, error=message, msg=message,
-                           finished_at=time.time())
-            return {"ok": False, "accepted": False, "msg": message}
+            self._set_job(
+                active=False,
+                state="failed",
+                ok=False,
+                error=message,
+                msg=message,
+                finished_at=time.time(),
+            )
+            return None, {
+                "ok": False,
+                "accepted": False,
+                "msg": message,
+            }
         exe_name = f"{EXE_ASSET_PREFIX}{version}{EXE_ASSET_SUFFIX}"
         exe_url = pick_exe_asset(snap, version)
         sums_url = pick_checksums_asset(snap)
         signature_url = pick_signature_asset(snap, version)
         if not exe_url or not sums_url or not signature_url:
-            self._set_job(active=False, state="idle", ok=False, msg="Release assets missing")
-            return {"ok": False, "accepted": False, "msg": "Release assets missing for v" + version}
+            self._set_job(
+                active=False,
+                state="idle",
+                ok=False,
+                msg="Release assets missing",
+            )
+            return None, {
+                "ok": False,
+                "accepted": False,
+                "msg": "Release assets missing for v" + version,
+            }
         exe_size = asset_size(snap, exe_name)
         sums_size = asset_size(snap, CHECKSUMS_ASSET)
         signature_size = asset_size(snap, exe_name + ".sig")
-        if (exe_size <= 0 or exe_size > MAX_EXE_SIZE_BYTES
-                or sums_size <= 0 or sums_size > MAX_CHECKSUMS_SIZE_BYTES
-                or signature_size <= 0 or signature_size > MAX_SIGNATURE_SIZE_BYTES):
-            message = "Update rejected: release asset size is missing or outside safe limits"
-            self._set_job(active=False, state="failed", ok=False, error=message, msg=message,
-                           version=version, finished_at=time.time())
-            return {"ok": False, "accepted": False, "msg": message}
-        requires_elevation = False
+        if not _sizes_within_limits(exe_size, sums_size, signature_size):
+            message = (
+                "Update rejected: release asset size is missing or outside "
+                "safe limits"
+            )
+            self._set_job(
+                active=False,
+                state="failed",
+                ok=False,
+                error=message,
+                msg=message,
+                version=version,
+                finished_at=time.time(),
+            )
+            return None, {
+                "ok": False,
+                "accepted": False,
+                "msg": message,
+            }
+        return _UpdatePlan(
+            version=version,
+            exe_url=exe_url,
+            sums_url=sums_url,
+            signature_url=signature_url,
+            exe_size=exe_size,
+            sums_size=sums_size,
+            signature_size=signature_size,
+            requires_elevation=_requires_elevation(),
+        ), None
+
+    def _prune_stage_logs(self, stage: str) -> None:
         try:
-            install_dir = os.path.dirname(os.path.abspath(app_paths.EXECUTABLE_PATH))
-            with tempfile.NamedTemporaryFile(prefix=".cronus-update-check-", dir=install_dir, delete=False) as probe:
-                probe_path = probe.name
-            os.remove(probe_path)
+            for name in os.listdir(stage):
+                if name.startswith("newapp_boot_") and name.endswith(".log"):
+                    try:
+                        os.remove(os.path.join(stage, name))
+                    except Exception:
+                        "intentional: ignore exception"
         except Exception:
-            # Protected install locations (for example Program Files) are
-            # supported through a user-approved UAC handoff at swap time.
-            requires_elevation = True
-        farm_running = bool(getattr(self._farm, "running", False))
-        if farm_running and not confirm_stop_farm:
-            self._set_job(active=False, state="idle", ok=False, need_confirm_stop=True,
-                           msg="Farm is running", version=version)
-            return {"ok": False, "accepted": False, "need_confirm_stop": True,
-                    "msg": "Farm is running. Confirm to stop it and update.", "version": version}
-        self._set_job(state="downloading", version=version, msg=f"Downloading v{version}")
-        thread = threading.Thread(
-            target=self._run,
-            args=(version, exe_url, sums_url, signature_url, exe_size, sums_size, signature_size,
-                  bool(farm_running and confirm_stop_farm), requires_elevation),
-            name="CronusAppUpdate", daemon=True,
+            "intentional: ignore exception"
+
+    def _prepare_update_stage(self, version: str) -> _UpdateStage:
+        stage = os.path.join(app_paths.APP_DATA_DIR, STAGE_DIRNAME)
+        os.makedirs(stage, exist_ok=True)
+        # Attempt-marker boot logs from previous updates are not held
+        # open by any running build (the child keeps its own console),
+        # so prune them instead of accumulating one file per update.
+        self._prune_stage_logs(stage)
+        exe_name = f"{EXE_ASSET_PREFIX}{version}{EXE_ASSET_SUFFIX}"
+        return _UpdateStage(
+            stage=stage,
+            exe_name=exe_name,
+            staged_exe=os.path.join(stage, exe_name),
+            staged_sums=os.path.join(stage, CHECKSUMS_ASSET),
+            staged_signature=os.path.join(stage, exe_name + ".sig"),
         )
-        thread.start()
-        return {"ok": True, "accepted": True, "msg": f"Updating to v{version}", "job": self.status()["job"]}
+
+    def _progress_callback(
+        self,
+        kind: str,
+    ) -> Callable[[int, int], None]:
+        def report(received: int, total: int) -> None:
+            pct = (
+                f"{received * 100 // total}%"
+                if total > 0
+                else f"{received // 1024}KB"
+            )
+            self._set_job(progress=f"{kind} {pct}")
+
+        return report
+
+    def _download_and_verify(
+        self,
+        plan: _UpdatePlan,
+        stage: _UpdateStage,
+    ) -> str:
+        self._set_job(
+            state="downloading",
+            msg=f"Downloading v{plan.version}",
+        )
+        _download(
+            plan.exe_url,
+            stage.staged_exe,
+            self._progress_callback("downloading"),
+            expected_size=plan.exe_size,
+            max_size=MAX_EXE_SIZE_BYTES,
+        )
+        self._set_job(
+            state="verifying",
+            progress="verifying",
+            msg="Verifying checksum",
+        )
+        _download(
+            plan.sums_url,
+            stage.staged_sums,
+            expected_size=plan.sums_size,
+            max_size=MAX_CHECKSUMS_SIZE_BYTES,
+        )
+        _download(
+            plan.signature_url,
+            stage.staged_signature,
+            expected_size=plan.signature_size,
+            max_size=MAX_SIGNATURE_SIZE_BYTES,
+        )
+        with open(stage.staged_sums, encoding="utf-8", errors="replace") as handle:
+            expected = parse_checksums(handle.read(), stage.exe_name)
+        if not expected:
+            raise RuntimeError("checksum entry missing for " + stage.exe_name)
+        actual = sha256_file(stage.staged_exe)
+        if actual != expected:
+            raise RuntimeError("checksum mismatch (download corrupted?)")
+        with open(stage.staged_signature, "rb") as handle:
+            signature_manifest = handle.read(MAX_SIGNATURE_SIZE_BYTES + 1)
+        if not verify_signature_manifest(
+            stage.staged_exe,
+            signature_manifest,
+            plan.version,
+            stage.exe_name,
+        ):
+            raise RuntimeError(
+                "release signature is invalid or does not match this version "
+                "and file"
+            )
+        self._log("UPDATE", "package_verified", version=plan.version)
+        return expected
+
+    def _write_swap_script(self, stage: str, version: str) -> str:
+        script = os.path.join(stage, f"cronus_updater_{version}.ps1")
+        with open(script, "w", encoding="utf-8") as handle:
+            handle.write(_UPDATER_PS1)
+        return script
+
+    def _snapshot_log_pos(self, log_file: str) -> int:
+        try:
+            return os.path.getsize(log_file)
+        except Exception:
+            return 0
+
+    def _launch_swap_script(
+        self,
+        ps_args: list[str],
+        requires_elevation: bool,
+    ) -> subprocess.Popen[Any] | None:
+        if requires_elevation:
+            # Ask for UAC before stopping the farm. Declining elevation
+            # leaves the running app and farm untouched.
+            shell_execute = ctypes.windll.shell32.ShellExecuteW
+            shell_execute.restype = ctypes.c_void_p
+            result = shell_execute(
+                None,
+                "runas",
+                "powershell.exe",
+                subprocess.list2cmdline(ps_args),
+                None,
+                1,
+            )
+            if not result or int(result) <= 32:
+                raise RuntimeError(
+                    "administrator permission was not granted for the "
+                    "protected install folder"
+                )
+            return None
+        return subprocess.Popen(
+            ["powershell.exe", *ps_args],
+            close_fds=True,
+            env=_clean_env_for_updater(),
+        )
+
+    @staticmethod
+    def _read_log_delta(log_file: str, log_pos: int) -> tuple[str, int]:
+        try:
+            with open(log_file, "rb") as handle:
+                handle.seek(log_pos)
+                chunk = handle.read().decode("utf-8", errors="replace")
+                log_pos = handle.tell()
+        except Exception:
+            chunk = ""
+        return chunk, log_pos
+
+    def _wait_for_script_start(
+        self,
+        proc: subprocess.Popen[Any] | None,
+        log_file: str,
+        log_pos: int,
+    ) -> None:
+        # Verified handoff: a stillborn swap script (e.g. a syntax error)
+        # exits instantly and writes nothing. Never suicide the app until
+        # the script proves it started via its first log marker.
+        marker = f"waiting for PID {os.getpid()}"
+        script_started = False
+        script_exit: int | None = None
+        deadline = time.time() + 15.0
+        while time.time() < deadline:
+            script_exit = proc.poll() if proc is not None else None
+            if proc is not None and script_exit is not None:
+                break
+            chunk, log_pos = self._read_log_delta(log_file, log_pos)
+            if marker in chunk:
+                script_started = True
+                break
+            time.sleep(0.5)
+        if not script_started:
+            if proc is not None:
+                try:
+                    proc.kill()
+                except Exception:
+                    "intentional: ignore exception"
+            if script_exit is not None:
+                raise RuntimeError(
+                    "updater script exited immediately "
+                    f"(code {script_exit}) - see {log_file}"
+                )
+            raise RuntimeError(
+                "updater script did not start "
+                f"(no log marker in 15s) - see {log_file}"
+            )
+
+    def _finish_update(self, stop_farm: bool, version: str) -> None:
+        if stop_farm:
+            try:
+                self._farm.stop()
+            except Exception as exc:
+                self._log(
+                    "UPDATE",
+                    "farm_stop_failed",
+                    "warning",
+                    error=exc,
+                )
+        self._set_job(
+            state="restarting",
+            progress="restarting",
+            msg="Verified. Restarting into the new version…",
+        )
+        self._log("UPDATE", "relaunching", version=version)
+        time.sleep(2.0)
+        # Single writer: the swap script already printed the progress
+        # line and the "> updating to vX..." header, and it announces
+        # "> new version running" itself. Anything typed here lands
+        # mid-stream between the script's lines, so stay silent.
+        os._exit(0)
 
     def _run(
         self,
@@ -808,144 +1264,63 @@ class AppUpdater:
         requires_elevation: bool,
     ) -> None:
         try:
-            stage = os.path.join(app_paths.APP_DATA_DIR, STAGE_DIRNAME)
-            os.makedirs(stage, exist_ok=True)
-            # Attempt-marker boot logs from previous updates are not held
-            # open by any running build (the child keeps its own console),
-            # so prune them instead of accumulating one file per update.
-            try:
-                for _name in os.listdir(stage):
-                    if _name.startswith("newapp_boot_") and _name.endswith(".log"):
-                        try:
-                            os.remove(os.path.join(stage, _name))
-                        except Exception:
-                            pass
-            except Exception:
-                pass
-            exe_name = f"{EXE_ASSET_PREFIX}{version}{EXE_ASSET_SUFFIX}"
-            staged_exe = os.path.join(stage, exe_name)
-            staged_sums = os.path.join(stage, CHECKSUMS_ASSET)
-            staged_signature = os.path.join(stage, exe_name + ".sig")
-
-            def progress(kind: str):
-                def report(received: int, total: int):
-                    pct = f"{received * 100 // total}%" if total > 0 else f"{received // 1024}KB"
-                    self._set_job(progress=f"{kind} {pct}")
-                return report
-
-            self._set_job(state="downloading", msg=f"Downloading v{version}")
-            _download(exe_url, staged_exe, progress("downloading"),
-                      expected_size=exe_size, max_size=MAX_EXE_SIZE_BYTES)
-            self._set_job(state="verifying", progress="verifying", msg="Verifying checksum")
-            _download(sums_url, staged_sums, expected_size=sums_size, max_size=MAX_CHECKSUMS_SIZE_BYTES)
-            _download(signature_url, staged_signature, expected_size=signature_size, max_size=MAX_SIGNATURE_SIZE_BYTES)
-            with open(staged_sums, encoding="utf-8", errors="replace") as handle:
-                expected = parse_checksums(handle.read(), exe_name)
-            if not expected:
-                raise RuntimeError("checksum entry missing for " + exe_name)
-            actual = sha256_file(staged_exe)
-            if actual != expected:
-                raise RuntimeError("checksum mismatch (download corrupted?)")
-            with open(staged_signature, "rb") as handle:
-                signature_manifest = handle.read(MAX_SIGNATURE_SIZE_BYTES + 1)
-            if not verify_signature_manifest(staged_exe, signature_manifest, version, exe_name):
-                raise RuntimeError("release signature is invalid or does not match this version and file")
-            self._log("UPDATE", "package_verified", version=version)
-
+            plan = _UpdatePlan(
+                version=version,
+                exe_url=exe_url,
+                sums_url=sums_url,
+                signature_url=signature_url,
+                exe_size=exe_size,
+                sums_size=sums_size,
+                signature_size=signature_size,
+                requires_elevation=requires_elevation,
+            )
+            stage = self._prepare_update_stage(plan.version)
+            expected = self._download_and_verify(plan, stage)
             current_exe = os.path.abspath(app_paths.EXECUTABLE_PATH)
             # Keep the installed path stable so desktop/taskbar shortcuts and
             # startup entries continue to point at the same executable.
             new_exe = current_exe
-            script = os.path.join(stage, f"cronus_updater_{version}.ps1")
-            with open(script, "w", encoding="utf-8") as handle:
-                handle.write(_UPDATER_PS1)
-            log_file = os.path.join(stage, UPDATER_LOG_NAME)
-            boot_log = os.path.join(stage, f"newapp_boot_{version}.log")
-
+            script = self._write_swap_script(stage.stage, plan.version)
+            log_file = os.path.join(stage.stage, UPDATER_LOG_NAME)
+            boot_log = os.path.join(
+                stage.stage,
+                f"newapp_boot_{plan.version}.log",
+            )
             # Snapshot first: the script may log its marker within
             # milliseconds of starting.
-            try:
-                log_pos = os.path.getsize(log_file)
-            except Exception:
-                log_pos = 0
+            log_pos = self._snapshot_log_pos(log_file)
             # Forward boot mode so an update during --autostart resumes the
             # boot chain (auto farm) in the new process.
-            app_args = "--post-update"
-            if "--autostart" in sys.argv:
-                app_args += " --autostart"
-            ps_args = ["-NoProfile", "-NonInteractive", "-WindowStyle", "Normal",
-                 "-ExecutionPolicy", "Bypass", "-File", script,
-                 "-ParentPid", str(os.getpid()),
-                 "-CurrentExe", new_exe,
-                 "-StagedExe", staged_exe,
-                 "-LogFile", log_file,
-                 "-Version", version,
-                 "-AppArgs", app_args,
-                 "-ExpectedHash", expected,
-                 "-BootLog", boot_log]
-            proc = None
-            if requires_elevation:
-                # Ask for UAC before stopping the farm. Declining elevation
-                # leaves the running app and farm untouched.
-                shell_execute = ctypes.windll.shell32.ShellExecuteW
-                shell_execute.restype = ctypes.c_void_p
-                result = shell_execute(
-                    None, "runas", "powershell.exe", subprocess.list2cmdline(ps_args), None, 1
-                )
-                if not result or int(result) <= 32:
-                    raise RuntimeError("administrator permission was not granted for the protected install folder")
-            else:
-                proc = subprocess.Popen(
-                    ["powershell.exe", *ps_args],
-                    close_fds=True,
-                    env=_clean_env_for_updater(),
-                )
-            # Verified handoff: a stillborn swap script (e.g. a syntax error)
-            # exits instantly and writes nothing. Never suicide the app until
-            # the script proves it started via its first log marker.
-            marker = f"waiting for PID {os.getpid()}"
-            script_started = False
-            script_exit: int | None = None
-            deadline = time.time() + 15.0
-            while time.time() < deadline:
-                script_exit = proc.poll() if proc is not None else None
-                if proc is not None and script_exit is not None:
-                    break
-                try:
-                    with open(log_file, "rb") as handle:
-                        handle.seek(log_pos)
-                        chunk = handle.read().decode("utf-8", errors="replace")
-                        log_pos = handle.tell()
-                except Exception:
-                    chunk = ""
-                if marker in chunk:
-                    script_started = True
-                    break
-                time.sleep(0.5)
-            if not script_started:
-                if proc is not None:
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
-                if script_exit is not None:
-                    raise RuntimeError(f"updater script exited immediately (code {script_exit}) - see {log_file}")
-                raise RuntimeError(f"updater script did not start (no log marker in 15s) - see {log_file}")
-            if stop_farm:
-                try:
-                    self._farm.stop()
-                except Exception as exc:
-                    self._log("UPDATE", "farm_stop_failed", "warning", error=exc)
-            self._set_job(state="restarting", progress="restarting",
-                          msg="Verified. Restarting into the new version…")
-            self._log("UPDATE", "relaunching", version=version)
-            time.sleep(2.0)
-            # Single writer: the swap script already printed the progress
-            # line and the "> updating to vX..." header, and it announces
-            # "> new version running" itself. Anything typed here lands
-            # mid-stream between the script's lines, so stay silent.
-            os._exit(0)
+            app_args = _app_args()
+            ps_args = _swap_args(
+                script,
+                plan.version,
+                new_exe,
+                stage,
+                log_file,
+                boot_log,
+                expected,
+                app_args,
+            )
+            proc = self._launch_swap_script(
+                ps_args,
+                plan.requires_elevation,
+            )
+            self._wait_for_script_start(proc, log_file, log_pos)
+            self._finish_update(stop_farm, plan.version)
         except Exception as exc:
-            self._log("UPDATE", "update_failed", "error", error=exc, version=version)
-            self._set_job(active=False, state="failed", ok=False, error=str(exc),
-                           msg=f"Update failed: {exc}", finished_at=time.time())
+            self._log(
+                "UPDATE",
+                "update_failed",
+                "error",
+                error=exc,
+                version=version,
+            )
+            self._set_job(
+                active=False,
+                state="failed",
+                ok=False,
+                error=str(exc),
+                msg=f"Update failed: {exc}",
+                finished_at=time.time(),
+            )

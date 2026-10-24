@@ -11,11 +11,11 @@
  */
 (function () {
   "use strict";
-  var EDGE_PX = 14;
-  var SELECTORS = [".nav", ".main"];
+  let EDGE_PX = 14;
+  let SELECTORS = [".nav", ".main"];
   // Inner scroll areas: show native thumb only when cursor is at the
   // vertical (right 14px) or horizontal (bottom 14px) scrollbar edge.
-  var INNER_SELECTORS = [
+  let INNER_SELECTORS = [
     ".table-wrap",
     ".custom-select-menu",
     ".modal-body",
@@ -26,25 +26,25 @@
     ".selected-close-list",
     ".account-filters"
   ];
-  var instances = [];
+  let instances = [];
 
   function mount(el) {
     if (!el || el.__edgeScrollBound) return;
     el.__edgeScrollBound = true;
-    var parent = el.parentElement;
+    let parent = el.parentElement;
     if (!parent) return;
     try {
       if (getComputedStyle(parent).position === "static") parent.style.position = "relative";
     } catch (e) {}
-    var track = document.createElement("div");
+    let track = document.createElement("div");
     track.className = "edge-scroll-track";
     track.setAttribute("aria-hidden", "true");
-    var thumb = document.createElement("div");
+    let thumb = document.createElement("div");
     thumb.className = "edge-scroll-thumb";
     track.appendChild(thumb);
     parent.appendChild(track);
 
-    var inst = { el: el, track: track, thumb: thumb, dragging: false, dragStartY: 0, dragStartTop: 0 };
+    let inst = { el: el, track: track, thumb: thumb, dragging: false, dragStartY: 0, dragStartTop: 0 };
     instances.push(inst);
 
     function showEdge(on) {
@@ -53,7 +53,7 @@
 
     function place() {
       try {
-        var h = el.clientHeight - 12;
+        let h = el.clientHeight - 12;
         if (h < 40) { track.style.display = "none"; return; }
         track.style.display = "";
         track.style.top = el.offsetTop + 6 + "px";
@@ -64,14 +64,14 @@
     function refresh() {
       place();
       try {
-        var sh = el.scrollHeight, ch = el.clientHeight;
+        let sh = el.scrollHeight, ch = el.clientHeight;
         if (sh <= ch + 1) { track.style.display = "none"; return; }
         if (track.style.display === "none") place();
         if (track.style.display === "none") return;
-        var th = track.clientHeight || 1;
-        var h = Math.max(24, Math.min(th, (ch / sh) * th));
-        var maxTop = Math.max(1, th - h);
-        var ratio = sh - ch > 0 ? el.scrollTop / (sh - ch) : 0;
+        let th = track.clientHeight || 1;
+        let h = Math.max(24, Math.min(th, (ch / sh) * th));
+        let maxTop = Math.max(1, th - h);
+        let ratio = sh - ch > 0 ? el.scrollTop / (sh - ch) : 0;
         ratio = Math.min(1, Math.max(0, ratio));
         thumb.style.height = h + "px";
         thumb.style.top = ratio * maxTop + "px";
@@ -82,7 +82,7 @@
     el.addEventListener("mousemove", function (e) {
       if (inst.dragging) return;
       try {
-        var r = el.getBoundingClientRect();
+        let r = el.getBoundingClientRect();
         showEdge(e.clientX >= r.right - EDGE_PX);
       } catch (err) {}
     });
@@ -107,11 +107,11 @@
     function onDrag(e) {
       if (!inst.dragging) return;
       try {
-        var th = track.clientHeight || 1;
-        var h = thumb.offsetHeight || 24;
-        var maxTop = Math.max(1, th - h);
-        var t = Math.min(maxTop, Math.max(0, inst.dragStartTop + (e.clientY - inst.dragStartY)));
-        var sh = el.scrollHeight, ch = el.clientHeight;
+        let th = track.clientHeight || 1;
+        let h = thumb.offsetHeight || 24;
+        let maxTop = Math.max(1, th - h);
+        let t = Math.min(maxTop, Math.max(0, inst.dragStartTop + (e.clientY - inst.dragStartY)));
+        let sh = el.scrollHeight, ch = el.clientHeight;
         el.scrollTop = (t / maxTop) * (sh - ch);
       } catch (err) {}
     }
@@ -126,7 +126,7 @@
 
     try {
       if (window.ResizeObserver) {
-        var ro = new ResizeObserver(function () { refresh(); });
+        let ro = new ResizeObserver(function () { refresh(); });
         ro.observe(el);
         ro.observe(parent);
       }
@@ -136,42 +136,42 @@
   }
 
   function bindAll() {
-    for (var i = 0; i < SELECTORS.length; i++) {
+    for (let i = 0; i < SELECTORS.length; i++) {
       try {
-        var nodes = document.querySelectorAll(SELECTORS[i]);
-        for (var j = 0; j < nodes.length; j++) mount(nodes[j]);
+        let nodes = document.querySelectorAll(SELECTORS[i]);
+        for (let j = 0; j < nodes.length; j++) mount(nodes[j]);
       } catch (err) {}
     }
-    for (var k = 0; k < instances.length; k++) {
+    for (let k = 0; k < instances.length; k++) {
       try { instances[k].refresh(); } catch (err) {}
     }
     bindInner();
   }
 
   function bindInner() {
-    for (var i = 0; i < INNER_SELECTORS.length; i++) {
-      var nodes;
+    for (let i = 0; i < INNER_SELECTORS.length; i++) {
+      let nodes;
       try { nodes = document.querySelectorAll(INNER_SELECTORS[i]); } catch (err) { continue; }
-      for (var j = 0; j < nodes.length; j++) mountInner(nodes[j]);
+      for (let j = 0; j < nodes.length; j++) mountInner(nodes[j]);
     }
   }
 
   function atScrollEdge(el, e) {
     try {
-      var r = el.getBoundingClientRect();
-      var nearRight = e.clientX >= r.right - EDGE_PX && e.clientX <= r.right + 2;
-      var nearBottom = e.clientY >= r.bottom - EDGE_PX && e.clientY <= r.bottom + 2;
-      var inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+      let r = el.getBoundingClientRect();
+      let nearRight = e.clientX >= r.right - EDGE_PX && e.clientX <= r.right + 2;
+      let nearBottom = e.clientY >= r.bottom - EDGE_PX && e.clientY <= r.bottom + 2;
+      let inside = e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
       return inside && (nearRight || nearBottom);
     } catch (err) { return false; }
   }
 
   function hasOverflow(el) {
     try {
-      var cs = getComputedStyle(el);
-      var oy = cs.overflowY, ox = cs.overflowX;
-      var needY = (oy === "auto" || oy === "scroll") && el.scrollHeight > el.clientHeight + 1;
-      var needX = (ox === "auto" || ox === "scroll") && el.scrollWidth > el.clientWidth + 1;
+      let cs = getComputedStyle(el);
+      let oy = cs.overflowY, ox = cs.overflowX;
+      let needY = (oy === "auto" || oy === "scroll") && el.scrollHeight > el.clientHeight + 1;
+      let needX = (ox === "auto" || ox === "scroll") && el.scrollWidth > el.clientWidth + 1;
       // overflow:auto shorthand case
       if (cs.overflow === "auto" || cs.overflow === "scroll") {
         needY = needY || (el.scrollHeight > el.clientHeight + 1);
@@ -190,7 +190,7 @@
     el.__edgeBarBound = true;
     el.addEventListener("mousemove", function (e) {
       try {
-        var show = hasOverflow(el) && atScrollEdge(el, e);
+        let show = hasOverflow(el) && atScrollEdge(el, e);
         el.classList.toggle("show-bar", show);
       } catch (err) {}
     });

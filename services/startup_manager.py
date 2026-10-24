@@ -93,22 +93,38 @@ def _norm(path: str) -> str:
         return os.path.normcase(str(path or ""))
 
 
+def _shortcut_matches(current: dict[str, Any], exe: str) -> bool:
+    return bool(
+        current.get("present")
+        and _norm(current.get("target", "")) == _norm(exe)
+        and AUTOSTART_FLAG in str(current.get("args") or "")
+    )
+
+
+def _write_shortcut_script(exe: str) -> str:
+    return (
+        _WRITE_SNIPPET
+        .replace("__PATH__", _ps_single(shortcut_path()))
+        .replace("__TARGET__", _ps_single(exe))
+        .replace("__ARGS__", _ps_single(AUTOSTART_FLAG))
+        .replace("__WORKDIR__", _ps_single(os.path.dirname(exe)))
+    )
+
+
+def _save_failure_message(res: dict[str, Any]) -> str:
+    return res.get("msg") or res.get("stdout") or "save failed"
+
+
 def ensure_shortcut(exe_path: str) -> dict[str, Any]:
     exe = os.path.abspath(exe_path)
     if not os.path.isfile(exe):
         return {"ok": False, "msg": f"exe not found: {exe}"}
     current = read_shortcut()
-    if current.get("present") and _norm(current.get("target", "")) == _norm(exe) \
-            and AUTOSTART_FLAG in str(current.get("args") or ""):
+    if _shortcut_matches(current, exe):
         return {"ok": True, "msg": "already installed", "changed": False}
-    script = (_WRITE_SNIPPET
-              .replace("__PATH__", _ps_single(shortcut_path()))
-              .replace("__TARGET__", _ps_single(exe))
-              .replace("__ARGS__", _ps_single(AUTOSTART_FLAG))
-              .replace("__WORKDIR__", _ps_single(os.path.dirname(exe))))
-    res = _run_ps(script)
+    res = _run_ps(_write_shortcut_script(exe))
     if not res["ok"] or "SAVED" not in (res["stdout"] or ""):
-        return {"ok": False, "msg": res.get("msg") or res.get("stdout") or "save failed"}
+        return {"ok": False, "msg": _save_failure_message(res)}
     return {"ok": True, "msg": "installed", "changed": True}
 
 

@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import base64
 import ctypes
@@ -10,7 +10,7 @@ import secrets
 import time
 from collections.abc import Iterable
 from ctypes import wintypes
-from typing import Any
+from typing import Any, NamedTuple
 
 from infra.app_paths import APP_DATA_DIR, LOG_DIR, move_app_data_file
 
@@ -26,6 +26,7 @@ COOKIE_RE = re.compile(
 LINK_CODE_RE = re.compile(r"((?:privateServerLinkCode|linkCode|accessCode)=)[^&\s]+", re.IGNORECASE)
 
 CRONUS_ENTROPY = b"Cronus Hybrid AccountData v1"
+COOKIE_UNREADABLE_REASON = "Saved cookie was encrypted on another PC or Windows profile - sign in again"
 
 
 class DATA_BLOB(ctypes.Structure):
@@ -99,13 +100,22 @@ def encrypt_cookie(cookie: str) -> str:
     return "dpapi:v1:" + base64.b64encode(protected).decode("ascii")
 
 
-def decrypt_cookie(value: str) -> str:
+def decrypt_cookie(value: str, *, strict: bool = True) -> str:
     value = str(value or "").strip()
     if not value:
         return ""
     if value.startswith("dpapi:v1:"):
-        raw = base64.b64decode(value.split(":", 2)[2].encode("ascii"))
-        return dpapi_unprotect(raw, CRONUS_ENTROPY).decode("utf-8", errors="replace")
+        try:
+            raw = base64.b64decode(value.split(":", 2)[2].encode("ascii"))
+            return dpapi_unprotect(raw, CRONUS_ENTROPY).decode("utf-8", errors="replace")
+        except (OSError, ValueError):
+            # WinError 13: the blob was protected by another Windows user/profile
+            # (AccountData.json copied between PCs, recreated profile). Non-strict
+            # callers keep the record usable and ask for a fresh login; the blob
+            # itself is preserved so returning to the original machine still works.
+            if strict:
+                raise
+            return ""
     if value.startswith("_|WARNING:"):
         return value
     return ""
@@ -125,7 +135,7 @@ def _short_hash(value: Any) -> str:
     return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()[:16]
 
 
-def _normalize_owned_private_servers(value: Any) -> list[dict[str, Any]]:
+def _coerce_private_server_list(value: Any) -> list[Any]:
     if isinstance(value, str):
         try:
             value = json.loads(value)
@@ -135,39 +145,67 @@ def _normalize_owned_private_servers(value: Any) -> list[dict[str, Any]]:
         value = [value]
     if not isinstance(value, list):
         return []
+    return value
+
+
+def _server_text(item: dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = item.get(key)
+        if value:
+            return str(value).strip()
+    return ""
+
+
+def _server_float(item: dict[str, Any], *keys: str) -> float:
+    for key in keys:
+        value = item.get(key)
+        if value:
+            return float(value)
+    return 0.0
+
+
+def _server_row(item: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "private_server_id": _server_text(
+            item,
+            "private_server_id",
+            "privateServerId",
+            "vipServerId",
+            "id",
+        ),
+        "owner_user_id": _server_text(item, "owner_user_id", "ownerId", "ownerUserId"),
+        "place_id": _server_text(item, "place_id", "placeId"),
+        "universe_id": _server_text(item, "universe_id", "universeId"),
+        "name": _server_text(item, "name"),
+        "active": bool(item.get("active", True)),
+        "link": _server_text(item, "link", "join_link", "joinLink"),
+        "join_code": _server_text(item, "join_code", "joinCode", "privateServerLinkCode"),
+        "access_code": _server_text(item, "access_code", "accessCode"),
+        "source": _server_text(item, "source"),
+        "status": _server_text(item, "status"),
+        "error": _server_text(item, "error"),
+        "synced_at": _server_float(item, "synced_at", "syncedAt"),
+    }
+
+
+def _server_has_signal(server: dict[str, Any]) -> bool:
+    return bool(
+        server["private_server_id"]
+        or server["link"]
+        or server["join_code"]
+        or server["access_code"]
+        or server["status"]
+        or server["error"]
+    )
+
+
+def _normalize_owned_private_servers(value: Any) -> list[dict[str, Any]]:
     clean: list[dict[str, Any]] = []
-    for item in value:
+    for item in _coerce_private_server_list(value):
         if not isinstance(item, dict):
             continue
-        server = {
-            "private_server_id": str(
-                item.get("private_server_id")
-                or item.get("privateServerId")
-                or item.get("vipServerId")
-                or item.get("id")
-                or ""
-            ).strip(),
-            "owner_user_id": str(item.get("owner_user_id") or item.get("ownerId") or item.get("ownerUserId") or "").strip(),
-            "place_id": str(item.get("place_id") or item.get("placeId") or "").strip(),
-            "universe_id": str(item.get("universe_id") or item.get("universeId") or "").strip(),
-            "name": str(item.get("name") or "").strip(),
-            "active": bool(item.get("active", True)),
-            "link": str(item.get("link") or item.get("join_link") or item.get("joinLink") or "").strip(),
-            "join_code": str(item.get("join_code") or item.get("joinCode") or item.get("privateServerLinkCode") or "").strip(),
-            "access_code": str(item.get("access_code") or item.get("accessCode") or "").strip(),
-            "source": str(item.get("source") or "").strip(),
-            "status": str(item.get("status") or "").strip(),
-            "error": str(item.get("error") or "").strip(),
-            "synced_at": float(item.get("synced_at") or item.get("syncedAt") or 0.0),
-        }
-        if (
-            server["private_server_id"]
-            or server["link"]
-            or server["join_code"]
-            or server["access_code"]
-            or server["status"]
-            or server["error"]
-        ):
+        server = _server_row(item)
+        if _server_has_signal(server):
             clean.append(server)
     return clean
 
@@ -211,32 +249,37 @@ def _redact_vip_links_for_api(value: Any) -> tuple[list[str], list[str]]:
     return [redact_secret(link) for link in links], [_short_hash(link) for link in links]
 
 
-def _merge_redacted_vip_links(new_value: Any, old_value: Any) -> Any:
-    if isinstance(new_value, str):
-        new_links = [line.strip() for line in new_value.splitlines() if line.strip()]
-    elif isinstance(new_value, list):
-        new_links = [str(link).strip() for link in new_value if str(link).strip()]
-    else:
-        return new_value
-    old_links = [str(link).strip() for link in (old_value or []) if str(link).strip()] if isinstance(old_value, list) else []
-    if not any("[REDACTED]" in link for link in new_links):
-        return new_value
-    if not old_links:
-        return [link for link in new_links if "[REDACTED]" not in link]
+def _link_list(value: Any) -> list[str] | None:
+    if isinstance(value, str):
+        return [line.strip() for line in value.splitlines() if line.strip()]
+    if isinstance(value, list):
+        return [str(link).strip() for link in value if str(link).strip()]
+    return None
+
+
+def _merge_links(new_links: list[str], old_links: list[str]) -> list[str]:
     merged: list[str] = []
     for idx, link in enumerate(new_links):
         if "[REDACTED]" in link and idx < len(old_links):
             merged.append(old_links[idx])
         elif "[REDACTED]" not in link:
             merged.append(link)
-    if not merged and old_links:
-        return old_links
     return merged
 
 
-def parse_cookie_line(line: str) -> tuple[str, str]:
-    username, _password, cookie = parse_credential_line(line)
-    return username, cookie
+def _merge_redacted_vip_links(new_value: Any, old_value: Any) -> Any:
+    new_links = _link_list(new_value)
+    if new_links is None:
+        return new_value
+    if not any("[REDACTED]" in link for link in new_links):
+        return new_value
+    old_links = _link_list(old_value) if isinstance(old_value, list) else []
+    if not old_links:
+        return [link for link in new_links if "[REDACTED]" not in link]
+    merged = _merge_links(new_links, old_links)
+    if not merged:
+        return old_links
+    return merged
 
 
 def parse_credential_line(line: str) -> tuple[str, str, str]:
@@ -264,14 +307,817 @@ def parse_credential_line(line: str) -> tuple[str, str, str]:
     return "", "", ""
 
 
-def parse_userpass_line(line: str) -> tuple[str, str]:
-    text = str(line or "").strip()
-    if not text:
-        return "", ""
-    parts = text.split(":", 1)
-    username = parts[0].strip()
-    password = parts[1].strip() if len(parts) > 1 else ""
-    return username, password
+_GATED_HINT = (
+    " (login was gated by a Roblox challenge — if the account shows a "
+    "lock / verify-you-are-human screen, unlock it in the browser first)"
+)
+
+
+def _resolve_ban_by_name(cookie: str, username: str) -> tuple[bool, str, str]:
+    """Resolve a dead cookie's ban state through the public API.
+
+    Returns (banned, resolved_name, user_id); the name is filled even when the
+    account turns out to be alive, so the caller can keep it visible.
+    """
+    try:
+        from services.roblox_identity import resolve_ban_for_dead_cookie as _resolve_dead
+
+        banned, name, uid = _resolve_dead(cookie, username)
+    except Exception:
+        return False, "", ""
+    resolved_name = str(name or "")
+    if banned is True:
+        return True, resolved_name, str(uid or "")
+    return False, resolved_name, ""
+
+
+def _locked_import_mark(
+    cookie: str,
+    username: str,
+    detail: str,
+    validated: str,
+    cookie_username: str,
+) -> tuple[str, str, str, str]:
+    """Return (user, user_id, block_message, import_status) for a moderated lock.
+
+    An empty user means the detail is not a confirmed lock.
+    """
+    try:
+        from services.roblox_identity import moderated_only_detail as _mod_only
+        from services.roblox_identity import resolve_moderated_dead_cookie as _resolve_mod
+    except Exception:
+        return "", "", "", ""
+    try:
+        from services.verify_guard import LOCKED_BLOCK_REASON as _locked_msg
+        from services.verify_guard import LOCKED_REASON as _locked_status
+    except Exception:
+        _locked_msg = "Account locked - face/ID verification required. Verify manually, then click Resume."
+        _locked_status = "identity_locked"
+    try:
+        if not bool(_mod_only(detail)):
+            return "", "", "", ""
+    except Exception:
+        return "", "", "", ""
+    try:
+        mv, _md, mn, mu = _resolve_mod(cookie, username)
+    except Exception:
+        mv, mn, mu = None, "", ""
+    if mv != "locked":
+        return "", "", "", ""
+    user = next(
+        (str(value).strip() for value in (username, mn, validated, cookie_username) if value),
+        "",
+    )
+    return user, (str(mu) if mu else ""), _locked_msg, _locked_status
+
+
+def _apply_fresh_cookie(
+    validator: Any,
+    cc: dict[str, Any] | None,
+    cookie: str,
+    ok: bool,
+    validated: str,
+    detail: str,
+    meta: dict[str, Any],
+    username: str,
+) -> dict[str, Any]:
+    """Revalidate a refreshed cookie; echoes the input state when it fails."""
+    state: dict[str, Any] = {
+        "cookie": cookie,
+        "ok": ok,
+        "validated": validated,
+        "detail": detail,
+        "meta": meta,
+        "refreshed": 0,
+        "errors": [],
+    }
+    fresh = str((cc or {}).get("fresh_cookie") or "")
+    if not fresh:
+        return state
+    try:
+        re_ = validator(fresh)
+        rok = bool(re_[0])
+        rvalidated = str(re_[1] or "")
+        rdetail = str(re_[2] or "")
+        rmeta = re_[3] if len(re_) >= 4 and isinstance(re_[3], dict) else {}
+    except Exception:
+        return state
+    if not rok:
+        return state
+    state.update(cookie=fresh, ok=rok, validated=rvalidated, detail=rdetail, meta=rmeta, refreshed=1)
+    state["errors"].append(f"{username} ok - cookie refreshed via login")
+    return state
+
+
+def _banned_login_record(username: str, cookie: str, cookie_user_id: str) -> dict[str, Any]:
+    """Imported record for a ban confirmed by the login probe."""
+    try:
+        from services.ban_guard import BANNED_BLOCK_REASON as _msg
+        from services.ban_guard import BANNED_IMPORT_STATUS as _status
+    except Exception:
+        _msg = "Account banned (Roblox). Unmark to allow rejoin."
+        _status = "banned"
+    return {
+        "username": username,
+        "cookie": cookie,
+        "cookie_username": username,
+        "cookie_user_id": cookie_user_id,
+        "cookie_mismatch": False,
+        "manual_status": _msg,
+        "import_status": _status,
+    }
+
+
+def _verify_login_mark(
+    outcome: str, username: str, cookie: str, cookie_user_id: str
+) -> tuple[dict[str, Any], str, tuple[int, int, int]]:
+    """Imported record for a locked/recovery/captcha verdict from the login probe."""
+    try:
+        from services.captcha_guard import CAPTCHA_BLOCK_REASON as cap_msg
+        from services.captcha_guard import CAPTCHA_REASON as cap_status
+        from services.credential_check import LOCKED as locked_outcome
+        from services.credential_check import RECOVERY as recovery_outcome
+        from services.verify_guard import LOCKED_BLOCK_REASON as lock_msg
+        from services.verify_guard import LOCKED_REASON as lock_status
+        from services.verify_guard import RECOVERY_BLOCK_REASON as rec_msg
+        from services.verify_guard import RECOVERY_REASON as rec_status
+    except Exception:
+        cap_msg = "CAPTCHA required. Solve it manually, then click Resume or Reload Cookies."
+        cap_status = "captcha_required"
+        lock_msg = "Account locked - face/ID verification required. Verify manually, then click Resume."
+        lock_status = "identity_locked"
+        rec_msg = "Account recovery - passkey/2FA required. Complete recovery manually, then click Resume."
+        rec_status = "account_recovery"
+        locked_outcome, recovery_outcome = "locked", "recovery"
+    if outcome == locked_outcome:
+        msg, status, word = lock_msg, lock_status, "locked"
+        deltas = (1, 0, 0)
+    elif outcome == recovery_outcome:
+        msg, status, word = rec_msg, rec_status, "recovery"
+        deltas = (0, 1, 0)
+    else:
+        msg, status, word = cap_msg, cap_status, "captcha"
+        deltas = (0, 0, 1)
+    record = {
+        "username": username,
+        "cookie": cookie,
+        "cookie_username": username,
+        "cookie_user_id": cookie_user_id,
+        "cookie_mismatch": False,
+        "manual_status": msg,
+        "import_status": status,
+    }
+    return record, word, deltas
+
+
+def _challenge_login_hold(
+    cookie: str,
+    username: str,
+    cookie_user_id: str,
+    records: list[dict[str, Any]],
+    errors: list[str],
+) -> tuple[bool, int]:
+    """Classify a challenge-gated login, appending a lock record when confirmed.
+
+    Returns (login_gated, locked_delta). A confirmed lock appends its record
+    and message here and reports a 1 so the caller skips the shared tail.
+    """
+    try:
+        from services.roblox_identity import reprobe_moderation_response as _reprobe
+        from services.roblox_identity import resolve_moderated_dead_cookie as _resolve_re
+    except Exception:
+        return True, 0
+    try:
+        rs, _rb = _reprobe(cookie)
+    except Exception:
+        return True, 0
+    if (int(rs) if rs else 0) != 403:
+        return True, 0
+    try:
+        mv, md, mn, mu = _resolve_re(cookie, username)
+    except Exception:
+        return True, 0
+    if mv != "locked":
+        return True, 0
+    raw_user = next((v for v in (username, mn) if v), "")
+    lock_user = str(raw_user).strip()
+    records.append(
+        {
+            "username": lock_user or username,
+            "cookie": cookie,
+            "cookie_username": str(raw_user),
+            "cookie_user_id": next((str(v) for v in (mu, cookie_user_id) if v), ""),
+            "cookie_mismatch": False,
+            "manual_status": md,
+            "import_status": "identity_locked",
+        }
+    )
+    errors.append(f"{username} locked (moderation) - imported with Locked mark")
+    return False, 1
+
+
+def _record_pick(
+    item: dict[str, Any],
+    fields: dict[str, Any],
+    *keys: str,
+) -> Any:
+    for key in keys:
+        value = item.get(key)
+        if value not in (None, ""):
+            return value
+    for key in keys:
+        value = fields.get(key)
+        if value not in (None, ""):
+            return value
+    return ""
+
+
+def _record_pick_bool(
+    item: dict[str, Any],
+    fields: dict[str, Any],
+    *keys: str,
+) -> bool:
+    value = _record_pick(item, fields, *keys)
+    if isinstance(value, bool):
+        return value
+    return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _record_group(item: dict[str, Any], fields: dict[str, Any]) -> str:
+    return str(_record_pick(item, fields, "group", "Group") or "Default").strip() or "Default"
+
+
+def _record_encrypted_cookie(item: dict[str, Any], cookie: str) -> str:
+    encrypted = str(
+        item.get("encrypted_cookie") or item.get("EncryptedCookie") or ""
+    ).strip()
+    if encrypted:
+        return encrypted
+    return encrypt_cookie(cookie) if cookie else ""
+
+
+def _normalize_vip_links(item: dict[str, Any]) -> list[Any]:
+    vip_links = item.get("vip_links", item.get("VipLinks", item.get("vipLinks", [])))
+    if isinstance(vip_links, str):
+        vip_links = [line.strip() for line in vip_links.splitlines() if line.strip()]
+    if not isinstance(vip_links, list):
+        vip_links = []
+    return vip_links
+
+
+def _normalize_browser_tracker(
+    item: dict[str, Any],
+    fields: dict[str, Any],
+) -> str:
+    tracker = str(
+        _record_pick(
+            item,
+            fields,
+            "browser_tracker_id",
+            "BrowserTrackerID",
+            "BrowserTrackerId",
+            "browserTrackerId",
+        )
+    ).strip()
+    if not tracker:
+        tracker = str(secrets.randbelow(75_000) + 100_000) + str(
+            secrets.randbelow(800_000) + 100_000
+        )
+    return tracker
+
+
+def _record_float(item: dict[str, Any], key: str, alternate: str | None = None) -> float:
+    return float(item.get(key) or (item.get(alternate) if alternate else None) or 0.0)
+
+
+def _record_priority(item: dict[str, Any]) -> int:
+    return int(float(item.get("priority") or item.get("Priority") or 50))
+
+
+def _record_text_field(item: dict[str, Any], key: str) -> str:
+    return str(item.get(key) or "").strip()
+
+
+def _existing_by_username(records: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    return {
+        str(record.get("username") or "").strip().lower(): record
+        for record in records
+        if str(record.get("username") or "").strip()
+    }
+
+
+def _carry_forward_old(data: dict[str, Any], old: dict[str, Any]) -> dict[str, Any]:
+    if "cookie" not in data and old:
+        data["encrypted_cookie"] = old.get("encrypted_cookie", "")
+    if not data.get("browser_tracker_id") and old:
+        data["browser_tracker_id"] = old.get("browser_tracker_id", "")
+    if not data.get("fields") and old:
+        data["fields"] = old.get("fields", {})
+    if old and "vip_links" in data:
+        data["vip_links"] = _merge_redacted_vip_links(
+            data.get("vip_links"),
+            old.get("vip_links", []),
+        )
+    return data
+
+
+class _ImportState:
+    def __init__(self) -> None:
+        self.records: list[dict[str, Any]] = []
+        self.errors: list[str] = []
+        self.banned = 0
+        self.locked = 0
+        self.account_recovery = 0
+        self.captcha = 0
+        self.refreshed = 0
+        self.cred_check_blocked = False
+
+
+class _ImportLine:
+    def __init__(self, username: str, password: str, cookie: str) -> None:
+        self.username = username
+        self.password = password
+        self.cookie = cookie
+        self.ok: Any = False
+        self.validated: Any = ""
+        self.detail: Any = ""
+        self.meta: dict[str, Any] = {}
+        self.cookie_username = ""
+        self.cookie_user_id = ""
+        self.cookie_mismatch = False
+        self.is_banned = False
+        self.login_gated = False
+        self.skip_line = 0
+
+
+class _BanMarks(NamedTuple):
+    msg: str
+    status: str
+    suspended_msg: str
+    suspended_status: str
+    is_suspended: Any
+
+
+class _CredentialVerdicts(NamedTuple):
+    bad: str
+    banned: str
+    captcha: str
+    locked: str
+    recovery: str
+    transient: str
+    unknown: str
+    valid: str
+
+
+def _import_owner_cookie(cookie: str) -> str:
+    try:
+        from services.roblox_identity import username_for_cookie_in_store as _owner_for_cookie
+
+        username = _owner_for_cookie(cookie)
+    except Exception:
+        username = ""
+    if username:
+        return username
+    try:
+        from services.roblox_identity import cookie_embedded_identity as _embedded_identity
+
+        return _embedded_identity(cookie)[0]
+    except Exception:
+        return ""
+
+
+def _parse_validation(validation: Any) -> tuple[Any, Any, Any, dict[str, Any]]:
+    ok, validated, detail = validation[:3]
+    meta = validation[3] if len(validation) >= 4 and isinstance(validation[3], dict) else {}
+    return ok, validated, detail, meta
+
+
+def _apply_validation_ids(line: _ImportLine) -> None:
+    line.cookie_user_id = str(line.meta.get("user_id") or "")
+    line.cookie_username = str(line.meta.get("username") or line.validated or "")
+
+
+def _import_ban_flag(meta: dict[str, Any], detail: Any) -> bool:
+    try:
+        from services.ban_guard import is_banned_text as _is_banned_text
+
+        return bool(meta.get("is_banned") or meta.get("banned")) or bool(
+            _is_banned_text(detail)
+        )
+    except Exception:
+        return bool(meta.get("is_banned") or meta.get("banned"))
+
+
+def _import_suspended_flag(meta: dict[str, Any]) -> bool:
+    return bool(meta.get("is_suspended") or meta.get("suspended"))
+
+
+def _import_ban_marks() -> _BanMarks:
+    try:
+        from services.ban_guard import BANNED_BLOCK_REASON as msg
+        from services.ban_guard import BANNED_IMPORT_STATUS as status
+        from services.ban_guard import SUSPENDED_BLOCK_REASON as susp_msg
+        from services.ban_guard import SUSPENDED_IMPORT_STATUS as susp_status
+        from services.ban_guard import is_suspended_text as is_suspended
+    except Exception:
+        return _BanMarks(
+            "Account banned (Roblox). Unmark to allow rejoin.",
+            "banned",
+            "Account suspended by Roblox. Unmark to allow rejoin.",
+            "suspended",
+            lambda *a, **k: False,
+        )
+    return _BanMarks(msg, status, susp_msg, susp_status, is_suspended)
+
+
+def _verify_detail_mark(detail: Any) -> tuple[str, str, str] | None:
+    try:
+        from services.captcha_guard import CAPTCHA_BLOCK_REASON as cap_msg
+        from services.captcha_guard import CAPTCHA_REASON as cap_status
+        from services.captcha_guard import is_captcha_text as is_cap_text
+        from services.verify_guard import LOCKED_BLOCK_REASON as lock_msg
+        from services.verify_guard import LOCKED_REASON as lock_status
+        from services.verify_guard import RECOVERY_BLOCK_REASON as rec_msg
+        from services.verify_guard import RECOVERY_REASON as rec_status
+        from services.verify_guard import is_locked_text as is_locked_text
+        from services.verify_guard import is_recovery_text as is_rec_text
+    except Exception:
+        return None
+    try:
+        if is_locked_text(detail):
+            return lock_msg, lock_status, "locked"
+        if is_rec_text(detail):
+            return rec_msg, rec_status, "recovery"
+        if is_cap_text(detail):
+            return cap_msg, cap_status, "captcha"
+    except Exception:
+        return None
+    return None
+
+
+def _handle_moderated_lock(state: _ImportState, line: _ImportLine) -> bool:
+    lock_user, lock_uid, lock_msg, lock_status = _locked_import_mark(
+        line.cookie,
+        line.username,
+        line.detail,
+        line.validated,
+        line.cookie_username,
+    )
+    if not lock_user:
+        return False
+    state.records.append(
+        {
+            "username": lock_user,
+            "cookie": line.cookie,
+            "cookie_username": line.cookie_username or lock_user,
+            "cookie_user_id": str(lock_uid or line.cookie_user_id or ""),
+            "cookie_mismatch": False,
+            "manual_status": lock_msg,
+            "import_status": lock_status,
+        }
+    )
+    state.locked += 1
+    state.errors.append(f"{lock_user} locked (moderation) - imported with Locked mark")
+    return True
+
+
+def _handle_ban_import(state: _ImportState, line: _ImportLine) -> None:
+    if not line.username:
+        line.username = str(line.validated or line.cookie_username or "")
+    if not line.username:
+        state.errors.append("banned cookie missing username")
+        return
+    marks = _import_ban_marks()
+    suspended = _import_suspended_flag(line.meta) or bool(marks.is_suspended(line.detail))
+    mark_msg = marks.suspended_msg if suspended else marks.msg
+    mark_status = marks.suspended_status if suspended else marks.status
+    word = "suspended" if suspended else "banned"
+    if line.cookie_username and line.username.strip().lower() != line.cookie_username.strip().lower():
+        state.errors.append(
+            f"{line.username} {word} — cookie belongs to {line.cookie_username}, "
+            f"imported with {word.capitalize()} mark"
+        )
+    else:
+        state.errors.append(f"{line.username} {word} — imported with {word.capitalize()} mark")
+    state.records.append(
+        {
+            "username": line.username,
+            "cookie": line.cookie,
+            "cookie_username": line.cookie_username or line.username,
+            "cookie_user_id": line.cookie_user_id,
+            "cookie_mismatch": False,
+            "manual_status": mark_msg,
+            "import_status": mark_status,
+        }
+    )
+    state.banned += 1
+
+
+def _handle_verify_mark(state: _ImportState, line: _ImportLine) -> bool:
+    mark = _verify_detail_mark(line.detail)
+    if mark is None:
+        return False
+    msg, status, word = mark
+    user = str(line.username or line.cookie_username or line.validated or "").strip()
+    if not user:
+        state.errors.append(f"{word} cookie missing username")
+        return True
+    state.records.append(
+        {
+            "username": user,
+            "cookie": line.cookie,
+            "cookie_username": line.cookie_username or user,
+            "cookie_user_id": line.cookie_user_id,
+            "cookie_mismatch": False,
+            "manual_status": msg,
+            "import_status": status,
+        }
+    )
+    state.errors.append(f"{user} {word} — imported with {word.capitalize()} mark")
+    return True
+
+
+def _should_probe_credentials(line: _ImportLine, state: _ImportState) -> bool:
+    return bool(
+        not line.ok
+        and not line.is_banned
+        and line.username
+        and line.password
+        and not state.cred_check_blocked
+    )
+
+
+def _credential_verdicts() -> _CredentialVerdicts:
+    from services.credential_check import (
+        BAD_CREDENTIALS,
+        BANNED,
+        CAPTCHA,
+        LOCKED,
+        RECOVERY,
+        TRANSIENT,
+        UNKNOWN,
+        VALID,
+    )
+
+    return _CredentialVerdicts(
+        bad=BAD_CREDENTIALS,
+        banned=BANNED,
+        captcha=CAPTCHA,
+        locked=LOCKED,
+        recovery=RECOVERY,
+        transient=TRANSIENT,
+        unknown=UNKNOWN,
+        valid=VALID,
+    )
+
+
+def _credential_probe(username: str, password: str) -> dict[str, Any] | None:
+    try:
+        from services.credential_check import paced_check_credentials
+
+        return paced_check_credentials(username, password)
+    except Exception:
+        return None
+
+
+def _log_credential_outcome(username: str, outcome: str) -> None:
+    try:
+        from core import flog_kv as _flog_cc
+
+        _flog_cc("ACCOUNT_DATA", "credential_check", account=username, outcome=outcome)
+    except Exception:
+        "intentional: ignore exception"
+
+
+def _login_was_gated(
+    cc: dict[str, Any] | None,
+    outcome: str,
+    verdicts: _CredentialVerdicts,
+    line: _ImportLine,
+) -> bool:
+    return bool(
+        outcome == verdicts.unknown
+        and str((cc or {}).get("challenge_type") or "")
+        and (line.username or line.cookie)
+    )
+
+
+def _apply_fresh_state(
+    state: _ImportState,
+    line: _ImportLine,
+    validator: Any,
+    cc: dict[str, Any] | None,
+) -> None:
+    fresh_state = _apply_fresh_cookie(
+        validator,
+        cc,
+        line.cookie,
+        line.ok,
+        line.validated,
+        line.detail,
+        line.meta,
+        line.username,
+    )
+    line.cookie = fresh_state["cookie"]
+    line.ok = fresh_state["ok"]
+    line.validated = fresh_state["validated"]
+    line.detail = fresh_state["detail"]
+    line.meta = fresh_state["meta"]
+    _apply_validation_ids(line)
+    state.refreshed += fresh_state["refreshed"]
+    state.errors.extend(fresh_state["errors"])
+
+
+def _run_credential_probe(
+    state: _ImportState,
+    line: _ImportLine,
+    validator: Any,
+) -> None:
+    verdicts = _credential_verdicts()
+    cc = _credential_probe(line.username, line.password)
+    outcome = str((cc or {}).get("outcome") or verdicts.unknown)
+    _log_credential_outcome(line.username, outcome)
+    if outcome == verdicts.transient:
+        state.cred_check_blocked = True
+    elif outcome == verdicts.valid:
+        _apply_fresh_state(state, line, validator, cc)
+    elif outcome == verdicts.banned:
+        state.records.append(
+            _banned_login_record(line.username, line.cookie, line.cookie_user_id)
+        )
+        state.banned += 1
+        state.errors.append(f"{line.username} banned (login) - imported with Banned mark")
+        line.skip_line = 1
+    elif outcome in (verdicts.locked, verdicts.recovery, verdicts.captcha):
+        record, word, (delta_l, delta_r, delta_c) = _verify_login_mark(
+            outcome,
+            line.username,
+            line.cookie,
+            line.cookie_user_id,
+        )
+        state.records.append(record)
+        state.locked += delta_l
+        state.account_recovery += delta_r
+        state.captcha += delta_c
+        state.errors.append(
+            f"{line.username} {word} (login) - imported with {word.capitalize()} mark"
+        )
+        line.skip_line = 1
+    elif outcome == verdicts.bad:
+        state.records.append(
+            {
+                "username": line.username,
+                "cookie": line.cookie,
+                "cookie_username": line.username,
+                "cookie_user_id": line.cookie_user_id,
+                "cookie_mismatch": False,
+                "manual_status": "Invalid Cookie: incorrect username or password",
+                "import_status": "cookie_invalid",
+            }
+        )
+        state.errors.append(
+            f"{line.username} wrong password - fix the password and reimport"
+        )
+        line.skip_line = 1
+    if _login_was_gated(cc, outcome, verdicts, line):
+        line.login_gated, line.skip_line = _challenge_login_hold(
+            line.cookie,
+            line.username,
+            line.cookie_user_id,
+            state.records,
+            state.errors,
+        )
+        state.locked += line.skip_line
+
+
+def _handle_valid_import(line: _ImportLine, state: _ImportState) -> None:
+    if not line.username:
+        line.username = str(line.validated or "")
+    elif line.cookie_username and line.username.strip().lower() != line.cookie_username.strip().lower():
+        line.cookie_mismatch = True
+        state.errors.append(f"cookie belongs to {line.cookie_username}, not {line.username}")
+
+
+def _dead_lock_record(
+    line: _ImportLine,
+    lock_user: str,
+    lock_uid: str,
+    lock_msg: str,
+    lock_status: str,
+) -> dict[str, Any]:
+    return {
+        "username": lock_user,
+        "cookie": line.cookie,
+        "cookie_username": lock_user,
+        "cookie_user_id": str(lock_uid or line.cookie_user_id or ""),
+        "cookie_mismatch": False,
+        "manual_status": lock_msg,
+        "import_status": lock_status,
+    }
+
+
+def _handle_dead_cookie(state: _ImportState, line: _ImportLine) -> None:
+    lock_user, lock_uid, lock_msg, lock_status = _locked_import_mark(
+        line.cookie,
+        line.username,
+        line.detail,
+        "",
+        "",
+    )
+    if lock_user:
+        state.records.append(_dead_lock_record(line, lock_user, lock_uid, lock_msg, lock_status))
+        state.errors.append(f"{lock_user} locked (moderation) - imported with Locked mark")
+        return
+    banned_by_name, resolved_name, ban_uid = _resolve_ban_by_name(line.cookie, line.username)
+    if banned_by_name:
+        line.username = line.username or resolved_name
+        state.records.append(_banned_login_record(line.username, line.cookie, ban_uid))
+        state.banned += 1
+        state.errors.append(
+            f"{line.username} banned (cookie expired) — imported with Banned mark"
+        )
+        return
+    if resolved_name:
+        line.username = line.username or resolved_name
+        state.records.append(
+            {
+                "username": line.username,
+                "cookie": line.cookie,
+                "cookie_username": resolved_name,
+                "cookie_user_id": line.cookie_user_id or ban_uid,
+                "cookie_mismatch": False,
+                "manual_status": "",
+                "import_status": "cookie_invalid",
+            }
+        )
+        state.errors.append(
+            f"{line.username} imported, but the cookie is not valid — paste a fresh cookie "
+            "for this account" + (_GATED_HINT if line.login_gated else "")
+        )
+        return
+    state.errors.append(str(line.detail or "") + (_GATED_HINT if line.login_gated else ""))
+
+
+def _plain_import_record(line: _ImportLine) -> dict[str, Any]:
+    return {
+        "username": line.username,
+        "cookie": line.cookie,
+        "cookie_username": line.cookie_username,
+        "cookie_user_id": line.cookie_user_id,
+        "cookie_mismatch": line.cookie_mismatch,
+        "import_status": "cookie_mismatch" if line.cookie_mismatch else "",
+    }
+
+
+def _import_result(
+    state: _ImportState,
+    changed: int,
+    merged: list[dict[str, Any]],
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "ok": True,
+        "imported": changed,
+        "errors": state.errors,
+        "count": len(merged),
+    }
+    if state.banned:
+        result["banned"] = state.banned
+    if state.locked:
+        result["locked"] = state.locked
+    if state.account_recovery:
+        result["recovery"] = state.account_recovery
+    if state.captcha:
+        result["captcha"] = state.captcha
+    if state.refreshed:
+        result["refreshed"] = state.refreshed
+    return result
+
+
+def _validate_import_line(
+    line: _ImportLine,
+    validator: Any,
+    state: _ImportState,
+) -> bool:
+    line.ok, line.validated, line.detail, line.meta = _parse_validation(validator(line.cookie))
+    _apply_validation_ids(line)
+    line.is_banned = _import_ban_flag(line.meta, line.detail)
+    if line.is_banned and not _import_suspended_flag(line.meta):
+        if _handle_moderated_lock(state, line):
+            return True
+    if line.is_banned:
+        _handle_ban_import(state, line)
+        return True
+    if _handle_verify_mark(state, line):
+        return True
+    if _should_probe_credentials(line, state):
+        _run_credential_probe(state, line, validator)
+    if line.skip_line:
+        return True
+    if line.ok:
+        _handle_valid_import(line, state)
+        return False
+    _handle_dead_cookie(state, line)
+    return True
 
 
 class AccountDataStore:
@@ -336,11 +1182,31 @@ class AccountDataStore:
     def get_cookie_from_record(record: dict[str, Any]) -> str:
         encrypted = str(record.get("encrypted_cookie") or record.get("EncryptedCookie") or "").strip()
         if encrypted:
-            return decrypt_cookie(encrypted)
+            return decrypt_cookie(encrypted, strict=False)
         cookie = str(record.get("cookie") or record.get("SecurityToken") or record.get("securityToken") or "").strip()
         if cookie.startswith("_|WARNING:"):
             return cookie
         return ""
+
+    @staticmethod
+    def cookie_state(record: dict[str, Any], cookie: str | None = None) -> str:
+        """Classify the stored cookie as ok | unreadable | missing. Never raises.
+
+        Pass ``cookie`` when the caller already decrypted the record so the hot
+        status path does not pay for a second DPAPI round-trip per account.
+        """
+        encrypted = str(record.get("encrypted_cookie") or record.get("EncryptedCookie") or "").strip()
+        if encrypted:
+            if cookie is None:
+                try:
+                    decrypt_cookie(encrypted)
+                except Exception:
+                    return "unreadable"
+                return "ok"
+            return "ok" if cookie else "unreadable"
+        if cookie is None:
+            cookie = str(record.get("cookie") or record.get("SecurityToken") or record.get("securityToken") or "").strip()
+        return "ok" if cookie.startswith("_|WARNING:") else "missing"
 
     @classmethod
     def normalize_record(cls, item: dict[str, Any]) -> dict[str, Any]:
@@ -348,72 +1214,63 @@ class AccountDataStore:
         if not isinstance(fields, dict):
             fields = {}
 
-        def pick(*keys: str) -> Any:
-            for key in keys:
-                value = item.get(key)
-                if value not in (None, ""):
-                    return value
-            for key in keys:
-                value = fields.get(key)
-                if value not in (None, ""):
-                    return value
-            return ""
-
-        username = str(pick("username", "Username", "Account", "account")).strip()
+        username = str(_record_pick(item, fields, "username", "Username", "Account", "account")).strip()
         cookie = cls.get_cookie_from_record(item)
-        encrypted_cookie = str(item.get("encrypted_cookie") or item.get("EncryptedCookie") or "").strip()
-        if cookie and not encrypted_cookie:
-            encrypted_cookie = encrypt_cookie(cookie)
+        encrypted_cookie = _record_encrypted_cookie(item, cookie)
 
-        vip_links = item.get("vip_links", item.get("VipLinks", item.get("vipLinks", [])))
-        if isinstance(vip_links, str):
-            vip_links = [line.strip() for line in vip_links.splitlines() if line.strip()]
-        if not isinstance(vip_links, list):
-            vip_links = []
+        vip_links = _normalize_vip_links(item)
         owned_private_servers = _normalize_owned_private_servers(
             item.get("owned_private_servers", item.get("ownedPrivateServers", item.get("private_servers", [])))
         )
 
-        job_id = str(pick("job_id", "JobId", "jobId", "SavedJobId")).strip()
+        job_id = str(_record_pick(item, fields, "job_id", "JobId", "jobId", "SavedJobId")).strip()
         if job_id.startswith("http") and job_id not in vip_links:
             vip_links.append(job_id)
 
-        browser_tracker_id = str(
-            pick("browser_tracker_id", "BrowserTrackerID", "BrowserTrackerId", "browserTrackerId")
-        ).strip()
-        if not browser_tracker_id:
-            browser_tracker_id = str(secrets.randbelow(75_000) + 100_000) + str(secrets.randbelow(800_000) + 100_000)
-
+        browser_tracker_id = _normalize_browser_tracker(item, fields)
         normalized_fields = {str(k): str(v) for k, v in fields.items() if v not in (None, "")}
-        def pick_bool(*keys: str) -> bool:
-            value = pick(*keys)
-            if isinstance(value, bool):
-                return value
-            return str(value or "").strip().lower() in {"1", "true", "yes", "y", "on"}
 
         return {
             "username": username,
-            "user_id": str(pick("user_id", "UserID", "userId")).strip(),
-            "alias": str(pick("alias", "Alias")).strip(),
-            "group": str(pick("group", "Group") or "Default").strip() or "Default",
-            "description": str(pick("description", "Description")).strip(),
-            "cookie_username": str(pick("cookie_username", "CookieUsername", "cookieUsername")).strip(),
-            "cookie_user_id": str(pick("cookie_user_id", "CookieUserID", "cookieUserId")).strip(),
-            "cookie_mismatch": pick_bool("cookie_mismatch", "CookieMismatch", "cookieMismatch"),
+            "user_id": str(_record_pick(item, fields, "user_id", "UserID", "userId")).strip(),
+            "alias": str(_record_pick(item, fields, "alias", "Alias")).strip(),
+            "group": _record_group(item, fields),
+            "description": str(_record_pick(item, fields, "description", "Description")).strip(),
+            "cookie_username": str(
+                _record_pick(item, fields, "cookie_username", "CookieUsername", "cookieUsername")
+            ).strip(),
+            "cookie_user_id": str(
+                _record_pick(item, fields, "cookie_user_id", "CookieUserID", "cookieUserId")
+            ).strip(),
+            "cookie_mismatch": _record_pick_bool(
+                item,
+                fields,
+                "cookie_mismatch",
+                "CookieMismatch",
+                "cookieMismatch",
+            ),
             "encrypted_cookie": encrypted_cookie,
-            "place_id": str(pick("place_id", "PlaceId", "placeId", "SavedPlaceId")).strip(),
-            "game_id": str(pick("game_id", "GameId", "gameId", "SavedGameId")).strip(),
+            "place_id": str(
+                _record_pick(item, fields, "place_id", "PlaceId", "placeId", "SavedPlaceId")
+            ).strip(),
+            "game_id": str(
+                _record_pick(item, fields, "game_id", "GameId", "gameId", "SavedGameId")
+            ).strip(),
             "job_id": job_id,
             "vip_links": [str(link).strip() for link in vip_links if str(link).strip()],
             "owned_private_servers": owned_private_servers,
             "browser_tracker_id": browser_tracker_id,
-            "last_use": float(item.get("last_use") or item.get("LastUse") or 0.0),
-            "last_cookie_refresh": float(item.get("last_cookie_refresh") or item.get("LastAttemptedRefresh") or 0.0),
-            "priority": int(float(item.get("priority") or item.get("Priority") or 50)),
-            "manual_status": str(item.get("manual_status") or "").strip(),
-            "finished_at": float(item.get("finished_at") or 0.0),
+            "last_use": _record_float(item, "last_use", "LastUse"),
+            "last_cookie_refresh": _record_float(
+                item,
+                "last_cookie_refresh",
+                "LastAttemptedRefresh",
+            ),
+            "priority": _record_priority(item),
+            "manual_status": _record_text_field(item, "manual_status"),
+            "finished_at": _record_float(item, "finished_at"),
             "fields": normalized_fields,
-            "import_status": str(item.get("import_status") or "").strip(),
+            "import_status": _record_text_field(item, "import_status"),
         }
 
     @classmethod
@@ -421,6 +1278,7 @@ class AccountDataStore:
         out = dict(cls.normalize_record(record))
         cookie = cls.get_cookie_from_record(record)
         out["cookie_present"] = bool(cookie)
+        out["cookie_state"] = cls.cookie_state(record, cookie)
         redacted_vip_links, vip_link_hashes = _redact_vip_links_for_api(out.get("vip_links", []))
         out["vip_links"] = redacted_vip_links
         out["vip_link_hashes"] = vip_link_hashes
@@ -458,25 +1316,13 @@ class AccountDataStore:
         return [self.to_cronus_account(record) for record in self.read_records(include_cookies=True)]
 
     def replace_from_cronus_payload(self, payload: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        existing = {
-            str(record.get("username") or "").strip().lower(): record
-            for record in self.read_records(include_cookies=False)
-            if str(record.get("username") or "").strip()
-        }
+        existing = _existing_by_username(self.read_records(include_cookies=False))
         records: list[dict[str, Any]] = []
         for item in payload:
             data = dict(item)
             username = str(data.get("username") or data.get("Username") or "").strip()
             old = existing.get(username.lower(), {})
-            if "cookie" not in data and old:
-                data["encrypted_cookie"] = old.get("encrypted_cookie", "")
-            if not data.get("browser_tracker_id") and old:
-                data["browser_tracker_id"] = old.get("browser_tracker_id", "")
-            if not data.get("fields") and old:
-                data["fields"] = old.get("fields", {})
-            if old and "vip_links" in data:
-                data["vip_links"] = _merge_redacted_vip_links(data.get("vip_links"), old.get("vip_links", []))
-            records.append(self.normalize_record(data))
+            records.append(self.normalize_record(_carry_forward_old(data, old)))
         self.write_records(records)
         return records
 
@@ -502,547 +1348,29 @@ class AccountDataStore:
         return changed, records
 
     def import_cookie_lines(self, lines: Iterable[str], validator=None) -> dict[str, Any]:
-        records: list[dict[str, Any]] = []
-        errors: list[str] = []
-        banned = 0
-        locked = 0
-        account_recovery = 0
-        captcha = 0
-        refreshed = 0
-        cred_check_blocked = False
-        for line in lines:
-            username, password, cookie = parse_credential_line(line)
-            if not cookie:
+        state = _ImportState()
+        for line_text in lines:
+            line = _ImportLine(*parse_credential_line(line_text))
+            if not line.cookie:
                 continue
-            if not username:
+            if not line.username:
                 # Cookie-only line (no "username:" prefix). The token itself
                 # embeds its owner (uname/uid fields), so identity — and the
                 # ban-by-name check — still work instead of skipping the line.
-                try:
-                    from services.roblox_identity import username_for_cookie_in_store as _owner_for_cookie
-
-                    username = _owner_for_cookie(cookie)
-                except Exception:
-                    username = ""
-                if not username:
-                    try:
-                        from services.roblox_identity import cookie_embedded_identity as _embedded_identity
-
-                        username = _embedded_identity(cookie)[0]
-                    except Exception:
-                        pass
-            cookie_username = ""
-            cookie_user_id = ""
-            cookie_mismatch = False
-            is_banned = False
-            ban_detail = ""
-            _login_gated = False
+                line.username = _import_owner_cookie(line.cookie)
             if validator:
                 try:
-                    validation = validator(cookie)
-                    ok, validated, detail = validation[:3]
-                    meta = validation[3] if len(validation) >= 4 and isinstance(validation[3], dict) else {}
-                    cookie_user_id = str(meta.get("user_id") or "")
-                    cookie_username = str(meta.get("username") or validated or "")
-                    try:
-                        from services.ban_guard import is_banned_text as _is_banned_text
-
-                        is_banned = bool(meta.get("is_banned") or meta.get("banned")) or bool(_is_banned_text(detail))
-                    except Exception:
-                        is_banned = bool(meta.get("is_banned") or meta.get("banned"))
-                    if is_banned and not bool(meta.get("is_suspended") or meta.get("suspended")):
-                        # Bare "User is moderated" wording may be a lock, not
-                        # a ban. Resolve it before the banned branch below so
-                        # a locked account is not imported as Banned.
-                        try:
-                            from services.roblox_identity import moderated_only_detail as _mod_only_v
-                            from services.roblox_identity import resolve_moderated_dead_cookie as _resolve_mod_v
-                            from services.verify_guard import LOCKED_BLOCK_REASON as _LM_V
-                            from services.verify_guard import LOCKED_REASON as _LR_V
-                        except Exception:
-                            _mod_only_v = lambda *a, **k: False  # type: ignore
-                            _resolve_mod_v = lambda *a, **k: (None, "", "", "")  # type: ignore
-                            _LM_V = "Account locked - face/ID verification required. Verify manually, then click Resume."
-                            _LR_V = "identity_locked"
-                        try:
-                            _mod_hit_v = bool(_mod_only_v(detail))
-                        except Exception:
-                            _mod_hit_v = False
-                        if _mod_hit_v:
-                            try:
-                                _mv_v, _md_v, _mn_v, _mu_v = _resolve_mod_v(cookie, username)
-                            except Exception:
-                                _mv_v, _md_v, _mn_v, _mu_v = None, "", "", ""
-                            if _mv_v == "locked":
-                                _lock_user_v = str(username or _mn_v or validated or cookie_username or "").strip()
-                                if _lock_user_v:
-                                    records.append(
-                                        {
-                                            "username": _lock_user_v,
-                                            "cookie": cookie,
-                                            "cookie_username": cookie_username or _lock_user_v,
-                                            "cookie_user_id": str(_mu_v or cookie_user_id or ""),
-                                            "cookie_mismatch": False,
-                                            "manual_status": _LM_V,
-                                            "import_status": _LR_V,
-                                        }
-                                    )
-                                    locked += 1
-                                    errors.append(f"{_lock_user_v} locked (moderation) - imported with Locked mark")
-                                    continue
-                    if is_banned:
-                        ban_detail = str(detail or "")
-                        if not username:
-                            username = str(validated or cookie_username or "")
-                        # Import anyway but marked so it never rejoins. A
-                        # suspension keeps its own mark: it blocks the account
-                        # like a ban but is not permanent.
-                        if not username:
-                            errors.append("banned cookie missing username")
-                            continue
-                        try:
-                            from services.ban_guard import BANNED_BLOCK_REASON as _BANNED_MSG
-                            from services.ban_guard import BANNED_IMPORT_STATUS as _BANNED_STATUS
-                            from services.ban_guard import SUSPENDED_BLOCK_REASON as _SUSP_MSG
-                            from services.ban_guard import SUSPENDED_IMPORT_STATUS as _SUSP_STATUS
-                            from services.ban_guard import is_suspended_text as _is_suspended
-                        except Exception:
-                            _BANNED_MSG = "Account banned (Roblox). Unmark to allow rejoin."
-                            _BANNED_STATUS = "banned"
-                            _SUSP_MSG = "Account suspended by Roblox. Unmark to allow rejoin."
-                            _SUSP_STATUS = "suspended"
-                            _is_suspended = lambda *a, **k: False  # type: ignore
-                        suspended = bool(meta.get("is_suspended") or meta.get("suspended")) or bool(
-                            _is_suspended(ban_detail)
-                        )
-                        mark_msg = _SUSP_MSG if suspended else _BANNED_MSG
-                        mark_status = _SUSP_STATUS if suspended else _BANNED_STATUS
-                        word = "suspended" if suspended else "banned"
-                        if cookie_username and username.strip().lower() != cookie_username.strip().lower():
-                            errors.append(
-                                f"{username} {word} — cookie belongs to {cookie_username}, imported with {word.capitalize()} mark"
-                            )
-                        else:
-                            errors.append(f"{username} {word} — imported with {word.capitalize()} mark")
-                        records.append(
-                            {
-                                "username": username,
-                                "cookie": cookie,
-                                "cookie_username": cookie_username or username,
-                                "cookie_user_id": cookie_user_id,
-                                "cookie_mismatch": False,
-                                "manual_status": mark_msg,
-                                "import_status": mark_status,
-                            }
-                        )
-                        banned += 1
-                        continue
-                    # Roblox challenge wording in the validation detail means
-                    # the account needs manual verification (face/ID scan,
-                    # passkey recovery, or captcha) — import it marked instead
-                    # of dropping it as a generic invalid cookie.
-                    try:
-                        from services.captcha_guard import CAPTCHA_BLOCK_REASON as _CAP_MSG_I
-                        from services.captcha_guard import CAPTCHA_REASON as _CAP_STATUS_I
-                        from services.captcha_guard import is_captcha_text as _is_cap_text_i
-                        from services.verify_guard import LOCKED_BLOCK_REASON as _LOCKED_MSG_I
-                        from services.verify_guard import LOCKED_REASON as _LOCKED_STATUS_I
-                        from services.verify_guard import RECOVERY_BLOCK_REASON as _REC_MSG_I
-                        from services.verify_guard import RECOVERY_REASON as _REC_STATUS_I
-                        from services.verify_guard import is_locked_text as _is_locked_text_i
-                        from services.verify_guard import is_recovery_text as _is_rec_text_i
-                    except Exception:
-                        _LOCKED_MSG_I = "Account locked - face/ID verification required. Verify manually, then click Resume."
-                        _LOCKED_STATUS_I = "identity_locked"
-                        _REC_MSG_I = "Account recovery - passkey/2FA required. Complete recovery manually, then click Resume."
-                        _REC_STATUS_I = "account_recovery"
-                        _CAP_MSG_I = "CAPTCHA required. Solve it manually, then click Resume or Reload Cookies."
-                        _CAP_STATUS_I = "captcha_required"
-                        _is_locked_text_i = lambda *a, **k: False  # type: ignore
-                        _is_rec_text_i = lambda *a, **k: False  # type: ignore
-                        _is_cap_text_i = lambda *a, **k: False  # type: ignore
-                    _verify_mark = None
-                    try:
-                        if _is_locked_text_i(detail):
-                            _verify_mark = (_LOCKED_MSG_I, _LOCKED_STATUS_I, "locked")
-                        elif _is_rec_text_i(detail):
-                            _verify_mark = (_REC_MSG_I, _REC_STATUS_I, "recovery")
-                        elif _is_cap_text_i(detail):
-                            _verify_mark = (_CAP_MSG_I, _CAP_STATUS_I, "captcha")
-                    except Exception:
-                        _verify_mark = None
-                    if _verify_mark is not None:
-                        _v_msg, _v_status, _v_word = _verify_mark
-                        _v_user = str(username or cookie_username or validated or "").strip()
-                        if not _v_user:
-                            errors.append(f"{_v_word} cookie missing username")
-                            continue
-                        records.append(
-                            {
-                                "username": _v_user,
-                                "cookie": cookie,
-                                "cookie_username": cookie_username or _v_user,
-                                "cookie_user_id": cookie_user_id,
-                                "cookie_mismatch": False,
-                                "manual_status": _v_msg,
-                                "import_status": _v_status,
-                            }
-                        )
-                        errors.append(f"{_v_user} {_v_word} — imported with {_v_word.capitalize()} mark")
-                        continue
-                    if not ok and not is_banned and username and password and not cred_check_blocked:
-                        # Dead cookie but the pasted line carries a password:
-                        # ask Roblox what the account actually needs. The
-                        # password is used for this one login attempt only and
-                        # is never stored, logged, or included in any message.
-                        try:
-                            from services.credential_check import (
-                                BAD_CREDENTIALS as _CC_BAD,
-                            )
-                            from services.credential_check import (
-                                BANNED as _CC_BANNED,
-                            )
-                            from services.credential_check import (
-                                CAPTCHA as _CC_CAPTCHA,
-                            )
-                            from services.credential_check import (
-                                LOCKED as _CC_LOCKED,
-                            )
-                            from services.credential_check import (
-                                RECOVERY as _CC_RECOVERY,
-                            )
-                            from services.credential_check import (
-                                TRANSIENT as _CC_TRANSIENT,
-                            )
-                            from services.credential_check import (
-                                UNKNOWN as _CC_UNKNOWN,
-                            )
-                            from services.credential_check import (
-                                VALID as _CC_VALID,
-                            )
-                            from services.credential_check import (
-                                paced_check_credentials as _paced_check,
-                            )
-
-                            _cc = _paced_check(username, password)
-                        except Exception:
-                            _cc = None
-                        _outcome = str((_cc or {}).get("outcome") or _CC_UNKNOWN)
-                        try:
-                            from core import flog_kv as _flog_cc
-
-                            _flog_cc("ACCOUNT_DATA", "credential_check", account=username, outcome=_outcome)
-                        except Exception:
-                            pass
-                        if _outcome == _CC_TRANSIENT:
-                            # Rate-limited / network error: stop password
-                            # checks for the rest of this batch.
-                            cred_check_blocked = True
-                        elif _outcome == _CC_VALID:
-                            _fresh = str((_cc or {}).get("fresh_cookie") or "")
-                            if _fresh:
-                                try:
-                                    _re = validator(_fresh)
-                                    _rok = bool(_re[0])
-                                    _rvalidated = str(_re[1] or "")
-                                    _rdetail = str(_re[2] or "")
-                                    _rmeta = _re[3] if len(_re) >= 4 and isinstance(_re[3], dict) else {}
-                                except Exception:
-                                    _rok, _rvalidated, _rdetail, _rmeta = False, "", "", {}
-                                if _rok:
-                                    cookie = _fresh
-                                    ok, validated, detail = _rok, _rvalidated, _rdetail
-                                    meta = _rmeta
-                                    cookie_user_id = str(meta.get("user_id") or "")
-                                    cookie_username = str(meta.get("username") or validated or "")
-                                    refreshed += 1
-                                    errors.append(f"{username} ok - cookie refreshed via login")
-                        elif _outcome == _CC_BANNED:
-                            try:
-                                from services.ban_guard import BANNED_BLOCK_REASON as _B_MSG_CC
-                                from services.ban_guard import BANNED_IMPORT_STATUS as _B_STATUS_CC
-                            except Exception:
-                                _B_MSG_CC = "Account banned (Roblox). Unmark to allow rejoin."
-                                _B_STATUS_CC = "banned"
-                            records.append(
-                                {
-                                    "username": username,
-                                    "cookie": cookie,
-                                    "cookie_username": username,
-                                    "cookie_user_id": cookie_user_id,
-                                    "cookie_mismatch": False,
-                                    "manual_status": _B_MSG_CC,
-                                    "import_status": _B_STATUS_CC,
-                                }
-                            )
-                            banned += 1
-                            errors.append(f"{username} banned (login) - imported with Banned mark")
-                            continue
-                        elif _outcome in (_CC_LOCKED, _CC_RECOVERY, _CC_CAPTCHA):
-                            try:
-                                from services.captcha_guard import CAPTCHA_BLOCK_REASON as _C_MSG_CC
-                                from services.captcha_guard import CAPTCHA_REASON as _C_STATUS_CC
-                                from services.verify_guard import LOCKED_BLOCK_REASON as _L_MSG_CC
-                                from services.verify_guard import LOCKED_REASON as _L_STATUS_CC
-                                from services.verify_guard import RECOVERY_BLOCK_REASON as _R_MSG_CC
-                                from services.verify_guard import RECOVERY_REASON as _R_STATUS_CC
-                            except Exception:
-                                _L_MSG_CC = "Account locked - face/ID verification required. Verify manually, then click Resume."
-                                _L_STATUS_CC = "identity_locked"
-                                _R_MSG_CC = "Account recovery - passkey/2FA required. Complete recovery manually, then click Resume."
-                                _R_STATUS_CC = "account_recovery"
-                                _C_MSG_CC = "CAPTCHA required. Solve it manually, then click Resume or Reload Cookies."
-                                _C_STATUS_CC = "captcha_required"
-                            if _outcome == _CC_LOCKED:
-                                _v_msg, _v_status, _v_word = _L_MSG_CC, _L_STATUS_CC, "locked"
-                                locked += 1
-                            elif _outcome == _CC_RECOVERY:
-                                _v_msg, _v_status, _v_word = _R_MSG_CC, _R_STATUS_CC, "recovery"
-                                account_recovery += 1
-                            else:
-                                _v_msg, _v_status, _v_word = _C_MSG_CC, _C_STATUS_CC, "captcha"
-                                captcha += 1
-                            records.append(
-                                {
-                                    "username": username,
-                                    "cookie": cookie,
-                                    "cookie_username": username,
-                                    "cookie_user_id": cookie_user_id,
-                                    "cookie_mismatch": False,
-                                    "manual_status": _v_msg,
-                                    "import_status": _v_status,
-                                }
-                            )
-                            errors.append(f"{username} {_v_word} (login) - imported with {_v_word.capitalize()} mark")
-                            continue
-                        elif _outcome == _CC_BAD:
-                            records.append(
-                                {
-                                    "username": username,
-                                    "cookie": cookie,
-                                    "cookie_username": username,
-                                    "cookie_user_id": cookie_user_id,
-                                    "cookie_mismatch": False,
-                                    "manual_status": "Invalid Cookie: incorrect username or password",
-                                    "import_status": "cookie_invalid",
-                                }
-                            )
-                            errors.append(f"{username} wrong password - fix the password and reimport")
-                            continue
-                        if _outcome == _CC_UNKNOWN and str((_cc or {}).get("challenge_type") or "") and (username or cookie):
-                            # Login was gated by a Roblox challenge, so its
-                            # verdict is hidden. The same dead cookie flaps
-                            # between plain 401 and 403-moderated: re-ask a
-                            # few times and classify a moderation hit.
-                            try:
-                                from services.roblox_identity import reprobe_moderation_response as _reprobe
-                                from services.roblox_identity import resolve_moderated_dead_cookie as _resolve_re
-                            except Exception:
-                                _reprobe = lambda *a, **k: (0, "")  # type: ignore
-                                _resolve_re = lambda *a, **k: (None, "", "", "")  # type: ignore
-                            try:
-                                _rs, _rb = _reprobe(cookie)
-                            except Exception:
-                                _rs, _rb = 0, ""
-                            if int(_rs or 0) == 403:
-                                try:
-                                    _mv_re, _md_re, _mn_re, _mu_re = _resolve_re(cookie, username)
-                                except Exception:
-                                    _mv_re, _md_re, _mn_re, _mu_re = None, "", "", ""
-                                if _mv_re == "locked":
-                                    records.append(
-                                        {
-                                            "username": str(username or _mn_re or "").strip() or username,
-                                            "cookie": cookie,
-                                            "cookie_username": str(username or _mn_re or ""),
-                                            "cookie_user_id": str(_mu_re or cookie_user_id or ""),
-                                            "cookie_mismatch": False,
-                                            "manual_status": _md_re,
-                                            "import_status": "identity_locked",
-                                        }
-                                    )
-                                    locked += 1
-                                    errors.append(f"{username} locked (moderation) - imported with Locked mark")
-                                    continue
-                            # Login gated + no moderation verdict: a security
-                            # lock kills the cookie the same way expiry does
-                            # (401 either way), so the status stays Invalid —
-                            # but hint at the likely cause below.
-                            _login_gated = True
-                    if ok:
-                        if not username:
-                            username = str(validated or "")
-                        elif cookie_username and username.strip().lower() != cookie_username.strip().lower():
-                            cookie_mismatch = True
-                            errors.append(f"cookie belongs to {cookie_username}, not {username}")
-                    else:
-                        # A dead cookie answered 403 "User is moderated" fits
-                        # a verification lock as well as a ban. Resolve it
-                        # before the ban check below so a locked account is
-                        # imported as Locked instead of Banned.
-                        try:
-                            from services.roblox_identity import moderated_only_detail as _mod_only_i
-                            from services.roblox_identity import resolve_moderated_dead_cookie as _resolve_mod_i
-                        except Exception:
-                            _mod_only_i = lambda *a, **k: False  # type: ignore
-                            _resolve_mod_i = lambda *a, **k: (None, "", "", "")  # type: ignore
-                        try:
-                            _mod_hit_i = bool(_mod_only_i(detail)) and bool(username or cookie)
-                        except Exception:
-                            _mod_hit_i = False
-                        if _mod_hit_i:
-                            try:
-                                _mv_i, _md_i, _mn_i, _mu_i = _resolve_mod_i(cookie, username)
-                            except Exception:
-                                _mv_i, _md_i, _mn_i, _mu_i = None, "", "", ""
-                            if _mv_i == "locked":
-                                try:
-                                    from services.verify_guard import LOCKED_BLOCK_REASON as _LM_I
-                                    from services.verify_guard import LOCKED_REASON as _LR_I
-                                except Exception:
-                                    _LM_I = "Account locked - face/ID verification required. Verify manually, then click Resume."
-                                    _LR_I = "identity_locked"
-                                _lock_user = str(username or _mn_i or "").strip()
-                                if _lock_user:
-                                    records.append(
-                                        {
-                                            "username": _lock_user,
-                                            "cookie": cookie,
-                                            "cookie_username": _lock_user,
-                                            "cookie_user_id": str(_mu_i or cookie_user_id or ""),
-                                            "cookie_mismatch": False,
-                                            "manual_status": _LM_I,
-                                            "import_status": _LR_I,
-                                        }
-                                    )
-                                    errors.append(f"{_lock_user} locked (moderation) - imported with Locked mark")
-                                    continue
-                        # Cookie is dead — identity cannot come from the cookie.
-                        # Fall back to the public API by username so banned
-                        # accounts are still tracked instead of being skipped.
-                        # resolve_ban_for_dead_cookie also recovers the owner
-                        # from the store, so a cookie-only paste works.
-                        banned_by_name = False
-                        resolved_name = ""
-                        ban_uid = ""
-                        if username or cookie:
-                            try:
-                                from services.roblox_identity import resolve_ban_for_dead_cookie as _resolve_dead
-
-                                _b, _name, _uid = _resolve_dead(cookie, username)
-                                resolved_name = str(_name or "")
-                                if _b is True:
-                                    banned_by_name = True
-                                    ban_uid = _uid
-                                    cookie_user_id = _uid
-                                    if not username:
-                                        username = _name
-                            except Exception:
-                                banned_by_name = False
-                        if banned_by_name:
-                            try:
-                                from services.ban_guard import BANNED_BLOCK_REASON as _BANNED_MSG2
-                                from services.ban_guard import BANNED_IMPORT_STATUS as _BANNED_STATUS2
-                            except Exception:
-                                _BANNED_MSG2 = "Account banned (Roblox). Unmark to allow rejoin."
-                                _BANNED_STATUS2 = "banned"
-                            records.append(
-                                {
-                                    "username": username,
-                                    "cookie": cookie,
-                                    "cookie_username": username,
-                                    "cookie_user_id": ban_uid,
-                                    "cookie_mismatch": False,
-                                    "manual_status": _BANNED_MSG2,
-                                    "import_status": _BANNED_STATUS2,
-                                }
-                            )
-                            banned += 1
-                            errors.append(f"{username} banned (cookie expired) — imported with Banned mark")
-                            continue
-                        if resolved_name:
-                            # The account itself is alive and not banned — only
-                            # this cookie is dead. Keep the account so the user
-                            # can see it and swap in a fresh cookie, instead of
-                            # dropping the line and losing the account entirely.
-                            if not username:
-                                username = resolved_name
-                            records.append(
-                                {
-                                    "username": username,
-                                    "cookie": cookie,
-                                    "cookie_username": resolved_name,
-                                    "cookie_user_id": cookie_user_id or ban_uid,
-                                    "cookie_mismatch": False,
-                                    "manual_status": "",
-                                    "import_status": "cookie_invalid",
-                                }
-                            )
-                            _invalid_msg = (
-                                f"{username} imported, but the cookie is not valid — paste a fresh cookie for this account"
-                            )
-                            if _login_gated:
-                                _invalid_msg += (
-                                    " (login was gated by a Roblox challenge — if the account shows a "
-                                    "lock / verify-you-are-human screen, unlock it in the browser first)"
-                                )
-                            errors.append(_invalid_msg)
-                            continue
-                        _tail_msg = str(detail or "")
-                        if _login_gated:
-                            _tail_msg += (
-                                " (login was gated by a Roblox challenge — if the account shows a "
-                                "lock / verify-you-are-human screen, unlock it in the browser first)"
-                            )
-                        errors.append(_tail_msg)
+                    if _validate_import_line(line, validator, state):
                         continue
                 except Exception as exc:
-                    errors.append(str(exc))
+                    state.errors.append(str(exc))
                     continue
-            if not username:
-                errors.append("cookie line missing username")
+            if not line.username:
+                state.errors.append("cookie line missing username")
                 continue
-            records.append(
-                {
-                    "username": username,
-                    "cookie": cookie,
-                    "cookie_username": cookie_username,
-                    "cookie_user_id": cookie_user_id,
-                    "cookie_mismatch": cookie_mismatch,
-                    "import_status": "cookie_mismatch" if cookie_mismatch else "",
-                }
-            )
-        changed, merged = self.upsert_records(records)
-        result: dict[str, Any] = {"ok": True, "imported": changed, "errors": errors, "count": len(merged)}
-        if banned:
-            result["banned"] = banned
-        if locked:
-            result["locked"] = locked
-        if account_recovery:
-            result["recovery"] = account_recovery
-        if captcha:
-            result["captcha"] = captcha
-        if refreshed:
-            result["refreshed"] = refreshed
-        return result
-
-    @staticmethod
-    def load_pending_imports() -> list[dict[str, Any]]:
-        if not os.path.exists(PENDING_IMPORT_FILE):
-            return []
-        try:
-            with open(PENDING_IMPORT_FILE, encoding="utf-8") as f:
-                data = json.load(f)
-            return data if isinstance(data, list) else []
-        except Exception:
-            return []
-
-    @staticmethod
-    def write_pending_imports(items: list[dict[str, Any]]) -> None:
-        tmp_path = f"{PENDING_IMPORT_FILE}.{os.getpid()}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(items, f, indent=2, ensure_ascii=False)
-        os.replace(tmp_path, PENDING_IMPORT_FILE)
+            state.records.append(_plain_import_record(line))
+        changed, merged = self.upsert_records(state.records)
+        return _import_result(state, changed, merged)
 
     def update_record(self, username: str, updates: dict[str, Any]) -> dict[str, Any] | None:
         records = self.read_records(include_cookies=False)

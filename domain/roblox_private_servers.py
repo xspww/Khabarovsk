@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 import time
@@ -9,6 +8,7 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+from domain._util import _safe_hash
 from infra import net_tls
 
 USER_AGENT = "CronusLauncherHybrid/1.0"
@@ -21,13 +21,6 @@ PRIVATE_GAME_RE = re.compile(
     flags=re.IGNORECASE,
 )
 GUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", flags=re.IGNORECASE)
-
-
-def _safe_hash(value: str) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()[:16]
 
 
 def parse_vip_link(value: str) -> tuple[str, str]:
@@ -70,6 +63,10 @@ def vip_links_for_place(vip_links: list[str], place_id: str) -> list[str]:
     return kept
 
 
+def _vip_component(comp: dict[str, str] | None, key: str) -> str:
+    return str((comp or {}).get(key) or "").strip()
+
+
 def shared_direct_vip_link(candidate: str, place_id: str) -> str:
     """Single owner for the shared-direct VIP rule.
 
@@ -84,32 +81,51 @@ def shared_direct_vip_link(candidate: str, place_id: str) -> str:
         comp = parse_vip_components(text)
     except Exception:
         return ""
-    comp_place = str((comp or {}).get("place_id") or "").strip()
-    code = str((comp or {}).get("link_code") or "").strip() or str((comp or {}).get("access_code") or "").strip()
+    comp_place = _vip_component(comp, "place_id")
+    code = _vip_component(comp, "link_code") or _vip_component(
+        comp, "access_code"
+    )
     place = str(place_id or "").strip()
-    if comp_place and code and (not place or comp_place == place):
-        return text
+    if not comp_place or not code:
+        return ""
+    if place and comp_place != place:
+        return ""
+    return text
+
+
+def _first_query_value(qs: dict[str, list[str]], *keys: str) -> str:
+    for key in keys:
+        values = qs.get(key)
+        if values:
+            return str(values[0] or "")
     return ""
+
+
+def _vip_query_parts(text: str) -> tuple[str, str, str]:
+    parsed = urllib.parse.urlparse(text)
+    qs = urllib.parse.parse_qs(parsed.query)
+    match = re.search(r"/games/(\d+)", parsed.path)
+    place_id = match.group(1) if match else _first_query_value(qs, "placeId")
+    link_code = _first_query_value(
+        qs, "privateServerLinkCode", "linkCode", "code"
+    )
+    access_code = _first_query_value(qs, "accessCode")
+    return str(place_id or ""), link_code, access_code
 
 
 def parse_vip_components(value: str) -> dict[str, str]:
     text = str(value or "").strip()
     if not text:
         return {"place_id": "", "link_code": "", "access_code": ""}
-    parsed = urllib.parse.urlparse(text)
-    qs = urllib.parse.parse_qs(parsed.query)
-    match = re.search(r"/games/(\d+)", parsed.path)
-    place_id = match.group(1) if match else qs.get("placeId", [""])[0]
-    link_code = (
-        qs.get("privateServerLinkCode", [""])[0]
-        or qs.get("linkCode", [""])[0]
-        or qs.get("code", [""])[0]
-    )
-    access_code = qs.get("accessCode", [""])[0]
+    place_id, link_code, access_code = _vip_query_parts(text)
     if not link_code and access_code and not GUID_RE.match(access_code):
         link_code = access_code
         access_code = ""
-    return {"place_id": str(place_id or ""), "link_code": str(link_code or ""), "access_code": str(access_code or "")}
+    return {
+        "place_id": str(place_id or ""),
+        "link_code": str(link_code or ""),
+        "access_code": str(access_code or ""),
+    }
 
 
 def parse_vip_access_code_html(html: str) -> dict[str, str]:
@@ -125,16 +141,13 @@ def parse_vip_access_code_html(html: str) -> dict[str, str]:
     }
 
 
-def resolve_vip_access_code(cookie: str, vip_link: str, timeout: float = 12.0) -> dict[str, Any]:
-    parts = parse_vip_components(vip_link)
-    place_id = parts.get("place_id", "")
-    link_code = parts.get("link_code", "")
-    access_code = parts.get("access_code", "")
-    if access_code and GUID_RE.match(access_code):
-        return {"ok": True, "place_id": place_id, "access_code": access_code, "link_code": link_code or access_code, "source": "query"}
-    if not place_id or not link_code:
-        return {"ok": False, "msg": "VIP link must contain placeId and privateServerLinkCode", "place_id": place_id, "link_code": link_code}
-    url = f"{ROBLOX_HOME}games/{urllib.parse.quote(place_id)}?privateServerLinkCode={urllib.parse.quote(link_code)}"
+def _vip_invite_request(
+    cookie: str, place_id: str, link_code: str, timeout: float
+) -> tuple[str, int, str]:
+    url = (
+        f"{ROBLOX_HOME}games/{urllib.parse.quote(place_id)}"
+        f"?privateServerLinkCode={urllib.parse.quote(link_code)}"
+    )
     req = urllib.request.Request(
         url,
         headers={
@@ -146,17 +159,66 @@ def resolve_vip_access_code(cookie: str, vip_link: str, timeout: float = 12.0) -
     )
     try:
         with net_tls.urlopen(req, timeout=timeout) as resp:
-            body = resp.read().decode("utf-8", errors="replace")
-            status = int(resp.status)
+            return (
+                resp.read().decode("utf-8", errors="replace"),
+                int(resp.status),
+                "",
+            )
     except urllib.error.HTTPError as exc:
-        return {"ok": False, "msg": f"VIP invite resolve failed ({exc.code})", "place_id": place_id, "link_code": link_code}
+        return "", 0, f"VIP invite resolve failed ({exc.code})"
     except Exception as exc:
-        return {"ok": False, "msg": f"VIP invite resolve failed: {exc}", "place_id": place_id, "link_code": link_code}
+        return "", 0, f"VIP invite resolve failed: {exc}"
+
+
+def _invite_place_matches(parsed: dict[str, str], place_id: str) -> bool:
+    return str(parsed.get("place_id") or "") == place_id
+
+
+def resolve_vip_access_code(cookie: str, vip_link: str, timeout: float = 12.0) -> dict[str, Any]:
+    parts = parse_vip_components(vip_link)
+    place_id = parts.get("place_id", "")
+    link_code = parts.get("link_code", "")
+    access_code = parts.get("access_code", "")
+    if access_code and GUID_RE.match(access_code):
+        return {
+            "ok": True,
+            "place_id": place_id,
+            "access_code": access_code,
+            "link_code": link_code or access_code,
+            "source": "query",
+        }
+    if not place_id or not link_code:
+        return {
+            "ok": False,
+            "msg": "VIP link must contain placeId and privateServerLinkCode",
+            "place_id": place_id,
+            "link_code": link_code,
+        }
+    body, status, error = _vip_invite_request(
+        cookie, place_id, link_code, timeout
+    )
+    if error:
+        return {
+            "ok": False,
+            "msg": error,
+            "place_id": place_id,
+            "link_code": link_code,
+        }
     parsed = parse_vip_access_code_html(body)
     if not parsed.get("ok"):
-        return {"ok": False, "msg": f"VIP invite did not expose accessCode ({status})", "place_id": place_id, "link_code": link_code}
-    if str(parsed.get("place_id") or "") != place_id:
-        return {"ok": False, "msg": "VIP invite placeId mismatch", "place_id": place_id, "link_code": link_code}
+        return {
+            "ok": False,
+            "msg": f"VIP invite did not expose accessCode ({status})",
+            "place_id": place_id,
+            "link_code": link_code,
+        }
+    if not _invite_place_matches(parsed, place_id):
+        return {
+            "ok": False,
+            "msg": "VIP invite placeId mismatch",
+            "place_id": place_id,
+            "link_code": link_code,
+        }
     return {
         "ok": True,
         "place_id": place_id,
@@ -182,7 +244,7 @@ def _api_error_message(payload: dict[str, Any], fallback: str) -> str:
             if message:
                 return message
     except Exception:
-        pass
+        "intentional: ignore exception"
     message = str(payload.get("message") or payload.get("error") or "").strip()
     return message or fallback
 
@@ -274,28 +336,72 @@ def _server_access_code(server: dict[str, Any]) -> str:
     return str(server.get("access_code") or server.get("accessCode") or "").strip()
 
 
-def build_owned_private_server_link(place_id: str, server: dict[str, Any]) -> str:
-    raw_link = server.get("link") or server.get("join_link") or server.get("joinLink") or ""
+def _server_link_value(server: dict[str, Any]) -> str:
+    raw_link = (
+        server.get("link")
+        or server.get("join_link")
+        or server.get("joinLink")
+        or ""
+    )
     if isinstance(raw_link, dict):
-        raw_link = raw_link.get("url") or raw_link.get("href") or raw_link.get("link") or ""
-    link = str(raw_link or "").strip()
+        raw_link = (
+            raw_link.get("url")
+            or raw_link.get("href")
+            or raw_link.get("link")
+            or ""
+        )
+    return str(raw_link or "").strip()
+
+
+def _server_place(place_id: str, server: dict[str, Any]) -> str:
+    return str(place_id or _server_place_id(server) or "").strip()
+
+
+def _vip_link_probe(link: str) -> tuple[bool, str]:
+    parts = parse_vip_components(link)
+    place = str(parts.get("place_id") or "")
+    link_code = str(parts.get("link_code") or "")
+    access_code = str(parts.get("access_code") or "")
+    complete = bool(place and (link_code or access_code))
+    return complete, link_code.strip()
+
+
+def _vip_place_url(place: str, key: str, value: str) -> str:
+    return (
+        f"{ROBLOX_HOME}games/{urllib.parse.quote(place, safe='')}"
+        f"/?{key}={urllib.parse.quote(value, safe='')}"
+    )
+
+
+def build_owned_private_server_link(place_id: str, server: dict[str, Any]) -> str:
+    link = _server_link_value(server)
+    raw_link_code = ""
     if link:
-        parts = parse_vip_components(link)
-        if parts.get("place_id") and (parts.get("link_code") or parts.get("access_code")):
+        complete, raw_link_code = _vip_link_probe(link)
+        if complete:
             return link
-        raw_link_code = str(parts.get("link_code") or "").strip()
-    else:
-        raw_link_code = ""
-    place = str(place_id or _server_place_id(server) or "").strip()
+    place = _server_place(place_id, server)
     join_code = _server_join_code(server) or raw_link_code
     if place and join_code:
-        return f"{ROBLOX_HOME}games/{urllib.parse.quote(place, safe='')}/?privateServerLinkCode={urllib.parse.quote(join_code, safe='')}"
+        return _vip_place_url(place, "privateServerLinkCode", join_code)
     access_code = _server_access_code(server)
     if place and access_code:
-        return f"{ROBLOX_HOME}games/{urllib.parse.quote(place, safe='')}/?accessCode={urllib.parse.quote(access_code, safe='')}"
+        return _vip_place_url(place, "accessCode", access_code)
     if link:
         return link
     return ""
+
+
+def _owner_conflicts(owner_user_id: str, owner: str) -> bool:
+    return bool(owner_user_id and owner and owner != str(owner_user_id))
+
+
+def _owner_matches(owner_user_id: str, owner: str) -> bool:
+    return bool(owner_user_id and owner and owner == str(owner_user_id))
+
+
+def _id_matches(expected: str, actual: str) -> bool:
+    return not expected or not actual or actual == str(expected)
 
 
 def _private_server_matches_owner(
@@ -306,23 +412,36 @@ def _private_server_matches_owner(
 ) -> bool:
     if server.get("active") is False:
         return False
-    owner = _server_owner_id(server)
-    if owner_user_id and owner and owner != str(owner_user_id):
+    if _owner_conflicts(owner_user_id, _server_owner_id(server)):
         return False
-    server_place = _server_place_id(server)
-    server_universe = _server_universe_id(server)
-    if place_id and server_place and server_place != str(place_id):
+    if not _id_matches(place_id, _server_place_id(server)):
         return False
-    if universe_id and server_universe and server_universe != str(universe_id):
+    if not _id_matches(universe_id, _server_universe_id(server)):
         return False
     return bool(_server_id(server) or build_owned_private_server_link(place_id, server))
+
+
+def _server_page_params(limit: int) -> dict[str, str]:
+    return {"limit": str(max(10, min(int(limit or 100), 100)))}
+
+
+def _server_page_data(
+    payload: dict[str, Any],
+) -> tuple[list[dict[str, Any]], str]:
+    data = payload.get("data")
+    if isinstance(data, list):
+        servers = [item for item in data if isinstance(item, dict)]
+    else:
+        servers = []
+    cursor = str(payload.get("nextPageCursor") or "").strip()
+    return servers, cursor
 
 
 def list_my_private_servers(client: Any, limit: int = 100, max_pages: int = 5) -> tuple[bool, list[dict[str, Any]], str]:
     servers: list[dict[str, Any]] = []
     cursor = ""
     for _page in range(max(1, int(max_pages or 1))):
-        params = {"limit": str(max(10, min(int(limit or 100), 100)))}
+        params = _server_page_params(limit)
         if cursor:
             params["cursor"] = cursor
         url = GAMES_BASE + "v1/private-servers/my-private-servers?" + urllib.parse.urlencode(params)
@@ -330,10 +449,8 @@ def list_my_private_servers(client: Any, limit: int = 100, max_pages: int = 5) -
         payload = _json_body(body)
         if not 200 <= status < 300:
             return False, servers, _api_error_message(payload, f"Private server list failed ({status})")
-        data = payload.get("data")
-        if isinstance(data, list):
-            servers.extend([item for item in data if isinstance(item, dict)])
-        cursor = str(payload.get("nextPageCursor") or "").strip()
+        page, cursor = _server_page_data(payload)
+        servers.extend(page)
         if not cursor:
             break
     return True, servers, "ok"
@@ -351,10 +468,7 @@ def list_private_servers_for_place(
     servers: list[dict[str, Any]] = []
     cursor = ""
     for _page in range(max(1, int(max_pages or 1))):
-        params = {
-            "sortOrder": "Asc",
-            "limit": str(max(10, min(int(limit or 100), 100))),
-        }
+        params = {"sortOrder": "Asc", **_server_page_params(limit)}
         if cursor:
             params["cursor"] = cursor
         url = GAMES_BASE + f"v1/games/{urllib.parse.quote(place, safe='')}/private-servers?" + urllib.parse.urlencode(params)
@@ -362,10 +476,8 @@ def list_private_servers_for_place(
         payload = _json_body(body)
         if not 200 <= status < 300:
             return False, servers, _api_error_message(payload, f"Private server place list failed ({status})")
-        data = payload.get("data")
-        if isinstance(data, list):
-            servers.extend([item for item in data if isinstance(item, dict)])
-        cursor = str(payload.get("nextPageCursor") or "").strip()
+        page, cursor = _server_page_data(payload)
+        servers.extend(page)
         if not cursor:
             break
     return True, servers, "ok"
@@ -450,6 +562,65 @@ def _merge_private_server_secrets(candidate: dict[str, Any], known: dict[str, An
             candidate[dst_key] = known.get(src_key)
 
 
+def _clean_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _expected_server_key(
+    owner_user_id: str, place_id: str, universe_id: str
+) -> tuple[str, str, str]:
+    return (
+        str(owner_user_id or ""),
+        str(place_id or ""),
+        str(universe_id or ""),
+    )
+
+
+def _server_key_matches(
+    item: dict[str, Any],
+    expected: tuple[str, str, str],
+    owner_user_id: str,
+    place_id: str,
+    universe_id: str,
+) -> bool:
+    item_key = _private_server_identity_key(
+        item, owner_user_id, place_id, universe_id
+    )
+    return bool(expected[0] and item_key == expected)
+
+
+def _server_has_join_data(item: dict[str, Any], place_id: str) -> bool:
+    return bool(
+        build_owned_private_server_link(place_id, item)
+        or _server_access_code(item)
+        or _server_join_code(item)
+    )
+
+
+def _server_matches_known(
+    item: dict[str, Any],
+    expected: tuple[str, str, str],
+    sid: str,
+    owner_user_id: str,
+    place_id: str,
+    universe_id: str,
+) -> bool:
+    if sid and _server_id(item) == sid:
+        return True
+    return _server_key_matches(
+        item, expected, owner_user_id, place_id, universe_id
+    )
+
+
+def _server_matches(
+    item: dict[str, Any], sid: str, owner_user_id: str
+) -> bool:
+    item_id = _server_id(item)
+    if sid and item_id and item_id == sid:
+        return True
+    return _owner_matches(owner_user_id, _server_owner_id(item))
+
+
 def _known_private_server_for(
     records: list[dict[str, Any]],
     private_server_id: str,
@@ -457,22 +628,17 @@ def _known_private_server_for(
     place_id: str,
     universe_id: str,
 ) -> dict[str, Any]:
-    expected_key = (str(owner_user_id or ""), str(place_id or ""), str(universe_id or ""))
-    sid = str(private_server_id or "").strip()
+    expected_key = _expected_server_key(owner_user_id, place_id, universe_id)
+    sid = _clean_text(private_server_id)
     fallback: dict[str, Any] = {}
     for item in records or []:
         if not isinstance(item, dict):
             continue
-        item_id = _server_id(item)
-        matched = False
-        if sid and item_id and item_id == sid:
-            matched = True
-        item_key = _private_server_identity_key(item, owner_user_id, place_id, universe_id)
-        if expected_key[0] and item_key == expected_key:
-            matched = True
-        if not matched:
+        if not _server_matches_known(
+            item, expected_key, sid, owner_user_id, place_id, universe_id
+        ):
             continue
-        if build_owned_private_server_link(place_id, item) or _server_access_code(item) or _server_join_code(item):
+        if _server_has_join_data(item, place_id):
             return item
         if not fallback:
             fallback = item
@@ -484,20 +650,15 @@ def _place_private_server_for(
     private_server_id: str,
     owner_user_id: str,
 ) -> dict[str, Any]:
-    sid = str(private_server_id or "").strip()
+    sid = _clean_text(private_server_id)
     owner = str(owner_user_id or "").strip()
     fallback: dict[str, Any] = {}
     for item in servers or []:
         if not isinstance(item, dict):
             continue
-        item_id = _server_id(item)
-        item_owner = _server_owner_id(item)
-        matched = bool(sid and item_id and item_id == sid)
-        if not matched and owner and item_owner and item_owner == owner:
-            matched = True
-        if not matched:
+        if not _server_matches(item, sid, owner):
             continue
-        if build_owned_private_server_link("", item) or _server_access_code(item) or _server_join_code(item):
+        if _server_has_join_data(item, ""):
             return item
         if not fallback:
             fallback = item
@@ -537,6 +698,30 @@ def vip_unavailable_permanently(message: str) -> bool:
 VIP_UNAVAILABLE_TTL_SECONDS = 6 * 60 * 60
 
 
+def _record_field(item: dict[str, Any], key: str) -> str:
+    return str(item.get(key) or "").strip()
+
+
+def _is_unavailable_record(item: dict[str, Any], place: str) -> bool:
+    if _record_field(item, "place_id") != place:
+        return False
+    if _record_field(item, "status").lower() != "error":
+        return False
+    return vip_unavailable_permanently(_record_field(item, "error"))
+
+
+def _record_fresh(
+    item: dict[str, Any], current: float, ttl_seconds: float
+) -> bool:
+    try:
+        synced_at = float(item.get("synced_at") or 0.0)
+    except Exception:
+        synced_at = 0.0
+    return bool(
+        synced_at and (current - synced_at) <= float(ttl_seconds or 0.0)
+    )
+
+
 def remembered_vip_unavailable(
     records: list[dict[str, Any]] | None,
     place_id: Any,
@@ -556,19 +741,11 @@ def remembered_vip_unavailable(
     for item in records or []:
         if not isinstance(item, dict):
             continue
-        if str(item.get("place_id") or "").strip() != place:
+        if not _is_unavailable_record(item, place):
             continue
-        if str(item.get("status") or "").strip().lower() != "error":
+        if not _record_fresh(item, current, ttl_seconds):
             continue
-        error = str(item.get("error") or "").strip()
-        if not vip_unavailable_permanently(error):
-            continue
-        try:
-            synced_at = float(item.get("synced_at") or 0.0)
-        except Exception:
-            synced_at = 0.0
-        if synced_at and (current - synced_at) <= float(ttl_seconds or 0.0):
-            return error
+        return _record_field(item, "error")
     return ""
 
 
@@ -576,6 +753,219 @@ def _render_private_server_name(game_name: str, place_id: str = "") -> str:
     name = str(game_name or "").strip() or (f"Place {place_id}" if place_id else "Private Server")
     name = re.sub(r"\s+", " ", str(name or "")).strip()
     return name[:50] or "Private Server"
+
+
+def _join_data_present(record: dict[str, Any]) -> bool:
+    return bool(
+        record.get("link")
+        or record.get("access_code")
+        or record.get("join_code")
+    )
+
+
+def _matches_owner(
+    server: dict[str, Any],
+    owner_user_id: str,
+    place: str,
+    universe_id: str,
+) -> bool:
+    return _private_server_matches_owner(
+        server, str(owner_user_id or ""), place, universe_id
+    )
+
+
+def _enrich_server_metadata(
+    client: Any, candidate: dict[str, Any], sid: str, fetch_meta: Any
+) -> None:
+    if not sid:
+        return
+    meta_ok, meta, _meta_msg = fetch_meta(client, sid)
+    if not meta_ok:
+        return
+    candidate.update(meta)
+    if "privateServerId" not in candidate:
+        candidate["privateServerId"] = sid
+
+
+def _enrich_created_server(
+    client: Any, candidate: dict[str, Any], sid: str, fetch_meta: Any
+) -> None:
+    if not sid:
+        return
+    meta_ok, meta, _meta_msg = fetch_meta(client, sid)
+    if not meta_ok:
+        return
+    # Preserve accessCode from the create response; GET responses often omit it.
+    access_code = _server_access_code(candidate)
+    candidate.update(meta)
+    if access_code and not _server_access_code(candidate):
+        candidate["accessCode"] = access_code
+    if "privateServerId" not in candidate:
+        candidate["privateServerId"] = sid
+
+
+def _existing_server_candidate(
+    client: Any,
+    server: dict[str, Any],
+    place: str,
+    universe_id: str,
+    owner_user_id: str,
+    known_servers: list[dict[str, Any]] | None,
+    fetch_meta: Any,
+) -> dict[str, Any]:
+    candidate = dict(server)
+    sid = _server_id(candidate)
+    _enrich_server_metadata(client, candidate, sid, fetch_meta)
+    known = _known_private_server_for(
+        list(known_servers or []), sid, owner_user_id, place, universe_id
+    )
+    _merge_private_server_secrets(candidate, known)
+    return candidate
+
+
+def _load_place_servers(
+    client: Any, place: str, list_place_fn: Any
+) -> tuple[list[dict[str, Any]], str]:
+    place_ok, place_servers, place_msg = list_place_fn(client, place)
+    if not place_ok:
+        return [], place_msg
+    return place_servers, place_msg
+
+
+def _apply_place_server_link(
+    candidate: dict[str, Any],
+    playable: dict[str, Any],
+    place: str,
+    universe_id: str,
+    owner_user_id: str,
+    sid: str,
+) -> None:
+    candidate.update(playable)
+    if sid and "privateServerId" not in candidate:
+        candidate["privateServerId"] = sid
+    if "placeId" not in candidate:
+        candidate["placeId"] = place
+    if "universeId" not in candidate:
+        candidate["universeId"] = universe_id
+    if "ownerId" not in candidate and owner_user_id:
+        candidate["ownerId"] = str(owner_user_id)
+
+
+def _existing_owned_server_result(
+    client: Any,
+    servers: list[dict[str, Any]],
+    owner_user_id: str,
+    place: str,
+    universe_id: str,
+    known_servers: list[dict[str, Any]] | None,
+    fetch_meta: Any,
+    list_place_fn: Any,
+) -> dict[str, Any] | None:
+    place_servers_loaded = False
+    place_servers: list[dict[str, Any]] = []
+    place_servers_msg = ""
+    for server in servers:
+        if not _matches_owner(server, owner_user_id, place, universe_id):
+            continue
+        candidate = _existing_server_candidate(
+            client,
+            server,
+            place,
+            universe_id,
+            owner_user_id,
+            known_servers,
+            fetch_meta,
+        )
+        sid = _server_id(candidate)
+        if not _server_has_join_data(candidate, place):
+            if not place_servers_loaded:
+                place_servers_loaded = True
+                place_servers, place_servers_msg = _load_place_servers(
+                    client, place, list_place_fn
+                )
+            playable = _place_private_server_for(
+                place_servers, sid, owner_user_id
+            )
+            if playable:
+                _apply_place_server_link(
+                    candidate,
+                    playable,
+                    place,
+                    universe_id,
+                    owner_user_id,
+                    sid,
+                )
+        record = _private_server_record(
+            candidate, place, universe_id, owner_user_id, source="existing"
+        )
+        if _join_data_present(record):
+            return {"ok": True, "source": "existing", **record}
+        detail = "Owned private server exists, but Roblox did not return a join link or access code"
+        if place_servers_loaded and place_servers_msg and not place_servers:
+            detail = f"{detail}; {place_servers_msg}"
+        return {
+            "ok": False,
+            "fatal": True,
+            "msg": detail,
+            "place_id": place,
+            "universe_id": universe_id,
+            "private_server_id": sid,
+        }
+    return None
+
+
+def _create_private_server(
+    client: Any,
+    universe_id: str,
+    place: str,
+    game_name: str,
+    free_only: bool,
+) -> tuple[bool, dict[str, Any], str]:
+    payload = {
+        "name": _render_private_server_name(game_name, place_id=place),
+        "expectedPrice": 0,
+        "isPurchaseConfirmed": True,
+    }
+    create_ok, created, create_msg, _headers = client.csrf_post(
+        GAMES_BASE + f"v1/games/vip-servers/{urllib.parse.quote(universe_id, safe='')}",
+        payload,
+    )
+    if create_ok:
+        return True, created, ""
+    reason = create_msg or "Private server creation failed"
+    if free_only:
+        reason += " (free-only expectedPrice=0)"
+    return False, {}, reason
+
+
+def _created_server_result(
+    client: Any,
+    created: dict[str, Any],
+    place: str,
+    universe_id: str,
+    owner_user_id: str,
+    fetch_meta: Any,
+) -> dict[str, Any]:
+    candidate = dict(created)
+    sid = _server_id(candidate)
+    _enrich_created_server(client, candidate, sid, fetch_meta)
+    if "placeId" not in candidate:
+        candidate["placeId"] = place
+    if "universeId" not in candidate:
+        candidate["universeId"] = universe_id
+    if "ownerId" not in candidate and owner_user_id:
+        candidate["ownerId"] = str(owner_user_id)
+    record = _private_server_record(
+        candidate, place, universe_id, owner_user_id, source="created"
+    )
+    if not _join_data_present(record):
+        return {
+            "ok": False,
+            "fatal": True,
+            "msg": "Private server was created, but Roblox did not return a join link or access code",
+            **record,
+        }
+    return {"ok": True, "source": "created", **record}
 
 
 def ensure_owned_private_server(
@@ -599,109 +989,72 @@ def ensure_owned_private_server(
 
     list_ok, servers, list_msg = list_my_private_servers_fn(client)
     if not list_ok:
-        return {"ok": False, "msg": list_msg, "place_id": place, "universe_id": universe_id}
-
-    place_servers_loaded = False
-    place_servers: list[dict[str, Any]] = []
-    place_servers_msg = ""
-
-    for server in servers:
-        if not _private_server_matches_owner(server, str(owner_user_id or ""), place, universe_id):
-            continue
-        candidate = dict(server)
-        sid = _server_id(candidate)
-        if sid:
-            meta_ok, meta, _meta_msg = fetch_private_server_metadata_fn(client, sid)
-            if meta_ok:
-                candidate.update(meta)
-                if "privateServerId" not in candidate:
-                    candidate["privateServerId"] = sid
-        known = _known_private_server_for(list(known_servers or []), sid, owner_user_id, place, universe_id)
-        _merge_private_server_secrets(candidate, known)
-        if not (build_owned_private_server_link(place, candidate) or _server_access_code(candidate) or _server_join_code(candidate)):
-            if not place_servers_loaded:
-                place_servers_loaded = True
-                place_ok, place_servers, place_servers_msg = list_private_servers_for_place_fn(client, place)
-                if not place_ok:
-                    place_servers = []
-            playable = _place_private_server_for(place_servers, sid, owner_user_id)
-            if playable:
-                candidate.update(playable)
-                if sid and "privateServerId" not in candidate:
-                    candidate["privateServerId"] = sid
-                if "placeId" not in candidate:
-                    candidate["placeId"] = place
-                if "universeId" not in candidate:
-                    candidate["universeId"] = universe_id
-                if "ownerId" not in candidate and owner_user_id:
-                    candidate["ownerId"] = str(owner_user_id)
-        record = _private_server_record(candidate, place, universe_id, owner_user_id, source="existing")
-        if record.get("link") or record.get("access_code") or record.get("join_code"):
-            return {"ok": True, "source": "existing", **record}
-        detail = "Owned private server exists, but Roblox did not return a join link or access code"
-        if place_servers_loaded and place_servers_msg and not place_servers:
-            detail = f"{detail}; {place_servers_msg}"
         return {
             "ok": False,
-            "fatal": True,
-            "msg": detail,
+            "msg": list_msg,
             "place_id": place,
             "universe_id": universe_id,
-            "private_server_id": sid,
         }
 
-    enabled_ok, enabled, enabled_msg = private_servers_enabled_for_universe_fn(client, universe_id)
-    if not enabled_ok:
-        return {"ok": False, "msg": enabled_msg, "place_id": place, "universe_id": universe_id}
-    if not enabled:
-        return {"ok": False, "msg": "Private servers are disabled for this universe", "place_id": place, "universe_id": universe_id}
-
-    name_ok, game_name, _name_msg = game_name_for_universe_fn(client, universe_id)
-    if not name_ok:
-        game_name = f"Place {place}"
-    payload = {
-        "name": _render_private_server_name(game_name, place_id=place),
-        "expectedPrice": 0,
-        "isPurchaseConfirmed": True,
-    }
-    create_ok, created, create_msg, _headers = client.csrf_post(
-        GAMES_BASE + f"v1/games/vip-servers/{urllib.parse.quote(universe_id, safe='')}",
-        payload,
+    existing = _existing_owned_server_result(
+        client,
+        servers,
+        owner_user_id,
+        place,
+        universe_id,
+        known_servers,
+        fetch_private_server_metadata_fn,
+        list_private_servers_for_place_fn,
     )
-    if not create_ok:
-        reason = create_msg or "Private server creation failed"
-        if free_only:
-            reason += " (free-only expectedPrice=0)"
-        return {"ok": False, "msg": reason, "place_id": place, "universe_id": universe_id}
+    if existing is not None:
+        return existing
 
-    candidate = dict(created)
-    sid = _server_id(candidate)
-    if sid:
-        meta_ok, meta, _meta_msg = fetch_private_server_metadata_fn(client, sid)
-        if meta_ok:
-            # Preserve accessCode from the create response; GET responses often omit it.
-            access_code = _server_access_code(candidate)
-            candidate.update(meta)
-            if access_code and not _server_access_code(candidate):
-                candidate["accessCode"] = access_code
-            if "privateServerId" not in candidate:
-                candidate["privateServerId"] = sid
-    if "placeId" not in candidate:
-        candidate["placeId"] = place
-    if "universeId" not in candidate:
-        candidate["universeId"] = universe_id
-    if "ownerId" not in candidate and owner_user_id:
-        candidate["ownerId"] = str(owner_user_id)
-    record = _private_server_record(candidate, place, universe_id, owner_user_id, source="created")
-    if not (record.get("link") or record.get("access_code") or record.get("join_code")):
+    enabled_ok, enabled, enabled_msg = private_servers_enabled_for_universe_fn(
+        client, universe_id
+    )
+    if not enabled_ok:
         return {
             "ok": False,
-            "fatal": True,
-            "msg": "Private server was created, but Roblox did not return a join link or access code",
-            **record,
+            "msg": enabled_msg,
+            "place_id": place,
+            "universe_id": universe_id,
         }
-    return {"ok": True, "source": "created", **record}
+    if not enabled:
+        return {
+            "ok": False,
+            "msg": "Private servers are disabled for this universe",
+            "place_id": place,
+            "universe_id": universe_id,
+        }
 
+    name_ok, game_name, _name_msg = game_name_for_universe_fn(
+        client, universe_id
+    )
+    if not name_ok:
+        game_name = f"Place {place}"
+    create_ok, created, create_msg = _create_private_server(
+        client, universe_id, place, game_name, free_only
+    )
+    if not create_ok:
+        return {
+            "ok": False,
+            "msg": create_msg,
+            "place_id": place,
+            "universe_id": universe_id,
+        }
+    return _created_server_result(
+        client,
+        created,
+        place,
+        universe_id,
+        owner_user_id,
+        fetch_private_server_metadata_fn,
+    )
+
+
+
+def _query_value(qs: dict[str, list[str]], key: str) -> str:
+    return str((qs.get(key) or [""])[0] or "")
 
 
 def parse_launch_destination_from_cmdline(cmdline: str) -> dict[str, Any]:
@@ -718,12 +1071,16 @@ def parse_launch_destination_from_cmdline(cmdline: str) -> dict[str, Any]:
         return {}
     parsed = urllib.parse.urlparse(launcher)
     qs = urllib.parse.parse_qs(parsed.query)
-    request_name = str((qs.get("request") or [""])[0] or "")
-    place_id = str((qs.get("placeId") or [""])[0] or "")
-    link_code = str((qs.get("linkCode") or [""])[0] or "")
-    access_code = str((qs.get("accessCode") or [""])[0] or "")
-    job_id = str((qs.get("gameId") or [""])[0] or "")
-    server_type = "VIP" if request_name.lower() == "requestprivategame" else ("JOB" if request_name.lower() == "requestgamejob" else "PUBLIC")
+    request_name = _query_value(qs, "request")
+    place_id = _query_value(qs, "placeId")
+    link_code = _query_value(qs, "linkCode")
+    access_code = _query_value(qs, "accessCode")
+    job_id = _query_value(qs, "gameId")
+    server_type = (
+        "VIP"
+        if request_name.lower() == "requestprivategame"
+        else ("JOB" if request_name.lower() == "requestgamejob" else "PUBLIC")
+    )
     return {
         "observed_place_id": place_id,
         "observed_server_type": server_type,
@@ -735,6 +1092,29 @@ def parse_launch_destination_from_cmdline(cmdline: str) -> dict[str, Any]:
     }
 
 
+def _private_launcher_result(
+    source: str,
+    place_id: str,
+    vip_access_code: str,
+    vip_link_code: str,
+) -> tuple[tuple[str, str, str] | None, str]:
+    parsed_place, link_code = parse_vip_link(source)
+    place = place_id or parsed_place
+    access_code = str(vip_access_code or link_code or "").strip()
+    launch_link_code = str(vip_link_code or link_code or "").strip()
+    if not (access_code and launch_link_code and place):
+        return None, place
+    return (
+        (
+            "https://assetgame.roblox.com/game/PlaceLauncher.ashx?"
+            f"request=RequestPrivateGame&placeId={place}&accessCode={access_code}&linkCode={launch_link_code}",
+            "vip",
+            source,
+        ),
+        place,
+    )
+
+
 def build_place_launcher_url(
     place_id: str,
     job_id: str = "",
@@ -744,11 +1124,11 @@ def build_place_launcher_url(
     vip_access_code: str = "",
     vip_link_code: str = "",
 ) -> tuple[str, str, str]:
-    place_id = str(place_id or "").strip()
-    job_id = str(job_id or "").strip()
-    vip_link = str(vip_link or "").strip()
-    follow_user_id = str(follow_user_id or "").strip()
-    browser_tracker_id = str(browser_tracker_id or "").strip()
+    place_id = _clean_text(place_id)
+    job_id = _clean_text(job_id)
+    vip_link = _clean_text(vip_link)
+    follow_user_id = _clean_text(follow_user_id)
+    browser_tracker_id = _clean_text(browser_tracker_id)
     if follow_user_id:
         return (
             f"https://assetgame.roblox.com/game/PlaceLauncher.ashx?request=RequestFollowUser&userId={follow_user_id}",
@@ -756,29 +1136,17 @@ def build_place_launcher_url(
             "",
         )
     if vip_link:
-        parsed_place, link_code = parse_vip_link(vip_link)
-        place_id = place_id or parsed_place
-        access_code = str(vip_access_code or link_code or "").strip()
-        launch_link_code = str(vip_link_code or link_code or "").strip()
-        if access_code and launch_link_code and place_id:
-            return (
-                "https://assetgame.roblox.com/game/PlaceLauncher.ashx?"
-                f"request=RequestPrivateGame&placeId={place_id}&accessCode={access_code}&linkCode={launch_link_code}",
-                "vip",
-                vip_link,
-            )
+        result, place_id = _private_launcher_result(
+            vip_link, place_id, vip_access_code, vip_link_code
+        )
+        if result is not None:
+            return result
     if job_id.startswith("http"):
-        parsed_place, link_code = parse_vip_link(job_id)
-        place_id = place_id or parsed_place
-        access_code = str(vip_access_code or link_code or "").strip()
-        launch_link_code = str(vip_link_code or link_code or "").strip()
-        if access_code and launch_link_code and place_id:
-            return (
-                "https://assetgame.roblox.com/game/PlaceLauncher.ashx?"
-                f"request=RequestPrivateGame&placeId={place_id}&accessCode={access_code}&linkCode={launch_link_code}",
-                "vip",
-                job_id,
-            )
+        result, place_id = _private_launcher_result(
+            job_id, place_id, vip_access_code, vip_link_code
+        )
+        if result is not None:
+            return result
     request_name = "RequestGameJob" if job_id else "RequestGame"
     params = f"request={request_name}&browserTrackerId={browser_tracker_id}&placeId={place_id}&isPlayTogetherGame=false"
     if job_id:

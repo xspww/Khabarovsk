@@ -23,7 +23,7 @@ def _flog(message: str, level: str = "info") -> None:
 
         flog(message, level)
     except Exception:
-        pass
+        "intentional: ignore exception"
 
 
 def cookie_hash(cookie: str) -> str:
@@ -79,7 +79,7 @@ class CookieArtifactLedger:
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
             except Exception:
-                pass
+                "intentional: ignore exception"
             return False
 
     @staticmethod
@@ -134,63 +134,6 @@ class CookieArtifactLedger:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp_path, path)
-
-    def scrub_json_cookie_artifacts(self, account: str | None = None) -> dict[str, int]:
-        account_key = str(account or "").strip().lower()
-        summary = {"scrubbed": 0, "skipped": 0, "missing": 0}
-
-        with _LEDGER_LOCK:
-            artifacts = self._read_artifacts()
-            remaining: list[dict[str, Any]] = []
-            for artifact in artifacts:
-                if str(artifact.get("target_type") or "").strip().lower() != "json":
-                    remaining.append(artifact)
-                    continue
-                artifact_account = str(artifact.get("account") or "").strip().lower()
-                if account_key and artifact_account != account_key:
-                    remaining.append(artifact)
-                    continue
-
-                path = str(artifact.get("path") or "").strip()
-                key = str(artifact.get("key") or COOKIE_STORAGE_KEY).strip()
-                expected_hash = str(artifact.get("cookie_hash") or "").strip()
-                if not path or not os.path.exists(path):
-                    summary["missing"] += 1
-                    continue
-
-                try:
-                    with open(path, encoding="utf-8") as handle:
-                        payload = json.load(handle)
-                except Exception as exc:
-                    _flog(f"[COOKIE_LEDGER] scrub read error ({path}): {exc}", "warning")
-                    summary["skipped"] += 1
-                    remaining.append(artifact)
-                    continue
-
-                if not isinstance(payload, dict) or key not in payload:
-                    summary["missing"] += 1
-                    continue
-
-                current_cookie = str(payload.get(key) or "")
-                if cookie_hash(current_cookie) != expected_hash:
-                    summary["skipped"] += 1
-                    remaining.append(artifact)
-                    continue
-
-                cleaned = dict(payload)
-                cleaned.pop(key, None)
-                try:
-                    self._write_json_artifact(path, cleaned)
-                except Exception as exc:
-                    _flog(f"[COOKIE_LEDGER] scrub write error ({path}): {exc}", "warning")
-                    summary["skipped"] += 1
-                    remaining.append(artifact)
-                    continue
-                summary["scrubbed"] += 1
-
-            self._write_artifacts(remaining)
-        return summary
-
 
 __all__ = [
     "COOKIE_ARTIFACT_LEDGER_FILE",

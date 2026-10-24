@@ -18,7 +18,7 @@ import struct
 import threading
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NamedTuple
 
 _OP_HANDSHAKE = 0
 _OP_FRAME = 1
@@ -39,7 +39,7 @@ def _flog_kv(scope: str, name: str, level: str = "info", **fields: Any) -> None:
 
         _fn(scope, name, level, **fields)
     except Exception:
-        pass
+        "intentional: ignore exception"
 
 
 def _releases_url() -> str:
@@ -65,7 +65,7 @@ class _DiscordIpc:
                 try:
                     self._pipe_file.close()
                 except Exception:
-                    pass
+                    "intentional: ignore exception"
         finally:
             self._pipe_file = None
         try:
@@ -73,7 +73,7 @@ class _DiscordIpc:
                 try:
                     self._sock.close()
                 except Exception:
-                    pass
+                    "intentional: ignore exception"
         finally:
             self._sock = None
 
@@ -196,7 +196,28 @@ class _DiscordIpc:
                 },
             )
         except Exception:
-            pass
+            "intentional: ignore exception"
+
+
+class _PresenceConfig(NamedTuple):
+    enabled: bool
+    client_id: str
+    show_accounts: bool
+    show_game: bool
+
+
+class _PresenceStatus(NamedTuple):
+    running: bool
+    total: int
+    in_game: int
+    place_id: str
+
+
+def _num(value: Any) -> int:
+    try:
+        return max(0, int(float(value or 0)))
+    except Exception:
+        return 0
 
 
 class DiscordPresenceService:
@@ -252,11 +273,11 @@ class DiscordPresenceService:
             try:
                 ipc.clear_activity(os.getpid())
             except Exception:
-                pass
+                "intentional: ignore exception"
             try:
                 ipc.close()
             except Exception:
-                pass
+                "intentional: ignore exception"
         with self._lock:
             self._state["connected"] = False
 
@@ -298,7 +319,7 @@ class DiscordPresenceService:
             try:
                 ipc.close()
             except Exception:
-                pass
+                "intentional: ignore exception"
 
     # -- internals -------------------------------------------------------
     def _cfg(self, key: str, default: Any = None) -> Any:
@@ -306,7 +327,7 @@ class DiscordPresenceService:
             if self._cfg_getter is not None:
                 return self._cfg_getter(key, default)
         except Exception:
-            pass
+            "intentional: ignore exception"
         return default
 
     def effective_client_id(self) -> str:
@@ -362,120 +383,190 @@ class DiscordPresenceService:
             "instance": False,
         }
 
+    def _read_loop_config(self) -> _PresenceConfig:
+        return _PresenceConfig(
+            enabled=bool(
+                self._cfg("discord_presence_enabled", False)
+            ),
+            client_id=self._current_client_id(),
+            show_accounts=bool(
+                self._cfg("discord_show_accounts", True)
+            ),
+            show_game=bool(
+                self._cfg("discord_show_game", True)
+            ),
+        )
+
+    def _teardown_presence(self, config: _PresenceConfig) -> None:
+        with self._lock:
+            ipc, self._ipc = self._ipc, None
+            self._activity_start = 0
+            self._last_push_at = 0.0
+            if config.enabled and not config.client_id:
+                self._state["last_error"] = (
+                    "Discord app not configured "
+                    "(set DEFAULT_DISCORD_CLIENT_ID)"
+                )
+        if ipc is None:
+            return
+        try:
+            ipc.clear_activity(os.getpid())
+        except Exception:
+            "intentional: ignore exception"
+        try:
+            ipc.close()
+        except Exception:
+            "intentional: ignore exception"
+        with self._lock:
+            self._state["connected"] = False
+
+    def _presence_place_id(
+        self,
+        status: dict[str, Any],
+    ) -> str:
+        place_id = str(
+            status.get("game_place_id")
+            or status.get("place_id")
+            or (status.get("game") or {}).get("place_id", "")
+            or ""
+        ).strip()
+        if place_id:
+            return place_id
+        try:
+            return str(
+                self._cfg("game_place_id", "") or ""
+            ).strip()
+        except Exception:
+            return ""
+
+    def _presence_status(self) -> _PresenceStatus:
+        running, total, in_game, place_id = False, 0, 0, ""
+        try:
+            status = (
+                self._status_getter()
+                if self._status_getter
+                else {}
+            ) or {}
+            running = bool(status.get("running"))
+            total = _num(status.get("total_accounts"))
+            in_game = _num(
+                status.get("in_game")
+                or status.get("in_game_count")
+            )
+            place_id = self._presence_place_id(status)
+        except Exception:
+            "intentional: ignore exception"
+        return _PresenceStatus(
+            running=running,
+            total=total,
+            in_game=in_game,
+            place_id=place_id,
+        )
+
+    def _ensure_ipc(
+        self,
+        client_id: str,
+    ) -> tuple[_DiscordIpc, bool]:
+        with self._lock:
+            needs_new_client = (
+                self._ipc is None
+                or getattr(self._ipc, "client_id", "") != client_id
+            )
+            ipc = self._ipc
+        if needs_new_client:
+            if ipc is not None:
+                try:
+                    ipc.close()
+                except Exception:
+                    "intentional: ignore exception"
+            ipc = _DiscordIpc(client_id)
+            ipc.connect(timeout=5.0)
+            with self._lock:
+                self._ipc = ipc
+        assert ipc is not None
+        return ipc, needs_new_client
+
+    def _push_activity_if_changed(
+        self,
+        ipc: _DiscordIpc,
+        activity: dict[str, Any],
+        needs_new_client: bool,
+    ) -> None:
+        with self._lock:
+            last = self._state.get("last_activity") or {}
+        now_ts = time.time()
+        changed = (
+            needs_new_client
+            or activity.get("details") != last.get("details")
+            or activity.get("state") != last.get("state")
+            or (now_ts - (self._last_push_at or 0.0)) >= 15.0
+        )
+        if changed:
+            ipc.set_activity(activity, os.getpid())
+            self._last_push_at = now_ts
+
+    def _mark_connected(self, activity: dict[str, Any]) -> None:
+        with self._lock:
+            self._state["connected"] = True
+            self._state["last_update_at"] = time.time()
+            self._state["last_error"] = ""
+            self._state["last_activity"] = activity
+
+    def _handle_loop_error(self, exc: Exception, failures: int) -> int:
+        failures += 1
+        with self._lock:
+            self._state["connected"] = False
+            self._state["last_error"] = str(exc)[:300]
+            try:
+                if self._ipc is not None:
+                    try:
+                        self._ipc.close()
+                    except Exception:
+                        "intentional: ignore exception"
+            finally:
+                self._ipc = None
+        if failures <= 2:
+            _flog_kv(
+                "DISCORD",
+                "presence_update_failed",
+                "warning",
+                error=str(exc)[:200],
+            )
+        return failures
+
     def _loop(self) -> None:
         failures = 0
         while not self._stop.is_set():
             try:
-                enabled = bool(self._cfg("discord_presence_enabled", False))
-                client_id = self._current_client_id()
-                show_accounts = bool(self._cfg("discord_show_accounts", True))
-                show_game = bool(self._cfg("discord_show_game", True))
+                config = self._read_loop_config()
                 with self._lock:
-                    self._state["enabled"] = enabled
-                    self._state["client_id"] = client_id
-                if not enabled or not client_id:
-                    # Disabled or app ID not set yet: drop any live connection.
-                    with self._lock:
-                        ipc, self._ipc = self._ipc, None
-                        self._activity_start = 0
-                        self._last_push_at = 0.0
-                        if enabled and not client_id:
-                            self._state["last_error"] = "Discord app not configured (set DEFAULT_DISCORD_CLIENT_ID)"
-                    if ipc is not None:
-                        try:
-                            ipc.clear_activity(os.getpid())
-                        except Exception:
-                            pass
-                        try:
-                            ipc.close()
-                        except Exception:
-                            pass
-                        with self._lock:
-                            self._state["connected"] = False
+                    self._state["enabled"] = config.enabled
+                    self._state["client_id"] = config.client_id
+                if not config.enabled or not config.client_id:
+                    self._teardown_presence(config)
                     self._stop.wait(_DEFAULT_UPDATE_INTERVAL)
                     continue
-                # Gather farm status (best effort — never crash the loop).
-                # Coerce defensively: one odd value must not kill the tick
-                # (and must not force a pointless IPC reconnect).
-                def _num(value: Any) -> int:
-                    try:
-                        return max(0, int(float(value or 0)))
-                    except Exception:
-                        return 0
-
-                running, total, in_game, place_id = False, 0, 0, ""
-                try:
-                    status = (self._status_getter() if self._status_getter else {}) or {}
-                    running = bool(status.get("running"))
-                    total = _num(status.get("total_accounts"))
-                    in_game = _num(status.get("in_game") or status.get("in_game_count"))
-                    place_id = str(
-                        status.get("game_place_id")
-                        or status.get("place_id")
-                        or (status.get("game") or {}).get("place_id", "")
-                        or ""
-                    ).strip()
-                    if not place_id:
-                        try:
-                            place_id = str(self._cfg("game_place_id", "") or "").strip()
-                        except Exception:
-                            place_id = ""
-                except Exception:
-                    pass
-                activity = self._build_activity(running, total, in_game, place_id, show_accounts, show_game)
-                with self._lock:
-                    needs_new_client = self._ipc is None or getattr(self._ipc, "client_id", "") != client_id
-                    ipc = self._ipc
-                if needs_new_client:
-                    if ipc is not None:
-                        try:
-                            ipc.close()
-                        except Exception:
-                            pass
-                    ipc = _DiscordIpc(client_id)
-                    ipc.connect(timeout=5.0)
-                    with self._lock:
-                        self._ipc = ipc
-                assert ipc is not None
-                # 1s poll, but push to Discord only when text actually changed,
-                # on fresh connect, or as a 15s heartbeat (timer ticks
-                # client-side, but a stale pipe/NAT can silently drop the
-                # session — periodic re-push keeps it alive without hitting
-                # Discord rate limits).
-                with self._lock:
-                    last = self._state.get("last_activity") or {}
-                now_ts = time.time()
-                changed = (
-                    needs_new_client
-                    or activity.get("details") != last.get("details")
-                    or activity.get("state") != last.get("state")
-                    or (now_ts - (self._last_push_at or 0.0)) >= 15.0
+                status = self._presence_status()
+                activity = self._build_activity(
+                    status.running,
+                    status.total,
+                    status.in_game,
+                    status.place_id,
+                    config.show_accounts,
+                    config.show_game,
                 )
-                if changed:
-                    ipc.set_activity(activity, os.getpid())
-                    self._last_push_at = now_ts
-                with self._lock:
-                    self._state["connected"] = True
-                    self._state["last_update_at"] = time.time()
-                    self._state["last_error"] = ""
-                    self._state["last_activity"] = activity
+                ipc, needs_new_client = self._ensure_ipc(
+                    config.client_id,
+                )
+                self._push_activity_if_changed(
+                    ipc,
+                    activity,
+                    needs_new_client,
+                )
+                self._mark_connected(activity)
                 failures = 0
             except Exception as exc:
-                failures += 1
-                with self._lock:
-                    self._state["connected"] = False
-                    self._state["last_error"] = str(exc)[:300]
-                    # Drop broken socket so next tick reconnects.
-                    try:
-                        if self._ipc is not None:
-                            try:
-                                self._ipc.close()
-                            except Exception:
-                                pass
-                    finally:
-                        self._ipc = None
-                if failures <= 2:
-                    _flog_kv("DISCORD", "presence_update_failed", "warning", error=str(exc)[:200])
+                failures = self._handle_loop_error(exc, failures)
             self._stop.wait(_DEFAULT_UPDATE_INTERVAL)
 
 

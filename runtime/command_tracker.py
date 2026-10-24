@@ -3,9 +3,24 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Callable
-from typing import Any
+from typing import Any, NamedTuple
 
 Logger = Callable[..., None]
+
+
+def _text(value: Any) -> str:
+    return str(value or "")
+
+
+class _CommandSpec(NamedTuple):
+    key: str
+    action: str
+    account: str
+    ttl: float
+    idempotency_key: str
+    request_fingerprint: str
+    scope: str
+    now: float
 
 
 class RuntimeCommandTracker:
@@ -106,6 +121,169 @@ class RuntimeCommandTracker:
         self._record_timeline("command_rejected", account, "warning", reason, action=action, command_id=existing.get("command_id", ""))
         return False, duplicate
 
+    def _replay_idempotent(
+        self,
+        scope: str,
+        key: str,
+        action: str,
+        account: str,
+    ) -> tuple[bool, dict[str, Any]] | None:
+        if not scope:
+            return None
+        cached = self._idempotency.get(scope)
+        if cached and cached.get("status") == "finished":
+            command = dict(cached.get("command") or {})
+            command.update(
+                {
+                    "accepted": False,
+                    "duplicate": True,
+                    "idempotent_replay": True,
+                    "response": dict(cached.get("response") or {}),
+                    "msg": "Idempotent response replayed",
+                }
+            )
+            return False, command
+        if cached and cached.get("command"):
+            return self._duplicate(
+                key,
+                action,
+                account,
+                dict(cached["command"]),
+                reason="idempotent_command_inflight",
+            )
+        return None
+
+    def _shutdown_rejection(self, action: str, key: str, account: str) -> dict[str, Any] | None:
+        if not (self._is_shutting_down() and action != "stop"):
+            return None
+        rejected = {
+            "command_id": "",
+            "key": key,
+            "action": action,
+            "account": account,
+            "accepted": False,
+            "duplicate": False,
+            "rejected": True,
+            "msg": "Shutdown in progress",
+        }
+        self._emit(
+            "rejected",
+            "warning",
+            key=key,
+            action=action,
+            account=account,
+            reason="shutdown_in_progress",
+        )
+        return rejected
+
+    def _overlap_rejection(
+        self,
+        key: str,
+        action: str,
+        account: str,
+        conflict: dict[str, Any],
+    ) -> dict[str, Any]:
+        rejected = dict(conflict)
+        rejected["accepted"] = False
+        rejected["duplicate"] = False
+        rejected["rejected"] = True
+        rejected["msg"] = f"{action} blocked by inflight {conflict.get('action', 'command')}"
+        self._emit(
+            "overlap_rejected",
+            "warning",
+            key=key,
+            action=action,
+            account=account,
+            blocked_by_key=conflict.get("key", ""),
+            blocked_by_action=conflict.get("action", ""),
+            blocked_by_command_id=conflict.get("command_id", ""),
+            command_generation=self._generation,
+            reason="command_inflight",
+        )
+        self._record_timeline(
+            "command_rejected",
+            account,
+            "warning",
+            "command_inflight",
+            action=action,
+            blocked_by_action=conflict.get("action", ""),
+        )
+        return rejected
+
+    def _capability_rejection(
+        self,
+        key: str,
+        action: str,
+        account: str,
+        reject_reason: str,
+    ) -> dict[str, Any]:
+        rejected = {
+            "command_id": "",
+            "key": key,
+            "action": action,
+            "account": account,
+            "accepted": False,
+            "duplicate": False,
+            "rejected": True,
+            "msg": reject_reason,
+        }
+        self._emit("rejected", "warning", key=key, action=action, account=account, reason=reject_reason)
+        self._record_timeline("command_rejected", account, "warning", reject_reason, action=action)
+        return rejected
+
+    def _new_command(self, spec: _CommandSpec) -> dict[str, Any]:
+        self._seq += 1
+        self._generation += 1
+        command = {
+            "command_id": f"{int(spec.now * 1000)}-{self._seq}",
+            "key": spec.key,
+            "action": spec.action,
+            "account": spec.account,
+            "command_generation": self._generation,
+            "started_at": spec.now,
+            "expires_at": spec.now + max(1.0, float(spec.ttl or 15.0)),
+            "idempotency_key": str(spec.idempotency_key or ""),
+            "idempotency_scope": spec.scope,
+            "request_fingerprint": str(spec.request_fingerprint or ""),
+        }
+        self._commands[spec.key] = command
+        if spec.scope:
+            self._idempotency[spec.scope] = {
+                "status": "running",
+                "command": dict(command),
+                "expires_at": spec.now + self._idempotency_ttl,
+            }
+        return command
+
+    def _start_account_command(self, acc: Any, command: dict[str, Any]) -> None:
+        if not acc:
+            return
+        with acc._lock:
+            account_generation = self._runtime_state.begin_account_command(acc, command)
+            command["account_command_generation"] = account_generation
+
+    def _accept_command(self, command: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
+        self._bump_status_revision()
+        self._emit(
+            "accepted",
+            key=command["key"],
+            action=command["action"],
+            command_id=command["command_id"],
+            account=command["account"],
+            command_generation=command["command_generation"],
+            account_command_generation=command.get("account_command_generation", ""),
+        )
+        self._record_timeline(
+            "command_accepted",
+            command["account"],
+            "info",
+            command["action"],
+            action=command["action"],
+            command_id=command["command_id"],
+            command_generation=command["command_generation"],
+        )
+        return True, dict(command)
+
     def begin(
         self,
         key: str,
@@ -119,158 +297,135 @@ class RuntimeCommandTracker:
         now = time.time()
         with self._lock:
             self._cleanup_locked()
-            if scope:
-                cached = self._idempotency.get(scope)
-                if cached and cached.get("status") == "finished":
-                    command = dict(cached.get("command") or {})
-                    command.update({
-                        "accepted": False,
-                        "duplicate": True,
-                        "idempotent_replay": True,
-                        "response": dict(cached.get("response") or {}),
-                        "msg": "Idempotent response replayed",
-                    })
-                    return False, command
-                if cached and cached.get("command"):
-                    return self._duplicate(key, action, account, dict(cached["command"]), reason="idempotent_command_inflight")
-            if self._is_shutting_down() and action != "stop":
-                rejected = {
-                    "command_id": "",
-                    "key": key,
-                    "action": action,
-                    "account": account,
-                    "accepted": False,
-                    "duplicate": False,
-                    "rejected": True,
-                    "msg": "Shutdown in progress",
-                }
-                self._emit("rejected", "warning", key=key, action=action, account=account, reason="shutdown_in_progress")
-                return False, rejected
+            replay = self._replay_idempotent(scope, key, action, account)
+            if replay is not None:
+                return replay
+            shutdown = self._shutdown_rejection(action, key, account)
+            if shutdown is not None:
+                return False, shutdown
             existing = self._commands.get(key)
             if existing:
                 return self._duplicate(key, action, account, existing)
             conflict = self._conflict_locked(key)
             if conflict:
-                rejected = dict(conflict)
-                rejected["accepted"] = False
-                rejected["duplicate"] = False
-                rejected["rejected"] = True
-                rejected["msg"] = f"{action} blocked by inflight {conflict.get('action', 'command')}"
-                self._emit(
-                    "overlap_rejected",
-                    "warning",
+                return False, self._overlap_rejection(key, action, account, conflict)
+            allowed, reject_reason, acc = self._capability(action, account)
+            if not allowed:
+                return False, self._capability_rejection(key, action, account, reject_reason)
+            command = self._new_command(
+                _CommandSpec(
                     key=key,
                     action=action,
                     account=account,
-                    blocked_by_key=conflict.get("key", ""),
-                    blocked_by_action=conflict.get("action", ""),
-                    blocked_by_command_id=conflict.get("command_id", ""),
-                    command_generation=self._generation,
-                    reason="command_inflight",
+                    ttl=ttl,
+                    idempotency_key=idempotency_key,
+                    request_fingerprint=request_fingerprint,
+                    scope=scope,
+                    now=now,
                 )
-                self._record_timeline("command_rejected", account, "warning", "command_inflight", action=action, blocked_by_action=conflict.get("action", ""))
-                return False, rejected
-            allowed, reject_reason, acc = self._capability(action, account)
-            if not allowed:
-                rejected = {
-                    "command_id": "",
-                    "key": key,
-                    "action": action,
-                    "account": account,
-                    "accepted": False,
-                    "duplicate": False,
-                    "rejected": True,
-                    "msg": reject_reason,
-                }
-                self._emit("rejected", "warning", key=key, action=action, account=account, reason=reject_reason)
-                self._record_timeline("command_rejected", account, "warning", reject_reason, action=action)
-                return False, rejected
-            self._seq += 1
-            self._generation += 1
-            command = {
-                "command_id": f"{int(now * 1000)}-{self._seq}",
-                "key": key,
-                "action": action,
-                "account": account,
-                "command_generation": self._generation,
-                "started_at": now,
-                "expires_at": now + max(1.0, float(ttl or 15.0)),
-                "idempotency_key": str(idempotency_key or ""),
-                "idempotency_scope": scope,
-                "request_fingerprint": str(request_fingerprint or ""),
-            }
-            self._commands[key] = command
-            if scope:
-                self._idempotency[scope] = {
-                    "status": "running",
-                    "command": dict(command),
-                    "expires_at": now + self._idempotency_ttl,
-                }
-            if acc:
-                with acc._lock:
-                    account_generation = self._runtime_state.begin_account_command(acc, command)
-                    command["account_command_generation"] = account_generation
-            self._bump_status_revision()
-            self._emit(
-                "accepted",
-                key=key,
-                action=action,
-                command_id=command["command_id"],
-                account=account,
-                command_generation=command["command_generation"],
-                account_command_generation=command.get("account_command_generation", ""),
             )
-            self._record_timeline("command_accepted", account, "info", action, action=action, command_id=command["command_id"], command_generation=command["command_generation"])
-            return True, dict(command)
+            self._start_account_command(acc, command)
+            return self._accept_command(command)
+
+    def _finish_account(self, current: dict[str, Any], command_id: str, ok: bool, error: str) -> None:
+        acc = self._find_account(_text(current.get("account")))
+        if acc:
+            with acc._lock:
+                self._runtime_state.finish_account_command(acc, command_id, ok=ok, error=error)
+
+    def _cache_finished(
+        self,
+        current: dict[str, Any],
+        scope: str,
+        ok: bool,
+        error: str,
+        response: dict[str, Any] | None,
+    ) -> None:
+        cached = self._idempotency.get(scope, {})
+        cached.update(
+            {
+                "status": "finished",
+                "command": dict(current),
+                "response": dict(response or {}),
+                "ok": bool(ok),
+                "error": str(error or ""),
+                "expires_at": time.time() + self._idempotency_ttl,
+            }
+        )
+        self._idempotency[scope] = cached
+
+    def _emit_finished(
+        self,
+        key: str,
+        command_id: str,
+        ok: bool,
+        error: str,
+        current: dict[str, Any],
+    ) -> None:
+        self._bump_status_revision()
+        self._emit(
+            "finished",
+            key=key,
+            command_id=command_id,
+            ok=ok,
+            error=error,
+            action=current.get("action", ""),
+            account=current.get("account", ""),
+            command_generation=current.get("command_generation", ""),
+            account_command_generation=current.get("account_command_generation", ""),
+        )
+        self._record_timeline(
+            "command_finished",
+            _text(current.get("account")),
+            "info" if ok else "warning",
+            error or "command_finished",
+            action=current.get("action", ""),
+            command_id=command_id,
+            ok=ok,
+        )
+
+    def _reject_stale_finish(
+        self,
+        key: str,
+        command_id: str,
+        current: dict[str, Any] | None,
+        ok: bool,
+        error: str,
+    ) -> None:
+        self._emit(
+            "stale_work_rejected",
+            "warning",
+            key=key,
+            command_id=command_id,
+            current_command_id=current.get("command_id", "") if current else "",
+            ok=ok,
+            error=error,
+            reason="command_finish_mismatch",
+            command_generation=self._generation,
+            thread_name=threading.current_thread().name,
+        )
+        self._record_timeline(
+            "stale_work_rejected",
+            "",
+            "warning",
+            "command_finish_mismatch",
+            command_id=command_id,
+            ok=ok,
+            error=error,
+        )
 
     def finish(self, key: str, command_id: str, ok: bool = True, error: str = "", response: dict[str, Any] | None = None) -> None:
         with self._lock:
             current = self._commands.get(key)
             if current and current.get("command_id") == command_id:
                 self._commands.pop(key, None)
-                acc = self._find_account(str(current.get("account", "") or ""))
-                if acc:
-                    with acc._lock:
-                        self._runtime_state.finish_account_command(acc, command_id, ok=ok, error=error)
-                scope = str(current.get("idempotency_scope") or "")
+                self._finish_account(current, command_id, ok, error)
+                scope = _text(current.get("idempotency_scope"))
                 if scope:
-                    cached = self._idempotency.get(scope, {})
-                    cached.update({
-                        "status": "finished",
-                        "command": dict(current),
-                        "response": dict(response or {}),
-                        "ok": bool(ok),
-                        "error": str(error or ""),
-                        "expires_at": time.time() + self._idempotency_ttl,
-                    })
-                    self._idempotency[scope] = cached
-                self._bump_status_revision()
-                self._emit(
-                    "finished",
-                    key=key,
-                    command_id=command_id,
-                    ok=ok,
-                    error=error,
-                    action=current.get("action", ""),
-                    account=current.get("account", ""),
-                    command_generation=current.get("command_generation", ""),
-                    account_command_generation=current.get("account_command_generation", ""),
-                )
-                self._record_timeline("command_finished", str(current.get("account", "") or ""), "info" if ok else "warning", error or "command_finished", action=current.get("action", ""), command_id=command_id, ok=ok)
+                    self._cache_finished(current, scope, ok, error, response)
+                self._emit_finished(key, command_id, ok, error, current)
             else:
-                self._emit(
-                    "stale_work_rejected",
-                    "warning",
-                    key=key,
-                    command_id=command_id,
-                    current_command_id=current.get("command_id", "") if current else "",
-                    ok=ok,
-                    error=error,
-                    reason="command_finish_mismatch",
-                    command_generation=self._generation,
-                    thread_name=threading.current_thread().name,
-                )
-                self._record_timeline("stale_work_rejected", "", "warning", "command_finish_mismatch", command_id=command_id, ok=ok, error=error)
+                self._reject_stale_finish(key, command_id, current, ok, error)
 
     def cancel_for_shutdown(self) -> None:
         with self._lock:

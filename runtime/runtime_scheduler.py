@@ -243,47 +243,63 @@ class RuntimeScheduler:
                     continue
             self.run_due()
 
-    def _dispatch(self, job: RuntimeScheduledJob, callback: ScheduleCallback, now: float) -> None:
-        if self._closed or self._external_stop.is_set():
-            return
-        if not self._generation_matches(job):
-            with self._lock:
-                self._stale_rejection_count += 1
-            self._emit("runtime_schedule_stale_rejected", job, level="warning")
-            return
+    def _reject_stale(self, job: RuntimeScheduledJob) -> None:
+        with self._lock:
+            self._stale_rejection_count += 1
+        self._emit("runtime_schedule_stale_rejected", job, level="warning")
+
+    def _mark_dispatch_started(self, job: RuntimeScheduledJob, now: float) -> None:
         started = time.time()
         with self._lock:
             self._last_dispatch_started_at = started
             self._last_dispatch_latency_seconds = max(0.0, float(now) - float(job.due_at or now))
             self._dispatch_count += 1
-        if not job.periodic:
-            self._emit("runtime_schedule_due", job)
+
+    def _run_callback(self, job: RuntimeScheduledJob, callback: ScheduleCallback) -> None:
         try:
             callback(job)
         except Exception as exc:
             with self._lock:
                 self._callback_failure_count += 1
             self._emit("runtime_schedule_callback_failed", job, level="error", error=str(exc))
+
+    def _should_reschedule(self, job: RuntimeScheduledJob) -> bool:
+        return job.periodic and not self._closed and not self._external_stop.is_set()
+
+    def _reschedule(self, job: RuntimeScheduledJob, callback: ScheduleCallback, now: float) -> None:
+        next_job = RuntimeScheduledJob(
+            job_key=job.job_key,
+            due_at=now + max(0.1, float(job.interval_seconds or 0.1)),
+            reason=job.reason,
+            account_id=job.account_id,
+            account=job.account,
+            runtime_generation=job.runtime_generation,
+            recovery_generation=job.recovery_generation,
+            command_generation=job.command_generation,
+            interval_seconds=job.interval_seconds,
+            periodic=True,
+            payload=dict(job.payload or {}),
+        )
+        with self._cond:
+            self._jobs[next_job.job_key] = (next_job, callback)
+            self._cond.notify_all()
+
+    def _dispatch(self, job: RuntimeScheduledJob, callback: ScheduleCallback, now: float) -> None:
+        if self._closed or self._external_stop.is_set():
+            return
+        if not self._generation_matches(job):
+            self._reject_stale(job)
+            return
+        self._mark_dispatch_started(job, now)
+        if not job.periodic:
+            self._emit("runtime_schedule_due", job)
+        try:
+            self._run_callback(job, callback)
         finally:
             with self._lock:
                 self._last_dispatch_finished_at = time.time()
-            if job.periodic and not self._closed and not self._external_stop.is_set():
-                next_job = RuntimeScheduledJob(
-                    job_key=job.job_key,
-                    due_at=now + max(0.1, float(job.interval_seconds or 0.1)),
-                    reason=job.reason,
-                    account_id=job.account_id,
-                    account=job.account,
-                    runtime_generation=job.runtime_generation,
-                    recovery_generation=job.recovery_generation,
-                    command_generation=job.command_generation,
-                    interval_seconds=job.interval_seconds,
-                    periodic=True,
-                    payload=dict(job.payload or {}),
-                )
-                with self._cond:
-                    self._jobs[next_job.job_key] = (next_job, callback)
-                    self._cond.notify_all()
+            if self._should_reschedule(job):
+                self._reschedule(job, callback, now)
 
     def _generation_matches(self, job: RuntimeScheduledJob) -> bool:
         account = job.account
@@ -304,6 +320,20 @@ class RuntimeScheduler:
                 return False
         return True
 
+    def _runtime_drift_allowed(self, job: RuntimeScheduledJob, account: Any) -> bool:
+        payload = job.payload or {}
+        if not payload.get("allow_runtime_generation_drift"):
+            return False
+        recovery_ok = (
+            job.recovery_generation is not None
+            and int(getattr(account, "recovery_generation", 0) or 0) == int(job.recovery_generation)
+        )
+        command_ok = (
+            job.command_generation is None
+            or int(getattr(account, "command_generation", 0) or 0) == int(job.command_generation)
+        )
+        return recovery_ok and command_ok
+
     def effective_runtime_generation(self, job: RuntimeScheduledJob) -> int | None:
         account = job.account
         expected = job.runtime_generation
@@ -314,10 +344,7 @@ class RuntimeScheduler:
         current = int(getattr(account, "runtime_generation", 0) or 0)
         if current == int(expected):
             return current
-        payload = dict(job.payload or {})
-        recovery_ok = job.recovery_generation is not None and int(getattr(account, "recovery_generation", 0) or 0) == int(job.recovery_generation)
-        command_ok = job.command_generation is None or int(getattr(account, "command_generation", 0) or 0) == int(job.command_generation)
-        if payload.get("allow_runtime_generation_drift") and recovery_ok and command_ok:
+        if self._runtime_drift_allowed(job, account):
             return current
         return None
 
@@ -344,7 +371,7 @@ class RuntimeScheduler:
                 snapshot = job.account.runtime_snapshot() if job.account is not None and hasattr(job.account, "runtime_snapshot") else {}
                 self._timeline.record({"event_type": event, "severity": level, **payload}, account_snapshot=snapshot, account_id=job.account_id)
             except Exception:
-                pass
+                "intentional: ignore exception"
         if self._log:
             try:
                 self._log("RUNTIME", event, level, **payload)

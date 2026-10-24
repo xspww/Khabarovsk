@@ -42,32 +42,29 @@ RECOVERY_REASON_MESSAGES = {
 }
 
 
-def _enrich_visual_disconnect_payload_with_log(payload: dict[str, Any]) -> dict[str, Any]:
-    """Attach late Roblox log evidence when visual popup recovery wins the race."""
-    if not payload:
-        return payload
-    if payload.get("popup_code") or payload.get("error_code"):
-        return payload
-    if not payload.get("visual_disconnect"):
-        return payload
-    evidence_source = str(payload.get("evidence_source") or "")
-    if evidence_source not in {"visual_strong", "center_modal", "visual"}:
-        return payload
-
+def _log_evidence_collector() -> Any:
     collector = collect_recent_log_evidence
     farm_module = sys.modules.get("farm")
     if farm_module is not None and hasattr(farm_module, "collect_recent_log_evidence"):
         collector = farm_module.collect_recent_log_evidence
-    evidence = collector(since_seconds=180.0, max_files=8, max_lines=1200)
-    code = str(evidence.get("error_code") or "").strip()
-    if not evidence.get("matched") or not code:
-        return payload
+    return collector
 
+
+def _apply_log_evidence(
+    payload: dict[str, Any],
+    code: str,
+    evidence_source: str,
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
     enriched = dict(payload)
     detail = str(enriched.get("detail") or enriched.get("reason_msg") or "").strip()
     log_line = str(evidence.get("line") or "").strip()
     if log_line and log_line not in detail:
-        detail = f"{detail}; roblox_log={log_line}" if detail else f"roblox_log={log_line}"
+        detail = (
+            f"{detail}; roblox_log={log_line}"
+            if detail
+            else f"roblox_log={log_line}"
+        )
     enriched.update({
         "popup_code": code,
         "error_code": code,
@@ -81,6 +78,29 @@ def _enrich_visual_disconnect_payload_with_log(payload: dict[str, Any]) -> dict[
         enriched["reason_key"] = "session_conflict"
         enriched["disconnect_category"] = SESSION_CONFLICT
     return enriched
+
+
+def _enrich_visual_disconnect_payload_with_log(payload: dict[str, Any]) -> dict[str, Any]:
+    """Attach late Roblox log evidence when visual popup recovery wins the race."""
+    if not payload:
+        return payload
+    if payload.get("popup_code") or payload.get("error_code"):
+        return payload
+    if not payload.get("visual_disconnect"):
+        return payload
+    evidence_source = str(payload.get("evidence_source") or "")
+    if evidence_source not in {"visual_strong", "center_modal", "visual"}:
+        return payload
+
+    evidence = _log_evidence_collector()(
+        since_seconds=180.0,
+        max_files=8,
+        max_lines=1200,
+    )
+    code = str(evidence.get("error_code") or "").strip()
+    if not evidence.get("matched") or not code:
+        return payload
+    return _apply_log_evidence(payload, code, evidence_source, evidence)
 
 
 def compute_backoff(attempt: int, base: int = 5, cap: int = 120) -> float:

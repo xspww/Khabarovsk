@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-import hashlib
 import re
 import time
 import urllib.parse
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
+from domain._util import _safe_hash
 from services.browser_tracker import tracker_label
 
 
@@ -124,11 +124,29 @@ def create_rejoin_transaction(identity: RuntimeSessionIdentity, recovery_generat
     )
 
 
-def _safe_hash(value: str) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()[:16]
+def _first_query_value(qs: dict[str, list[str]], *keys: str) -> str:
+    for key in keys:
+        values = qs.get(key) or []
+        if values:
+            return str(values[0] or "")
+    return ""
+
+
+def _vip_link_fields(text: str) -> dict[str, Any]:
+    parsed = urllib.parse.urlparse(text)
+    qs = urllib.parse.parse_qs(parsed.query)
+    match = re.search(r"/games/(\d+)", parsed.path or "")
+    place_id = match.group(1) if match else _first_query_value(qs, "placeId")
+    link_code = _first_query_value(qs, "privateServerLinkCode", "linkCode", "code", "accessCode")
+    job_id = _first_query_value(qs, "gameInstanceId", "jobId", "serverId")
+    return {
+        "place_id": str(place_id or ""),
+        "link_code_hash": _safe_hash(link_code),
+        "job_id_hash": _safe_hash(job_id),
+        "url_hash": _safe_hash(text),
+        "has_private_code": bool(link_code),
+        "has_job_id": bool(job_id),
+    }
 
 
 def _parse_vip_link(vip_url: str) -> dict[str, Any]:
@@ -136,29 +154,7 @@ def _parse_vip_link(vip_url: str) -> dict[str, Any]:
     if not text:
         return {}
     try:
-        parsed = urllib.parse.urlparse(text)
-        qs = urllib.parse.parse_qs(parsed.query)
-        match = re.search(r"/games/(\d+)", parsed.path or "")
-        place_id = match.group(1) if match else qs.get("placeId", [""])[0]
-        link_code = (
-            qs.get("privateServerLinkCode", [""])[0]
-            or qs.get("linkCode", [""])[0]
-            or qs.get("code", [""])[0]
-            or qs.get("accessCode", [""])[0]
-        )
-        job_id = (
-            qs.get("gameInstanceId", [""])[0]
-            or qs.get("jobId", [""])[0]
-            or qs.get("serverId", [""])[0]
-        )
-        return {
-            "place_id": str(place_id or ""),
-            "link_code_hash": _safe_hash(link_code),
-            "job_id_hash": _safe_hash(job_id),
-            "url_hash": _safe_hash(text),
-            "has_private_code": bool(link_code),
-            "has_job_id": bool(job_id),
-        }
+        return _vip_link_fields(text)
     except Exception:
         return {"url_hash": _safe_hash(text), "parse_error": True}
 
@@ -177,60 +173,139 @@ def _unique(values: list[str], limit: int = 10) -> list[str]:
     return out
 
 
-def build_launch_intent(account: Any, reason: str = "") -> dict[str, Any]:
+class _LaunchIntentParts(NamedTuple):
+    vip_links: list[Any]
+    active_vip: str
+    browser_tracker_id: str
+    parsed_active: dict[str, Any]
+    configured_place_ids: list[str]
+    configured_private_hashes: list[str]
+    active_private_hash: str
+    active_place_id: str
+    effective_place_id: str
+    server_type_norm: str
+    launch_strategy: str
+    private_server_intent: bool
+    vip_intent: str
+
+
+def _account_text(account: Any, attr: str) -> str:
+    return str(getattr(account, attr, "") or "")
+
+
+def _account_server_type(account: Any) -> str:
+    raw = getattr(account, "server_type", None)
+    fallback = str(getattr(account, "server_type", "") or "")
+    return str(getattr(raw, "value", fallback) or "")
+
+
+def _mapping_text(mapping: dict[str, Any], key: str) -> str:
+    return str(mapping.get(key, "") or "")
+
+
+def _first_text(*values: Any) -> str:
+    for value in values:
+        if value:
+            return str(value)
+    return ""
+
+
+def _parsed_link_hashes(parsed_links: list[dict[str, Any]]) -> tuple[list[str], list[str]]:
+    place_ids = _unique([_mapping_text(item, "place_id") for item in parsed_links])
+    link_hashes = _unique([_mapping_text(item, "link_code_hash") for item in parsed_links])
+    return place_ids, link_hashes
+
+
+def _active_vip_intent(private_server_intent: bool, active_private_hash: str, has_vip: bool) -> str:
+    if private_server_intent and active_private_hash:
+        return "active_private"
+    if private_server_intent:
+        return "configured_private"
+    if has_vip:
+        return "configured_public"
+    return "none"
+
+
+def _launch_intent_parts(account: Any) -> _LaunchIntentParts:
     vip_links = list(getattr(account, "vip_links", []) or [])
-    active_vip = str(getattr(account, "active_vip", "") or "")
-    browser_tracker_id = str(getattr(account, "browser_tracker_id", "") or "")
-    place_id = str(getattr(account, "place_id", "") or "")
-    server_type = getattr(getattr(account, "server_type", None), "value", str(getattr(account, "server_type", "") or ""))
-    launch_strategy = str(getattr(account, "launch_strategy", "") or "")
+    active_vip = _account_text(account, "active_vip")
+    browser_tracker_id = _account_text(account, "browser_tracker_id")
+    place_id = _account_text(account, "place_id")
+    server_type = _account_server_type(account)
+    launch_strategy = _account_text(account, "launch_strategy")
     parsed_active = _parse_vip_link(active_vip)
     parsed_links = [_parse_vip_link(link) for link in vip_links]
-    configured_place_ids = _unique([str(item.get("place_id", "") or "") for item in parsed_links])
-    configured_private_hashes = _unique([str(item.get("link_code_hash", "") or "") for item in parsed_links])
-    active_private_hash = str(parsed_active.get("link_code_hash", "") or "")
-    active_place_id = str(parsed_active.get("place_id", "") or "")
-    effective_place_id = place_id or active_place_id or (configured_place_ids[0] if configured_place_ids else "")
+    configured_place_ids, configured_private_hashes = _parsed_link_hashes(parsed_links)
+    active_private_hash = _mapping_text(parsed_active, "link_code_hash")
+    active_place_id = _mapping_text(parsed_active, "place_id")
+    effective_place_id = _first_text(
+        place_id,
+        active_place_id,
+        configured_place_ids[0] if configured_place_ids else "",
+    )
     server_type_norm = (server_type or "UNKNOWN").upper()
     private_server_intent = bool(
         active_private_hash
         or configured_private_hashes
         or server_type_norm in {"VIP", "PRIVATE", "PRIVATE_SERVER"}
     )
-    if private_server_intent and active_private_hash:
-        vip_intent = "active_private"
-    elif private_server_intent:
-        vip_intent = "configured_private"
-    elif vip_links or active_vip:
-        vip_intent = "configured_public"
-    else:
-        vip_intent = "none"
-    launch_intent_summary = {
-        "place_id": effective_place_id,
-        "server_type": server_type_norm or "UNKNOWN",
-        "launch_strategy": launch_strategy,
-        "vip_intent": vip_intent,
-        "private_server_intent": private_server_intent,
-        "active_vip_hash": str(parsed_active.get("url_hash", "") or ""),
-        "active_private_link_code_hash": active_private_hash,
-        "browser_tracker_id": tracker_label(browser_tracker_id),
+    vip_intent = _active_vip_intent(
+        private_server_intent,
+        active_private_hash,
+        bool(vip_links or active_vip),
+    )
+    return _LaunchIntentParts(
+        vip_links=vip_links,
+        active_vip=active_vip,
+        browser_tracker_id=browser_tracker_id,
+        parsed_active=parsed_active,
+        configured_place_ids=configured_place_ids,
+        configured_private_hashes=configured_private_hashes,
+        active_private_hash=active_private_hash,
+        active_place_id=active_place_id,
+        effective_place_id=effective_place_id,
+        server_type_norm=server_type_norm,
+        launch_strategy=launch_strategy,
+        private_server_intent=private_server_intent,
+        vip_intent=vip_intent,
+    )
+
+
+def _launch_intent_summary(parts: _LaunchIntentParts) -> dict[str, Any]:
+    return {
+        "place_id": parts.effective_place_id,
+        "server_type": parts.server_type_norm or "UNKNOWN",
+        "launch_strategy": parts.launch_strategy,
+        "vip_intent": parts.vip_intent,
+        "private_server_intent": parts.private_server_intent,
+        "active_vip_hash": _mapping_text(parts.parsed_active, "url_hash"),
+        "active_private_link_code_hash": parts.active_private_hash,
+        "browser_tracker_id": tracker_label(parts.browser_tracker_id),
     }
+
+
+def _launch_intent_output(parts: _LaunchIntentParts, reason: str, summary: dict[str, Any]) -> dict[str, Any]:
     return {
         "reason": str(reason or ""),
-        "place_id": effective_place_id,
-        "vip_configured": bool(vip_links),
-        "vip_count": len(vip_links),
-        "active_vip_present": bool(active_vip),
-        "server_type": server_type_norm or "UNKNOWN",
-        "launch_strategy": launch_strategy,
-        "vip_intent": vip_intent,
-        "private_server_intent": private_server_intent,
-        "active_vip_place_id": active_place_id,
-        "active_vip_hash": str(parsed_active.get("url_hash", "") or ""),
-        "active_private_link_code_hash": active_private_hash,
-        "active_job_id_hash": str(parsed_active.get("job_id_hash", "") or ""),
-        "configured_vip_place_ids": configured_place_ids,
-        "configured_private_link_code_hashes": configured_private_hashes,
-        "browser_tracker_id": tracker_label(browser_tracker_id),
-        "launch_intent_summary": launch_intent_summary,
+        "place_id": parts.effective_place_id,
+        "vip_configured": bool(parts.vip_links),
+        "vip_count": len(parts.vip_links),
+        "active_vip_present": bool(parts.active_vip),
+        "server_type": parts.server_type_norm or "UNKNOWN",
+        "launch_strategy": parts.launch_strategy,
+        "vip_intent": parts.vip_intent,
+        "private_server_intent": parts.private_server_intent,
+        "active_vip_place_id": parts.active_place_id,
+        "active_vip_hash": _mapping_text(parts.parsed_active, "url_hash"),
+        "active_private_link_code_hash": parts.active_private_hash,
+        "active_job_id_hash": _mapping_text(parts.parsed_active, "job_id_hash"),
+        "configured_vip_place_ids": parts.configured_place_ids,
+        "configured_private_link_code_hashes": parts.configured_private_hashes,
+        "browser_tracker_id": tracker_label(parts.browser_tracker_id),
+        "launch_intent_summary": summary,
     }
+
+
+def build_launch_intent(account: Any, reason: str = "") -> dict[str, Any]:
+    parts = _launch_intent_parts(account)
+    return _launch_intent_output(parts, reason, _launch_intent_summary(parts))

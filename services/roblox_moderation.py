@@ -12,6 +12,30 @@ from infra import net_tls
 from services.roblox_http import MODERATION_HEADERS, PUBLIC_HEADERS, USERMODERATION_BASE, USERS_BASE
 
 
+def _fetch_moderation_raw(req: urllib.request.Request, timeout: float) -> tuple[str, str]:
+    try:
+        with net_tls.urlopen(req, timeout=timeout) as resp:
+            raw = resp.read().decode("utf-8", errors="replace")
+        return "ok", raw
+    except urllib.error.HTTPError as exc:
+        if exc.code == 401:
+            # Cookie revoked/expired. Says nothing about moderation state.
+            return "error", "moderation status unavailable (cookie not valid)"
+        if exc.code == 429 or exc.code >= 500:
+            return "error", f"moderation status transient (HTTP {exc.code})"
+        return "error", f"moderation status HTTP {exc.code}"
+    except Exception as exc:
+        return "error", f"moderation status transient: {exc}"
+
+
+def _moderation_payload(raw: str) -> dict[str, Any] | None:
+    try:
+        data = json.loads(raw) if raw.strip() else {}
+    except Exception:
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def fetch_moderation_status(cookie: str, timeout: float = 8.0) -> tuple[bool | None, str, dict[str, Any]]:
     """Read Roblox account moderation (suspension / ban) for a live cookie.
 
@@ -33,23 +57,11 @@ def fetch_moderation_status(cookie: str, timeout: float = 8.0) -> tuple[bool | N
         url,
         headers={**MODERATION_HEADERS, "Cookie": f".ROBLOSECURITY={token};"},
     )
-    try:
-        with net_tls.urlopen(req, timeout=timeout) as resp:
-            raw = resp.read().decode("utf-8", errors="replace")
-    except urllib.error.HTTPError as exc:
-        if exc.code == 401:
-            # Cookie revoked/expired. Says nothing about moderation state.
-            return None, "moderation status unavailable (cookie not valid)", {}
-        if exc.code == 429 or exc.code >= 500:
-            return None, f"moderation status transient (HTTP {exc.code})", {}
-        return None, f"moderation status HTTP {exc.code}", {}
-    except Exception as exc:
-        return None, f"moderation status transient: {exc}", {}
-    try:
-        data = json.loads(raw) if raw.strip() else {}
-    except Exception:
-        return None, "moderation status parse failed", {}
-    if not isinstance(data, dict):
+    kind, value = _fetch_moderation_raw(req, timeout)
+    if kind == "error":
+        return None, value, {}
+    data = _moderation_payload(value)
+    if data is None:
         return None, "moderation status parse failed", {}
     # An active intervention is the only marker; an empty object means clean.
     if data.get("interventionId") in (None, ""):
@@ -83,6 +95,57 @@ def _describe_moderation(data: dict[str, Any]) -> str:
     return f"Account suspended by Roblox{until}"
 
 
+def _parse_public_payload(raw: str) -> tuple[str, Any]:
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return "transient", "ban check parse failed"
+    if isinstance(data, dict) and bool(data.get("isBanned", False)):
+        return "ok", (True, "Account banned (Roblox isBanned=true)")
+    return "ok", (False, "")
+
+
+def _fetch_public_once(url: str, timeout: float) -> tuple[str, Any]:
+    """Returns (kind, payload): kind is ok|http_error|transient."""
+    try:
+        req = urllib.request.Request(url, headers=dict(PUBLIC_HEADERS))
+        with net_tls.urlopen(req, timeout=timeout) as resp:
+            return _parse_public_payload(resp.read().decode("utf-8", errors="replace"))
+    except urllib.error.HTTPError as exc:
+        try:
+            body = exc.read().decode("utf-8", errors="replace")
+        except Exception:
+            body = ""
+        return "http_error", (int(exc.code or 0), body)
+    except Exception as exc:
+        return "transient", f"ban check transient: {exc}"
+
+
+def _ban_http_result(code: int, body: str) -> tuple[bool | None, str]:
+    lowered = f"{code} {body}".lower()
+    if code == 429 or code >= 500:
+        return None, f"ban check transient (HTTP {code})"
+    if "banned" in lowered or "terminat" in lowered:
+        return True, f"Account banned ({body[:120].strip() or code})"
+    return None, f"ban check HTTP {code}"
+
+
+def _retry_404_result(fetch_once: Any) -> tuple[bool | None, str]:
+    try:
+        time.sleep(2.0)
+    except Exception:
+        "intentional: ignore exception"
+    kind2, payload2 = fetch_once()
+    if kind2 == "ok":
+        return payload2
+    if kind2 == "transient":
+        return None, str(payload2)
+    code2, body2 = payload2
+    if code2 == 404:
+        return True, "Account not found (deleted/terminated)"
+    return _ban_http_result(code2, body2)
+
+
 def fetch_user_ban_status(user_id: str, timeout: float = 8.0, trusted_id: bool = True) -> tuple[bool | None, str]:
     """Check Roblox account-level ban via public profile (isBanned).
 
@@ -99,35 +162,12 @@ def fetch_user_ban_status(user_id: str, timeout: float = 8.0, trusted_id: bool =
     if not uid.isdigit():
         return None, ""
     url = f"{USERS_BASE}v1/users/{uid}"
-
-    def _fetch_once() -> tuple[str, Any]:
-        """Returns (kind, payload): kind is ok|http_error|transient."""
-        try:
-            req = urllib.request.Request(url, headers=dict(PUBLIC_HEADERS))
-            with net_tls.urlopen(req, timeout=timeout) as resp:
-                try:
-                    data = json.loads(resp.read().decode("utf-8", errors="replace"))
-                except Exception:
-                    return "transient", "ban check parse failed"
-                if isinstance(data, dict) and bool(data.get("isBanned", False)):
-                    return "ok", (True, "Account banned (Roblox isBanned=true)")
-                return "ok", (False, "")
-        except urllib.error.HTTPError as exc:
-            try:
-                body = exc.read().decode("utf-8", errors="replace")
-            except Exception:
-                body = ""
-            return "http_error", (int(exc.code or 0), body)
-        except Exception as exc:
-            return "transient", f"ban check transient: {exc}"
-
-    kind, payload = _fetch_once()
+    kind, payload = _fetch_public_once(url, timeout)
     if kind == "ok":
         return payload
     if kind == "transient":
         return None, str(payload)
     code, body = payload
-    lowered = f"{code} {body}".lower()
     if code == 404:
         if not trusted_id:
             return None, "ban check: no public profile for this id"
@@ -135,25 +175,27 @@ def fetch_user_ban_status(user_id: str, timeout: float = 8.0, trusted_id: bool =
         # is usually replication lag / rate-limit, not a deletion. Retry
         # once before concluding the account is gone so one flaky 404 can
         # never falsely mark a healthy account as banned.
-        try:
-            time.sleep(2.0)
-        except Exception:
-            pass
-        kind2, payload2 = _fetch_once()
-        if kind2 == "ok":
-            return payload2
-        if kind2 == "transient":
-            return None, str(payload2)
-        code2, body2 = payload2
-        if code2 == 404:
-            return True, "Account not found (deleted/terminated)"
-        lowered = f"{code2} {body2}".lower()
-        code, body = code2, body2
-    if code == 429 or code >= 500:
-        return None, f"ban check transient (HTTP {code})"
-    if "banned" in lowered or "terminat" in lowered:
-        return True, f"Account banned ({body[:120].strip() or code})"
-    return None, f"ban check HTTP {code}"
+        return _retry_404_result(lambda: _fetch_public_once(url, timeout))
+    return _ban_http_result(code, body)
+
+
+def _lookup_items(data: Any) -> list[Any]:
+    items = data.get("data") if isinstance(data, dict) else []
+    return items if isinstance(items, list) else []
+
+
+def _match_user_item(items: list[Any], name: str) -> str:
+    lowered = name.lower()
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        requested = str(item.get("requestedUsername") or "").lower()
+        actual = str(item.get("name") or "").lower()
+        if requested == lowered or actual == lowered:
+            uid = str(item.get("id") or "").strip()
+            if uid:
+                return uid
+    return ""
 
 
 def fetch_user_id_by_username(username: str, timeout: float = 8.0) -> tuple[str, str]:
@@ -184,16 +226,9 @@ def fetch_user_id_by_username(username: str, timeout: float = 8.0) -> tuple[str,
         return "", f"username lookup HTTP {exc.code}"
     except Exception as exc:
         return "", f"username lookup transient: {exc}"
-    items = data.get("data") if isinstance(data, dict) else []
-    if isinstance(items, list):
-        lowered = name.lower()
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("requestedUsername") or "").lower() == lowered or str(item.get("name") or "").lower() == lowered:
-                uid = str(item.get("id") or "").strip()
-                if uid:
-                    return uid, ""
+    uid = _match_user_item(_lookup_items(data), name)
+    if uid:
+        return uid, ""
     return "", "user not found"
 
 

@@ -197,6 +197,55 @@ class RuntimeOrchestrator:
             payload=payload or {"trigger": "network"},
         )
 
+    def _signal_expectations(
+        self,
+        acc: Any,
+        expected_runtime_generation: int | None,
+        expected_session_id: str,
+        expected_launch_nonce: str,
+        expected_transaction_id: str,
+    ) -> tuple[int, str, str, str]:
+        if expected_runtime_generation is not None:
+            return (
+                expected_runtime_generation,
+                expected_session_id,
+                expected_launch_nonce,
+                expected_transaction_id,
+            )
+        owner = self.capture_owner(acc)
+        return (
+            int(owner.get("runtime_generation") or 0),
+            expected_session_id or str(owner.get("session_id") or ""),
+            expected_launch_nonce or str(owner.get("launch_nonce") or ""),
+            expected_transaction_id or str(owner.get("transaction_id") or ""),
+        )
+
+    def _emit_signal_event(
+        self,
+        acc: Any,
+        signal: str,
+        reason: str,
+        accepted: bool,
+        runtime_generation: int,
+        session_id: str,
+        launch_nonce: str,
+        transaction_id: str,
+    ) -> None:
+        self.emit_event(
+            RuntimeEvent(
+                event_type=self._signal_event_type(signal, reason, accepted),
+                account_id=self._account_key(acc),
+                reason=reason or signal,
+                severity="info" if accepted else "warning",
+                payload={"signal": signal, "accepted": accepted},
+                runtime_generation=int(runtime_generation or 0),
+                session_id=session_id,
+                launch_nonce=launch_nonce,
+                transaction_id=transaction_id,
+            ),
+            acc=acc,
+        )
+
     def handle_runtime_signal(
         self,
         acc: Any,
@@ -212,38 +261,26 @@ class RuntimeOrchestrator:
         if not recovery:
             self._emit_log("runtime_signal_rejected", "warning", account=self._account_key(acc), reason="missing_recovery")
             return False
-        if expected_runtime_generation is None:
-            owner = self.capture_owner(acc)
-            expected_runtime_generation = int(owner.get("runtime_generation") or 0)
-            expected_session_id = expected_session_id or str(owner.get("session_id") or "")
-            expected_launch_nonce = expected_launch_nonce or str(owner.get("launch_nonce") or "")
-            expected_transaction_id = expected_transaction_id or str(owner.get("transaction_id") or "")
+        generation, session_id, launch_nonce, transaction_id = self._signal_expectations(
+            acc,
+            expected_runtime_generation,
+            expected_session_id,
+            expected_launch_nonce,
+            expected_transaction_id,
+        )
         accepted = bool(
             recovery.handle_runtime_signal(
                 acc,
                 signal,
                 reason,
                 payload=payload,
-                expected_runtime_generation=expected_runtime_generation,
-                expected_session_id=expected_session_id,
-                expected_launch_nonce=expected_launch_nonce,
-                expected_transaction_id=expected_transaction_id,
+                expected_runtime_generation=generation,
+                expected_session_id=session_id,
+                expected_launch_nonce=launch_nonce,
+                expected_transaction_id=transaction_id,
             )
         )
-        self.emit_event(
-            RuntimeEvent(
-                event_type=self._signal_event_type(signal, reason, accepted),
-                account_id=self._account_key(acc),
-                reason=reason or signal,
-                severity="info" if accepted else "warning",
-                payload={"signal": signal, "accepted": accepted},
-                runtime_generation=int(expected_runtime_generation or 0),
-                session_id=expected_session_id,
-                launch_nonce=expected_launch_nonce,
-                transaction_id=expected_transaction_id,
-            ),
-            acc=acc,
-        )
+        self._emit_signal_event(acc, signal, reason, accepted, generation, session_id, launch_nonce, transaction_id)
         return accepted
 
     def set_recovery_status(self, acc: Any, status: str = "", reason: str = "", inflight: bool | None = None) -> None:

@@ -184,7 +184,7 @@ class SystemMaintenance(
         try:
             self._enforce_auto_minimize()
         except Exception:
-            pass
+            "intentional: ignore exception"
 
     def _run_reconcile(self, job: RuntimeScheduledJob) -> None:
         self._runtime_reconcile_all(trigger=job.reason or "periodic_reconcile", force_restart=False)

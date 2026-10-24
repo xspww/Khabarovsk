@@ -8,6 +8,95 @@ import time
 from typing import Any
 
 
+def _snap_str(snapshot: dict[str, Any], key: str, default: str = "") -> str:
+    return str(snapshot.get(key) or default)
+
+
+def _snap_int(snapshot: dict[str, Any], key: str) -> int:
+    return int(snapshot.get(key) or 0)
+
+
+def _snap_float(snapshot: dict[str, Any], key: str, fallback: float) -> float:
+    return float(snapshot.get(key) or fallback)
+
+
+def _event_alias(event: dict[str, Any], primary: str, secondary: str) -> str:
+    value = event.get(primary, event.get(secondary, ""))
+    return str(value or "")
+
+
+def _event_record_params(event: dict[str, Any], payload_json: str) -> tuple[Any, ...]:
+    return (
+        _snap_float(event, "ts", time.time()),
+        _snap_str(event, "severity", "info"),
+        _event_alias(event, "account", "account_id"),
+        _event_alias(event, "event_type", "kind"),
+        _snap_str(event, "reason"),
+        _snap_str(event, "session_id"),
+        _event_alias(event, "rejoin_transaction_id", "transaction_id"),
+        _snap_int(event, "runtime_generation"),
+        _snap_int(event, "recovery_generation"),
+        _snap_int(event, "command_generation"),
+        event.get("pid"),
+        _snap_str(event, "runtime_state"),
+        _snap_str(event, "public_state"),
+        payload_json,
+    )
+
+
+def _event_filters(account_id: str, event_type: str, severity: str) -> tuple[list[str], list[Any]]:
+    filters: list[str] = []
+    params: list[Any] = []
+    if account_id:
+        filters.append("account_id=?")
+        params.append(str(account_id or ""))
+    if event_type:
+        filters.append("LOWER(event_type)=LOWER(?)")
+        params.append(str(event_type or ""))
+    if severity:
+        filters.append("LOWER(severity)=LOWER(?)")
+        params.append(str(severity or ""))
+    return filters, params
+
+
+def _event_row(row: Any, payload: Any) -> dict[str, Any]:
+    data = dict(row)
+    return {
+        "id": int(data["id"]),
+        "ts": _snap_float(data, "ts", 0.0),
+        "severity": _snap_str(data, "severity", "info"),
+        "account": _snap_str(data, "account_id"),
+        "event_type": _snap_str(data, "event_type"),
+        "reason": _snap_str(data, "reason"),
+        "session_id": _snap_str(data, "session_id"),
+        "rejoin_transaction_id": _snap_str(data, "transaction_id"),
+        "runtime_generation": _snap_int(data, "runtime_generation"),
+        "recovery_generation": _snap_int(data, "recovery_generation"),
+        "command_generation": _snap_int(data, "command_generation"),
+        "pid": data["pid"],
+        "runtime_state": _snap_str(data, "runtime_state"),
+        "public_state": _snap_str(data, "public_state"),
+        "payload": payload if isinstance(payload, dict) else {},
+    }
+
+
+def _rollback_event(row: Any, reason: str, now: float) -> dict[str, Any]:
+    data = dict(row)
+    return {
+        "ts": now,
+        "severity": "warning",
+        "account": _snap_str(data, "account_id"),
+        "event_type": "transaction_rollback",
+        "reason": reason or "backend_restart",
+        "session_id": _snap_str(data, "session_id"),
+        "transaction_id": _snap_str(data, "transaction_id"),
+        "runtime_generation": _snap_int(data, "runtime_generation"),
+        "recovery_generation": _snap_int(data, "recovery_generation"),
+        "command_generation": _snap_int(data, "command_generation"),
+        "payload": {"step": "rolled_back_on_restart", "previous_status": _snap_str(data, "status")},
+    }
+
+
 class RuntimeStore:
     """SQLite WAL store for runtime truth that must survive backend restarts."""
 
@@ -30,7 +119,7 @@ class RuntimeStore:
                 try:
                     self._conn.rollback()
                 except sqlite3.DatabaseError:
-                    pass
+                    "intentional: ignore exception"
                 raise
 
     def _json(self, value: Any) -> str:
@@ -153,17 +242,17 @@ class RuntimeStore:
                 updated_at=excluded.updated_at
             """,
             (
-                str(snapshot.get("session_id", "") or ""),
-                str(snapshot.get("account_id", "") or ""),
-                str(snapshot.get("account_runtime_id", "") or ""),
-                str(snapshot.get("launch_nonce", "") or ""),
-                int(snapshot.get("runtime_generation", 0) or 0),
-                int(snapshot.get("recovery_generation", 0) or 0),
-                int(snapshot.get("command_generation", 0) or 0),
+                _snap_str(snapshot, "session_id"),
+                _snap_str(snapshot, "account_id"),
+                _snap_str(snapshot, "account_runtime_id"),
+                _snap_str(snapshot, "launch_nonce"),
+                _snap_int(snapshot, "runtime_generation"),
+                _snap_int(snapshot, "recovery_generation"),
+                _snap_int(snapshot, "command_generation"),
                 str(status or snapshot.get("status", "active") or "active"),
-                str(snapshot.get("reason", "") or ""),
+                _snap_str(snapshot, "reason"),
                 self._json(snapshot.get("launch_intent", {})),
-                float(snapshot.get("created_at", 0.0) or now),
+                _snap_float(snapshot, "created_at", now),
                 now,
             ),
         )
@@ -188,23 +277,23 @@ class RuntimeStore:
                 completed_at=excluded.completed_at
             """,
             (
-                str(snapshot.get("transaction_id", "") or ""),
-                str(snapshot.get("account_id", "") or ""),
-                str(snapshot.get("session_id", "") or ""),
-                str(snapshot.get("account_runtime_id", "") or ""),
-                str(snapshot.get("launch_nonce", "") or ""),
-                int(snapshot.get("runtime_generation", 0) or 0),
-                int(snapshot.get("recovery_generation", 0) or 0),
-                int(snapshot.get("command_generation", 0) or 0),
-                str(snapshot.get("status", "") or "pending"),
-                str(snapshot.get("step", "") or "begin"),
-                str(snapshot.get("reason", "") or ""),
-                str(snapshot.get("failure_reason", "") or ""),
+                _snap_str(snapshot, "transaction_id"),
+                _snap_str(snapshot, "account_id"),
+                _snap_str(snapshot, "session_id"),
+                _snap_str(snapshot, "account_runtime_id"),
+                _snap_str(snapshot, "launch_nonce"),
+                _snap_int(snapshot, "runtime_generation"),
+                _snap_int(snapshot, "recovery_generation"),
+                _snap_int(snapshot, "command_generation"),
+                _snap_str(snapshot, "status", "pending"),
+                _snap_str(snapshot, "step", "begin"),
+                _snap_str(snapshot, "reason"),
+                _snap_str(snapshot, "failure_reason"),
                 self._json(snapshot.get("launch_intent", {})),
                 self._json(snapshot.get("destination_evidence", {})),
-                float(snapshot.get("created_at", 0.0) or time.time()),
-                float(snapshot.get("updated_at", 0.0) or time.time()),
-                float(snapshot.get("completed_at", 0.0) or 0.0),
+                _snap_float(snapshot, "created_at", time.time()),
+                _snap_float(snapshot, "updated_at", time.time()),
+                _snap_float(snapshot, "completed_at", 0.0),
             ),
         )
 
@@ -230,20 +319,7 @@ class RuntimeStore:
                     VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        float(event.get("ts", 0.0) or time.time()),
-                        str(event.get("severity", "") or "info"),
-                        str(event.get("account", event.get("account_id", "")) or ""),
-                        str(event.get("event_type", event.get("kind", "")) or ""),
-                        str(event.get("reason", "") or ""),
-                        str(event.get("session_id", "") or ""),
-                        str(event.get("rejoin_transaction_id", event.get("transaction_id", "")) or ""),
-                        int(event.get("runtime_generation", 0) or 0),
-                        int(event.get("recovery_generation", 0) or 0),
-                        int(event.get("command_generation", 0) or 0),
-                        event.get("pid"),
-                        str(event.get("runtime_state", "") or ""),
-                        str(event.get("public_state", "") or ""),
-                        self._json(event),
+                        * _event_record_params(event, self._json(event)),
                     ),
                 )
                 self._event_write_count += 1
@@ -262,7 +338,7 @@ class RuntimeStore:
                 try:
                     self._conn.rollback()
                 except sqlite3.DatabaseError:
-                    pass
+                    "intentional: ignore exception"
                 raise
     def list_recent_events(
         self,
@@ -272,44 +348,16 @@ class RuntimeStore:
         severity: str = "",
     ) -> list[dict[str, Any]]:
         safe_limit = max(1, min(int(limit or 100), 500))
-        filters: list[str] = []
-        params: list[Any] = []
-        if account_id:
-            filters.append("account_id=?")
-            params.append(str(account_id or ""))
-        if event_type:
-            filters.append("LOWER(event_type)=LOWER(?)")
-            params.append(str(event_type or ""))
-        if severity:
-            filters.append("LOWER(severity)=LOWER(?)")
-            params.append(str(severity or ""))
+        filters, params = _event_filters(account_id, event_type, severity)
         where = f" WHERE {' AND '.join(filters)}" if filters else ""
         sql = f"SELECT * FROM runtime_events{where} ORDER BY ts DESC, id DESC LIMIT ?"
         params.append(safe_limit)
         with self._lock:
             rows = list(self._conn.execute(sql, tuple(params)).fetchall())
-        events: list[dict[str, Any]] = []
-        for row in rows:
-            payload = self._decode_json(row["payload_json"])
-            item = {
-                "id": int(row["id"]),
-                "ts": float(row["ts"] or 0.0),
-                "severity": str(row["severity"] or "info"),
-                "account": str(row["account_id"] or ""),
-                "event_type": str(row["event_type"] or ""),
-                "reason": str(row["reason"] or ""),
-                "session_id": str(row["session_id"] or ""),
-                "rejoin_transaction_id": str(row["transaction_id"] or ""),
-                "runtime_generation": int(row["runtime_generation"] or 0),
-                "recovery_generation": int(row["recovery_generation"] or 0),
-                "command_generation": int(row["command_generation"] or 0),
-                "pid": row["pid"],
-                "runtime_state": str(row["runtime_state"] or ""),
-                "public_state": str(row["public_state"] or ""),
-                "payload": payload if isinstance(payload, dict) else {},
-            }
-            events.append(item)
-        return events
+        return [
+            _event_row(row, self._decode_json(row["payload_json"]))
+            for row in rows
+        ]
     def rollback_open_transactions(self, reason: str = "backend_restart") -> int:
         now = time.time()
         open_statuses = ("pending", "launching", "process_bound", "verifying", "binding_verified")
@@ -335,21 +383,9 @@ class RuntimeStore:
             self._conn.commit()
         for row in rows:
             try:
-                self.record_event({
-                    "ts": now,
-                    "severity": "warning",
-                    "account": str(row["account_id"] or ""),
-                    "event_type": "transaction_rollback",
-                    "reason": reason or "backend_restart",
-                    "session_id": str(row["session_id"] or ""),
-                    "transaction_id": str(row["transaction_id"] or ""),
-                    "runtime_generation": int(row["runtime_generation"] or 0),
-                    "recovery_generation": int(row["recovery_generation"] or 0),
-                    "command_generation": int(row["command_generation"] or 0),
-                    "payload": {"step": "rolled_back_on_restart", "previous_status": str(row["status"] or "")},
-                })
+                self.record_event(_rollback_event(row, reason, now))
             except Exception:
-                pass
+                "intentional: ignore exception"
         return len(rows)
 
     def close(self) -> None:

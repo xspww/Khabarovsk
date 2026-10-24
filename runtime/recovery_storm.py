@@ -69,6 +69,38 @@ class RecoveryStormDecision:
         }
 
 
+def _storm_due(
+    now: float,
+    requested: float,
+    cfg: dict[str, Any],
+    active: int,
+    account_key: str,
+    reason: str,
+    net_online: bool,
+    next_due_at: float,
+) -> tuple[float, str, float]:
+    max_active = max(1, _int(cfg, "recovery_storm_max_active", 3))
+    spacing = max(0.0, _float(cfg, "recovery_storm_min_spacing_seconds", 5.0))
+    jitter_window = max(0.0, _float(cfg, "recovery_storm_jitter_seconds", 3.0))
+    outage_backoff = max(0.0, _float(cfg, "recovery_storm_outage_backoff_seconds", 30.0))
+    due_at = now + requested
+    reason_key = "normal"
+    if not net_online and outage_backoff > requested:
+        due_at = max(due_at, now + outage_backoff)
+        reason_key = "network_outage_backoff"
+    if active >= max_active:
+        over = active - max_active + 1
+        due_at = max(due_at, now + spacing * over)
+        reason_key = "max_active_recovery"
+    if next_due_at > due_at:
+        due_at = next_due_at
+        reason_key = "global_spacing"
+    delayed = due_at > now + requested + 0.05
+    if delayed and jitter_window > 0:
+        due_at += _stable_jitter(account_key, reason, jitter_window)
+    return due_at, reason_key, spacing
+
+
 class RecoveryStormController:
     def __init__(self, cfg: dict[str, Any], accounts: Iterable[Any], *, clock=time.time):
         self._cfg = dict(cfg or {})
@@ -121,25 +153,17 @@ class RecoveryStormController:
                 self._next_due_at = 0.0
             account_key = str(getattr(account, "_config_username", getattr(account, "username", "")) or "")
             active = self._active_recovery_count(accounts, excluding=account)
-            max_active = max(1, _int(cfg, "recovery_storm_max_active", 3))
-            spacing = max(0.0, _float(cfg, "recovery_storm_min_spacing_seconds", 5.0))
-            jitter_window = max(0.0, _float(cfg, "recovery_storm_jitter_seconds", 3.0))
-            outage_backoff = max(0.0, _float(cfg, "recovery_storm_outage_backoff_seconds", 30.0))
-            due_at = now + requested
-            reason_key = "normal"
-            if not net_online and outage_backoff > requested:
-                due_at = max(due_at, now + outage_backoff)
-                reason_key = "network_outage_backoff"
-            if active >= max_active:
-                over = active - max_active + 1
-                due_at = max(due_at, now + spacing * over)
-                reason_key = "max_active_recovery"
-            if self._next_due_at > due_at:
-                due_at = self._next_due_at
-                reason_key = "global_spacing"
+            due_at, reason_key, spacing = _storm_due(
+                now,
+                requested,
+                cfg,
+                active,
+                account_key,
+                reason,
+                net_online,
+                self._next_due_at,
+            )
             delayed = due_at > now + requested + 0.05
-            if delayed and jitter_window > 0:
-                due_at += _stable_jitter(account_key, reason, jitter_window)
             if delayed or reason_key != "normal":
                 # Only chain global spacing when actually contended.
                 # Idle recoveries (active=0, online) must not push _next_due_at

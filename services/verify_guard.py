@@ -3,6 +3,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from services._util import _lower
+from services.hold_clear import clear_account_hold
+
 # ── Locked: face / ID verification ─────────────────────────────────────
 LOCKED_REASON = "identity_locked"
 LOCKED_LABEL = "Locked"
@@ -176,10 +179,6 @@ RECOVERY_UI_KEYWORDS = (
 )
 
 
-def _lower(value: Any) -> str:
-    return str(value or "").strip().lower()
-
-
 def _is_cookie_auth_status_text(text: str) -> bool:
     return (
         "cookie identity mismatch" in text
@@ -198,7 +197,7 @@ def is_locked_text(*values: Any, headers: Mapping[str, Any] | None = None) -> bo
             extra = " ".join(f"{k}={v}" for k, v in dict(headers).items())
             text = f"{text} {_lower(extra)}".strip()
         except Exception:
-            pass
+            "intentional: ignore exception"
     if not text:
         return False
     return any(k in text for k in LOCKED_KEYWORDS)
@@ -276,7 +275,7 @@ def persist_account_locked_status(account: Any, active: bool = True) -> None:
             }
         ACCOUNT_STORE.update_record(username, updates)
     except Exception:
-        pass
+        "intentional: ignore exception"
 
 
 def _apply_runtime_hold(account: Any, runtime_writer: Any, reason: str) -> None:
@@ -289,7 +288,7 @@ def _apply_runtime_hold(account: Any, runtime_writer: Any, reason: str) -> None:
     try:
         account.sync_runtime(reason)
     except Exception:
-        pass
+        "intentional: ignore exception"
 
 
 def _apply_runtime_clear(account: Any, runtime_writer: Any, reason: str = "manual_resume") -> None:
@@ -304,7 +303,7 @@ def _apply_runtime_clear(account: Any, runtime_writer: Any, reason: str = "manua
     try:
         account.sync_runtime(reason)
     except Exception:
-        pass
+        "intentional: ignore exception"
 
 
 def set_account_locked_hold(account: Any, detail: str = "", source: str = "", runtime_writer: Any = None) -> None:
@@ -333,48 +332,16 @@ def set_account_locked_hold(account: Any, detail: str = "", source: str = "", ru
 
 
 def clear_account_locked_hold(account: Any, runtime_writer: Any = None) -> bool:
-    was_locked = is_account_locked(account)
-    lock = getattr(account, "_lock", None)
-
-    def _clear() -> None:
-        if is_locked_status_text(getattr(account, "manual_status", "")):
-            account.manual_status = ""
-        if is_locked_status_text(getattr(account, "last_error", "")):
-            account.last_error = ""
-        if _lower(getattr(account, "last_crash_reason", "")) == LOCKED_REASON:
-            account.last_crash_reason = ""
-        if _lower(getattr(account, "last_recovery_reason", "")) == LOCKED_REASON:
-            account.last_recovery_reason = ""
-        if is_locked_status_text(getattr(account, "last_state_reason", "")):
-            account.last_state_reason = ""
-        if is_locked_status_text(getattr(account, "import_status", "")):
-            account.import_status = ""
-        account.recovery_scheduled_at = 0.0
-        account.session_checked = False
-        account.session_valid = False
-        account.session_wait_started_at = 0.0
-        account.retry_count = 0
-        account.fail_count = 0
-        account.launch_fail_count = 0
-        account.crash_retry_count = 0
-        account.network_retry_count = 0
-        account.session_retry_count = 0
-        _apply_runtime_clear(account, runtime_writer, "manual_resume")
-        try:
-            account.runtime.last_error = ""
-            account.runtime.recovery_reason = ""
-            account.runtime.recovery_active = False
-        except Exception:
-            pass
-
-    if lock:
-        with lock:
-            _clear()
-    else:
-        _clear()
-    if was_locked:
-        persist_account_locked_status(account, active=False)
-    return was_locked
+    return clear_account_hold(
+        account,
+        runtime_writer,
+        is_account_locked(account),
+        persist_account_locked_status,
+        is_locked_status_text,
+        LOCKED_REASON,
+        _apply_runtime_clear,
+        "manual_resume",
+    )
 
 
 # ── Recovery helpers ───────────────────────────────────────────────────
@@ -386,7 +353,7 @@ def is_recovery_text(*values: Any, headers: Mapping[str, Any] | None = None) -> 
             extra = " ".join(f"{k}={v}" for k, v in dict(headers).items())
             text = f"{text} {_lower(extra)}".strip()
         except Exception:
-            pass
+            "intentional: ignore exception"
     if not text:
         return False
     return any(k in text for k in RECOVERY_KEYWORDS)
@@ -464,7 +431,7 @@ def persist_account_recovery_status(account: Any, active: bool = True) -> None:
             }
         ACCOUNT_STORE.update_record(username, updates)
     except Exception:
-        pass
+        "intentional: ignore exception"
 
 
 def set_account_recovery_hold(account: Any, detail: str = "", source: str = "", runtime_writer: Any = None) -> None:
@@ -493,45 +460,13 @@ def set_account_recovery_hold(account: Any, detail: str = "", source: str = "", 
 
 
 def clear_account_recovery_hold(account: Any, runtime_writer: Any = None) -> bool:
-    was_recovery = is_account_recovery(account)
-    lock = getattr(account, "_lock", None)
-
-    def _clear() -> None:
-        if is_recovery_status_text(getattr(account, "manual_status", "")):
-            account.manual_status = ""
-        if is_recovery_status_text(getattr(account, "last_error", "")):
-            account.last_error = ""
-        if _lower(getattr(account, "last_crash_reason", "")) == RECOVERY_REASON:
-            account.last_crash_reason = ""
-        if _lower(getattr(account, "last_recovery_reason", "")) == RECOVERY_REASON:
-            account.last_recovery_reason = ""
-        if is_recovery_status_text(getattr(account, "last_state_reason", "")):
-            account.last_state_reason = ""
-        if is_recovery_status_text(getattr(account, "import_status", "")):
-            account.import_status = ""
-        account.recovery_scheduled_at = 0.0
-        account.session_checked = False
-        account.session_valid = False
-        account.session_wait_started_at = 0.0
-        account.retry_count = 0
-        account.fail_count = 0
-        account.launch_fail_count = 0
-        account.crash_retry_count = 0
-        account.network_retry_count = 0
-        account.session_retry_count = 0
-        _apply_runtime_clear(account, runtime_writer, "manual_resume")
-        try:
-            account.runtime.last_error = ""
-            account.runtime.recovery_reason = ""
-            account.runtime.recovery_active = False
-        except Exception:
-            pass
-
-    if lock:
-        with lock:
-            _clear()
-    else:
-        _clear()
-    if was_recovery:
-        persist_account_recovery_status(account, active=False)
-    return was_recovery
+    return clear_account_hold(
+        account,
+        runtime_writer,
+        is_account_recovery(account),
+        persist_account_recovery_status,
+        is_recovery_status_text,
+        RECOVERY_REASON,
+        _apply_runtime_clear,
+        "manual_resume",
+    )

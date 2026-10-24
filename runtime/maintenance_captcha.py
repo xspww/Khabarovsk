@@ -35,7 +35,7 @@ def clear_captcha_suspicion(acc: Any) -> None:
             acc._captcha_suspected_at = 0.0
             acc._captcha_suspected_pid = 0
         except Exception:
-            pass
+            "intentional: ignore exception"
 
     if lock:
         with lock:
@@ -44,47 +44,156 @@ def clear_captcha_suspicion(acc: Any) -> None:
         _clear()
 
 
-def detect_and_hold_captcha(owner: Any, acc: Any, pid: int, source: str) -> bool:
-    if not pid:
-        return False
+def _log_captcha_probe_failure(acc: Any, pid: int, source: str, exc: Exception) -> None:
+    flog_kv(
+        "CAPTCHA",
+        "timeout_probe_failed",
+        "warning",
+        account=acc.display_name,
+        pid=pid,
+        source=source,
+        error=str(exc),
+    )
+
+
+def _probe_captcha(acc: Any, pid: int, source: str) -> dict[str, Any] | None:
     try:
         from runtime.captcha_detector import inspect_captcha
     except Exception as exc:
-        flog_kv(
-            "CAPTCHA",
-            "timeout_probe_failed",
-            "warning",
-            account=acc.display_name,
-            pid=pid,
-            source=source,
-            error=str(exc),
-        )
-        return False
+        _log_captcha_probe_failure(acc, pid, source, exc)
+        return None
     try:
         cookie = str(getattr(acc, "cookie", "") or "")
         found = inspect_captcha(pid, cookie=cookie, window=True, api=True)
     except Exception as exc:
-        flog_kv(
-            "CAPTCHA",
-            "timeout_probe_failed",
-            "warning",
-            account=acc.display_name,
-            pid=pid,
-            source=source,
-            error=str(exc),
-        )
-        return False
+        _log_captcha_probe_failure(acc, pid, source, exc)
+        return None
     if not found.get("matched") or str(found.get("reason_key") or "") != CAPTCHA_REASON:
-        return False
-    dialog = {
+        return None
+    return found
+
+
+def _captcha_dialog(found: dict[str, Any], source: str) -> dict[str, Any]:
+    return {
         "detail": str(found.get("detail") or "Roblox Security verification CAPTCHA visible"),
         "evidence_source": str(found.get("evidence_source") or source),
         "popup_confidence": float(found.get("popup_confidence", found.get("confidence", 1.0)) or 0.0),
         "confidence": float(found.get("confidence", 1.0) or 0.0),
     }
+
+
+def detect_and_hold_captcha(owner: Any, acc: Any, pid: int, source: str) -> bool:
+    if not pid:
+        return False
+    found = _probe_captcha(acc, pid, source)
+    if found is None:
+        return False
     # This path runs only for already-stuck accounts (Lua silent past the
     # timeout), where a captcha is the likely cause -> hold immediately.
-    return handle_watchdog_captcha(owner, acc, pid, dialog, require_confirm=False)
+    return handle_watchdog_captcha(owner, acc, pid, _captcha_dialog(found, source), require_confirm=False)
+
+
+def _reset_captcha_suspicion(acc: Any) -> None:
+    with acc._lock:
+        acc._captcha_suspected_at = 0.0
+        acc._captcha_suspected_pid = 0
+
+
+def _mark_captcha_suspicion(acc: Any, now: float, pid: int) -> None:
+    with acc._lock:
+        acc._captcha_suspected_at = now
+        acc._captcha_suspected_pid = int(pid or 0)
+
+
+def _confirm_captcha_hold(acc: Any, pid: int, detail: str, now: float, confirm_seconds: float) -> bool:
+    suspected_at = float(getattr(acc, "_captcha_suspected_at", 0.0) or 0.0)
+    suspected_pid = int(getattr(acc, "_captcha_suspected_pid", 0) or 0)
+    if suspected_pid and suspected_pid != int(pid or 0):
+        # bound process changed -> previous suspicion no longer applies
+        suspected_at = 0.0
+        _reset_captcha_suspicion(acc)
+
+    if not suspected_at:
+        _mark_captcha_suspicion(acc, now, pid)
+        flog_kv(
+            "CAPTCHA",
+            "captcha_suspected_waiting_confirm",
+            "warning",
+            account=acc.display_name,
+            pid=pid,
+            confirm_seconds=f"{confirm_seconds:.1f}",
+            detail=detail,
+        )
+        return True
+
+    if now - suspected_at < confirm_seconds:
+        flog_kv(
+            "CAPTCHA",
+            "captcha_confirm_pending",
+            "warning",
+            account=acc.display_name,
+            pid=pid,
+            elapsed=f"{now - suspected_at:.1f}",
+            confirm_seconds=f"{confirm_seconds:.1f}",
+            detail=detail,
+        )
+        return True
+    return False
+
+
+def _close_captcha_process(owner: Any, acc: Any, captcha_pid: int, captcha_runtime_generation: int) -> None:
+    if captcha_pid and hasattr(owner._state_mgr, "clear_process_binding"):
+        kill_result = ProcessService.safe_kill_bound_process(
+            acc,
+            owner._state_mgr,
+            reason="captcha_hold",
+            expected_runtime_generation=captcha_runtime_generation,
+            increment_generation=False,
+        )
+        flog_kv(
+            "CAPTCHA",
+            "account_process_closed",
+            "warning",
+            account=acc.display_name,
+            pid=captcha_pid,
+            killed=bool(kill_result.get("killed")),
+            kill_reason=kill_result.get("reason", ""),
+        )
+        return
+    flog_kv(
+        "CAPTCHA",
+        "account_process_close_skipped",
+        "warning",
+        account=acc.display_name,
+        pid=captcha_pid or "",
+        reason="missing_bound_pid" if not captcha_pid else "state_manager_unavailable",
+    )
+
+
+def _apply_captcha_hold(
+    owner: Any,
+    acc: Any,
+    pid: int,
+    dialog: dict[str, Any],
+    detail: str,
+    captcha_pid: int,
+    captcha_runtime_generation: int,
+) -> None:
+    if not is_account_captcha_required(acc):
+        flog_kv(
+            "WATCHDOG",
+            "captcha_dialog_hold",
+            "warning",
+            account=acc.display_name,
+            pid=pid,
+            confidence=f"{float(dialog.get('popup_confidence', dialog.get('confidence', 0.0)) or 0.0):.2f}",
+            source=dialog.get("evidence_source", ""),
+            detail=detail,
+        )
+    set_account_captcha_hold(acc, detail, source="watchdog_popup", runtime_writer=owner._state_mgr)
+    _close_captcha_process(owner, acc, captcha_pid, captcha_runtime_generation)
+    if hasattr(owner._recovery, "fail_account"):
+        owner._recovery.fail_account(acc, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
 
 
 def handle_watchdog_captcha(owner: Any, acc: Any, pid: int, dialog: dict[str, Any], *, require_confirm: bool = True) -> bool:
@@ -105,82 +214,8 @@ def handle_watchdog_captcha(owner: Any, acc: Any, pid: int, dialog: dict[str, An
         captcha_pid = acc.pid
         captcha_runtime_generation = acc.runtime_generation
 
-    if require_confirm:
-        suspected_at = float(getattr(acc, "_captcha_suspected_at", 0.0) or 0.0)
-        suspected_pid = int(getattr(acc, "_captcha_suspected_pid", 0) or 0)
-        if suspected_pid and suspected_pid != int(pid or 0):
-            # bound process changed -> previous suspicion no longer applies
-            suspected_at = 0.0
-            with acc._lock:
-                acc._captcha_suspected_at = 0.0
-                acc._captcha_suspected_pid = 0
+    if require_confirm and _confirm_captcha_hold(acc, pid, detail, now, confirm_seconds):
+        return False
 
-        if not suspected_at:
-            with acc._lock:
-                acc._captcha_suspected_at = now
-                acc._captcha_suspected_pid = int(pid or 0)
-            flog_kv(
-                "CAPTCHA",
-                "captcha_suspected_waiting_confirm",
-                "warning",
-                account=acc.display_name,
-                pid=pid,
-                confirm_seconds=f"{confirm_seconds:.1f}",
-                detail=detail,
-            )
-            return False
-
-        if now - suspected_at < confirm_seconds:
-            flog_kv(
-                "CAPTCHA",
-                "captcha_confirm_pending",
-                "warning",
-                account=acc.display_name,
-                pid=pid,
-                elapsed=f"{now - suspected_at:.1f}",
-                confirm_seconds=f"{confirm_seconds:.1f}",
-                detail=detail,
-            )
-            return False
-
-    if not is_account_captcha_required(acc):
-        flog_kv(
-            "WATCHDOG",
-            "captcha_dialog_hold",
-            "warning",
-            account=acc.display_name,
-            pid=pid,
-            confidence=f"{float(dialog.get('popup_confidence', dialog.get('confidence', 0.0)) or 0.0):.2f}",
-            source=dialog.get("evidence_source", ""),
-            detail=detail,
-        )
-    set_account_captcha_hold(acc, detail, source="watchdog_popup", runtime_writer=owner._state_mgr)
-    if captcha_pid and hasattr(owner._state_mgr, "clear_process_binding"):
-        kill_result = ProcessService.safe_kill_bound_process(
-            acc,
-            owner._state_mgr,
-            reason="captcha_hold",
-            expected_runtime_generation=captcha_runtime_generation,
-            increment_generation=False,
-        )
-        flog_kv(
-            "CAPTCHA",
-            "account_process_closed",
-            "warning",
-            account=acc.display_name,
-            pid=captcha_pid,
-            killed=bool(kill_result.get("killed")),
-            kill_reason=kill_result.get("reason", ""),
-        )
-    else:
-        flog_kv(
-            "CAPTCHA",
-            "account_process_close_skipped",
-            "warning",
-            account=acc.display_name,
-            pid=captcha_pid or "",
-            reason="missing_bound_pid" if not captcha_pid else "state_manager_unavailable",
-        )
-    if hasattr(owner._recovery, "fail_account"):
-        owner._recovery.fail_account(acc, CAPTCHA_REASON, CAPTCHA_BLOCK_REASON)
+    _apply_captcha_hold(owner, acc, pid, dialog, detail, captcha_pid, captcha_runtime_generation)
     return True

@@ -126,29 +126,35 @@ def _float(value: Any, default: float, bounds: tuple[float, float] | None = None
     return parsed
 
 
+def _coerce_value(key: str, value: Any, default: Any) -> Any:
+    if isinstance(default, bool):
+        return _bool(value, default)
+    if isinstance(default, int) and not isinstance(default, bool):
+        return _int(value, default, _INT_RANGES.get(key))
+    if isinstance(default, float):
+        return _float(value, default, _FLOAT_RANGES.get(key))
+    if isinstance(default, str):
+        return str(value or "")
+    if isinstance(default, list):
+        return value if isinstance(value, list) else list(default)
+    if isinstance(default, dict):
+        return value if isinstance(value, dict) else dict(default)
+    return value
+
+
+def _is_removed_or_private(key: Any) -> bool:
+    return key in _REMOVED_CONFIG_KEYS or str(key).startswith("__")
+
+
 def validate_config_payload(raw: Any, defaults: Mapping[str, Any]) -> dict[str, Any]:
     source = raw if isinstance(raw, dict) else {}
-    clean: dict[str, Any] = {}
-    for key, default in defaults.items():
-        value = source.get(key, default)
-        if isinstance(default, bool):
-            clean[key] = _bool(value, default)
-        elif isinstance(default, int) and not isinstance(default, bool):
-            clean[key] = _int(value, default, _INT_RANGES.get(key))
-        elif isinstance(default, float):
-            clean[key] = _float(value, default, _FLOAT_RANGES.get(key))
-        elif isinstance(default, str):
-            clean[key] = str(value or "")
-        elif isinstance(default, list):
-            clean[key] = value if isinstance(value, list) else list(default)
-        elif isinstance(default, dict):
-            clean[key] = value if isinstance(value, dict) else dict(default)
-        else:
-            clean[key] = value
+    clean: dict[str, Any] = {
+        key: _coerce_value(key, source.get(key, default), default)
+        for key, default in defaults.items()
+    }
     for key, value in source.items():
-        if key in _REMOVED_CONFIG_KEYS:
+        if key in clean or _is_removed_or_private(key):
             continue
-        if key not in clean and not str(key).startswith("__"):
-            clean[key] = value
+        clean[key] = value
     clean["schema_version"] = CONFIG_SCHEMA_VERSION
     return clean

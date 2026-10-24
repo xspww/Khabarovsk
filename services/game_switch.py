@@ -13,15 +13,19 @@ import re
 from collections.abc import Mapping
 from typing import Any
 
+from domain.games import (
+    _text,
+    effective_place,
+    ensure_games_migrated,
+    game_for_account,
+    normalize_game_mode,
+)
+
 # (place_id, private_server_url) that determines where the client will land.
 GameTarget = tuple[str, str]
 
 _VIP_PLACE_QUERY = re.compile(r"[?&]placeId=(\d+)", re.IGNORECASE)
 _VIP_PLACE_PATH = re.compile(r"/games/(\d+)", re.IGNORECASE)
-
-
-def _text(value: Any) -> str:
-    return str(value or "").strip()
 
 
 def _field(account: Any, name: str) -> Any:
@@ -50,6 +54,69 @@ def _place_from_vip(url: Any) -> str:
     return match.group(1) if match else ""
 
 
+def _migrated_games(snapshot: Mapping[str, Any]) -> list[dict[str, Any]]:
+    try:
+        return ensure_games_migrated(dict(snapshot))
+    except Exception:
+        return []
+
+
+def _game_mode(snapshot: Mapping[str, Any]) -> str:
+    try:
+        return normalize_game_mode(snapshot.get("game_mode", "shared"))
+    except Exception:
+        return "shared"
+
+
+def _assigned_game(
+    mode: str,
+    games: list[dict[str, Any]],
+    game_id: str,
+    account_place: str,
+) -> dict[str, Any] | None:
+    if mode != "per_account" or not games:
+        return None
+    try:
+        return game_for_account(game_id, account_place, games)
+    except Exception:
+        return None
+
+
+def _effective_place(
+    account_place: str,
+    game: dict[str, Any] | None,
+    fallback_place: str,
+) -> str:
+    try:
+        return _text(effective_place(account_place, game, fallback_place))
+    except Exception:
+        return account_place or _text((game or {}).get("place_id")) or fallback_place
+
+
+def _target_vip(
+    game: dict[str, Any] | None,
+    pool_active: bool,
+    shared_vip: str,
+) -> str:
+    if game is not None:
+        return _text(game.get("private_server_url"))
+    if pool_active:
+        return ""
+    return shared_vip
+
+
+def _fallback_vip(account: Any) -> str:
+    vip_url = _text(_field(account, "active_vip"))
+    if vip_url:
+        return vip_url
+    links = _field(account, "vip_links") or []
+    if isinstance(links, str):
+        links = [links]
+    if not isinstance(links, (list, tuple)):
+        return ""
+    return next((_text(link) for link in links if _text(link)), "")
+
+
 def effective_game_target(account: Any, cfg: Any) -> GameTarget:
     """Return ``(place_id, vip_url)`` for the next launch of this account.
 
@@ -60,64 +127,29 @@ def effective_game_target(account: Any, cfg: Any) -> GameTarget:
     Shared Place ID.
     """
     snapshot = cfg if isinstance(cfg, Mapping) else {}
-    try:
-        from domain.games import (
-            effective_place,
-            ensure_games_migrated,
-            game_for_account,
-            normalize_game_mode,
-        )
-    except Exception:
-        return ("", "")
-
-    try:
-        games = ensure_games_migrated(dict(snapshot))
-    except Exception:
-        games = []
-    try:
-        mode = normalize_game_mode(snapshot.get("game_mode", "shared"))
-    except Exception:
-        mode = "shared"
+    games = _migrated_games(snapshot)
+    mode = _game_mode(snapshot)
 
     account_place = _text(_field(account, "place_id"))
     game_id = _text(_field(account, "game_id"))
     shared_vip = _text(snapshot.get("game_private_server_url"))
     shared_place = _text(snapshot.get("game_place_id")) or _place_from_vip(shared_vip)
 
-    game = None
-    if mode == "per_account" and games:
-        try:
-            game = game_for_account(game_id, account_place, games)
-        except Exception:
-            game = None
+    game = _assigned_game(mode, games, game_id, account_place)
 
     # Shared mode (or a legacy empty pool) uses the Shared fallback. In
     # per-account mode with a pool, an unassigned account stays target-less.
     pool_active = mode == "per_account" and bool(games)
     fallback_place = "" if pool_active or game is not None else shared_place
-    try:
-        place_id = _text(effective_place(account_place, game, fallback_place))
-    except Exception:
-        place_id = account_place or _text((game or {}).get("place_id")) or fallback_place
+    place_id = _effective_place(account_place, game, fallback_place)
 
-    if game is not None:
-        vip_url = _text(game.get("private_server_url"))
-    elif pool_active:
-        vip_url = ""
-    else:
-        vip_url = shared_vip
+    vip_url = _target_vip(game, pool_active, shared_vip)
     if not place_id and not vip_url:
         # A personal VIP link is a launch target too: build_target/launch
         # fall back to acc.vip_links when place and game/shared targets are
         # empty. Without this, clearing that last target ("No game") looks
         # like a no-op and leaves the old client farming the old game.
-        vip_url = _text(_field(account, "active_vip"))
-        if not vip_url:
-            links = _field(account, "vip_links") or []
-            if isinstance(links, str):
-                links = [links]
-            if isinstance(links, (list, tuple)):
-                vip_url = next((_text(link) for link in links if _text(link)), "")
+        vip_url = _fallback_vip(account)
     return (place_id, vip_url)
 
 
@@ -129,6 +161,39 @@ def capture_game_targets(accounts: Any, cfg: Any) -> dict[str, GameTarget]:
         if name:
             targets[name.lower()] = effective_game_target(account, cfg)
     return targets
+
+
+def _call_legacy_compatible(fn: Any, *args: Any, **kwargs: Any) -> tuple[Any, Any]:
+    """Call fn with kwargs, retrying positionally for older farm implementations."""
+    try:
+        return fn(*args, **kwargs)
+    except TypeError:
+        try:
+            return fn(*args)
+        except Exception:
+            return False, ""
+    except Exception:
+        return False, ""
+
+
+def _stop_targetless(farm: Any, name: str, result: dict[str, list[str]]) -> None:
+    stop_account = getattr(farm, "stop_account", None)
+    if not callable(stop_account):
+        return
+    ok, _msg = _call_legacy_compatible(stop_account, name, reason="game_unassigned")
+    if ok:
+        result["stopped"].append(name)
+
+
+def _rejoin_target(farm: Any, name: str, result: dict[str, list[str]]) -> None:
+    ok, _msg = _call_legacy_compatible(
+        farm.force_rejoin,
+        name,
+        reason="game_changed",
+        ignore_rate_limit=True,
+    )
+    if ok:
+        result["rejoined"].append(name)
 
 
 def rejoin_changed_game_targets(
@@ -157,36 +222,7 @@ def rejoin_changed_game_targets(
         if target == before[key]:
             continue
         if not target[0] and not target[1]:
-            ok = False
-            stop_account = getattr(farm, "stop_account", None)
-            if callable(stop_account):
-                try:
-                    ok, _msg = stop_account(name, reason="game_unassigned")
-                except TypeError:
-                    # Older/fake farm implementations may not accept keywords.
-                    try:
-                        ok, _msg = stop_account(name)
-                    except Exception:
-                        ok = False
-                except Exception:
-                    ok = False
-            if ok:
-                result["stopped"].append(name)
+            _stop_targetless(farm, name, result)
             continue
-        try:
-            ok, _msg = farm.force_rejoin(
-                name,
-                reason="game_changed",
-                ignore_rate_limit=True,
-            )
-        except TypeError:
-            # Older/fake farm implementations may not accept the keywords.
-            try:
-                ok, _msg = farm.force_rejoin(name)
-            except Exception:
-                ok = False
-        except Exception:
-            ok = False
-        if ok:
-            result["rejoined"].append(name)
+        _rejoin_target(farm, name, result)
     return result

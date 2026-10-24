@@ -89,15 +89,14 @@ def begin_rejoin_transaction(
     return snapshot
 
 
-def update_rejoin_transaction(
+def _apply_transaction_update_fields(
     acc: Any,
-    status: str = "",
-    step: str = "",
-    reason: str = "",
-    server_validation: str = "",
-    scheduler_slot: str = "",
-    emit: Emit | None = None,
-) -> dict[str, Any]:
+    status: str,
+    step: str,
+    reason: str,
+    server_validation: str,
+    scheduler_slot: str,
+) -> None:
     if status:
         acc.last_transaction_status = status
     if step:
@@ -112,12 +111,18 @@ def update_rejoin_transaction(
     if step:
         acc.supervisor_state = step
     acc.last_transaction_at = time.time()
+
+
+def _mark_transaction_terminal(acc: Any, status: str, reason: str) -> None:
     if status in {"committed", "rolled_back", "failed"}:
         acc.last_transaction_completed_at = acc.last_transaction_at
     if status in {"rolled_back", "failed"} and reason:
         acc.last_transaction_failure_reason = reason
-    acc.sync_runtime(reason or step or status or "transaction_update")
-    snapshot = {
+
+
+def _transaction_snapshot(acc: Any, status: str, step: str, reason: str) -> dict[str, Any]:
+    failure_status = status in {"rolled_back", "failed"} or getattr(acc, "last_transaction_status", "") in {"rolled_back", "failed"}
+    return {
         "transaction_id": getattr(acc, "rejoin_transaction_id", ""),
         "account_id": getattr(acc, "_config_username", getattr(acc, "username", "")),
         "runtime_generation": getattr(acc, "runtime_generation", 0),
@@ -129,81 +134,96 @@ def update_rejoin_transaction(
         "status": status or getattr(acc, "last_transaction_status", ""),
         "step": step or getattr(acc, "last_transaction_step", "") or getattr(acc, "supervisor_state", ""),
         "reason": reason or getattr(acc, "last_transaction_reason", ""),
-        "failure_reason": getattr(acc, "last_transaction_failure_reason", "") if (status in {"rolled_back", "failed"} or getattr(acc, "last_transaction_status", "") in {"rolled_back", "failed"}) else "",
+        "failure_reason": getattr(acc, "last_transaction_failure_reason", "") if failure_status else "",
         "launch_intent": getattr(acc, "launch_intent", {}) or {},
         "destination_evidence": {},
         "created_at": getattr(acc, "session_started_at", 0.0) or time.time(),
         "updated_at": getattr(acc, "last_transaction_at", 0.0) or time.time(),
         "completed_at": getattr(acc, "last_transaction_at", 0.0) if status in {"committed", "rolled_back", "failed"} else 0.0,
     }
+
+
+def _emit_update_events(acc: Any, snapshot: dict[str, Any], emit: Emit) -> None:
+    emit(
+        "RUNTIME",
+        "rejoin_transaction_update",
+        account=_display_name(acc),
+        transaction_id=snapshot["transaction_id"],
+        session_id=snapshot["session_id"],
+        status=snapshot["status"],
+        step=snapshot["step"],
+        reason=snapshot["reason"],
+        runtime_generation=snapshot["runtime_generation"],
+        recovery_generation=snapshot["recovery_generation"],
+        command_generation=snapshot["command_generation"],
+    )
+    emit(
+        "RUNTIME",
+        "transaction_step",
+        account=_display_name(acc),
+        transaction_id=snapshot["transaction_id"],
+        session_id=snapshot["session_id"],
+        status=snapshot["status"],
+        step=snapshot["step"],
+        reason=snapshot["reason"],
+        server_validation=getattr(acc, "server_validation", ""),
+        runtime_generation=snapshot["runtime_generation"],
+        recovery_generation=snapshot["recovery_generation"],
+        command_generation=snapshot["command_generation"],
+        thread=threading.current_thread().name,
+    )
+
+
+def update_rejoin_transaction(
+    acc: Any,
+    status: str = "",
+    step: str = "",
+    reason: str = "",
+    server_validation: str = "",
+    scheduler_slot: str = "",
+    emit: Emit | None = None,
+) -> dict[str, Any]:
+    _apply_transaction_update_fields(acc, status, step, reason, server_validation, scheduler_slot)
+    _mark_transaction_terminal(acc, status, reason)
+    acc.sync_runtime(reason or step or status or "transaction_update")
+    snapshot = _transaction_snapshot(acc, status, step, reason)
     if emit:
-        emit(
-            "RUNTIME",
-            "rejoin_transaction_update",
-            account=_display_name(acc),
-            transaction_id=snapshot["transaction_id"],
-            session_id=snapshot["session_id"],
-            status=snapshot["status"],
-            step=snapshot["step"],
-            reason=snapshot["reason"],
-            runtime_generation=snapshot["runtime_generation"],
-            recovery_generation=snapshot["recovery_generation"],
-            command_generation=snapshot["command_generation"],
-        )
-        emit(
-            "RUNTIME",
-            "transaction_step",
-            account=_display_name(acc),
-            transaction_id=snapshot["transaction_id"],
-            session_id=snapshot["session_id"],
-            status=snapshot["status"],
-            step=snapshot["step"],
-            reason=snapshot["reason"],
-            server_validation=getattr(acc, "server_validation", ""),
-            runtime_generation=snapshot["runtime_generation"],
-            recovery_generation=snapshot["recovery_generation"],
-            command_generation=snapshot["command_generation"],
-            thread=threading.current_thread().name,
-        )
+        _emit_update_events(acc, snapshot, emit)
     return snapshot
 
 
-def finish_rejoin_transaction(
+def _apply_final_transaction_state(
     acc: Any,
-    status: str,
+    final_status: str,
     reason: str,
-    destination_evidence: dict[str, Any] | None = None,
-    server_validation: str = "",
-    emit: Emit | None = None,
-) -> dict[str, Any]:
-    final_status = status or "failed"
-    acc.last_transaction_status = final_status
-    acc.last_transaction_reason = reason
-    acc.last_transaction_at = time.time()
-    acc.last_transaction_completed_at = acc.last_transaction_at
+    server_validation: str,
+) -> None:
+    acc.scheduler_slot = ""
     if final_status == "committed":
-        acc.scheduler_slot = ""
         acc.supervisor_state = "running"
         acc.last_transaction_step = "committed"
         acc.last_transaction_failure_reason = ""
         acc.server_validation = server_validation or "intent_verified_no_destination_signal"
-        acc.destination_validation = acc.server_validation
     elif final_status == "rolled_back":
-        acc.scheduler_slot = ""
         acc.supervisor_state = "rolled_back"
         acc.last_transaction_step = "rolled_back"
         acc.last_transaction_failure_reason = reason
         acc.server_validation = server_validation or "unverified_rollback"
-        acc.destination_validation = acc.server_validation
     else:
-        acc.scheduler_slot = ""
         acc.supervisor_state = "failed"
         acc.last_transaction_step = "failed"
         acc.last_transaction_failure_reason = reason
         acc.server_validation = server_validation or "failed"
-        acc.destination_validation = acc.server_validation
-    acc.sync_runtime(reason or final_status)
-    snapshot = {
+    acc.destination_validation = acc.server_validation
+
+
+def _finish_snapshot(
+    acc: Any,
+    final_status: str,
+    reason: str,
+    destination_evidence: dict[str, Any] | None,
+) -> dict[str, Any]:
+    return {
         "transaction_id": getattr(acc, "rejoin_transaction_id", ""),
         "account_id": getattr(acc, "_config_username", getattr(acc, "username", "")),
         "runtime_generation": getattr(acc, "runtime_generation", 0),
@@ -222,34 +242,62 @@ def finish_rejoin_transaction(
         "updated_at": acc.last_transaction_at,
         "completed_at": acc.last_transaction_at,
     }
+
+
+def _emit_finish_events(
+    acc: Any,
+    snapshot: dict[str, Any],
+    final_status: str,
+    reason: str,
+    emit: Emit,
+) -> None:
+    emit(
+        "RUNTIME",
+        "rejoin_transaction_finish",
+        account=_display_name(acc),
+        transaction_id=snapshot["transaction_id"],
+        session_id=snapshot["session_id"],
+        status=final_status,
+        reason=reason,
+        server_validation=acc.server_validation,
+        runtime_generation=snapshot["runtime_generation"],
+        recovery_generation=snapshot["recovery_generation"],
+        command_generation=snapshot["command_generation"],
+    )
+    emit(
+        "RUNTIME",
+        "transaction_commit" if final_status == "committed" else "transaction_rollback",
+        account=_display_name(acc),
+        transaction_id=snapshot["transaction_id"],
+        session_id=snapshot["session_id"],
+        status=final_status,
+        step=snapshot["step"],
+        reason=reason,
+        failure_reason=snapshot["failure_reason"],
+        server_validation=acc.server_validation,
+        runtime_generation=snapshot["runtime_generation"],
+        recovery_generation=snapshot["recovery_generation"],
+        command_generation=snapshot["command_generation"],
+        thread=threading.current_thread().name,
+    )
+
+
+def finish_rejoin_transaction(
+    acc: Any,
+    status: str,
+    reason: str,
+    destination_evidence: dict[str, Any] | None = None,
+    server_validation: str = "",
+    emit: Emit | None = None,
+) -> dict[str, Any]:
+    final_status = status or "failed"
+    acc.last_transaction_status = final_status
+    acc.last_transaction_reason = reason
+    acc.last_transaction_at = time.time()
+    acc.last_transaction_completed_at = acc.last_transaction_at
+    _apply_final_transaction_state(acc, final_status, reason, server_validation)
+    acc.sync_runtime(reason or final_status)
+    snapshot = _finish_snapshot(acc, final_status, reason, destination_evidence)
     if emit:
-        emit(
-            "RUNTIME",
-            "rejoin_transaction_finish",
-            account=_display_name(acc),
-            transaction_id=snapshot["transaction_id"],
-            session_id=snapshot["session_id"],
-            status=final_status,
-            reason=reason,
-            server_validation=acc.server_validation,
-            runtime_generation=snapshot["runtime_generation"],
-            recovery_generation=snapshot["recovery_generation"],
-            command_generation=snapshot["command_generation"],
-        )
-        emit(
-            "RUNTIME",
-            "transaction_commit" if final_status == "committed" else "transaction_rollback",
-            account=_display_name(acc),
-            transaction_id=snapshot["transaction_id"],
-            session_id=snapshot["session_id"],
-            status=final_status,
-            step=snapshot["step"],
-            reason=reason,
-            failure_reason=snapshot["failure_reason"],
-            server_validation=acc.server_validation,
-            runtime_generation=snapshot["runtime_generation"],
-            recovery_generation=snapshot["recovery_generation"],
-            command_generation=snapshot["command_generation"],
-            thread=threading.current_thread().name,
-        )
+        _emit_finish_events(acc, snapshot, final_status, reason, emit)
     return snapshot

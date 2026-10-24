@@ -44,7 +44,7 @@ class AuthGateDecision:
         }
 
 
-def evaluate_account_auth_gate(account: Any) -> AuthGateDecision:
+def _finished_decision(account: Any) -> AuthGateDecision | None:
     try:
         from domain.account_model import FINISHED_STATUS, is_account_finished
 
@@ -56,7 +56,11 @@ def evaluate_account_auth_gate(account: Any) -> AuthGateDecision:
                 category="finished",
             )
     except Exception:
-        pass
+        "intentional: ignore exception"
+    return None
+
+
+def _moderation_decision(account: Any) -> AuthGateDecision | None:
     try:
         from services.ban_guard import (
             BANNED_BLOCK_REASON,
@@ -66,25 +70,29 @@ def evaluate_account_auth_gate(account: Any) -> AuthGateDecision:
             is_account_banned,
             is_account_suspended,
         )
-
-        # A suspension blocks the launch like a ban but keeps its own reason so
-        # the dashboard can label it instead of reporting a permanent ban.
-        if is_account_suspended(account):
-            return AuthGateDecision(
-                blocked=True,
-                reason_key=SUSPENDED_REASON,
-                reason=SUSPENDED_BLOCK_REASON,
-                category="suspended",
-            )
-        if is_account_banned(account):
-            return AuthGateDecision(
-                blocked=True,
-                reason_key=BANNED_REASON,
-                reason=BANNED_BLOCK_REASON,
-                category="banned",
-            )
     except Exception:
-        pass
+        return None
+
+    # A suspension blocks the launch like a ban but keeps its own reason so
+    # the dashboard can label it instead of reporting a permanent ban.
+    if is_account_suspended(account):
+        return AuthGateDecision(
+            blocked=True,
+            reason_key=SUSPENDED_REASON,
+            reason=SUSPENDED_BLOCK_REASON,
+            category="suspended",
+        )
+    if is_account_banned(account):
+        return AuthGateDecision(
+            blocked=True,
+            reason_key=BANNED_REASON,
+            reason=BANNED_BLOCK_REASON,
+            category="banned",
+        )
+    return None
+
+
+def _hold_decision(account: Any) -> AuthGateDecision | None:
     # Identity lock (face/ID) and account recovery (passkey/2FA) outrank
     # captcha everywhere else (Status payload, launch block reason,
     # dashboard). Check them first so a locked account never reports as
@@ -111,9 +119,10 @@ def evaluate_account_auth_gate(account: Any) -> AuthGateDecision:
             reason=CAPTCHA_BLOCK_REASON,
             category="captcha",
         )
-    reason = account_launch_block_reason(account)
-    if not reason:
-        return AuthGateDecision(blocked=False)
+    return None
+
+
+def _banned_reason_decision(reason: str) -> AuthGateDecision | None:
     try:
         from services.ban_guard import BANNED_BLOCK_REASON as _BANNED_MSG
 
@@ -125,7 +134,17 @@ def evaluate_account_auth_gate(account: Any) -> AuthGateDecision:
                 category="banned",
             )
     except Exception:
-        pass
+        "intentional: ignore exception"
+    return None
+
+
+def _reason_decision(account: Any) -> AuthGateDecision:
+    reason = account_launch_block_reason(account)
+    if not reason:
+        return AuthGateDecision(blocked=False)
+    banned = _banned_reason_decision(reason)
+    if banned:
+        return banned
     if reason == CAPTCHA_BLOCK_REASON:
         return AuthGateDecision(
             blocked=True,
@@ -156,6 +175,110 @@ def evaluate_account_auth_gate(account: Any) -> AuthGateDecision:
     )
 
 
+def evaluate_account_auth_gate(account: Any) -> AuthGateDecision:
+    for resolver in (_finished_decision, _moderation_decision, _hold_decision):
+        decision = resolver(account)
+        if decision:
+            return decision
+    return _reason_decision(account)
+
+
+def _clear_hold_runtime(runtime_writer: Any, account: Any, status: str) -> None:
+    if runtime_writer is None:
+        return
+    try:
+        runtime_writer.set_recovery(account, status=status, reason=status, inflight=False)
+        runtime_writer.set_cooldown(account, 0.0, reason=status)
+    except Exception:
+        "intentional: ignore exception"
+
+
+def _apply_captcha_hold(account: Any, decision: AuthGateDecision, source: str, runtime_writer: Any) -> None:
+    set_account_captcha_hold(
+        account,
+        decision.reason or CAPTCHA_BLOCK_REASON,
+        source=source,
+        runtime_writer=runtime_writer,
+    )
+
+
+def _apply_locked_hold(account: Any, decision: AuthGateDecision, source: str, runtime_writer: Any) -> None:
+    set_account_locked_hold(
+        account,
+        decision.reason or LOCKED_BLOCK_REASON,
+        source=source,
+        runtime_writer=runtime_writer,
+    )
+
+
+def _apply_recovery_hold(account: Any, decision: AuthGateDecision, source: str, runtime_writer: Any) -> None:
+    set_account_recovery_hold(
+        account,
+        decision.reason or RECOVERY_BLOCK_REASON,
+        source=source,
+        runtime_writer=runtime_writer,
+    )
+
+
+def _apply_banned_hold(account: Any, decision: AuthGateDecision, source: str, runtime_writer: Any) -> None:
+    try:
+        from services.ban_guard import set_account_banned_hold
+
+        set_account_banned_hold(
+            account,
+            decision.reason or "",
+            source=source,
+            runtime_writer=runtime_writer,
+        )
+    except Exception:
+        "intentional: ignore exception"
+    _clear_hold_runtime(runtime_writer, account, "banned")
+
+
+def _apply_suspended_hold(account: Any, decision: AuthGateDecision, source: str, runtime_writer: Any) -> None:
+    try:
+        from services.ban_guard import set_account_suspended_hold
+
+        set_account_suspended_hold(
+            account,
+            decision.reason or "",
+            source=source,
+            runtime_writer=runtime_writer,
+        )
+    except Exception:
+        "intentional: ignore exception"
+    _clear_hold_runtime(runtime_writer, account, "suspended")
+
+
+def _apply_cookie_hold(account: Any, decision: AuthGateDecision, source: str, runtime_writer: Any) -> None:
+    _set_account_cookie_block(account, decision.reason)
+    _clear_hold_runtime(runtime_writer, account, decision.reason_key)
+
+
+def _hold_kind(decision: AuthGateDecision) -> str:
+    if decision.reason_key == CAPTCHA_REASON:
+        return "captcha"
+    if decision.reason_key in (LOCKED_REASON, "locked") or decision.category == "locked":
+        return "locked"
+    if decision.reason_key == RECOVERY_REASON or decision.category == "account_recovery":
+        return "recovery"
+    if decision.reason_key == "banned" or decision.category == "banned":
+        return "banned"
+    if decision.reason_key == "suspended" or decision.category == "suspended":
+        return "suspended"
+    return "cookie"
+
+
+_HOLD_APPLIERS = {
+    "captcha": _apply_captcha_hold,
+    "locked": _apply_locked_hold,
+    "recovery": _apply_recovery_hold,
+    "banned": _apply_banned_hold,
+    "suspended": _apply_suspended_hold,
+    "cookie": _apply_cookie_hold,
+}
+
+
 def mark_account_auth_quarantined(
     account: Any,
     decision: AuthGateDecision,
@@ -168,69 +291,5 @@ def mark_account_auth_quarantined(
     if decision.category == "finished" or decision.reason_key == "finished":
         # User-marked done: never touch cookie/captcha state, just stay out.
         return decision
-    if decision.reason_key == CAPTCHA_REASON:
-        set_account_captcha_hold(
-            account,
-            decision.reason or CAPTCHA_BLOCK_REASON,
-            source=source or "auth_gate",
-            runtime_writer=runtime_writer,
-        )
-    elif decision.reason_key in (LOCKED_REASON, "locked") or decision.category == "locked":
-        set_account_locked_hold(
-            account,
-            decision.reason or LOCKED_BLOCK_REASON,
-            source=source or "auth_gate",
-            runtime_writer=runtime_writer,
-        )
-    elif decision.reason_key == RECOVERY_REASON or decision.category == "account_recovery":
-        set_account_recovery_hold(
-            account,
-            decision.reason or RECOVERY_BLOCK_REASON,
-            source=source or "auth_gate",
-            runtime_writer=runtime_writer,
-        )
-    elif decision.reason_key == "banned" or decision.category == "banned":
-        try:
-            from services.ban_guard import set_account_banned_hold
-
-            set_account_banned_hold(
-                account,
-                decision.reason or "",
-                source=source or "auth_gate",
-                runtime_writer=runtime_writer,
-            )
-        except Exception:
-            pass
-        if runtime_writer is not None:
-            try:
-                runtime_writer.set_recovery(account, status="banned", reason="banned", inflight=False)
-                runtime_writer.set_cooldown(account, 0.0, reason="banned")
-            except Exception:
-                pass
-    elif decision.reason_key == "suspended" or decision.category == "suspended":
-        try:
-            from services.ban_guard import set_account_suspended_hold
-
-            set_account_suspended_hold(
-                account,
-                decision.reason or "",
-                source=source or "auth_gate",
-                runtime_writer=runtime_writer,
-            )
-        except Exception:
-            pass
-        if runtime_writer is not None:
-            try:
-                runtime_writer.set_recovery(account, status="suspended", reason="suspended", inflight=False)
-                runtime_writer.set_cooldown(account, 0.0, reason="suspended")
-            except Exception:
-                pass
-    else:
-        _set_account_cookie_block(account, decision.reason)
-        if runtime_writer is not None:
-            try:
-                runtime_writer.set_recovery(account, status=decision.reason_key, reason=decision.reason_key, inflight=False)
-                runtime_writer.set_cooldown(account, 0.0, reason=decision.reason_key)
-            except Exception:
-                pass
+    _HOLD_APPLIERS[_hold_kind(decision)](account, decision, source or "auth_gate", runtime_writer)
     return decision

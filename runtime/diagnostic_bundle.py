@@ -178,6 +178,54 @@ def _recommendations(status: Mapping[str, Any], accounts: Iterable[Mapping[str, 
     return output[:6]
 
 
+def _safe_int(value: Any, default: int = 0) -> int:
+    return int(value or default)
+
+
+def _selected_accounts(status: Mapping[str, Any], account_id: str) -> list[dict[str, Any]]:
+    return [
+        _safe_account(row)
+        for row in list(status.get("accounts") or [])
+        if isinstance(row, Mapping) and _matches_account(row, account_id)
+    ]
+
+
+def _safe_events(events: Iterable[Mapping[str, Any]], safe_limit: int) -> list[dict[str, Any]]:
+    return [
+        _safe_event(event)
+        for event in list(events or [])[:safe_limit]
+        if isinstance(event, Mapping)
+    ]
+
+
+def _bundle_filters(account_id: str, event_type: str, severity: str, safe_limit: int) -> dict[str, Any]:
+    return {
+        "account_id": str(account_id or ""),
+        "event_type": str(event_type or ""),
+        "severity": str(severity or ""),
+        "limit": safe_limit,
+    }
+
+
+def _bundle_summary(
+    status: Mapping[str, Any],
+    accounts: list[dict[str, Any]],
+    safe_events: list[dict[str, Any]],
+) -> dict[str, Any]:
+    return {
+        "running": bool(status.get("running", False)),
+        "total_accounts": _safe_int(status.get("total_accounts", len(accounts))),
+        "selected_accounts": len(accounts),
+        "launchable_count": _safe_int(status.get("launchable_count", 0)),
+        "blocked_count": _safe_int(status.get("blocked_count", 0)),
+        "in_game": _safe_int(status.get("in_game", 0)),
+        "crash": _safe_int(status.get("crash", 0)),
+        "queued": _safe_int(status.get("queued", 0)),
+        "failed": _safe_int(status.get("failed", 0)),
+        "event_count": len(safe_events),
+    }
+
+
 def build_runtime_diagnostic_bundle(
     status: Mapping[str, Any],
     events: Iterable[Mapping[str, Any]],
@@ -191,34 +239,13 @@ def build_runtime_diagnostic_bundle(
 ) -> dict[str, Any]:
     generated_at = float(now if now is not None else time.time())
     safe_limit = max(1, min(int(limit or 200), 500))
-    accounts = [
-        _safe_account(row)
-        for row in list(status.get("accounts") or [])
-        if isinstance(row, Mapping) and _matches_account(row, account_id)
-    ]
-    safe_events = [_safe_event(event) for event in list(events or [])[:safe_limit] if isinstance(event, Mapping)]
-    summary = {
-        "running": bool(status.get("running", False)),
-        "total_accounts": int(status.get("total_accounts", len(accounts)) or 0),
-        "selected_accounts": len(accounts),
-        "launchable_count": int(status.get("launchable_count", 0) or 0),
-        "blocked_count": int(status.get("blocked_count", 0) or 0),
-        "in_game": int(status.get("in_game", 0) or 0),
-        "crash": int(status.get("crash", 0) or 0),
-        "queued": int(status.get("queued", 0) or 0),
-        "failed": int(status.get("failed", 0) or 0),
-        "event_count": len(safe_events),
-    }
+    accounts = _selected_accounts(status, account_id)
+    safe_events = _safe_events(events, safe_limit)
     return {
         "ok": True,
         "generated_at": generated_at,
-        "filters": {
-            "account_id": str(account_id or ""),
-            "event_type": str(event_type or ""),
-            "severity": str(severity or ""),
-            "limit": safe_limit,
-        },
-        "summary": summary,
+        "filters": _bundle_filters(account_id, event_type, severity, safe_limit),
+        "summary": _bundle_summary(status, accounts, safe_events),
         "runtime_health": _redact_value("runtime_health", status.get("runtime_health", {})),
         "scheduler_health": _redact_value("scheduler_health", status.get("scheduler_health", {})),
         "queue_snapshot": _redact_value("queue_snapshot", status.get("queue_snapshot", {})),

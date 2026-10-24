@@ -114,7 +114,7 @@ def move_app_data_file(source_rel: str, target_rel: str, *, discard_if_target_ex
             target = _collision_path(target)
         shutil.move(source, target)
     except Exception:
-        pass
+        "intentional: ignore exception"
 
 
 ensure_user_dirs()

@@ -109,6 +109,20 @@ def duplicate_signal_key(account_key: str, signal_name: str, reason_key: str, re
     return (str(account_key or ""), str(signal_name or ""), canonical_reason(reason_key), int(recovery_generation or 0))
 
 
+def _has_any_token(text: str, tokens: tuple[str, ...]) -> bool:
+    return any(token in text for token in tokens)
+
+
+def _is_non_game_down_detail(lowered: str) -> bool:
+    if _has_any_token(lowered, ("cookie", ".roblosecurity")):
+        return True
+    if _has_any_token(lowered, ("captcha", "banned", "suspended")):
+        return True
+    if _has_any_token(lowered, ("identity_locked", "account_recovery", "account locked", "passkey")):
+        return True
+    return _has_any_token(lowered, ("auth failure", "auth-ticket", "authentication", "login"))
+
+
 def is_game_unavailable_detail(text: str) -> bool:
     """True when a launch/crash detail means the map itself is down.
 
@@ -133,16 +147,10 @@ def is_game_unavailable_detail(text: str) -> bool:
         "teleport failed",
         "unauthorized",
     )
-    if any(sig in lowered for sig in definitive):
+    if _has_any_token(lowered, definitive):
         return True
     # Auth problems are separate categories — never treat them as game-down.
-    if "cookie" in lowered or ".roblosecurity" in lowered:
-        return False
-    if "captcha" in lowered or "banned" in lowered or "suspended" in lowered:
-        return False
-    if "identity_locked" in lowered or "account_recovery" in lowered or "account locked" in lowered or "passkey" in lowered:
-        return False
-    if "auth failure" in lowered or "auth-ticket" in lowered or "authentication" in lowered or "login" in lowered:
+    if _is_non_game_down_detail(lowered):
         return False
     signatures = (
         "server shutdown",
@@ -153,7 +161,7 @@ def is_game_unavailable_detail(text: str) -> bool:
         "game is updating",
         "under maintenance",
     )
-    return any(sig in lowered for sig in signatures)
+    return _has_any_token(lowered, signatures)
 
 
 TRANSIENT_RECOVERY_MARKERS = (
@@ -182,11 +190,11 @@ def canonical_launch_failure_reason(detail: str) -> str:
         return "captcha_required"
     if is_game_unavailable_detail(detail):
         return "game_unavailable"
-    if "server full" in reason_l or "experience is full" in reason_l:
+    if _has_any_token(reason_l, ("server full", "experience is full")):
         return "server_full"
-    if "cookie" in reason_l or "auth" in reason_l or "login" in reason_l:
+    if _has_any_token(reason_l, ("cookie", "auth", "login")):
         return "auth_failure"
-    if "verify_timeout" in reason_l or "pid not detected" in reason_l:
+    if _has_any_token(reason_l, ("verify_timeout", "pid not detected")):
         return "watchdog_timeout"
     return "launch_fail"
 
@@ -234,6 +242,62 @@ def build_recovery_log_payload(event: str, account: Any, reason: str, fields: di
     return payload
 
 
+def _base_delays(cfg: dict[str, Any]) -> tuple[float, float]:
+    rejoin_base = float(cfg.get("rejoin_delay", cfg.get("cooldown_after_crash", 5)) or 5)
+    crash_base = float(cfg.get("cooldown_after_crash", rejoin_base) or rejoin_base)
+    return rejoin_base, crash_base
+
+
+def _retry_counts(account: Any) -> tuple[int, int, int]:
+    with account._lock:
+        launch_retry = int(account.launch_fail_count or 0)
+        crash_retry = int(account.crash_retry_count or 0)
+        network_retry = int(account.network_retry_count or 0)
+    return launch_retry, crash_retry, network_retry
+
+
+def _session_conflict_delay(attempts: int) -> float:
+    return 3.0 if attempts <= 1 else min(20.0, 8.0 + (attempts * 4.0))
+
+
+def _network_delay(canonical: str, network_retry: int) -> float:
+    if canonical == "network_drop":
+        return min(12.0, 2.0 + (network_retry * 1.5))
+    return min(15.0, 3.0 + (network_retry * 1.5))
+
+
+def _launch_delay(
+    canonical: str,
+    launch_retry: int,
+    rejoin_base: float,
+    compute_backoff: Callable[..., float],
+) -> float:
+    if canonical == "launch_fail":
+        return min(45.0, compute_backoff(max(1, launch_retry), base=4, cap=45))
+    if canonical == "game_unavailable":
+        # Map closed for update / private link temporarily dead.
+        # Back off hard so we do not hammer Roblox while the map is down,
+        # but keep retrying indefinitely — the map coming back must rejoin.
+        return min(120.0, 30.0 + max(0, launch_retry - 1) * 15.0)
+    return min(20.0, rejoin_base + max(0, launch_retry - 1) * 3.0)
+
+
+def _crash_delay(crash_retry: int, crash_base: float, policy: dict[str, Any]) -> float:
+    return min(float(policy.get("cap") or 35), crash_base + max(0, crash_retry - 1) * 4.0)
+
+
+def _generic_delay(
+    crash_retry: int,
+    rejoin_base: float,
+    policy: dict[str, Any],
+    compute_backoff: Callable[..., float],
+) -> float:
+    return min(
+        float(policy.get("cap") or 30),
+        compute_backoff(max(1, crash_retry), base=int(rejoin_base), cap=int(policy.get("cap") or 30)),
+    )
+
+
 def adaptive_recovery_delay(
     cfg: dict[str, Any],
     account: Any,
@@ -246,30 +310,17 @@ def adaptive_recovery_delay(
         return max(0.0, float(cooldown))
     canonical = canonical_reason(reason_key)
     policy = policy_for(canonical)
-    rejoin_base = float(cfg.get("rejoin_delay", cfg.get("cooldown_after_crash", 5)) or 5)
-    crash_base = float(cfg.get("cooldown_after_crash", rejoin_base) or rejoin_base)
-    with account._lock:
-        launch_retry = int(account.launch_fail_count or 0)
-        crash_retry = int(account.crash_retry_count or 0)
-        network_retry = int(account.network_retry_count or 0)
+    rejoin_base, crash_base = _base_delays(cfg)
+    launch_retry, crash_retry, network_retry = _retry_counts(account)
     if canonical == "session_conflict":
-        return 3.0 if session_conflict_attempts <= 1 else min(20.0, 8.0 + (session_conflict_attempts * 4.0))
-    if canonical == "network_drop":
-        return min(12.0, 2.0 + (network_retry * 1.5))
-    if canonical == "connection_error":
-        return min(15.0, 3.0 + (network_retry * 1.5))
-    if canonical == "launch_fail":
-        return min(45.0, compute_backoff(max(1, launch_retry), base=4, cap=45))
-    if canonical == "game_unavailable":
-        # Map closed for update / private link temporarily dead.
-        # Back off hard so we do not hammer Roblox while the map is down,
-        # but keep retrying indefinitely — the map coming back must rejoin.
-        return min(120.0, 30.0 + max(0, launch_retry - 1) * 15.0)
-    if canonical == "server_full":
-        return min(20.0, rejoin_base + max(0, launch_retry - 1) * 3.0)
+        return _session_conflict_delay(session_conflict_attempts)
+    if canonical in {"network_drop", "connection_error"}:
+        return _network_delay(canonical, network_retry)
+    if canonical in {"launch_fail", "game_unavailable", "server_full"}:
+        return _launch_delay(canonical, launch_retry, rejoin_base, compute_backoff)
     if canonical in {"process_crash", "watchdog_timeout", "loading_freeze", "teleport_timeout"}:
-        return min(float(policy.get("cap") or 35), crash_base + max(0, crash_retry - 1) * 4.0)
-    return min(float(policy.get("cap") or 30), compute_backoff(max(1, crash_retry), base=int(rejoin_base), cap=int(policy.get("cap") or 30)))
+        return _crash_delay(crash_retry, crash_base, policy)
+    return _generic_delay(crash_retry, rejoin_base, policy, compute_backoff)
 
 
 def context_from_signal(account: Any, signal: str, reason_key: str, payload: dict[str, Any]) -> RecoveryAttemptContext:
@@ -431,6 +482,42 @@ def active_recovery_block_reason(owner: dict[str, Any] | None, ctx: RecoveryAtte
     }
 
 
+def _duplicate_scope(account: Any) -> tuple[int, str, str]:
+    with account._lock:
+        return (
+            int(account.pid or 0),
+            str(account._config_username or ""),
+            str(getattr(account, "browser_tracker_id", "") or ""),
+        )
+
+
+def _is_session_conflict_ctx(ctx: RecoveryAttemptContext) -> bool:
+    if ctx.category != SESSION_CONFLICT:
+        return False
+    return not (ctx.popup_code and ctx.popup_code != "273")
+
+
+def _process_identity(entry: dict[str, Any]) -> tuple[int, str, str]:
+    return (
+        int(entry.get("pid") or 0),
+        str(entry.get("owner") or ""),
+        str(entry.get("browser_tracker_id") or ""),
+    )
+
+
+def _duplicate_match(
+    owner: str,
+    tracker: str,
+    expected_owner: str,
+    expected_tracker: str,
+) -> tuple[bool, bool, bool]:
+    owner_match = bool(expected_owner and owner and owner == expected_owner)
+    tracker_match = bool(expected_tracker and tracker and tracker == expected_tracker)
+    if expected_tracker and tracker and not tracker_match:
+        return False, owner_match, tracker_match
+    return bool(owner_match or tracker_match), owner_match, tracker_match
+
+
 def kill_local_duplicate_for_session_conflict(
     account: Any,
     ctx: RecoveryAttemptContext,
@@ -438,7 +525,7 @@ def kill_local_duplicate_for_session_conflict(
     kill_pid: Callable[[int], bool],
     log_event: Callable[..., None],
 ) -> int:
-    if ctx.category != SESSION_CONFLICT or (ctx.popup_code and ctx.popup_code != "273"):
+    if not _is_session_conflict_ctx(ctx):
         log_event(
             "session_conflict_duplicate_skipped",
             skip_reason="not_error_273_session_conflict",
@@ -446,21 +533,13 @@ def kill_local_duplicate_for_session_conflict(
         )
         return 0
     killed = 0
-    with account._lock:
-        bound_pid = int(account.pid or 0)
-        expected_owner = str(account._config_username or "")
-        expected_tracker = str(getattr(account, "browser_tracker_id", "") or "")
+    bound_pid, expected_owner, expected_tracker = _duplicate_scope(account)
     for entry in list_processes():
-        pid = int(entry.get("pid") or 0)
-        owner = str(entry.get("owner") or "")
-        tracker = str(entry.get("browser_tracker_id") or "")
+        pid, owner, tracker = _process_identity(entry)
         if not pid or pid == bound_pid:
             continue
-        owner_match = bool(expected_owner and owner and owner == expected_owner)
-        tracker_match = bool(expected_tracker and tracker and tracker == expected_tracker)
-        if expected_tracker and tracker and not tracker_match:
-            continue
-        if not owner_match and not tracker_match:
+        matched, owner_match, tracker_match = _duplicate_match(owner, tracker, expected_owner, expected_tracker)
+        if not matched:
             continue
         if kill_pid(pid):
             killed += 1

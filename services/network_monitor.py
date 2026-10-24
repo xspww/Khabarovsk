@@ -76,6 +76,15 @@ class NetworkMonitor:
         except Exception:
             return False
 
+    def _apply_state_locked(self, new_state: str) -> None:
+        with self._lock:
+            self._state = new_state
+            self._state_since = time.time()
+            if new_state == NET_ONLINE:
+                self._online_ev.set()
+            else:
+                self._online_ev.clear()
+
     def _run(self):
         first_run = True
         pending_state: str | None = None
@@ -88,25 +97,13 @@ class NetworkMonitor:
 
             if new_state != current:
                 if first_run:
-                    with self._lock:
-                        self._state = new_state
-                        self._state_since = time.time()
-                        if new_state == NET_ONLINE:
-                            self._online_ev.set()
-                        else:
-                            self._online_ev.clear()
+                    self._apply_state_locked(new_state)
                     pending_state = None
                 elif pending_state != new_state:
                     pending_state = new_state
                     pending_since = time.time()
                 elif time.time() - pending_since >= self._debounce:
-                    with self._lock:
-                        self._state = new_state
-                        self._state_since = time.time()
-                        if new_state == NET_ONLINE:
-                            self._online_ev.set()
-                        else:
-                            self._online_ev.clear()
+                    self._apply_state_locked(new_state)
                     flog(f"[NET] {current} → {new_state}")
                     self._bus.emit("network_state_change", old=current, new=new_state)
                     pending_state = None

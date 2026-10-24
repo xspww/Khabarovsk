@@ -20,6 +20,40 @@ from runtime.supervisor_runtime import SupervisorRuntime
 from services.process_service import ProcessManager, ProcessService
 
 
+def _transaction_reason(reason: str, step: str, status: str) -> str:
+    return f"transaction_update:{reason or step or status}"
+
+
+def _expected_text(expected: dict[str, Any], key: str) -> str:
+    return str(expected.get(key, "") or "")
+
+
+def _validation_int(validation: dict[str, Any], key: str) -> int:
+    return int(validation.get(key) or 0)
+
+
+def _validation_ram_mb(validation: dict[str, Any]) -> float:
+    return float(validation.get("ram_mb") or validation.get("rss_mb") or 0.0)
+
+
+def _stable_binding(
+    validation: dict[str, Any],
+    expected_identity: str,
+    acc: Account,
+    pid: int,
+) -> bool:
+    identity = str(validation.get("identity") or "")
+    owner = str(validation.get("owner") or ProcessManager.get_pid_owner(pid) or "")
+    exact_existing_identity = bool(expected_identity and identity == expected_identity)
+    owner_claim_matches = bool(owner and owner == acc._config_username)
+    return (
+        _validation_int(validation, "windows") > 0
+        or _validation_ram_mb(validation) >= 100.0
+        or exact_existing_identity
+        or owner_claim_matches
+    )
+
+
 class LaunchController:
     def __init__(
         self,
@@ -51,7 +85,7 @@ class LaunchController:
                     float(cfg.get("account_switch_cooldown", 10) or 10),
                 )
             except Exception:
-                pass
+                "intentional: ignore exception"
 
     def _record_transaction(self, acc: Account, snapshot: dict[str, Any]):
         if self._runtime_store and snapshot.get("transaction_id"):
@@ -97,6 +131,16 @@ class LaunchController:
             thread=threading.current_thread().name,
         )
 
+    def _guard_transaction_identity(self, acc: Account, expected: dict[str, Any], label: str) -> bool:
+        return self._runtime_state.guard_session_identity(
+            acc,
+            expected_generation=expected.get("runtime_generation"),
+            expected_session_id=_expected_text(expected, "session_id"),
+            expected_launch_nonce=_expected_text(expected, "launch_nonce"),
+            expected_transaction_id=_expected_text(expected, "transaction_id"),
+            reason=label,
+        )
+
     def _transaction_update(
         self,
         acc: Account,
@@ -106,17 +150,11 @@ class LaunchController:
         server_validation: str = "",
         expected: dict[str, Any] | None = None,
     ) -> bool:
+        label = _transaction_reason(reason, step, status)
         with acc._lock:
             expected = expected or {}
-            if expected and not self._runtime_state.guard_session_identity(
-                acc,
-                expected_generation=expected.get("runtime_generation"),
-                expected_session_id=str(expected.get("session_id", "") or ""),
-                expected_launch_nonce=str(expected.get("launch_nonce", "") or ""),
-                expected_transaction_id=str(expected.get("transaction_id", "") or ""),
-                reason=f"transaction_update:{reason or step or status}",
-            ):
-                self._record_stale_transaction(acc, expected, f"transaction_update:{reason or step or status}")
+            if expected and not self._guard_transaction_identity(acc, expected, label):
+                self._record_stale_transaction(acc, expected, label)
                 return False
             snapshot = self._runtime_state.update_rejoin_transaction(
                 acc,
@@ -127,7 +165,13 @@ class LaunchController:
             )
         self._record_transaction(acc, snapshot)
         if self._supervisor:
-            self._supervisor.emit("JoinSupervisor", f"TRANSACTION_{(step or status or 'UPDATE').upper()}", account=acc, reason=reason, payload=snapshot)
+            self._supervisor.emit(
+                "JoinSupervisor",
+                f"TRANSACTION_{(step or status or 'UPDATE').upper()}",
+                account=acc,
+                reason=reason,
+                payload=snapshot,
+            )
         return True
 
     def _bind_live_game(
@@ -217,15 +261,11 @@ class LaunchController:
             )
             return False
 
-        windows = int(validation.get("windows") or 0)
-        ram_mb = float(validation.get("ram_mb") or validation.get("rss_mb") or 0.0)
-        identity = str(validation.get("identity") or "")
-        owner = str(validation.get("owner") or ProcessManager.get_pid_owner(pid) or "")
-        exact_existing_identity = bool(expected_identity and identity == expected_identity)
-        owner_claim_matches = bool(owner and owner == acc._config_username)
-        if windows > 0 or ram_mb >= 100.0 or exact_existing_identity or owner_claim_matches:
+        if _stable_binding(validation, expected_identity, acc, pid):
             return True
 
+        windows = _validation_int(validation, "windows")
+        ram_mb = _validation_ram_mb(validation)
         flog_kv(
             "LAUNCH",
             "quick_bind_rejected_unstable_pid",

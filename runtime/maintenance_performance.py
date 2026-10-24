@@ -6,15 +6,6 @@ from core import Account, flog_kv
 from services.process_service import ProcessService
 
 
-def _num_cfg(value, default: float) -> float:
-    if value is None or (isinstance(value, str) and not value.strip()):
-        return default
-    try:
-        return float(value)
-    except Exception:
-        return default
-
-
 def _window_size_target_from_config(cfg: dict) -> tuple[int, int]:
     try:
         width = int(float(cfg.get("roblox_window_width", 200) or 200))
@@ -96,6 +87,109 @@ def _apply_cpu_limiter_for_bound_process(
         )
 
 
+def _hide_roblox_windows(seconds: float) -> None:
+    try:
+        hide_result = ProcessService.hide_roblox_windows(reason="auto_window_hide_cycle")
+        if int(hide_result.get("hidden") or 0) > 0:
+            flog_kv(
+                "WINDOW",
+                "auto_window_hide_cycle",
+                hidden=hide_result.get("hidden", 0),
+                count=hide_result.get("count", 0),
+                seconds=f"{seconds:.1f}",
+            )
+    except Exception:
+        "intentional: ignore exception"
+
+
+def _ram_skip_details(decision: dict) -> tuple[str, str, str]:
+    percent = f"{float(decision.get('percent') or 0):.1f}"
+    trigger = str(decision.get("trigger") or "")
+    threshold = f"{float(decision.get('threshold') or 0):.1f}"
+    return percent, trigger, threshold
+
+
+def _log_ram_cleanup_result(decision: dict, trigger: str, result: dict) -> None:
+    percent = f"{float(decision.get('percent') or 0):.1f}"
+    if result.get("ok"):
+        flog_kv(
+            "PERFORMANCE",
+            "ram_cleanup_auto",
+            freed_mb=result.get("freed_mb", 0.0),
+            percent=percent,
+            trigger=trigger,
+            source="auto",
+        )
+        return
+    flog_kv(
+        "PERFORMANCE",
+        "ram_cleanup_auto_failed",
+        "warning",
+        error=str(result.get("msg", ""))[:200],
+        trigger=trigger,
+        source="auto",
+    )
+
+
+def _log_process_trim(result: dict, trimmed: int) -> None:
+    rows = result.get("rows") or []
+    first = rows[0] if rows else {}
+    flog_kv(
+        "PERFORMANCE",
+        "process_trim_auto",
+        trimmed=trimmed,
+        pid=first.get("pid", ""),
+        account=first.get("display", first.get("account", "")),
+        before_mb=first.get("before_mb", 0.0),
+        after_mb=first.get("after_mb", 0.0),
+        freed_mb=first.get("freed_mb", 0.0),
+        source="auto",
+    )
+
+
+def _window_from_process(item: dict) -> dict[str, int]:
+    return {"pid": int(item.get("pid") or 0), "hwnd": int(item.get("hwnd") or 0)}
+
+
+def _live_window_list(process_manager: type) -> list[dict]:
+    list_fn = getattr(process_manager, "list_live_game_processes", None)
+    if not callable(list_fn):
+        return []
+    live = list_fn() or []
+    return [_window_from_process(item) for item in live if int(item.get("pid") or 0)]
+
+
+def _visible_window_list(process_manager: type) -> list[dict]:
+    fn = getattr(process_manager, "_visible_roblox_windows", None)
+    if not callable(fn):
+        return _live_window_list(process_manager)
+    try:
+        return fn(include_minimized=False) or []
+    except TypeError:
+        return [w for w in (fn() or []) if not w.get("iconic")]
+
+
+def _collect_visible_roblox_windows() -> list[dict]:
+    try:
+        from services.process_service import ProcessManager
+
+        return _visible_window_list(ProcessManager)
+    except Exception:
+        return []
+
+
+def _due_windows(windows: list[dict], due_pids: list[int]) -> list[dict]:
+    due_set = set(due_pids)
+    return [w for w in windows if int(w.get("pid") or 0) in due_set]
+
+
+def _clear_seen(seen: dict) -> None:
+    try:
+        seen.clear()
+    except Exception:
+        "intentional: ignore exception"
+
+
 class MaintenancePerformanceMixin:
     def _apply_auto_process_priority(self):
         if not bool(self._cfg.get("auto_process_priority_enabled", False)):
@@ -148,41 +242,19 @@ class MaintenancePerformanceMixin:
         except Exception as exc:
             flog_kv("PERFORMANCE", "cpu_limiter_failed", "warning", error=str(exc))
 
-    def _enforce_window_resize(self):
-        target = _window_resize_target_from_config(self._cfg)
-        arrange = _window_arrange_settings_from_config(self._cfg)
-        hide_enabled = bool(self._cfg.get("roblox_window_hide_enabled", False))
-        if not target and not arrange and not hide_enabled:
-            self._last_window_resize_at = time.time()
-            # Still run auto-minimize even when resize/arrange are off.
-            self._enforce_auto_minimize()
-            return
+    def _resize_interval_seconds(self) -> float:
         try:
-            seconds = max(1.0, float(self._cfg.get("roblox_window_resize_interval_seconds", 10) or 10))
+            return max(1.0, float(self._cfg.get("roblox_window_resize_interval_seconds", 10) or 10))
         except Exception:
-            seconds = 10.0
-        now = time.time()
-        if (now - self._last_window_resize_at) < seconds:
-            return
-        self._last_window_resize_at = now
-        if hide_enabled:
-            try:
-                hide_result = ProcessService.hide_roblox_windows(reason="auto_window_hide_cycle")
-                if int(hide_result.get("hidden") or 0) > 0:
-                    flog_kv(
-                        "WINDOW",
-                        "auto_window_hide_cycle",
-                        hidden=hide_result.get("hidden", 0),
-                        count=hide_result.get("count", 0),
-                        seconds=f"{seconds:.1f}",
-                    )
-            except Exception:
-                pass
-            try:
-                self._enforce_auto_minimize()
-            except Exception:
-                pass
-            return
+            return 10.0
+
+    def _safe_enforce_auto_minimize(self) -> None:
+        try:
+            self._enforce_auto_minimize()
+        except Exception:
+            "intentional: ignore exception"
+
+    def _run_window_cycle(self, target: tuple[int, int] | None, arrange: tuple[int, ...] | None, seconds: float) -> None:
         if arrange:
             width, height, columns, rows, gap, margin = arrange
             result = ProcessService.arrange_roblox_windows(
@@ -220,12 +292,64 @@ class MaintenancePerformanceMixin:
                 columns=result.get("columns", ""),
                 seconds=f"{seconds:.1f}",
             )
+
+    def _enforce_window_resize(self):
+        target = _window_resize_target_from_config(self._cfg)
+        arrange = _window_arrange_settings_from_config(self._cfg)
+        hide_enabled = bool(self._cfg.get("roblox_window_hide_enabled", False))
+        if not target and not arrange and not hide_enabled:
+            self._last_window_resize_at = time.time()
+            # Still run auto-minimize even when resize/arrange are off.
+            self._safe_enforce_auto_minimize()
+            return
+        seconds = self._resize_interval_seconds()
+        now = time.time()
+        if (now - self._last_window_resize_at) < seconds:
+            return
+        self._last_window_resize_at = now
+        if hide_enabled:
+            _hide_roblox_windows(seconds)
+            self._safe_enforce_auto_minimize()
+            return
+        self._run_window_cycle(target, arrange, seconds)
         # Auto Minimize runs on the same cycle so minimized windows keep
         # their grid position/size.
-        try:
-            self._enforce_auto_minimize()
-        except Exception:
-            pass
+        self._safe_enforce_auto_minimize()
+
+    def _ram_skip_log_due(self, now: float) -> bool:
+        last_skip = float(getattr(self, "_last_ram_cleanup_skip_log_at", 0.0) or 0.0)
+        if last_skip and (now - last_skip) < 300.0:
+            return False
+        self._last_ram_cleanup_skip_log_at = now
+        return True
+
+    def _log_ram_cleanup_skip(self, decision: dict, now: float) -> None:
+        reason = str(decision.get("reason") or "")
+        if reason == "below_threshold":
+            return
+        if not self._ram_skip_log_due(now):
+            return
+        percent, trigger, threshold = _ram_skip_details(decision)
+        if reason == "requires_admin":
+            flog_kv(
+                "PERFORMANCE",
+                "ram_cleanup_skipped_no_admin",
+                "warning",
+                percent=percent,
+                trigger=trigger,
+                source="auto",
+            )
+        elif reason == "cooldown":
+            flog_kv(
+                "PERFORMANCE",
+                "ram_cleanup_skipped",
+                reason=reason,
+                percent=percent,
+                threshold=threshold,
+                cooldown_remaining=decision.get("cooldown_remaining", 0),
+                trigger=trigger,
+                source="auto",
+            )
 
     def _apply_ram_cleanup(self):
         """Auto RAM cleanup (MemReduct port): independent dual triggers.
@@ -246,45 +370,41 @@ class MaintenancePerformanceMixin:
                              RAM_CLEANUP.should_auto_clean)
             decision = decide(self._cfg, now)
             if not decision.get("eligible"):
-                reason = str(decision.get("reason") or "")
-                if reason == "below_threshold":
-                    # Normal state (checked every ~15s) — stay silent to
-                    # avoid flooding the terminal.
-                    return
-                # Throttle repeated skip logs (threshold stays high while
-                # cooldown/admin blocks): at most once per 5 min.
-                last_skip = float(getattr(self, "_last_ram_cleanup_skip_log_at", 0.0) or 0.0)
-                if last_skip and (now - last_skip) < 300.0:
-                    return
-                self._last_ram_cleanup_skip_log_at = now
-                pct_text = f"{float(decision.get('percent') or 0):.1f}"
-                trigger = str(decision.get("trigger") or "")
-                if reason == "requires_admin":
-                    flog_kv("PERFORMANCE", "ram_cleanup_skipped_no_admin", "warning",
-                            percent=pct_text, trigger=trigger, source="auto")
-                elif reason == "cooldown":
-                    flog_kv("PERFORMANCE", "ram_cleanup_skipped",
-                            reason=reason, percent=pct_text,
-                            threshold=f"{float(decision.get('threshold') or 0):.1f}",
-                            cooldown_remaining=decision.get("cooldown_remaining", 0),
-                            trigger=trigger, source="auto")
+                self._log_ram_cleanup_skip(decision, now)
                 return
             trigger = str(decision.get("trigger") or "")
             result = RAM_CLEANUP.clean(source="auto")
-            if result.get("ok"):
-                flog_kv("PERFORMANCE", "ram_cleanup_auto",
-                        freed_mb=result.get("freed_mb", 0.0),
-                        percent=f"{float(decision.get('percent') or 0):.1f}",
-                        trigger=trigger, source="auto")
-            else:
-                flog_kv("PERFORMANCE", "ram_cleanup_auto_failed", "warning",
-                        error=str(result.get("msg", ""))[:200],
-                        trigger=trigger, source="auto")
+            _log_ram_cleanup_result(decision, trigger, result)
         except Exception as exc:
             try:
                 flog_kv("PERFORMANCE", "ram_cleanup_auto_failed", "warning", error=str(exc), source="auto")
             except Exception:
-                pass
+                "intentional: ignore exception"
+
+    def _log_trim_failure(self, error: str) -> None:
+        now = time.time()
+        last_skip = float(getattr(self, "_last_trim_fail_log_at", 0.0) or 0.0)
+        if last_skip and (now - last_skip) < 300.0:
+            return
+        self._last_trim_fail_log_at = now
+        flog_kv("PERFORMANCE", "process_trim_auto_failed", "warning", error=error, source="auto")
+
+    def _handle_process_trim_result(self, result: dict) -> None:
+        reason = str(result.get("reason") or "")
+        if reason in ("disabled", "throttled", "below_threshold", "global_clean_recent"):
+            return
+        trimmed = int(result.get("trimmed") or 0)
+        if trimmed > 0:
+            _log_process_trim(result, trimmed)
+            return
+        if reason == "trim_failed":
+            # EmptyWorkingSet ล้มเหลวทุก PID ที่เลือก — เตือนแบบ throttle
+            # (กัน log flood ทุก 15s) ไม่เงียบหาย
+            self._log_trim_failure("EmptyWorkingSet failed for selected PID(s)")
+            return
+        if not result.get("ok"):
+            # windows_only / psutil_unavailable — เตือนแบบ throttle เช่นกัน
+            self._log_trim_failure(str(result.get("reason", ""))[:200])
 
     def _apply_process_trim(self):
         """Auto per-process trim: เฉพาะจอ Roblox ที่บวม (เบา, ไม่ต้อง admin).
@@ -299,160 +419,127 @@ class MaintenancePerformanceMixin:
             from services.process_trim import PROCESS_TRIM
 
             result = PROCESS_TRIM.apply(self._accounts, self._cfg)
-            reason = str(result.get("reason") or "")
-            if reason in ("disabled", "throttled", "below_threshold", "global_clean_recent"):
-                return
-            trimmed = int(result.get("trimmed") or 0)
-            if trimmed > 0:
-                rows = result.get("rows") or []
-                first = rows[0] if rows else {}
-                flog_kv(
-                    "PERFORMANCE",
-                    "process_trim_auto",
-                    trimmed=trimmed,
-                    pid=first.get("pid", ""),
-                    account=first.get("display", first.get("account", "")),
-                    before_mb=first.get("before_mb", 0.0),
-                    after_mb=first.get("after_mb", 0.0),
-                    freed_mb=first.get("freed_mb", 0.0),
-                    source="auto",
-                )
-                return
-            if reason == "trim_failed":
-                # EmptyWorkingSet ล้มเหลวทุก PID ที่เลือก — เตือนแบบ throttle
-                # (กัน log flood ทุก 15s) ไม่เงียบหาย
-                now = time.time()
-                last_skip = float(getattr(self, "_last_trim_fail_log_at", 0.0) or 0.0)
-                if last_skip and (now - last_skip) < 300.0:
-                    return
-                self._last_trim_fail_log_at = now
-                flog_kv("PERFORMANCE", "process_trim_auto_failed", "warning",
-                         error="EmptyWorkingSet failed for selected PID(s)", source="auto")
-                return
-            if not result.get("ok"):
-                # windows_only / psutil_unavailable — เตือนแบบ throttle เช่นกัน
-                now = time.time()
-                last_skip = float(getattr(self, "_last_trim_fail_log_at", 0.0) or 0.0)
-                if last_skip and (now - last_skip) < 300.0:
-                    return
-                self._last_trim_fail_log_at = now
-                flog_kv("PERFORMANCE", "process_trim_auto_failed", "warning",
-                         error=str(result.get("reason", ""))[:200], source="auto")
+            self._handle_process_trim_result(result)
         except Exception as exc:
             try:
                 flog_kv("PERFORMANCE", "process_trim_auto_failed", "warning", error=str(exc), source="auto")
             except Exception:
-                pass
+                "intentional: ignore exception"
 
-    def _enforce_auto_minimize(self):
-        """Minimize each visible Roblox window after N seconds (configurable)."""
-        if not bool(self._cfg.get("auto_minimize_enabled", False)):
-            # Reset tracking so re-enabling starts fresh.
-            try:
-                if getattr(self, "_auto_minimize_first_seen", None):
-                    self._auto_minimize_first_seen.clear()
-            except Exception:
-                pass
-            return
+    def _auto_minimize_delay(self) -> int:
         try:
             delay = int(float(self._cfg.get("auto_minimize_seconds", 10) or 10))
         except Exception:
             delay = 10
-        delay = max(1, min(delay, 3600))
-        now = time.time()
-        # Throttle to at most once every 2s to avoid EnumWindows spam.
+        return max(1, min(delay, 3600))
+
+    def _auto_minimize_throttled(self, now: float) -> bool:
         try:
             last = float(getattr(self, "_last_auto_minimize_at", 0.0) or 0.0)
         except Exception:
             last = 0.0
         if (now - last) < 2.0:
-            return
+            return True
         self._last_auto_minimize_at = now
+        return False
+
+    def _reset_auto_minimize_tracking(self) -> None:
+        try:
+            if getattr(self, "_auto_minimize_first_seen", None):
+                self._auto_minimize_first_seen.clear()
+        except Exception:
+            "intentional: ignore exception"
+
+    def _prune_seen_pids(self, seen: dict, live_pids: set[int]) -> None:
+        try:
+            for pid in list(seen.keys()):
+                if pid not in live_pids:
+                    seen.pop(pid, None)
+        except Exception:
+            "intentional: ignore exception"
+
+    def _auto_minimize_due_pids(self, windows: list[dict], seen: dict, now: float, delay: int) -> list[int]:
+        live_pids: set[int] = set()
+        due_pids: list[int] = []
+        for item in windows:
+            try:
+                pid = int(item.get("pid") or 0)
+            except Exception:
+                continue
+            if not pid:
+                continue
+            live_pids.add(pid)
+            first = seen.get(pid)
+            if first is None:
+                seen[pid] = now
+                continue
+            try:
+                age = now - float(first)
+            except Exception:
+                age = 0.0
+            if age >= delay:
+                due_pids.append(pid)
+        self._prune_seen_pids(seen, live_pids)
+        return due_pids
+
+    def _minimize_due_windows(
+        self,
+        windows: list[dict],
+        due_pids: list[int],
+        seen: dict,
+        now: float,
+        delay: int,
+    ) -> None:
+        due_windows = _due_windows(windows, due_pids)
+        if not due_windows:
+            return
+        try:
+            from services import window_control as _wc
+
+            result = _wc.minimize_windows(due_windows)
+            minimized = int(result.get("minimized") or 0)
+        except Exception as exc:
+            flog_kv("WINDOW", "auto_minimize_failed", "warning", error=str(exc))
+            return
+        if minimized > 0:
+            flog_kv(
+                "WINDOW",
+                "auto_minimized",
+                minimized=minimized,
+                delay_seconds=delay,
+                pids=",".join(str(p) for p in due_pids[:10]),
+            )
+            # Don't re-minimize the same pids every 2s — wait until they
+            # reappear (user restored) by resetting their timer.
+            try:
+                for pid in due_pids:
+                    seen[pid] = now
+            except Exception:
+                "intentional: ignore exception"
+
+    def _enforce_auto_minimize(self):
+        """Minimize each visible Roblox window after N seconds (configurable)."""
+        if not bool(self._cfg.get("auto_minimize_enabled", False)):
+            # Reset tracking so re-enabling starts fresh.
+            self._reset_auto_minimize_tracking()
+            return
+        delay = self._auto_minimize_delay()
+        now = time.time()
+        # Throttle to at most once every 2s to avoid EnumWindows spam.
+        if self._auto_minimize_throttled(now):
+            return
         if not hasattr(self, "_auto_minimize_first_seen") or self._auto_minimize_first_seen is None:
             self._auto_minimize_first_seen = {}
         seen: dict = self._auto_minimize_first_seen
         try:
-            from services.process_service import ProcessManager
-
-            windows = []
-            try:
-                # Minimized windows are already minimized: skip them so we
-                # don't re-minimize + spam logs every cycle.
-                fn = getattr(ProcessManager, "_visible_roblox_windows", None)
-                if callable(fn):
-                    try:
-                        windows = fn(include_minimized=False) or []
-                    except TypeError:
-                        windows = [w for w in (fn() or []) if not w.get("iconic")]
-                else:
-                    list_fn = getattr(ProcessManager, "list_live_game_processes", None)
-                    if callable(list_fn):
-                        live = list_fn() or []
-                        windows = [{"pid": int(item.get("pid") or 0), "hwnd": int(item.get("hwnd") or 0)} for item in live if int(item.get("pid") or 0)]
-            except Exception:
-                windows = []
+            windows = _collect_visible_roblox_windows()
             if not windows:
                 # Prune dead entries when nothing visible.
-                try:
-                    seen.clear()
-                except Exception:
-                    pass
+                _clear_seen(seen)
                 return
-            live_pids = set()
-            due_pids: list[int] = []
-            for item in windows:
-                try:
-                    pid = int(item.get("pid") or 0)
-                except Exception:
-                    continue
-                if not pid:
-                    continue
-                live_pids.add(pid)
-                first = seen.get(pid)
-                if first is None:
-                    seen[pid] = now
-                    continue
-                try:
-                    age = now - float(first)
-                except Exception:
-                    age = 0.0
-                if age >= delay:
-                    due_pids.append(pid)
-            # Drop pids that disappeared.
-            try:
-                for pid in list(seen.keys()):
-                    if pid not in live_pids:
-                        seen.pop(pid, None)
-            except Exception:
-                pass
+            due_pids = self._auto_minimize_due_pids(windows, seen, now, delay)
             if not due_pids:
                 return
-            due_set = set(due_pids)
-            due_windows = [w for w in windows if int(w.get("pid") or 0) in due_set]
-            if not due_windows:
-                return
-            try:
-                from services import window_control as _wc
-
-                result = _wc.minimize_windows(due_windows)
-                minimized = int(result.get("minimized") or 0)
-            except Exception as exc:
-                flog_kv("WINDOW", "auto_minimize_failed", "warning", error=str(exc))
-                return
-            if minimized > 0:
-                flog_kv(
-                    "WINDOW",
-                    "auto_minimized",
-                    minimized=minimized,
-                    delay_seconds=delay,
-                    pids=",".join(str(p) for p in due_pids[:10]),
-                )
-                # Don't re-minimize the same pids every 2s — wait until they
-                # reappear (user restored) by resetting their timer.
-                try:
-                    for pid in due_pids:
-                        seen[pid] = now
-                except Exception:
-                    pass
+            self._minimize_due_windows(windows, due_pids, seen, now, delay)
         except Exception as exc:
             flog_kv("WINDOW", "auto_minimize_failed", "warning", error=str(exc))

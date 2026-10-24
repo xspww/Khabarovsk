@@ -109,8 +109,11 @@ def _kv_value(value: Any) -> str:
 
 
 def flog_kv(scope: str, name: str, level: str = "info", **fields):
-    flog_struct(scope, name, level, **fields)
-    emit_console_activity(scope, name, **fields)
-    parts = " ".join(f"{key}={_kv_value(_redact_value(key, value))}" for key, value in fields.items())
+    # Redact once, then fan out. The console must never receive raw values
+    # that the file log already scrubs (cookies, tokens, private links).
+    safe_fields = {key: _redact_value(key, value) for key, value in fields.items()}
+    flog_struct(scope, name, level, **safe_fields)
+    emit_console_activity(scope, name, **safe_fields)
+    parts = " ".join(f"{key}={_kv_value(value)}" for key, value in safe_fields.items())
     suffix = f" {parts}" if parts else ""
     flog(f"[{scope}] {name}{suffix}", level)

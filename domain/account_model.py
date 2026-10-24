@@ -23,6 +23,21 @@ STATE_META: dict[AccountState, dict[str, str]] = {
     AccountState.COOLDOWN:     {"label": "Cooldown",     "color": "#6b7280"},
 }
 
+def _first_value(*values: Any, default: Any = "") -> Any:
+    for value in values:
+        if value:
+            return value
+    return default
+
+
+def _runtime_int(value: Any) -> int:
+    return int(value or 0)
+
+
+def _runtime_float(value: Any) -> float:
+    return float(value or 0.0)
+
+
 class ServerType(StrEnum):
     VIP     = "VIP"
     PUBLIC  = "PUBLIC"
@@ -167,80 +182,108 @@ class Account:
             object.__setattr__(self, "_config_username", self.username)
         self.sync_runtime("init")
 
-    def sync_runtime(self, reason: str = "") -> AccountRuntime:
-        self.runtime.account_id = self._config_username or self.username
+    def _sync_runtime_identity(self) -> None:
+        self.runtime.account_id = _first_value(self._config_username, self.username)
         self.runtime.lifecycle_state = runtime_state_for_public(self.state)
         self.runtime.canonical_state = lifecycle_for_public(self.state).value
         self.runtime.public_state = self.state.name
         self.runtime.desired_public_state = self.desired_state.name
         self.runtime.pid = self.pid
         self.runtime.process_identity = self.bound_process_identity
-        self.runtime.bind_status = self.process_binding_status or "unbound"
-        self.runtime.binding_status = self.process_binding_status or "unbound"
-        self.runtime.binding_decision = self.binding_decision or ""
-        self.runtime.process_binding_confidence = float(self.process_binding_confidence or self.ownership_confidence or 0.0)
-        self.runtime.process_proof_level = self.process_proof_level or "untrusted"
-        self.runtime.process_reject_reason = self.process_reject_reason or ""
-        self.runtime.process_owner_claim = self.process_owner_claim or ""
+
+    def _sync_runtime_binding(self) -> None:
+        self.runtime.bind_status = _first_value(self.process_binding_status, default="unbound")
+        self.runtime.binding_status = _first_value(self.process_binding_status, default="unbound")
+        self.runtime.binding_decision = _first_value(self.binding_decision)
+        self.runtime.process_binding_confidence = float(
+            _first_value(self.process_binding_confidence, self.ownership_confidence, default=0.0)
+        )
+        self.runtime.process_proof_level = _first_value(self.process_proof_level, default="untrusted")
+        self.runtime.process_reject_reason = _first_value(self.process_reject_reason)
+        self.runtime.process_owner_claim = _first_value(self.process_owner_claim)
         self.runtime.unmanaged_live_process_count = int(self.unmanaged_live_process_count or 0)
-        self.runtime.unmanaged_live_pids = list(self.unmanaged_live_pids or [])
+        self.runtime.unmanaged_live_pids = list(_first_value(self.unmanaged_live_pids, default=[]))
         self.runtime.adopt_candidate_pid = self.adopt_candidate_pid
-        self.runtime.adopt_reject_reason = self.adopt_reject_reason or ""
+        self.runtime.adopt_reject_reason = _first_value(self.adopt_reject_reason)
         self.runtime.orphan_pid = self.orphan_pid
-        self.runtime.orphan_identity = self.orphan_identity or ""
-        self.runtime.orphan_confidence = float(self.orphan_confidence or 0.0)
-        self.runtime.orphan_observed_at = float(self.orphan_observed_at or 0.0)
-        self.runtime.orphan_verify_after = float(self.orphan_verify_after or 0.0)
-        self.runtime.destination_validation = self.destination_validation or self.server_validation or "unverified"
-        self.runtime.launch_intent_summary = dict(self.launch_intent_summary or (self.launch_intent or {}).get("launch_intent_summary", {}) or {})
-        self.runtime.runtime_generation = int(self.runtime_generation or 0)
-        self.runtime.generation = int(self.runtime_generation or 0)
-        self.runtime.recovery_generation = int(self.recovery_generation or 0)
-        self.runtime.command_generation = int(self.command_generation or 0)
-        self.runtime.retry_count = int(self.retry_count or 0)
-        self.runtime.crash_count = int(self.crash_count or 0)
-        self.runtime.fail_count = int(self.fail_count or 0)
-        self.runtime.recovery_budget_count = len(self.recovery_budget_attempts or [])
-        self.runtime.cooldown_until = float(self.cooldown_until or 0.0)
-        self.runtime.recovery_status = self.recovery_status or ""
-        self.runtime.recovery_reason = self.last_recovery_reason or self.last_crash_reason or ""
+        self.runtime.orphan_identity = _first_value(self.orphan_identity)
+        self.runtime.orphan_confidence = float(_first_value(self.orphan_confidence, default=0.0))
+        self.runtime.orphan_observed_at = float(_first_value(self.orphan_observed_at, default=0.0))
+        self.runtime.orphan_verify_after = float(_first_value(self.orphan_verify_after, default=0.0))
+
+    def _sync_runtime_state(self) -> None:
+        self.runtime.destination_validation = _first_value(
+            self.destination_validation, self.server_validation, default="unverified"
+        )
+        summary = self.launch_intent_summary
+        if not summary:
+            summary = _first_value(self.launch_intent, default={}).get("launch_intent_summary", {})
+        self.runtime.launch_intent_summary = dict(summary or {})
+        self.runtime.runtime_generation = _runtime_int(self.runtime_generation)
+        self.runtime.generation = _runtime_int(self.runtime_generation)
+        self.runtime.recovery_generation = _runtime_int(self.recovery_generation)
+        self.runtime.command_generation = _runtime_int(self.command_generation)
+        self.runtime.retry_count = _runtime_int(self.retry_count)
+        self.runtime.crash_count = _runtime_int(self.crash_count)
+        self.runtime.fail_count = _runtime_int(self.fail_count)
+        self.runtime.recovery_budget_count = len(_first_value(self.recovery_budget_attempts, default=[]))
+        self.runtime.cooldown_until = _runtime_float(self.cooldown_until)
+        self.runtime.recovery_status = _first_value(self.recovery_status)
+        self.runtime.recovery_reason = _first_value(self.last_recovery_reason, self.last_crash_reason)
         self.runtime.recovery_inflight = bool(self.recovery_inflight)
-        self.runtime.recovery_active = bool(self.recovery_inflight or self.recovery_status)
-        self.runtime.liveness_state = self.liveness_state or "unknown"
-        self.runtime.liveness_score = float(self.liveness_score or 0.0)
-        self.runtime.last_heartbeat = float(self.last_activity_at or 0.0)
-        self.runtime.session_id = self.session_id or ""
-        self.runtime.launch_nonce = self.launch_nonce or ""
-        self.runtime.account_runtime_id = self.account_runtime_id or ""
-        self.runtime.rejoin_transaction_id = self.rejoin_transaction_id or ""
-        self.runtime.server_validation = self.server_validation or "unverified"
-        self.runtime.observed_server_type = self.observed_server_type or ""
-        self.runtime.observed_private_server_id = self.observed_private_server_id or ""
-        self.runtime.observed_private_server_owner_id = self.observed_private_server_owner_id or ""
-        self.runtime.observed_place_id = self.observed_place_id or ""
-        self.runtime.observed_job_id = self.observed_job_id or ""
-        self.runtime.observed_universe_id = self.observed_universe_id or ""
-        self.runtime.observed_server_at = float(self.observed_server_at or 0.0)
-        self.runtime.scheduler_slot = self.scheduler_slot or ""
-        self.runtime.supervisor_state = self.supervisor_state or LIFECYCLE_STATE.get(self.state, "STOPPED").lower()
-        self.runtime.last_transaction_status = self.last_transaction_status or ""
-        self.runtime.last_transaction_step = self.last_transaction_step or ""
-        self.runtime.last_transaction_reason = self.last_transaction_reason or ""
-        self.runtime.last_transaction_started_at = float(self.last_transaction_started_at or self.session_started_at or 0.0)
-        self.runtime.last_transaction_completed_at = float(self.last_transaction_completed_at or 0.0)
-        self.runtime.last_transaction_failure_reason = self.last_transaction_failure_reason or ""
-        self.runtime.last_transition_at = float(self.last_state_change_at or time.time())
-        self.runtime.last_transition_reason = reason or self.last_state_reason or ""
-        self.runtime.current_command = self.current_command or ""
+        self.runtime.recovery_active = bool(_first_value(self.recovery_inflight, self.recovery_status, default=False))
+
+    def _sync_runtime_sources(self) -> None:
+        self.runtime.liveness_state = _first_value(self.liveness_state, default="unknown")
+        self.runtime.liveness_score = _runtime_float(self.liveness_score)
+        self.runtime.last_heartbeat = _runtime_float(self.last_activity_at)
+        self.runtime.session_id = _first_value(self.session_id)
+        self.runtime.launch_nonce = _first_value(self.launch_nonce)
+        self.runtime.account_runtime_id = _first_value(self.account_runtime_id)
+        self.runtime.rejoin_transaction_id = _first_value(self.rejoin_transaction_id)
+        self.runtime.server_validation = _first_value(self.server_validation, default="unverified")
+        self.runtime.observed_server_type = _first_value(self.observed_server_type)
+        self.runtime.observed_private_server_id = _first_value(self.observed_private_server_id)
+        self.runtime.observed_private_server_owner_id = _first_value(self.observed_private_server_owner_id)
+        self.runtime.observed_place_id = _first_value(self.observed_place_id)
+        self.runtime.observed_job_id = _first_value(self.observed_job_id)
+        self.runtime.observed_universe_id = _first_value(self.observed_universe_id)
+        self.runtime.observed_server_at = _runtime_float(self.observed_server_at)
+        self.runtime.scheduler_slot = _first_value(self.scheduler_slot)
+        self.runtime.supervisor_state = _first_value(
+            self.supervisor_state, LIFECYCLE_STATE.get(self.state, "STOPPED").lower()
+        )
+
+    def _sync_runtime_transaction(self, reason: str) -> None:
+        self.runtime.last_transaction_status = _first_value(self.last_transaction_status)
+        self.runtime.last_transaction_step = _first_value(self.last_transaction_step)
+        self.runtime.last_transaction_reason = _first_value(self.last_transaction_reason)
+        self.runtime.last_transaction_started_at = float(
+            _first_value(self.last_transaction_started_at, self.session_started_at, default=0.0)
+        )
+        self.runtime.last_transaction_completed_at = float(
+            _first_value(self.last_transaction_completed_at, default=0.0)
+        )
+        self.runtime.last_transaction_failure_reason = _first_value(self.last_transaction_failure_reason)
+        self.runtime.last_transition_at = float(_first_value(self.last_state_change_at, time.time()))
+        self.runtime.last_transition_reason = _first_value(reason, self.last_state_reason)
+        self.runtime.current_command = _first_value(self.current_command)
         if self.current_command_id:
             self.runtime.command_inflight = {
                 "command_id": self.current_command_id,
-                "action": self.current_command or "",
-                "age": round(max(0.0, time.time() - float(self.command_inflight_started_at or time.time())), 2),
+                "action": _first_value(self.current_command),
+                "age": round(max(0.0, time.time() - float(_first_value(self.command_inflight_started_at, time.time()))), 2),
             }
         else:
             self.runtime.command_inflight = None
-        self.runtime.last_error = self.last_error or ""
+        self.runtime.last_error = _first_value(self.last_error)
+
+    def sync_runtime(self, reason: str = "") -> AccountRuntime:
+        self._sync_runtime_identity()
+        self._sync_runtime_binding()
+        self._sync_runtime_state()
+        self._sync_runtime_sources()
+        self._sync_runtime_transaction(reason)
         return self.runtime
 
     def runtime_snapshot(self) -> dict[str, Any]:
@@ -268,10 +311,6 @@ class Account:
     @property
     def is_vip(self) -> bool:
         return bool(self.vip_links)
-
-    @property
-    def needs_recovery(self) -> bool:
-        return self.desired_state == AccountState.IN_GAME and self.state != AccountState.IN_GAME
 
     def to_dict(self) -> dict:
         return {
@@ -335,6 +374,14 @@ def cookie_identity_block_reason(
     return ""
 
 
+_COOKIE_INVALID_MARKERS = ("invalid", "expired", "missing", "validation failed", "not authenticated")
+
+
+def _is_cookie_invalid_text(lowered: str) -> bool:
+    has_cookie = "cookie" in lowered or ".roblosecurity" in lowered
+    return has_cookie and any(marker in lowered for marker in _COOKIE_INVALID_MARKERS)
+
+
 def cookie_invalid_block_reason(*values: object) -> str:
     for value in values:
         text = str(value or "").strip()
@@ -346,15 +393,7 @@ def cookie_invalid_block_reason(*values: object) -> str:
             continue
         if lowered == "cookie_invalid":
             return "Invalid Cookie. Reimport the correct .ROBLOSECURITY for this account."
-        has_cookie = "cookie" in lowered or ".roblosecurity" in lowered
-        invalid = (
-            "invalid" in lowered
-            or "expired" in lowered
-            or "missing" in lowered
-            or "validation failed" in lowered
-            or "not authenticated" in lowered
-        )
-        if has_cookie and invalid:
+        if _is_cookie_invalid_text(lowered):
             return text
     return ""
 
@@ -429,6 +468,26 @@ def is_account_recovery(acc: Any) -> bool:
         return False
 
 
+def _locked_message() -> str:
+    try:
+        from services.verify_guard import LOCKED_BLOCK_REASON as message
+    except Exception:
+        message = "Account locked - face/ID verification required. Verify manually, then click Resume."
+    return message
+
+
+def _locked_text_match(values: tuple[object, ...]) -> str:
+    try:
+        from services.verify_guard import is_locked_status_text
+    except Exception:
+        return ""
+    for value in values:
+        text = str(value or "").strip()
+        if text and is_locked_status_text(text):
+            return text
+    return ""
+
+
 def locked_block_reason(*values: object) -> str:
     for value in values:
         text = str(value or "").strip()
@@ -436,22 +495,29 @@ def locked_block_reason(*values: object) -> str:
         if not lowered:
             continue
         if lowered.strip() in {"identity_locked", "locked"}:
-            try:
-                from services.verify_guard import LOCKED_BLOCK_REASON as _LOCKED_MSG
-            except Exception:
-                _LOCKED_MSG = "Account locked - face/ID verification required. Verify manually, then click Resume."
-            return _LOCKED_MSG
+            return _locked_message()
         if "identity_locked" in lowered:
             return text
-    try:
-        from services.verify_guard import is_locked_status_text as _is_locked_text
+    return _locked_text_match(values)
 
-        for value in values:
-            text = str(value or "").strip()
-            if text and _is_locked_text(text):
-                return text
+
+def _recovery_message() -> str:
+    try:
+        from services.verify_guard import RECOVERY_BLOCK_REASON as message
     except Exception:
-        pass
+        message = "Account recovery - passkey/2FA required. Complete recovery manually, then click Resume."
+    return message
+
+
+def _recovery_text_match(values: tuple[object, ...]) -> str:
+    try:
+        from services.verify_guard import is_recovery_status_text
+    except Exception:
+        return ""
+    for value in values:
+        text = str(value or "").strip()
+        if text and is_recovery_status_text(text):
+            return text
     return ""
 
 
@@ -462,23 +528,10 @@ def recovery_block_reason(*values: object) -> str:
         if not lowered:
             continue
         if lowered.strip() == "account_recovery":
-            try:
-                from services.verify_guard import RECOVERY_BLOCK_REASON as _RECOVERY_MSG
-            except Exception:
-                _RECOVERY_MSG = "Account recovery - passkey/2FA required. Complete recovery manually, then click Resume."
-            return _RECOVERY_MSG
+            return _recovery_message()
         if "account_recovery" in lowered:
             return text
-    try:
-        from services.verify_guard import is_recovery_status_text as _is_recovery_text
-
-        for value in values:
-            text = str(value or "").strip()
-            if text and _is_recovery_text(text):
-                return text
-    except Exception:
-        pass
-    return ""
+    return _recovery_text_match(values)
 
 
 FINISHED_STATUS = "Finished"
@@ -491,26 +544,24 @@ def is_account_finished(acc: Any) -> bool:
         if str(getattr(acc, "manual_status", "") or "").strip().lower() == "finished":
             return True
     except Exception:
-        pass
+        "intentional: ignore exception"
     try:
         if float(getattr(acc, "finished_at", 0.0) or 0.0) > 0:
             return True
     except Exception:
-        pass
+        "intentional: ignore exception"
     return False
 
 
-def account_launch_block_reason(acc: Account) -> str:
-    if is_account_finished(acc):
-        return FINISHED_STATUS
-    # A suspension blocks the launch just as hard as a ban, but it reports its
-    # own reason so the dashboard can label it correctly.
-    if is_account_suspended(acc):
-        return suspended_block_reason(
-            getattr(acc, "manual_status", ""),
-            getattr(acc, "import_status", ""),
-            getattr(acc, "last_error", ""),
-        ) or SUSPENDED_BLOCK_REASON_FALLBACK
+def _suspended_launch_reason(acc: Account) -> str:
+    return suspended_block_reason(
+        getattr(acc, "manual_status", ""),
+        getattr(acc, "import_status", ""),
+        getattr(acc, "last_error", ""),
+    ) or SUSPENDED_BLOCK_REASON_FALLBACK
+
+
+def _banned_launch_reason(acc: Account) -> str:
     try:
         from services.ban_guard import BANNED_BLOCK_REASON
         from services.ban_guard import is_account_banned as _is_banned
@@ -518,25 +569,17 @@ def account_launch_block_reason(acc: Account) -> str:
         if _is_banned(acc):
             return BANNED_BLOCK_REASON
     except Exception:
-        pass
-    banned = banned_block_reason(
+        "intentional: ignore exception"
+    return banned_block_reason(
         getattr(acc, "manual_status", ""),
         getattr(acc, "import_status", ""),
         getattr(acc, "last_error", ""),
         getattr(acc, "last_crash_reason", ""),
         getattr(acc, "last_recovery_reason", ""),
     )
-    if banned:
-        return banned
-    suspended = suspended_block_reason(
-        getattr(acc, "manual_status", ""),
-        getattr(acc, "import_status", ""),
-        getattr(acc, "last_error", ""),
-    )
-    if suspended:
-        return suspended
-    # Identity lock (face/ID scan) and account recovery (passkey/2FA) outrank
-    # captcha: they need manual verification, not just a puzzle solve.
+
+
+def _manual_verification_reason(acc: Account) -> str:
     try:
         from services.verify_guard import (
             LOCKED_BLOCK_REASON,
@@ -550,35 +593,44 @@ def account_launch_block_reason(acc: Account) -> str:
         if is_account_recovery(acc):
             return RECOVERY_BLOCK_REASON
     except Exception:
-        pass
+        "intentional: ignore exception"
+    return ""
+
+
+def _hold_text_reason(acc: Account) -> str:
     try:
-        _locked = locked_block_reason(
+        locked = locked_block_reason(
             getattr(acc, "manual_status", ""),
             getattr(acc, "import_status", ""),
             getattr(acc, "last_error", ""),
             getattr(acc, "last_crash_reason", ""),
             getattr(acc, "last_recovery_reason", ""),
         )
-        if _locked:
-            return _locked
-        _rec = recovery_block_reason(
+        if locked:
+            return locked
+        return recovery_block_reason(
             getattr(acc, "manual_status", ""),
             getattr(acc, "import_status", ""),
             getattr(acc, "last_error", ""),
             getattr(acc, "last_crash_reason", ""),
             getattr(acc, "last_recovery_reason", ""),
         )
-        if _rec:
-            return _rec
     except Exception:
-        pass
+        return ""
+
+
+def _captcha_launch_reason(acc: Account) -> str:
     try:
         from services.captcha_guard import CAPTCHA_BLOCK_REASON, is_account_captcha_required
 
         if is_account_captcha_required(acc):
             return CAPTCHA_BLOCK_REASON
     except Exception:
-        pass
+        "intentional: ignore exception"
+    return ""
+
+
+def _invalid_cookie_launch_reason(acc: Account) -> str:
     invalid = cookie_invalid_block_reason(
         getattr(acc, "manual_status", ""),
         getattr(acc, "import_status", ""),
@@ -590,6 +642,27 @@ def account_launch_block_reason(acc: Account) -> str:
         getattr(acc, "username", ""),
         getattr(acc, "cookie_username", ""),
         bool(getattr(acc, "cookie_mismatch", False)),
+    )
+
+
+def account_launch_block_reason(acc: Account) -> str:
+    if is_account_finished(acc):
+        return FINISHED_STATUS
+    # A suspension blocks the launch just as hard as a ban, but it reports its
+    # own reason so the dashboard can label it correctly.
+    if is_account_suspended(acc):
+        return _suspended_launch_reason(acc)
+    return (
+        _banned_launch_reason(acc)
+        or suspended_block_reason(
+            getattr(acc, "manual_status", ""),
+            getattr(acc, "import_status", ""),
+            getattr(acc, "last_error", ""),
+        )
+        or _manual_verification_reason(acc)
+        or _hold_text_reason(acc)
+        or _captcha_launch_reason(acc)
+        or _invalid_cookie_launch_reason(acc)
     )
 
 

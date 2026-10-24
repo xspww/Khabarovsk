@@ -51,3 +51,6 @@ ignore = [
 "api_routes/accounts_routes.py" = ["ASYNC"]
 "api_routes/config_routes.py" = ["ASYNC"]
 "api_routes/system_routes.py" = ["ASYNC"]
+# Qt virtual-method names are fixed camelCase by PySide6 (changeEvent etc.);
+# renaming breaks the override, so N802 is unfixable inside the class body.
+"desktop/webview_window.py" = ["N802"]

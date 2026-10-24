@@ -11,6 +11,8 @@ from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any
 
+from domain.games import _text
+
 TOKEN_VERSION = "lua1"
 # Farm sessions routinely run for hours in the same server without refetching
 # the helper. A 15-minute TTL blinded the farm to disconnect/error_code events
@@ -36,10 +38,6 @@ class LuaEventReplayResult:
     reason: str = ""
 
 
-def _text(value: Any) -> str:
-    return str(value or "").strip()
-
-
 def _b64url(data: bytes) -> str:
     return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
 
@@ -52,6 +50,45 @@ def _unb64url(value: str) -> bytes:
 def _sign(secret: str, payload_b64: str) -> str:
     digest = hmac.new(_text(secret).encode("utf-8"), payload_b64.encode("ascii"), hashlib.sha256).digest()
     return _b64url(digest)
+
+
+def _token_parts(token: str) -> tuple[str, str] | None:
+    parts = _text(token).split(".")
+    if len(parts) != 3 or parts[0] != TOKEN_VERSION:
+        return None
+    return parts[1], parts[2]
+
+
+def _verify_token_signature(secret: str, payload_b64: str, supplied_sig: str) -> bool:
+    return hmac.compare_digest(supplied_sig, _sign(secret, payload_b64))
+
+
+def _token_claims(payload: Any, account: str, session_id: str, launch_nonce: str) -> dict[str, Any]:
+    return {
+        "account": _text(payload.get("account")),
+        "session_id": _text(payload.get("session_id")),
+        "launch_nonce": _text(payload.get("launch_nonce")),
+        "expires_at": int(payload.get("exp") or 0),
+    }
+
+
+def _claims_mismatch(
+    claims: dict[str, Any],
+    account: str,
+    session_id: str,
+    launch_nonce: str,
+    expires_at: int,
+    now: int,
+) -> str:
+    if not expires_at or expires_at < now:
+        return "expired"
+    if claims["account"] != _text(account):
+        return "account_mismatch"
+    if claims["session_id"] != _text(session_id):
+        return "session_id_mismatch"
+    if claims["launch_nonce"] != _text(launch_nonce):
+        return "launch_nonce_mismatch"
+    return ""
 
 
 def issue_lua_session_token(
@@ -87,43 +124,27 @@ def validate_lua_session_token(
     launch_nonce: str,
     now: float | None = None,
 ) -> LuaSessionTokenValidation:
-    def reject(reason: str, expires_at: int = 0) -> LuaSessionTokenValidation:
-        return LuaSessionTokenValidation(False, reason, expires_at=expires_at)
+    parsed = _token_parts(token)
+    if parsed is None:
+        return LuaSessionTokenValidation(False, "invalid_format")
 
-    raw = _text(token)
-    parts = raw.split(".")
-    if len(parts) != 3 or parts[0] != TOKEN_VERSION:
-        return reject("invalid_format")
-
-    _, payload_b64, supplied_sig = parts
-    expected_sig = _sign(secret, payload_b64)
-    if not hmac.compare_digest(supplied_sig, expected_sig):
-        return reject("bad_signature")
+    payload_b64, supplied_sig = parsed
+    if not _verify_token_signature(secret, payload_b64, supplied_sig):
+        return LuaSessionTokenValidation(False, "bad_signature")
 
     try:
         payload = json.loads(_unb64url(payload_b64).decode("utf-8"))
     except Exception:
-        return reject("invalid_payload")
+        return LuaSessionTokenValidation(False, "invalid_payload")
 
-    expected_account = _text(account)
-    expected_session_id = _text(session_id)
-    expected_launch_nonce = _text(launch_nonce)
-    actual_account = _text(payload.get("account"))
-    actual_session_id = _text(payload.get("session_id"))
-    actual_launch_nonce = _text(payload.get("launch_nonce"))
-    expires_at = int(payload.get("exp") or 0)
-
+    claims = _token_claims(payload, account, session_id, launch_nonce)
+    expires_at = int(claims["expires_at"])
     current = int(now if now is not None else time.time())
-    if not expires_at or expires_at < current:
-        return reject("expired", expires_at)
-    if actual_account != expected_account:
-        return reject("account_mismatch", expires_at)
-    if actual_session_id != expected_session_id:
-        return reject("session_id_mismatch", expires_at)
-    if actual_launch_nonce != expected_launch_nonce:
-        return reject("launch_nonce_mismatch", expires_at)
+    mismatch = _claims_mismatch(claims, account, session_id, launch_nonce, expires_at, current)
+    if mismatch:
+        return LuaSessionTokenValidation(False, mismatch, expires_at=expires_at)
 
-    return LuaSessionTokenValidation(True, "", actual_account, actual_session_id, actual_launch_nonce, expires_at)
+    return LuaSessionTokenValidation(True, "", claims["account"], claims["session_id"], claims["launch_nonce"], expires_at)
 
 
 def token_session_binding_matches(
@@ -174,6 +195,24 @@ class LuaEventReplayCache:
         self._lock = threading.Lock()
         self._events: dict[str, OrderedDict[str, float]] = {}
 
+    def _prune_bucket(self, bucket: OrderedDict[str, float], cutoff: float) -> None:
+        for key, recorded_at in list(bucket.items()):
+            if recorded_at < cutoff:
+                bucket.pop(key, None)
+            else:
+                break
+
+    def _record_event(self, account_key: str, event_key: str, event_ts: float, cutoff: float) -> bool:
+        with self._lock:
+            bucket = self._events.setdefault(account_key, OrderedDict())
+            self._prune_bucket(bucket, cutoff)
+            if event_key in bucket:
+                return False
+            bucket[event_key] = event_ts
+            while len(bucket) > self._max_events_per_account:
+                bucket.popitem(last=False)
+        return True
+
     def check_and_record(
         self,
         account: str,
@@ -199,17 +238,6 @@ class LuaEventReplayCache:
         if event_ts > current + self._max_clock_skew_seconds:
             return LuaEventReplayResult(False, "future_event")
 
-        with self._lock:
-            bucket = self._events.setdefault(account_key, OrderedDict())
-            cutoff = current - self._ttl_seconds
-            for key, recorded_at in list(bucket.items()):
-                if recorded_at < cutoff:
-                    bucket.pop(key, None)
-                else:
-                    break
-            if event_key in bucket:
-                return LuaEventReplayResult(False, "duplicate_event")
-            bucket[event_key] = event_ts
-            while len(bucket) > self._max_events_per_account:
-                bucket.popitem(last=False)
+        if not self._record_event(account_key, event_key, event_ts, current - self._ttl_seconds):
+            return LuaEventReplayResult(False, "duplicate_event")
         return LuaEventReplayResult(True)

@@ -29,57 +29,82 @@ from version import (
 HTTP_TIMEOUT_SECONDS = 20.0
 UPDATE_USER_AGENT = f"CronusLauncher-Update/{app_display_version()}"
 LEGACY_STAGE_DIRNAME = "update_stage"
-
-# Last check failure, kept in memory so the dashboard can show WHY the
-# update button is missing instead of failing silently for hours.
-_LAST_CHECK_ERROR = ""
-_LAST_CHECK_AT = 0.0
-
-# Short TTL cache: every dashboard open, focus and update-status poll calls
-# check_app_update(), and each uncached call is a live GitHub round-trip.
-# Serve the last snapshot instantly instead of stalling page opens.
-_CHECK_CACHE_AT = 0.0
-_CHECK_CACHE_OK = False
-_CHECK_CACHE_SNAP: dict[str, Any] = {}
 _CHECK_CACHE_TTL_OK = 180.0
 _CHECK_CACHE_TTL_FAIL = 30.0
 _RELEASE_TAG_RE = re.compile(r"^v?\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$")
 
 
-def _cached_check_snapshot() -> dict[str, Any] | None:
-    try:
-        import time as _time
+class _UpdateCheckState:
+    """Last error plus the short TTL snapshot cache, held off module globals."""
 
-        age = float(_time.time()) - float(_CHECK_CACHE_AT or 0.0)
-    except Exception:
-        return None
-    ttl = _CHECK_CACHE_TTL_OK if _CHECK_CACHE_OK else _CHECK_CACHE_TTL_FAIL
-    if age < 0 or age >= ttl or not isinstance(_CHECK_CACHE_SNAP, dict):
-        return None
-    try:
-        snap = dict(_CHECK_CACHE_SNAP)
-        assets = snap.get("assets")
-        if isinstance(assets, list):
-            snap["assets"] = [dict(item) for item in assets if isinstance(item, dict)]
-        return snap
-    except Exception:
-        return None
+    def __init__(self) -> None:
+        # Last check failure, kept in memory so the dashboard can show WHY the
+        # update button is missing instead of failing silently for hours.
+        self.last_error = ""
+        self.last_error_at = 0.0
+        # Short TTL cache: every dashboard open, focus and update-status poll
+        # calls check_app_update(), and each uncached call is a live GitHub
+        # round-trip. Serve the last snapshot instantly instead of stalling.
+        self.cache_at = 0.0
+        self.cache_ok = False
+        self.cache_snapshot: dict[str, Any] = {}
+
+    def cached_snapshot(self) -> dict[str, Any] | None:
+        try:
+            import time as _time
+
+            age = float(_time.time()) - float(self.cache_at or 0.0)
+        except Exception:
+            return None
+        ttl = _CHECK_CACHE_TTL_OK if self.cache_ok else _CHECK_CACHE_TTL_FAIL
+        if age < 0 or age >= ttl or not isinstance(self.cache_snapshot, dict):
+            return None
+        try:
+            snap = dict(self.cache_snapshot)
+            assets = snap.get("assets")
+            if isinstance(assets, list):
+                snap["assets"] = [dict(item) for item in assets if isinstance(item, dict)]
+            return snap
+        except Exception:
+            return None
+
+    def store(self, snap: dict[str, Any], ok: bool) -> None:
+        try:
+            import time as _time
+
+            self.cache_at = float(_time.time())
+            self.cache_ok = bool(ok)
+            stored = dict(snap)
+            assets = stored.get("assets")
+            if isinstance(assets, list):
+                stored["assets"] = [dict(item) for item in assets if isinstance(item, dict)]
+            self.cache_snapshot = stored
+        except Exception:
+            "intentional: ignore exception"
+
+    def note_error(self, reason: str) -> None:
+        try:
+            import time as _time
+
+            self.last_error = str(reason or "")[:300]
+            self.last_error_at = float(_time.time())
+        except Exception:
+            "intentional: ignore exception"
+
+
+_STATE = _UpdateCheckState()
+
+
+def _cached_check_snapshot() -> dict[str, Any] | None:
+    return _STATE.cached_snapshot()
 
 
 def _store_check_snapshot(snap: dict[str, Any], ok: bool) -> None:
-    global _CHECK_CACHE_AT, _CHECK_CACHE_OK, _CHECK_CACHE_SNAP
-    try:
-        import time as _time
+    _STATE.store(snap, ok)
 
-        _CHECK_CACHE_AT = float(_time.time())
-        _CHECK_CACHE_OK = bool(ok)
-        stored = dict(snap)
-        assets = stored.get("assets")
-        if isinstance(assets, list):
-            stored["assets"] = [dict(item) for item in assets if isinstance(item, dict)]
-        _CHECK_CACHE_SNAP = stored
-    except Exception:
-        pass
+
+def _note_check_error(reason: str) -> None:
+    _STATE.note_error(reason)
 
 
 def _api_get_json(url: str) -> Any:
@@ -100,17 +125,6 @@ def _api_get_json(url: str) -> Any:
     ) as response:
         body = response.read()
     return json.loads(body.decode("utf-8", errors="replace"))
-
-
-def _note_check_error(reason: str) -> None:
-    global _LAST_CHECK_ERROR, _LAST_CHECK_AT
-    try:
-        import time as _time
-
-        _LAST_CHECK_ERROR = str(reason or "")[:300]
-        _LAST_CHECK_AT = float(_time.time())
-    except Exception:
-        pass
 
 
 def _assets_from_payload(payload: dict[str, Any]) -> list:
@@ -145,26 +159,93 @@ def _is_usable_release(payload: Any) -> bool:
     return bool(tag and _RELEASE_TAG_RE.fullmatch(tag))
 
 
+def _release_tag(payload: dict[str, Any]) -> str:
+    return str(payload.get("tag_name") or "").strip()
+
+
+def _release_url(payload: dict[str, Any], tag: str) -> str:
+    return str(payload.get("html_url") or release_tag_url(tag))
+
+
+def _apply_release(base: dict[str, Any], payload: dict[str, Any], tag: str) -> None:
+    base["assets"] = _assets_from_payload(payload)
+    base.update(
+        latest_version=strip_tag_prefix(tag),
+        latest_url=_release_url(payload, tag),
+        update_available=True,
+    )
+
+
+def _release_candidate(item: Any, current: str) -> str:
+    """Return the release tag when item is a usable newer stable release."""
+    if not _is_usable_release(item):
+        return ""
+    tag = _release_tag(item)
+    if not tag or not is_newer_version(tag, current):
+        return ""
+    return tag
+
+
+def _newer_than(tag: str, best: dict[str, Any]) -> bool:
+    try:
+        return compare_versions(tag, str(best.get("tag_name") or "")) > 0
+    except Exception:
+        return False
+
+
 def _pick_newest_stable(payloads: Any, current: str) -> dict[str, Any]:
     """Return the newest stable release newer than current, or {}."""
-    best: dict[str, Any] = {}
     if not isinstance(payloads, list):
-        return best
+        return {}
+    best: dict[str, Any] = {}
     for item in payloads:
-        if not _is_usable_release(item):
-            continue
-        tag = str(item.get("tag_name") or "").strip()
-        if not tag or not is_newer_version(tag, current):
+        tag = _release_candidate(item, current)
+        if not tag:
             continue
         if not best:
             best = item
             continue
-        try:
-            if compare_versions(tag, str(best.get("tag_name") or "")) > 0:
-                best = item
-        except Exception:
-            continue
-    return best if isinstance(best, dict) else {}
+        if _newer_than(tag, best):
+            best = item
+    return best
+
+
+def _apply_release_list(base: dict[str, Any], current: str) -> str:
+    """Fill base from the releases list; return an error string on failure."""
+    try:
+        payloads = _api_get_json(releases_api_list(100))
+        if not isinstance(payloads, list):
+            raise RuntimeError("bad response from GitHub releases list")  # noqa: TRY004 - external service failure, not a type error
+        best = _pick_newest_stable(payloads, current)
+        if best:
+            _apply_release(base, best, _release_tag(best))
+        _STATE.last_error = ""
+        base["check_error"] = ""
+        _store_check_snapshot(base, True)
+        return ""
+    except Exception as exc:
+        detail = str(exc) or "connection failed"
+        if "403" in detail:
+            detail += " (GitHub rate limit - retry in a few minutes)"
+        return f"GitHub release list failed: {detail}"
+
+
+def _apply_latest_release(base: dict[str, Any], current: str, list_error: str) -> dict[str, Any]:
+    try:
+        payload = _api_get_json(releases_api_latest())
+        if _is_usable_release(payload) and is_newer_version(_release_tag(payload), current):
+            _apply_release(base, payload, _release_tag(payload))
+            _STATE.last_error = ""
+            base["check_error"] = ""
+            _store_check_snapshot(base, True)
+            return base
+        raise RuntimeError("latest release is not newer or is not a stable release")
+    except Exception as exc:
+        latest_error = str(exc) or "latest release lookup failed"
+        _note_check_error(f"{list_error} | latest fallback failed: {latest_error}")
+        base["check_error"] = _STATE.last_error
+        _store_check_snapshot(base, False)
+        return base
 
 
 def check_app_update() -> dict[str, Any]:
@@ -179,7 +260,6 @@ def check_app_update() -> dict[str, Any]:
     Results are cached (success 180s, failure 30s) to avoid stalling
     dashboard opens with a live GitHub round-trip every time.
     """
-    global _LAST_CHECK_ERROR
     current = app_display_version()
     hit = _cached_check_snapshot()
     if hit is not None:
@@ -188,7 +268,7 @@ def check_app_update() -> dict[str, Any]:
         hit["current_version"] = current
         # Keep check_error in sync with the latest known error so the UI
         # does not show a stale error after a successful cached hit.
-        hit["check_error"] = _LAST_CHECK_ERROR if not hit.get("update_available") else ""
+        hit["check_error"] = _STATE.last_error if not hit.get("update_available") else ""
         return hit
     base: dict[str, Any] = {
         "ok": True,
@@ -197,57 +277,16 @@ def check_app_update() -> dict[str, Any]:
         "latest_url": "",
         "update_available": False,
         "assets": [],
-        "check_error": _LAST_CHECK_ERROR,
+        "check_error": _STATE.last_error,
     }
     # Select by semantic version from the release list, not GitHub's
     # manually assignable "latest" pointer or publication order.
-    try:
-        payloads = _api_get_json(releases_api_list(100))
-        if not isinstance(payloads, list):
-            raise RuntimeError("bad response from GitHub releases list")  # noqa: TRY004 - external service failure, not a type error
-        best = _pick_newest_stable(payloads, current)
-        if best:
-            tag = str(best.get("tag_name") or "").strip()
-            base["assets"] = _assets_from_payload(best)
-            base.update(
-                latest_version=strip_tag_prefix(tag),
-                latest_url=str(best.get("html_url") or release_tag_url(tag)),
-                update_available=True,
-            )
-        _LAST_CHECK_ERROR = ""
-        base["check_error"] = ""
-        _store_check_snapshot(base, True)
+    list_error = _apply_release_list(base, current)
+    if not list_error:
         return base
-    except Exception as exc:
-        detail = str(exc) or "connection failed"
-        if "403" in detail:
-            detail += " (GitHub rate limit - retry in a few minutes)"
-        list_error = f"GitHub release list failed: {detail}"
-
     # If listing releases is unavailable, try GitHub's designated latest
     # stable release so an API outage does not hide every possible update.
-    try:
-        payload = _api_get_json(releases_api_latest())
-        if _is_usable_release(payload):
-            tag = str(payload.get("tag_name") or "").strip()
-            if is_newer_version(tag, current):
-                base["assets"] = _assets_from_payload(payload)
-                base.update(
-                    latest_version=strip_tag_prefix(tag),
-                    latest_url=str(payload.get("html_url") or release_tag_url(tag)),
-                    update_available=True,
-                )
-                _LAST_CHECK_ERROR = ""
-                base["check_error"] = ""
-                _store_check_snapshot(base, True)
-                return base
-        raise RuntimeError("latest release is not newer or is not a stable release")
-    except Exception as exc:
-        latest_error = str(exc) or "latest release lookup failed"
-        _note_check_error(f"{list_error} | latest fallback failed: {latest_error}")
-        base["check_error"] = _LAST_CHECK_ERROR
-        _store_check_snapshot(base, False)
-        return base
+    return _apply_latest_release(base, current, list_error)
 
 
 def cleanup_legacy_update_stage() -> None:
@@ -259,4 +298,4 @@ def cleanup_legacy_update_stage() -> None:
         if os.path.isdir(stage):
             shutil.rmtree(stage, ignore_errors=True)
     except Exception:
-        pass
+        "intentional: ignore exception"

@@ -56,6 +56,86 @@ class RecoveryTxnMixin:
         return ""
 
 
+    def _begin_gate_reason(self, acc: Account, canonical: str) -> bool:
+        if self._stop.is_set() or self._closed or acc.desired_state != AccountState.IN_GAME:
+            self._log_recovery_decision(
+                "ignored",
+                acc,
+                canonical,
+                desired=getattr(acc.desired_state, "name", acc.desired_state),
+                stopped=self._stop.is_set(),
+                closed=self._closed,
+            )
+            return True
+        if acc.state == AccountState.FAILED:
+            self._log_recovery_decision(
+                "ignored",
+                acc,
+                canonical,
+                reason_detail="already_failed",
+            )
+            return True
+        return False
+
+    def _duplicate_recovery(
+        self,
+        acc: Account,
+        canonical: str,
+        force: bool,
+        now: float,
+    ) -> bool:
+        duplicate = (
+            acc.recovery_inflight
+            and not force
+            and acc.last_recovery_reason == canonical
+            and (now - float(acc.last_recovery_at or 0.0)) < self._duplicate_window
+        )
+        if duplicate:
+            self._log_recovery_decision(
+                "recovery_duplicate_suppressed",
+                acc,
+                canonical,
+                age=f"{now - float(acc.last_recovery_at or now):.2f}",
+                window=f"{self._duplicate_window:.1f}",
+            )
+            return True
+        return False
+
+    def _owner_key(self, acc: Account, canonical: str, force: bool) -> str | None:
+        account_key = acc._config_username
+        owner_check = self._owner_registry.check_start(
+            account_key,
+            runtime_generation=int(acc.runtime_generation or 0),
+            recovery_generation=int(acc.recovery_generation or 0),
+            reason=canonical,
+            current_state=acc.state,
+            force=force,
+        )
+        if not owner_check.get("accepted"):
+            self._log_recovery_decision(
+                "recovery_owner_rejected",
+                acc,
+                canonical,
+                **{
+                    key: value
+                    for key, value in owner_check.items()
+                    if key != "accepted"
+                },
+            )
+            return None
+        if owner_check.get("replaced"):
+            self._log_recovery_decision(
+                "recovery_owner_replaced",
+                acc,
+                canonical,
+                **{
+                    key: value
+                    for key, value in owner_check.items()
+                    if key not in {"accepted", "replaced"}
+                },
+            )
+        return account_key
+
     def _begin_recovery(
         self,
         acc: Account,
@@ -72,60 +152,17 @@ class RecoveryTxnMixin:
         now = time.time()
         budget_reason = ""
         with acc._lock:
-            if self._stop.is_set() or self._closed or acc.desired_state != AccountState.IN_GAME:
-                self._log_recovery_decision(
-                    "ignored",
-                    acc,
-                    canonical,
-                    desired=getattr(acc.desired_state, "name", acc.desired_state),
-                    stopped=self._stop.is_set(),
-                    closed=self._closed,
-                )
+            if self._begin_gate_reason(acc, canonical):
                 return None
-            if acc.state == AccountState.FAILED:
-                self._log_recovery_decision("ignored", acc, canonical, reason_detail="already_failed")
+            if self._duplicate_recovery(acc, canonical, force, now):
                 return None
-            duplicate = (
-                acc.recovery_inflight and
-                not force and
-                acc.last_recovery_reason == canonical and
-                (now - float(acc.last_recovery_at or 0.0)) < self._duplicate_window
-            )
-            if duplicate:
-                self._log_recovery_decision(
-                    "recovery_duplicate_suppressed",
-                    acc,
-                    canonical,
-                    age=f"{now - float(acc.last_recovery_at or now):.2f}",
-                    window=f"{self._duplicate_window:.1f}",
-                )
+            account_key = self._owner_key(acc, canonical, force)
+            if account_key is None:
                 return None
-            account_key = acc._config_username
-            owner_check = self._owner_registry.check_start(
-                account_key,
-                runtime_generation=int(acc.runtime_generation or 0),
-                recovery_generation=int(acc.recovery_generation or 0),
-                reason=canonical,
-                current_state=acc.state,
-                force=force,
-            )
-            if not owner_check.get("accepted"):
-                self._log_recovery_decision(
-                    "recovery_owner_rejected",
-                    acc,
-                    canonical,
-                    **{key: value for key, value in owner_check.items() if key != "accepted"},
-                )
-                return None
-            if owner_check.get("replaced"):
-                self._log_recovery_decision(
-                    "recovery_owner_replaced",
-                    acc,
-                    canonical,
-                    **{key: value for key, value in owner_check.items() if key not in {"accepted", "replaced"}},
-                )
 
-            budget_reason = self._record_recovery_budget_attempt(acc, canonical, bucket, now)
+            budget_reason = self._record_recovery_budget_attempt(
+                acc, canonical, bucket, now
+            )
             if not budget_reason:
                 self._runtime_state.begin_recovery(
                     acc,
@@ -163,7 +200,13 @@ class RecoveryTxnMixin:
                 )
 
         if budget_reason:
-            self._log_recovery_decision("recovery_budget_exceeded", acc, canonical, reason_msg=budget_reason, bucket=bucket)
+            self._log_recovery_decision(
+                "recovery_budget_exceeded",
+                acc,
+                canonical,
+                reason_msg=budget_reason,
+                bucket=bucket,
+            )
             self.fail_account(acc, "recovery_budget_exceeded", budget_reason)
             return None
         self._log_recovery_decision(

@@ -1151,7 +1151,11 @@ class ProcessService:
         if rejection is not None:
             return rejection
         killed = _ProcessBackend.kill_pid(pid)
-        _clear_bound_process_binding(state_manager, account, reason or "safe_kill_bound_process", increment_generation)
+        if killed:
+            _clear_bound_process_binding(state_manager, account, reason or "safe_kill_bound_process", increment_generation)
+        # If the kill failed, keep the binding: the process may still be
+        # alive, and clearing the PID here would let the launcher start a
+        # duplicate client on the next attempt.
         _log_bound_kill_allowed(account, pid, reason, identity, validation, killed)
         return {"ok": True, "killed": bool(killed), "pid": pid, "reason": "killed" if killed else "kill_failed", "validation": validation}
 

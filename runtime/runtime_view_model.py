@@ -391,12 +391,17 @@ class RuntimeViewModelBuilder:
         active_runtime_action = bool(acc.recovery_inflight or account_command)
         waiting_patch = _waiting_patch(acc)
         game_closed = _game_closed(acc)
+        network_lost = (
+            display_state == AccountState.NETWORK_LOST
+            or _network_recovery(acc)
+        )
         label, color = _label_for_state(
             display_state,
             pid_alive,
             meta,
             waiting_patch,
             game_closed,
+            network_lost,
             recovery_step,
             active_runtime_action,
         )
@@ -917,10 +922,17 @@ def _label_for_state(
     meta: dict[str, Any],
     waiting_patch: bool,
     game_closed: bool,
+    network_lost: bool,
     recovery_step: str,
     active_runtime_action: bool,
 ) -> tuple[str, str]:
-    hold = _hold_label(display_state, pid_alive, waiting_patch, game_closed)
+    hold = _hold_label(
+        display_state,
+        pid_alive,
+        waiting_patch,
+        game_closed,
+        network_lost,
+    )
     if hold is not None:
         return hold
     return _recovery_label(
@@ -933,11 +945,16 @@ def _hold_label(
     pid_alive: bool,
     waiting_patch: bool,
     game_closed: bool,
+    network_lost: bool,
 ) -> tuple[str, str] | None:
     if waiting_patch and not (
         display_state == AccountState.IN_GAME and pid_alive
     ):
         return "Wait for exploit patch", "#f0c76f"
+    # A live network loss must outrank "Game Close": the account cannot
+    # rejoin until the network is back.
+    if network_lost and display_state != AccountState.IN_GAME:
+        return "Disconnected", "#f97316"
     if game_closed and display_state != AccountState.IN_GAME:
         return "Game Close", "#fcd34d"
     return None
@@ -988,11 +1005,29 @@ def _waiting_patch(acc: Any) -> bool:
     )
 
 
+def _network_recovery(acc: Any) -> bool:
+    """True while the account is inside a network-loss recovery.
+
+    Network loss is a live condition, while ``last_crash_reason`` is only
+    history: ``mark_network_lost`` updates the recovery status/reason but
+    leaves the crash text untouched. Callers must let the network state
+    outrank any historical crash classification.
+    """
+    if str(acc.recovery_status or "").strip().lower() == "network_lost":
+        return True
+    reason = str(acc.last_recovery_reason or "").lower()
+    return "network_drop" in reason or "network_lost" in reason
+
+
 def _game_closed(acc: Any) -> bool:
+    if _network_recovery(acc):
+        return False
+    # Only an active recovery marker may keep the account on "Game Close".
+    # last_crash_reason is historical and can still say game_unavailable
+    # long after the map came back.
     return (
         str(acc.recovery_status or "").strip().lower() == "game_unavailable"
         or "game_unavailable" in str(acc.last_recovery_reason or "").lower()
-        or "game_unavailable" in str(acc.last_crash_reason or "").lower()
     )
 
 

@@ -657,16 +657,23 @@ def _handle_rejoin_requested(
     reason: str,
     event_payload: dict[str, Any],
 ) -> tuple[dict[str, Any] | None, str, bool, str]:
-    return _dispatch_runtime_signal(
-        farm,
-        acc,
-        event_name,
-        reason,
-        event_payload,
-        RuntimeSignal.REJOIN_REQUESTED.value,
-        "warning",
-        wake=False,
-    )
+    # Route Lua rejoin requests through the same unified path as manual
+    # rejoin: finished-account guard, per-account rate limit, runtime
+    # generation bump, worker ensure + wake, and the uniform "rejoin" event.
+    try:
+        ok, msg = farm.force_rejoin(acc._config_username, reason=reason or "lua_rejoin_requested")
+    except Exception as e:
+        return farm._lua_event_handler_error(acc, event_name, e), "", False, ""
+    if not ok:
+        lowered = str(msg or "").lower()
+        status = 429 if ("rate" in lowered or "wait" in lowered) else 409
+        return (
+            _lua_error(status, f"Rejoin rejected: {msg}", event=event_name, account=acc._config_username),
+            RuntimeSignal.REJOIN_REQUESTED.value,
+            False,
+            "warning",
+        )
+    return None, RuntimeSignal.REJOIN_REQUESTED.value, True, "warning"
 
 
 def _log_teleport(log: Any, acc: Any, payload: dict[str, Any], resolution: Any, identity: Any) -> None:

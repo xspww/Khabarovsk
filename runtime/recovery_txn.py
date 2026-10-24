@@ -56,7 +56,13 @@ class RecoveryTxnMixin:
         return ""
 
 
-    def _begin_gate_reason(self, acc: Account, canonical: str) -> bool:
+    def _begin_gate_reason(
+        self,
+        acc: Account,
+        canonical: str,
+        *,
+        allow_failed: bool = False,
+    ) -> bool:
         if self._stop.is_set() or self._closed or acc.desired_state != AccountState.IN_GAME:
             self._log_recovery_decision(
                 "ignored",
@@ -68,6 +74,16 @@ class RecoveryTxnMixin:
             )
             return True
         if acc.state == AccountState.FAILED:
+            if allow_failed:
+                # Manual rejoin is an explicit user action: it may break a
+                # transient FAILED hold, but the caller must already have
+                # rejected captcha/auth/ban blocks before asking for it.
+                self._log_recovery_decision(
+                    "manual_failed_bypass",
+                    acc,
+                    canonical,
+                )
+                return False
             self._log_recovery_decision(
                 "ignored",
                 acc,
@@ -148,11 +164,16 @@ class RecoveryTxnMixin:
         count_crash: bool = True,
         count_fail: bool = True,
         context: RecoveryAttemptContext | None = None,
+        allow_failed: bool = False,
     ) -> dict[str, Any] | None:
         now = time.time()
         budget_reason = ""
         with acc._lock:
-            if self._begin_gate_reason(acc, canonical):
+            if self._begin_gate_reason(
+                acc,
+                canonical,
+                allow_failed=allow_failed,
+            ):
                 return None
             if self._duplicate_recovery(acc, canonical, force, now):
                 return None

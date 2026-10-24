@@ -528,14 +528,45 @@ class FarmController:
             return False, "Not running", None
         return True, "", None
 
+    def _force_rejoin_block_reason(self, acc: Account) -> str:
+        """Single manual-rejoin gate shared by the API capability and the action."""
+        recovery = self._recovery
+        check = getattr(recovery, "force_rejoin_block_reason", None) if recovery else None
+        if callable(check):
+            try:
+                return str(check(acc) or "")
+            except Exception as exc:
+                # Fail closed: an unavailable safety check must not become a
+                # silent bypass of the captcha/auth/ban gate.
+                flog_kv(
+                    "COMMAND",
+                    "force_rejoin_block_check_failed",
+                    "warning",
+                    account=getattr(acc, "display_name", ""),
+                    error=exc,
+                )
+                return "Rejoin blocked: account check failed"
+        try:
+            from domain.account_model import is_account_finished
+
+            if is_account_finished(acc):
+                return "Account is Finished"
+        except Exception:
+            "intentional: ignore exception"
+        if recovery is None:
+            with acc._lock:
+                if acc.state == AccountState.FAILED:
+                    return "Account failed"
+        return ""
+
     def _capability_force_rejoin(self, acc: Account | None) -> tuple[bool, str, Account | None]:
         if not self.running:
             return False, "Guard stopped", acc
         if not acc:
             return False, "Account not found", None
-        with acc._lock:
-            if acc.state == AccountState.FAILED:
-                return False, "Account failed", acc
+        block_reason = self._force_rejoin_block_reason(acc)
+        if block_reason:
+            return False, block_reason, acc
         return True, "", acc
 
     def _capability_kill_pid(self, acc: Account | None) -> tuple[bool, str, Account | None]:
@@ -769,16 +800,12 @@ class FarmController:
         reason: str = "force_rejoin",
         *,
         ignore_rate_limit: bool = False,
-    ):
+    ) -> tuple[bool, str]:
         acc = self._find_account(username)
         if acc:
-            try:
-                from domain.account_model import is_account_finished
-
-                if is_account_finished(acc):
-                    return False, "Account is Finished"
-            except Exception:
-                "intentional: ignore exception"
+            block_reason = self._force_rejoin_block_reason(acc)
+            if block_reason:
+                return False, block_reason
         if acc and self._recovery:
             if not ignore_rate_limit:
                 allowed, rate_msg = self._check_force_rejoin_rate_limit(acc._config_username)
@@ -787,10 +814,23 @@ class FarmController:
                     return False, rate_msg
             routed = self._runtime_orchestrator.request_rejoin(acc, reason)
             if not routed:
+                with acc._lock:
+                    parked = str(acc.recovery_status or "") == "wait_exploit_patch"
+                if parked:
+                    return False, "Rejoin deferred: waiting for executor patch"
                 return False, "Rejoin rejected"
             worker = self._workers.get(acc._config_username)
+            alive = bool(worker and getattr(worker, "is_alive", lambda: False)())
+            if not alive:
+                try:
+                    worker = self._ensure_resume_worker(acc)
+                except Exception:
+                    "intentional: ignore exception"
             if worker:
-                worker.wake()
+                try:
+                    worker.wake()
+                except Exception:
+                    "intentional: ignore exception"
             message = (
                 f"Game changed - rejoin: {acc.display_name}"
                 if reason == "game_changed"

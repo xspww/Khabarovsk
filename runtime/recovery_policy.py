@@ -134,6 +134,9 @@ def is_game_unavailable_detail(text: str) -> bool:
       the server shut down for an update)
     These are external and transient: retry slowly forever, never FAILED.
     Auth/cookie/ban/captcha failures are NOT game-down and must not match.
+    Generic teleport failures ("Failure", "Error", "HttpError") are network
+    or transient client faults, not proof the map is down, so they must not
+    match either.
     """
     lowered = str(text or "").strip().lower()
     if not lowered:
@@ -144,7 +147,6 @@ def is_game_unavailable_detail(text: str) -> bool:
         "did not expose accesscode",
         "joinprivategame",
         "teleportresult.unauthorized",
-        "teleport failed",
         "unauthorized",
     )
     if _has_any_token(lowered, definitive):

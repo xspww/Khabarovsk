@@ -210,7 +210,7 @@ class RecoverySignalRouter:
         auth_gate: Any,
     ) -> bool:
         gate_fields = {
-            key: value
+            ("auth_gate_category" if key == "category" else key): value
             for key, value in auth_gate.to_dict().items()
             if key != "reason"
         }
@@ -249,6 +249,15 @@ class RecoverySignalRouter:
             **context.to_dict(),
         )
         return True
+
+    def _handled_result(self, signal_name: str) -> bool:
+        """Report whether a handled signal counts as an accepted rejoin.
+
+        Auth, captcha and recovery-gate suppression all mean "handled, but
+        no rejoin ran". Returning True for ``rejoin_requested`` in those
+        paths used to make the caller report a successful rejoin.
+        """
+        return signal_name != RuntimeSignal.REJOIN_REQUESTED.value
 
     def route(
         self,
@@ -306,7 +315,7 @@ class RecoverySignalRouter:
         current_recovery_generation, account_key = state
 
         if captcha_detected:
-            return self._handle_captcha_hold(
+            self._handle_captcha_hold(
                 recovery,
                 acc,
                 signal_name,
@@ -314,17 +323,19 @@ class RecoverySignalRouter:
                 reason_key,
                 context,
             )
+            return self._handled_result(signal_name)
 
         if is_recovery_signal(signal_name):
             auth_gate = evaluate_account_auth_gate(acc)
             if auth_gate.blocked and not captcha_resume_reason:
-                return self._handle_auth_gate(
+                self._handle_auth_gate(
                     recovery,
                     acc,
                     signal_name,
                     context,
                     auth_gate,
                 )
+                return self._handled_result(signal_name)
             verdict = self._recovery_gate.check(
                 account_key=account_key,
                 ctx=context,
@@ -333,7 +344,7 @@ class RecoverySignalRouter:
                 recovery_generation=current_recovery_generation,
             )
             if self._handle_gate_verdict(acc, context, reason_key, verdict):
-                return True
+                return self._handled_result(signal_name)
 
         self._log_decision(
             "runtime_signal_dispatch",
@@ -442,8 +453,7 @@ class RecoverySignalRouter:
             self._dispatch_evaluate(ctx)
             return True
         if ctx.signal_name == RuntimeSignal.REJOIN_REQUESTED.value:
-            ctx.recovery.force_rejoin(ctx.acc)
-            return True
+            return bool(ctx.recovery.force_rejoin(ctx.acc))
         self._log_decision(
             "runtime_signal_rejected",
             ctx.acc,

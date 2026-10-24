@@ -1,7 +1,14 @@
 """Tests for the binding predicates (pure dicts, no psutil/processes)."""
+import threading
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
-from services.process_service import _has_binding_evidence, _validate_process_ownership
+from services.process_service import (
+    ProcessService,
+    _has_binding_evidence,
+    _validate_process_ownership,
+)
 
 
 def _valid():
@@ -90,6 +97,54 @@ class TestValidateProcessOwnership(unittest.TestCase):
         out = _validate_process_ownership(_valid(), pid=None, owner_key="mallory")
         self.assertEqual(out["reason"], "missing_pid")
         self.assertIn("owner_mismatch", out["ownership_reasons"])
+
+
+class TestSafeKillBoundProcessBinding(unittest.TestCase):
+    def _account(self):
+        return SimpleNamespace(
+            _lock=threading.RLock(),
+            pid=4242,
+            bound_process_identity="robloxplayerbeta.exe|1|2",
+            state="RUNNING",
+        )
+
+    def _kill(self, killed):
+        acc = self._account()
+        with patch(
+            "services.process_service._bound_process_snapshot",
+            return_value=(4242, "robloxplayerbeta.exe|1|2"),
+        ), patch(
+            "services.process_service._runtime_generation_matches",
+            return_value=True,
+        ), patch(
+            "services.process_service._bound_validation",
+            return_value={"ok": True},
+        ), patch(
+            "services.process_service._bound_proof_rejection",
+            return_value=None,
+        ), patch(
+            "services.process_service._ProcessBackend.kill_pid",
+            return_value=killed,
+        ), patch(
+            "services.process_service._clear_bound_process_binding",
+        ) as clear, patch(
+            "services.process_service._log_bound_kill_allowed",
+        ):
+            result = ProcessService.safe_kill_bound_process(acc, state_manager=object())
+        return result, clear
+
+    def test_failed_kill_keeps_binding(self):
+        result, clear = self._kill(False)
+        self.assertTrue(result["ok"])
+        self.assertFalse(result["killed"])
+        self.assertEqual(result["reason"], "kill_failed")
+        clear.assert_not_called()
+
+    def test_successful_kill_clears_binding(self):
+        result, clear = self._kill(True)
+        self.assertTrue(result["ok"])
+        self.assertTrue(result["killed"])
+        clear.assert_called_once()
 
 
 if __name__ == "__main__":

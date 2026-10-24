@@ -148,12 +148,27 @@ def _log_same_server_blocked(acc: Any, other: dict[str, str], job: str, detectio
 
 
 def _request_same_server_hop(farm: Any, acc: Any) -> bool:
+    # Prefer the unified rejoin path (finished guard, runtime generation
+    # bump, worker ensure + wake, uniform "rejoin" event). The same-server
+    # 60s/3-hop cooldown (should_hop_for_same_server) already throttles
+    # hops, so bypass the manual 10s force-rejoin limiter here.
     try:
+        force_rejoin = getattr(farm, "force_rejoin", None)
+        if callable(force_rejoin):
+            try:
+                ok, _msg = force_rejoin(
+                    acc._config_username,
+                    reason="same_server_blocked",
+                    ignore_rate_limit=True,
+                )
+            except TypeError:
+                # Legacy/test doubles without keyword support.
+                ok, _msg = force_rejoin(acc._config_username)
+            return bool(ok)
         orchestrator = getattr(farm, "_runtime_orchestrator", None)
         if orchestrator is not None and hasattr(orchestrator, "request_rejoin"):
             return bool(orchestrator.request_rejoin(acc, reason="same_server_blocked"))
-        ok, _msg = farm.force_rejoin(acc._config_username)
-        return bool(ok)
+        return False
     except Exception:
         return False
 

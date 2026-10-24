@@ -66,6 +66,22 @@ class TestCanonicalOwnership(unittest.TestCase):
         self.assertFalse(is_game_unavailable_detail("cookie invalid .roblosecurity"))
         self.assertFalse(is_game_unavailable_detail("captcha required"))
 
+    def test_generic_teleport_failure_is_not_game_down(self):
+        # A network-caused teleport failure used to be classified as
+        # game_unavailable, which made the dashboard say "Game Close" while
+        # the account was actually offline.
+        for detail in (
+            "Teleport failed: Enum.TeleportResult.Failure",
+            "Teleport failed: Enum.TeleportResult.Error",
+            "Teleport failed: Enum.TeleportResult.HttpError",
+        ):
+            with self.subTest(detail=detail):
+                self.assertFalse(is_game_unavailable_detail(detail))
+                self.assertNotEqual(
+                    canonical_launch_failure_reason(detail),
+                    "game_unavailable",
+                )
+
     def test_policy_buckets(self):
         self.assertEqual(policy_for("pid_dead")["bucket"], "crash")
         self.assertTrue(policy_for("cookie_invalid")["fatal"])

@@ -166,8 +166,12 @@ function isNetworkIssue(e) {
   const n = String(e?.public_state || e?.state || "").toUpperCase(), t = String(e?.runtime_state || "").toUpperCase(), i = lower(e?.liveness_state), s = statusText(e), o = ["NETWORK_LOST", "COOLDOWN", "RECOVERING"].includes(n) || ["RECOVERING", "BACKOFF"].includes(t), r = s.includes("disconnect_dialog") || s.includes("visual_disconnect") || s.includes("session_conflict") || s.includes("error 273") || s.includes("code 273"), u = r || s.includes("network_lost") || s.includes("network lost") || s.includes("network_drop") || s.includes("network drop") || s.includes("connection_error") || s.includes("connection error") || s.includes("disconnected") || s.includes("disconnect") || s.includes("error 277") || s.includes("code 277");
   return "NETWORK_LOST" === n || "reconnecting" === i || r || o && u;
 }
+function isNetworkRecovery(e) {
+  const n = lower(e?.recovery_status), t = lower(e?.last_recovery_reason);
+  return "network_lost" === n || t.includes("network_drop") || t.includes("network_lost");
+}
 function luaWaiting(e) { return !!e?.lua_required && !e?.lua_online }
-function isGameClosed(e) { return statusText(e).includes("game_unavailable") }
+function isGameClosed(e) { return !(isNetworkIssue(e) || isNetworkRecovery(e)) && statusText(e).includes("game_unavailable") }
 function isWaitExploitPatch(e) { const n = statusText(e); return n.includes("wait_exploit_patch") || n.includes("wait for exploit patch") || lower(e?.state_label).includes("wait for exploit"); }
 function queuedLabel(e) { return "Queued" }
 function isStableInGame(e) {
@@ -200,6 +204,7 @@ export function rowStatusLabel(e, n) {
   if (isCaptcha(e)) return "Captcha";
   if (isInvalid(e)) return "Invalid";
   if (isBlocked(e)) return blockedStatusLabel(e);
+  if (isNetworkIssue(e) || isNetworkRecovery(e)) return "Disconnected";
   if (isGameClosed(e)) return "Game Close";
   if (isWaitExploitPatch(e)) return "Wait for exploit patch";
   const t = String(e.public_state || e.state || "").toUpperCase(), i = String(e.runtime_state || "").toUpperCase(), s = lower(e.command_inflight?.action || e.command_inflight || ""), o = statusText(e), r = String(e.state_label || "").trim();

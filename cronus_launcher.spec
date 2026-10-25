@@ -72,10 +72,37 @@ def _playwright_datas():
 
 _PLAYWRIGHT_DATAS = _playwright_datas()
 
+
+def _abi3t_compat_binaries():
+    """Bundle python3t.dll for Python 3.15+ builds.
+
+    abi3 wheels built for 3.15 (cryptography, ...) import ``python3t.dll``.
+    CPython keeps that DLL in ``<prefix>/abi3t-compat`` instead of next to
+    the interpreter, so PyInstaller's dependency scan misses it and the
+    frozen app dies on ``import cryptography``. Older Pythons have no such
+    directory, so this is a no-op there.
+    """
+    try:
+        import pathlib
+        import sys
+    except Exception:
+        return []
+    for prefix in (sys.base_prefix, sys.prefix):
+        path = pathlib.Path(prefix) / "abi3t-compat" / "python3t.dll"
+        try:
+            if path.is_file():
+                return [(str(path), ".")]
+        except Exception:
+            continue
+    return []
+
+
+_ABI3T_COMPAT_BINARIES = _abi3t_compat_binaries()
+
 a = Analysis(
     ["main.py"],
     pathex=["."],
-    binaries=[],
+    binaries=_ABI3T_COMPAT_BINARIES,
     datas=[
         ("assets", "assets"),
         ("ui", "ui"),
@@ -91,7 +118,6 @@ a = Analysis(
         "playwright.sync_api",
         "uvicorn.loops.auto",
         "uvicorn.protocols.http.auto",
-        "uvicorn.protocols.websockets.auto",
         "uvicorn.lifespan.on",
     ],
     hookspath=[],

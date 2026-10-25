@@ -23,8 +23,7 @@ _COLOR_RED = "\x1b[91m"
 _COLOR_DIM = "\x1b[90m"
 _REQUIREMENT_IMPORT_NAMES: dict[str, str] = {
     "pillow": "PIL",
-    "pyside6": "PySide6",
-    "python-dotenv": "dotenv",
+    "pyside6-essentials": "PySide6",
 }
 
 

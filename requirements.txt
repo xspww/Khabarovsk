@@ -1,16 +1,17 @@
 fastapi>=0.110
 # NOTE: `uvicorn[standard]` pulls in PyYAML, which has no wheel for Python 3.15
 # (pip then tries to compile it and fails without MSVC Build Tools). The launcher
-# never imports yaml, so we list the `standard` extras we actually use instead.
+# never imports yaml, so only the one `standard` extra we actually load is listed
+# here; reload (watchfiles), WebSocket (websockets) and `--env-file`
+# (python-dotenv) are never used at runtime.
 uvicorn>=0.29
 httptools>=0.8.0
-python-dotenv>=0.13
-watchfiles>=0.20
-websockets>=13.0
-colorama>=0.4.6; sys_platform == "win32"
 psutil>=5.9
 pillow>=10.0
-PySide6>=6.6
+# Essentials carries QtCore/QtGui/QtWidgets, the shell's whole dependency closure
+# (see cronus_launcher.spec). Full `PySide6` additionally installs Addons and
+# WebEngine, which this app never loads.
+PySide6-Essentials>=6.6
 qtwebview2>=0.5
 cryptography>=42.0
 certifi>=2024.2.2

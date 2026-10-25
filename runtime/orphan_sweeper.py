@@ -71,14 +71,14 @@ class RuntimeOrphanSweeper:
         self,
         accounts: Iterable[Any],
         runtime_state: Any = None,
-        process_service: Any = ProcessService,
-        process_manager: Any = ProcessManager,
+        process_service: Any = None,
+        process_manager: Any = None,
         record_event: RecordEvent | None = None,
     ):
         self._accounts = accounts
         self._runtime_state = runtime_state
-        self._process_service = process_service
-        self._process_manager = process_manager
+        self._process_service = ProcessService if process_service is None else process_service
+        self._process_manager = ProcessManager if process_manager is None else process_manager
         self._record_event = record_event
 
     def sweep(self, cfg: dict[str, Any], now: float | None = None) -> dict[str, Any]:

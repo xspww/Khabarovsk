@@ -110,6 +110,12 @@ class _FarmStub:
     def _force_rejoin_block_reason(self, acc):
         return FarmController._force_rejoin_block_reason(self, acc)
 
+    def _route_rejoin_command(self, acc, reason):
+        return FarmController._route_rejoin_command(self, acc, reason)
+
+    def _wake_rejoin_worker(self, acc):
+        return FarmController._wake_rejoin_worker(self, acc)
+
     def _push_event(self, *args, **kwargs):
         pass
 

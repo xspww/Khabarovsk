@@ -730,8 +730,12 @@ def handle_lua_rejoin_event(
     validate_payload=validate_lua_event_payload,
     resolve_account=resolve_lua_account,
     log=flog_kv,
-    process_service=ProcessService,
+    process_service: Any = None,
 ) -> dict[str, Any]:
+    # Late-bound default: resolve the service on call so the module import
+    # does not pin a subclass/mock that a caller may want to swap in.
+    if process_service is None:
+        process_service = ProcessService
     base = _validate_and_resolve(farm, payload, validate_payload, resolve_account, log)
     if base.error:
         return base.error

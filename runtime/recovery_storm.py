@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import zlib
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -102,10 +102,11 @@ def _storm_due(
 
 
 class RecoveryStormController:
-    def __init__(self, cfg: dict[str, Any], accounts: Iterable[Any], *, clock=time.time):
+    def __init__(self, cfg: dict[str, Any], accounts: Iterable[Any], *, clock: Callable[[], float] | None = None):
         self._cfg = dict(cfg or {})
         self._accounts: list[Any] = list(accounts or [])
-        self._clock = clock
+        # Late-bound default so tests can patch time.time after import.
+        self._clock = time.time if clock is None else clock
         self._lock = threading.Lock()
         self._next_due_at = 0.0
         self._last_decision = RecoveryStormDecision(0.0, 0.0, "disabled", 0, True)

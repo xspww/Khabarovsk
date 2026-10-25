@@ -32,8 +32,8 @@ def _read_cached_json(path: Path) -> dict[str, Any]:
     return payload if isinstance(payload, dict) else {}
 
 
-def load_cached_operator_health(data_dir: str | Path = APP_DATA_DIR) -> dict[str, Any]:
-    root = Path(data_dir)
+def load_cached_operator_health(data_dir: str | Path | None = None) -> dict[str, Any]:
+    root = Path(APP_DATA_DIR if data_dir is None else data_dir)
     return {
         "watchdog_task": _read_cached_json(root / WATCHDOG_STATUS_CACHE),
     }

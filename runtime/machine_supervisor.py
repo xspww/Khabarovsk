@@ -99,14 +99,15 @@ class MachineSupervisor:
         resource_probe: ResourceProbe | None = None,
         guard_probe: GuardProbe | None = None,
         process_probe: ProcessProbe | None = None,
-        clock: Callable[[], float] = time.time,
+        clock: Callable[[], float] | None = None,
     ):
         self._cfg = dict(cfg or {})
         self._accounts = list(accounts or [])
         self._resource_probe = resource_probe or self._default_resource_probe
         self._guard_probe = guard_probe or self._default_guard_probe
         self._process_probe = process_probe or self._default_process_probe
-        self._clock = clock
+        # Late-bound default so tests can patch time.time after import.
+        self._clock = time.time if clock is None else clock
         self._lock = threading.RLock()
         self._cached_snapshot: MachineSnapshot | None = None
         self._cached_at = 0.0

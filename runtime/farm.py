@@ -806,39 +806,49 @@ class FarmController:
             block_reason = self._force_rejoin_block_reason(acc)
             if block_reason:
                 return False, block_reason
-        if acc and self._recovery:
-            if not ignore_rate_limit:
-                allowed, rate_msg = self._check_force_rejoin_rate_limit(acc._config_username)
-                if not allowed:
-                    flog_kv("COMMAND", "force_rejoin_rate_limited", "warning", account=acc.display_name, msg=rate_msg)
-                    return False, rate_msg
-            routed = self._runtime_orchestrator.request_rejoin(acc, reason)
-            if not routed:
-                with acc._lock:
-                    parked = str(acc.recovery_status or "") == "wait_exploit_patch"
-                if parked:
-                    return False, "Rejoin deferred: waiting for executor patch"
-                return False, "Rejoin rejected"
-            worker = self._workers.get(acc._config_username)
-            alive = bool(worker and getattr(worker, "is_alive", lambda: False)())
-            if not alive:
-                try:
-                    worker = self._ensure_resume_worker(acc)
-                except Exception:
-                    "intentional: ignore exception"
-            if worker:
-                try:
-                    worker.wake()
-                except Exception:
-                    "intentional: ignore exception"
-            message = (
-                f"Game changed - rejoin: {acc.display_name}"
-                if reason == "game_changed"
-                else f"Force rejoin: {acc.display_name}"
-            )
-            self._push_event("rejoin", message, account=acc, severity="warn", reason=reason)
-            return True, f"Rejoin: {username}"
-        return False, "Account not running or recovery coordinator unavailable"
+        if not (acc and self._recovery):
+            return False, "Account not running or recovery coordinator unavailable"
+        if not ignore_rate_limit:
+            allowed, rate_msg = self._check_force_rejoin_rate_limit(acc._config_username)
+            if not allowed:
+                flog_kv("COMMAND", "force_rejoin_rate_limited", "warning", account=acc.display_name, msg=rate_msg)
+                return False, rate_msg
+        route_error = self._route_rejoin_command(acc, reason)
+        if route_error:
+            return False, route_error
+        self._wake_rejoin_worker(acc)
+        message = (
+            f"Game changed - rejoin: {acc.display_name}"
+            if reason == "game_changed"
+            else f"Force rejoin: {acc.display_name}"
+        )
+        self._push_event("rejoin", message, account=acc, severity="warn", reason=reason)
+        return True, f"Rejoin: {username}"
+
+    def _route_rejoin_command(self, acc, reason: str) -> str:
+        """Ask the orchestrator to rejoin; returns an empty string on success."""
+        if self._runtime_orchestrator.request_rejoin(acc, reason):
+            return ""
+        with acc._lock:
+            parked = str(acc.recovery_status or "") == "wait_exploit_patch"
+        if parked:
+            return "Rejoin deferred: waiting for executor patch"
+        return "Rejoin rejected"
+
+    def _wake_rejoin_worker(self, acc) -> None:
+        worker = self._workers.get(acc._config_username)
+        alive = bool(worker and getattr(worker, "is_alive", lambda: False)())
+        if not alive:
+            try:
+                worker = self._ensure_resume_worker(acc)
+            except Exception:
+                "intentional: ignore exception"
+        if not worker:
+            return
+        try:
+            worker.wake()
+        except Exception:
+            "intentional: ignore exception"
 
     def close_all_roblox(
         self,

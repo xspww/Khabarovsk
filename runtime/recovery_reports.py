@@ -658,6 +658,15 @@ class RecoveryReportsMixin:
         launch failure, map down), but it must never bypass a captcha/auth/
         ban hold and must not resurrect an account the user stopped.
         """
+        return (
+            self._finished_rejoin_block(acc)
+            or self._stopped_rejoin_block(acc)
+            or self._failed_rejoin_block(acc)
+            or self._auth_rejoin_block(acc)
+        )
+
+    @staticmethod
+    def _finished_rejoin_block(acc: Account) -> str:
         try:
             from domain.account_model import is_account_finished
 
@@ -665,28 +674,42 @@ class RecoveryReportsMixin:
                 return "Account is Finished"
         except Exception:
             "intentional: ignore exception"
+        return ""
+
+    @staticmethod
+    def _stopped_rejoin_block(acc: Account) -> str:
         with acc._lock:
             desired = acc.desired_state
-            failed = acc.state == AccountState.FAILED
-            failed_reason = str(acc.last_crash_reason or acc.last_recovery_reason or "")
         if desired != AccountState.IN_GAME:
             return "Account is stopped; start it first"
-        if failed:
-            terminal = canonical_reason(failed_reason).strip().lower()
-            if terminal in _TERMINAL_REJOIN_BLOCK_REASONS:
-                return f"Account blocked: {terminal}"
+        return ""
+
+    @staticmethod
+    def _failed_rejoin_block(acc: Account) -> str:
+        with acc._lock:
+            failed = acc.state == AccountState.FAILED
+            failed_reason = str(acc.last_crash_reason or acc.last_recovery_reason or "")
+        if not failed:
+            return ""
+        terminal = canonical_reason(failed_reason).strip().lower()
+        if terminal in _TERMINAL_REJOIN_BLOCK_REASONS:
+            return f"Account blocked: {terminal}"
+        return ""
+
+    @staticmethod
+    def _auth_rejoin_block(acc: Account) -> str:
         try:
             gate = evaluate_account_auth_gate(acc)
-            if gate.blocked:
-                if gate.reason_key == CAPTCHA_REASON:
-                    return "Account is blocked by captcha; solve it first"
-                detail = gate.reason_key or gate.reason or "auth"
-                return f"Account blocked: {detail}"
+            if not gate.blocked:
+                return ""
+            if gate.reason_key == CAPTCHA_REASON:
+                return "Account is blocked by captcha; solve it first"
+            detail = gate.reason_key or gate.reason or "auth"
+            return f"Account blocked: {detail}"
         except Exception:
             # Fail closed: if the auth gate cannot be evaluated we must not
             # let a manual rejoin bypass a possible captcha/auth/ban hold.
             return "Account blocked: auth check unavailable"
-        return ""
 
     def force_rejoin(self, acc: Account) -> bool:
         """Reset and evaluate an account for a manual rejoin.
@@ -723,51 +746,11 @@ class RecoveryReportsMixin:
             return False
         # Reset only after the recovery was admitted: a rejected begin must
         # not wipe counters, cooldown or the previous crash reason.
-        with acc._lock:
-            acc.retry_count = 0
-            acc.fail_count = 0
-            acc.launch_fail_count = 0
-            acc.crash_retry_count = 0
-            acc.network_retry_count = 0
-            acc.session_retry_count = 0
-            acc.recovery_budget_attempts.clear()
-            acc.session_wait_started_at = 0.0
-            acc.last_network_lost_at = None
-            acc.pid_missing_since = 0.0
-            self._runtime_state.set_cooldown(acc, 0.0, reason="force_rejoin")
-            acc.last_crash_reason = ""
-            acc.last_rejoin_trigger = "force_rejoin"
-            acc.session_checked = True
-            acc.session_valid = True
+        self._reset_force_rejoin_state(acc)
         pid = ctx.get("pid")
         runtime_generation = int(ctx.get("runtime_generation") or 0)
-        if pid:
-            # request_rejoin already bumped the runtime generation. Do not
-            # bump it again here: the recovery owner was acquired against the
-            # current generation and a second bump would make its release
-            # stale.
-            kill_result = ProcessService.safe_kill_bound_process(
-                acc,
-                self._state_mgr,
-                reason="force_rejoin_kill",
-                expected_runtime_generation=runtime_generation,
-                increment_generation=False,
-            )
-            if not (kill_result.get("ok") and kill_result.get("killed")):
-                kill_reason = str(kill_result.get("reason") or "kill_failed")
-                self._log_recovery_decision(
-                    "rejoin_kill_rejected",
-                    acc,
-                    "force_rejoin",
-                    pid=pid,
-                    reject=kill_reason,
-                )
-                self.fail_account(
-                    acc,
-                    "force_rejoin_kill_failed",
-                    f"Could not stop the old client ({kill_reason})",
-                )
-                return False
+        if not self._stop_old_client(acc, pid, runtime_generation):
+            return False
         if not self._state_mgr.transition(
             acc,
             AccountState.READY,
@@ -787,24 +770,77 @@ class RecoveryReportsMixin:
                 "The runtime rejected the rejoin evaluation",
             )
             return False
-        with acc._lock:
-            evaluate_failed = acc.state == AccountState.FAILED
-        if evaluate_failed:
-            # The evaluator can fail the account synchronously (auth/captcha
-            # discovered during evaluation) while still accepting the signal.
-            # Do not report a successful rejoin in that case.
-            self._release_recovery_owner(
-                acc._config_username,
-                runtime_generation,
-                int(ctx.get("recovery_generation") or 0),
-                "force_rejoin_evaluate_failed",
-            )
-            self._log_recovery_decision(
-                "rejoin_failed",
-                acc,
-                "force_rejoin",
-                reason="evaluate_failed",
-            )
+        if self._rejoin_evaluate_failed(acc, ctx, runtime_generation):
             return False
         self._persist_runtime(force=True)
+        return True
+
+    def _reset_force_rejoin_state(self, acc: Account) -> None:
+        with acc._lock:
+            acc.retry_count = 0
+            acc.fail_count = 0
+            acc.launch_fail_count = 0
+            acc.crash_retry_count = 0
+            acc.network_retry_count = 0
+            acc.session_retry_count = 0
+            acc.recovery_budget_attempts.clear()
+            acc.session_wait_started_at = 0.0
+            acc.last_network_lost_at = None
+            acc.pid_missing_since = 0.0
+            self._runtime_state.set_cooldown(acc, 0.0, reason="force_rejoin")
+            acc.last_crash_reason = ""
+            acc.last_rejoin_trigger = "force_rejoin"
+            acc.session_checked = True
+            acc.session_valid = True
+
+    def _stop_old_client(self, acc: Account, pid: Any, runtime_generation: int) -> bool:
+        if not pid:
+            return True
+        # request_rejoin already bumped the runtime generation. Do not bump it
+        # again here: the recovery owner was acquired against the current
+        # generation and a second bump would make its release stale.
+        kill_result = ProcessService.safe_kill_bound_process(
+            acc,
+            self._state_mgr,
+            reason="force_rejoin_kill",
+            expected_runtime_generation=runtime_generation,
+            increment_generation=False,
+        )
+        if kill_result.get("ok") and kill_result.get("killed"):
+            return True
+        kill_reason = str(kill_result.get("reason") or "kill_failed")
+        self._log_recovery_decision(
+            "rejoin_kill_rejected",
+            acc,
+            "force_rejoin",
+            pid=pid,
+            reject=kill_reason,
+        )
+        self.fail_account(
+            acc,
+            "force_rejoin_kill_failed",
+            f"Could not stop the old client ({kill_reason})",
+        )
+        return False
+
+    def _rejoin_evaluate_failed(self, acc: Account, ctx: dict[str, Any], runtime_generation: int) -> bool:
+        with acc._lock:
+            evaluate_failed = acc.state == AccountState.FAILED
+        if not evaluate_failed:
+            return False
+        # The evaluator can fail the account synchronously (auth/captcha
+        # discovered during evaluation) while still accepting the signal.
+        # Do not report a successful rejoin in that case.
+        self._release_recovery_owner(
+            acc._config_username,
+            runtime_generation,
+            int(ctx.get("recovery_generation") or 0),
+            "force_rejoin_evaluate_failed",
+        )
+        self._log_recovery_decision(
+            "rejoin_failed",
+            acc,
+            "force_rejoin",
+            reason="evaluate_failed",
+        )
         return True

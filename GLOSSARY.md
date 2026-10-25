@@ -1,5 +1,7 @@
 # GLOSSARY — Khabarovsk domain language
 
+English | [ไทย](GLOSSARY.th.md)
+
 Use these terms consistently in code, commits, and documentation. Do not
 substitute a file name or class name for the term itself. The owning module is
 the single source of truth for the concept: link to it instead of restating its

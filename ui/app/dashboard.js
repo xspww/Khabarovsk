@@ -13,13 +13,13 @@ import {
   label as bucketLabel,
   rowStatusLabel,
 } from "../runtime/accountStatus.js?v=js-verify2";
-import { renderAccountRows } from "../components/accountsTable.js?v=js-verify3";
+import { renderAccountRows } from "../components/accountsTable.js?v=js-verify4";
 import { createFeedback } from "../components/feedback.js?v=grid-11";
 import {
   applySolarStaticIcons,
   solarIcon,
 } from "../components/icons.js?v=grid-6";
-import { bindDashboardEvents } from "../events/bindings.js?v=grid-17";
+import { bindDashboardEvents } from "../events/bindings.js?v=grid-18";
 import {
   renderSettingsPanel,
   renderPerformancePanel,
@@ -1260,23 +1260,62 @@ function resetColWidths() {
   }
   renderAccountFilters();
 }
+const FILTER_RESET_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 12a9 9 0 1 0 3-6.7"/><path d="M3 4v6h6"/></svg>';
+
+function accountFilterButtonHtml(filter, total, extra) {
+  const active = ACCOUNT_FILTER === filter;
+  return `<button type="button" class="account-filter${extra ? " is-extra" : ""}${active ? " active" : ""}" data-account-filter="${esc(filter)}" aria-pressed="${active ? "true" : "false"}"><span>${esc(bucketLabel(filter))}</span><span class="filter-count">${esc(total)}</span></button>`;
+}
+
+let _filterOverflowObserver = null;
+function syncAccountFilterOverflow() {
+  const extra = document.querySelector("#account-filters .filter-extra");
+  if (!extra) {
+    if (_filterOverflowObserver) _filterOverflowObserver.disconnect();
+    return;
+  }
+  const overflow = extra.scrollWidth - extra.clientWidth;
+  extra.classList.toggle("is-scrollable", overflow > 1);
+  extra.classList.toggle(
+    "is-at-end",
+    overflow > 1 && extra.scrollLeft >= overflow - 1,
+  );
+}
+function watchAccountFilterOverflow() {
+  const extra = document.querySelector("#account-filters .filter-extra");
+  if (extra) {
+    extra.addEventListener("scroll", syncAccountFilterOverflow, {
+      passive: true,
+    });
+  }
+  if (typeof ResizeObserver !== "undefined") {
+    _filterOverflowObserver ??= new ResizeObserver(
+      syncAccountFilterOverflow,
+    );
+    _filterOverflowObserver.disconnect();
+    if (extra) _filterOverflowObserver.observe(extra);
+  }
+  syncAccountFilterOverflow();
+}
+
 function renderAccountFilters(e = counts()) {
   const t = $("account-filters");
   if (!t) return;
-  const a = visibleAccountFilters(e);
-  (a.includes(ACCOUNT_FILTER) || (ACCOUNT_FILTER = "all"),
-    (t.innerHTML =
-      a
-        .map(
-          (t) =>
-            `<button class="account-filter ${ACCOUNT_FILTER === t ? "active" : ""}" data-account-filter="${esc(t)}"><span>${esc(bucketLabel(t))}</span><strong>${esc(e[t] ?? 0)}</strong></button>`,
-        )
-        .join("") +
-      (Object.keys(_colWidths).length
-        ? `<button class="account-filter col-reset" data-col-reset="1" title="Reset column widths"><span>Reset columns</span></button>`
-        : "")));
+  if (!visibleAccountFilters(e).includes(ACCOUNT_FILTER)) ACCOUNT_FILTER = "all";
+  const extras = CONDITIONAL_ACCOUNT_FILTERS.filter((f) => (e[f] || 0) > 0);
+  const hasReset = Object.keys(_colWidths).length > 0;
+  t.innerHTML =
+    `<div class="filter-seg" role="group" aria-label="Account status filters">${ACCOUNT_FILTERS.map((f) => accountFilterButtonHtml(f, e[f] ?? 0, false)).join("")}</div>` +
+    (extras.length
+      ? `<span class="filter-divider" aria-hidden="true"></span><div class="filter-extra">${extras.map((f) => accountFilterButtonHtml(f, e[f] ?? 0, true)).join("")}</div>`
+      : "") +
+    (hasReset
+      ? `<button type="button" class="account-filter col-reset" data-col-reset="1" title="Reset column widths" aria-label="Reset column widths">${FILTER_RESET_ICON}</button>`
+      : "");
   const rb = t.querySelector("[data-col-reset]");
   if (rb) rb.onclick = resetColWidths;
+  watchAccountFilterOverflow();
 }
 function setAccountFilter(e) {
   const t = visibleAccountFilters();
@@ -1366,11 +1405,11 @@ function saveSelectedUsers() {
 }
 function updateDeleteSelectedBtn() {
   const b = $("delete-selected-btn"),
-    c = $("delete-selected-count");
-  if (!b) return;
+    c = $("selection-count");
   const n = selectedUsers.size;
-  b.hidden = n === 0;
   if (c) c.textContent = String(n);
+  if (!b) return;
+  b.hidden = n === 0;
   b.disabled = n === 0;
 }
 function isFinishedUser(u) {
@@ -1383,16 +1422,12 @@ function isFinishedUser(u) {
 }
 function updateFinishedBtn() {
   const b = $("finish-toggle-btn"),
-    c = $("finish-toggle-count");
+    c = $("finish-toggle-label");
   if (!b) return;
   const n = [...selectedUsers];
+  const f = n.length > 0 && n.every(isFinishedUser);
   b.hidden = 0 === n.length;
-  if (c) c.textContent = String(n.length);
-  if (!n.length) return;
-  const f = n.every(isFinishedUser);
-  try {
-    b.childNodes[0].textContent = f ? "Unfinish (" : "Finished (";
-  } catch {}
+  if (c) c.textContent = f ? "Unfinish" : "Finished";
 }
 const BANNED_IMPORT_STATUSES = ["banned", "suspended"];
 const BANNED_REASON_MARKERS = [
@@ -1447,6 +1482,22 @@ function updateResumeBtn() {
   const n = [...selectedUsers].filter(isCaptchaUser);
   b.hidden = 0 === n.length;
   if (c) c.textContent = String(n.length);
+}
+function updateSelectionUi() {
+  updateDeleteSelectedBtn();
+  updateFinishedBtn();
+  updateUnbanBtn();
+  updateResumeBtn();
+}
+function clearSelectedUsers() {
+  if (!selectedUsers.size) return;
+  selectedUsers.clear();
+  saveSelectedUsers();
+  document
+    .querySelectorAll("#accounts-table tr.selected")
+    .forEach((row) => row.classList.remove("selected"));
+  updateSelectionUi();
+  renderAccountsTable();
 }
 async function resumeSelected() {
   const all = [...selectedUsers];
@@ -1812,10 +1863,7 @@ function renderAccountsTable() {
     privacyBlur: privacyBlurOn(),
     displayNameFor: privacyDisplayName,
   });
-  updateDeleteSelectedBtn();
-  updateFinishedBtn();
-  updateUnbanBtn();
-  updateResumeBtn();
+  updateSelectionUi();
   initColumnResizers();
   if (EDITING_DESC_USER) {
     const ta = document.querySelector(
@@ -2204,7 +2252,7 @@ async function copyTextToClipboard(e, t) {
   }
 }
 const DEVELOPER_LUA_COPY_SNIPPET =
-  'loadstring(game:HttpGet("https://raw.githubusercontent.com/xspww/Loader/refs/heads/master/Main/main.lua"))()';
+  'loadstring(game:HttpGet("https://raw.githubusercontent.com/xspww/Khabarovsk/refs/heads/main/lua/run_in_executor.lua"))()';
 async function copyDeveloperLua() {
   const b = $("developer-copy-lua");
   toast("Copying loader...");
@@ -2453,10 +2501,7 @@ async function deleteSelectedAccounts() {
         await saveAccounts(keep, n.length + " account(s) deleted");
         selectedUsers.clear();
         saveSelectedUsers();
-        updateDeleteSelectedBtn();
-        updateFinishedBtn();
-        updateUnbanBtn();
-        updateResumeBtn();
+        updateSelectionUi();
         await manualSnapshot();
       } catch (e) {
         toast(e.message);
@@ -3132,11 +3177,9 @@ function connectStream() {
       if (selectedUsers.has(k)) selectedUsers.delete(k);
       else selectedUsers.add(k);
       saveSelectedUsers();
-      updateDeleteSelectedBtn();
-      updateFinishedBtn();
-      updateUnbanBtn();
-      updateResumeBtn();
+      updateSelectionUi();
     },
+    clearSelection: clearSelectedUsers,
     saveDescription: saveDescription,
     startEditDescription: (e) => {
       ((EDITING_DESC_USER = e), renderAccountsTable());

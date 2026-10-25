@@ -90,6 +90,7 @@ function wireHeaderButtons(api) {
   }
   bindClick(api, "unban-toggle-btn", api.unbanMarkSelected);
   bindClick(api, "resume-selected-btn", api.resumeSelected);
+  bindClick(api, "clear-selection-btn", api.clearSelection);
   bindClick(api, "close-all-roblox-btn", api.closeAllRoblox);
   bindClick(api, "modal-close", api.closeModal);
   const search = api.$("account-search");

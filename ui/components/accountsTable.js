@@ -136,7 +136,7 @@ function accountRowHtml(account, index, ctx) {
       : account.username === ctx.selectedUser;
   const name = resolveRowName(account, ctx.privacyBlur, ctx.displayNameFor);
   return `<tr class="${selected ? "selected" : ""}${isEditing ? " editing-desc" : ""}" data-user="${ctx.esc(account.username)}">
-      <td class="num">${index + 1}</td>
+      <td class="num"><span class="row-index">${index + 1}</span><span class="row-select" aria-hidden="true"></span></td>
       <td><span class="status ${ctx.esc(tick)}">${ctx.esc(statusLabel)}</span></td>
       <td><div class="user-simple"><span class="${name.nameCls}" title="${ctx.esc(name.nameTitle)}">${ctx.esc(name.shownName)}</span></div></td>
       <td class="game-cell">${gameCell}</td>

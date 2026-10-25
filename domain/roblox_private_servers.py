@@ -9,6 +9,9 @@ import urllib.request
 from typing import Any
 
 from domain._util import _safe_hash
+from domain._util import clean_text as _clean_text
+from domain._util import identity_matches as _owner_matches
+from domain._util import record_text as _record_field
 from infra import net_tls
 
 USER_AGENT = "CronusLauncherHybrid/1.0"
@@ -396,10 +399,6 @@ def _owner_conflicts(owner_user_id: str, owner: str) -> bool:
     return bool(owner_user_id and owner and owner != str(owner_user_id))
 
 
-def _owner_matches(owner_user_id: str, owner: str) -> bool:
-    return bool(owner_user_id and owner and owner == str(owner_user_id))
-
-
 def _id_matches(expected: str, actual: str) -> bool:
     return not expected or not actual or actual == str(expected)
 
@@ -632,10 +631,6 @@ def _merge_private_server_secrets(candidate: dict[str, Any], known: dict[str, An
             candidate[dst_key] = known.get(src_key)
 
 
-def _clean_text(value: Any) -> str:
-    return str(value or "").strip()
-
-
 def _expected_server_key(
     owner_user_id: str, place_id: str, universe_id: str
 ) -> tuple[str, str, str]:
@@ -766,10 +761,6 @@ def vip_unavailable_permanently(message: str) -> bool:
 # does not re-probe on every single launch, short enough that enabling
 # VIP servers on the game later still takes effect.
 VIP_UNAVAILABLE_TTL_SECONDS = 6 * 60 * 60
-
-
-def _record_field(item: dict[str, Any], key: str) -> str:
-    return str(item.get(key) or "").strip()
 
 
 def _is_unavailable_record(item: dict[str, Any], place: str) -> bool:

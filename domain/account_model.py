@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from domain.block_reasons import LOCKED_BLOCK_REASON
 from domain.runtime_lifecycle import lifecycle_for_public
 from domain.runtime_models import AccountRuntime
 from domain.states import LIFECYCLE_STATE, AccountState, runtime_state_for_public
@@ -468,12 +469,8 @@ def is_account_recovery(acc: Any) -> bool:
         return False
 
 
-def _locked_message() -> str:
-    try:
-        from services.verify_guard import LOCKED_BLOCK_REASON as message
-    except Exception:
-        message = "Account locked - face/ID verification required. Verify manually, then click Resume."
-    return message
+def locked_message() -> str:
+    return LOCKED_BLOCK_REASON
 
 
 def _locked_text_match(values: tuple[object, ...]) -> str:
@@ -495,7 +492,7 @@ def locked_block_reason(*values: object) -> str:
         if not lowered:
             continue
         if lowered.strip() in {"identity_locked", "locked"}:
-            return _locked_message()
+            return locked_message()
         if "identity_locked" in lowered:
             return text
     return _locked_text_match(values)

@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
+from domain._util import account_key
 from domain.states import RuntimeSignal
 from runtime.account_runtime_controller import AccountRuntimeController
 from runtime.runtime_state_manager import RuntimeStateManager
@@ -74,8 +75,7 @@ class RuntimeOrchestrator:
     def bind_recovery(self, recovery: Any) -> None:
         self._account_runtime.bind_recovery(recovery)
 
-    def _account_key(self, acc: Any) -> str:
-        return str(getattr(acc, "_config_username", "") or getattr(acc, "username", "") or "")
+    _account_key = staticmethod(account_key)
 
     def capture_owner(self, acc: Any) -> dict[str, Any]:
         return self._account_runtime.capture_owner(acc)

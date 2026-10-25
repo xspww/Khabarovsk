@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from services._util import _lower
+from services._util import is_cookie_auth_status_text as _is_cookie_auth_status_text
 from services.hold_clear import clear_account_hold
 
 CAPTCHA_REASON = "captcha_required"
@@ -99,15 +100,6 @@ def is_captcha_window_texts(values: Any) -> bool:
     return any(keyword in joined for keyword in CAPTCHA_UI_KEYWORDS)
 
 
-def _is_cookie_auth_status_text(text: str) -> bool:
-    return (
-        "cookie identity mismatch" in text
-        or "cookie belongs to" in text
-        or ".roblosecurity" in text
-        or "cookie invalid" in text
-    )
-
-
 def is_captcha_status_text(*values: Any) -> bool:
     for value in values:
         text = _lower(value)
@@ -190,21 +182,6 @@ def _apply_runtime_captcha_hold(account: Any, runtime_writer: Any = None, reason
         "intentional: ignore exception"
 
 
-def _apply_runtime_captcha_clear(account: Any, runtime_writer: Any = None, reason: str = "manual_resume") -> None:
-    if runtime_writer:
-        if hasattr(runtime_writer, "clear_recovery"):
-            runtime_writer.clear_recovery(account, reason=reason, inflight=False)
-        elif hasattr(runtime_writer, "set_recovery"):
-            runtime_writer.set_recovery(account, reason=reason, inflight=False)
-        if hasattr(runtime_writer, "set_cooldown"):
-            runtime_writer.set_cooldown(account, 0.0, reason=reason)
-        return
-    try:
-        account.sync_runtime(reason)
-    except Exception:
-        "intentional: ignore exception"
-
-
 def set_account_captcha_hold(account: Any, detail: str = "", source: str = "", runtime_writer: Any = None) -> None:
     reason = CAPTCHA_BLOCK_REASON
     lock = getattr(account, "_lock", None)
@@ -246,7 +223,6 @@ def clear_account_captcha_hold(account: Any, runtime_writer: Any = None) -> bool
         persist_account_captcha_status,
         is_captcha_status_text,
         CAPTCHA_REASON,
-        _apply_runtime_captcha_clear,
         "manual_resume",
         extra_clear=_clear_captcha_suspicion,
     )

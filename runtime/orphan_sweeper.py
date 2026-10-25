@@ -4,26 +4,14 @@ import time
 from collections.abc import Callable, Iterable
 from typing import Any
 
+from domain._util import account_key as _account_key
+from domain._util import int_or_zero as _int_pid
+from domain._util import state_name as _state_name
 from services.process_service import ProcessManager, ProcessService
 
 RecordEvent = Callable[..., None]
 
 ACTIVE_PUBLIC_STATES = {"IN_GAME", "LAUNCHING", "VERIFY", "QUEUED"}
-
-
-def _account_key(account: Any) -> str:
-    return str(getattr(account, "_config_username", "") or getattr(account, "username", "") or "")
-
-
-def _state_name(value: Any) -> str:
-    return str(getattr(value, "name", value) or "").upper()
-
-
-def _int_pid(value: Any) -> int:
-    try:
-        return int(value or 0)
-    except Exception:
-        return 0
 
 
 def _orphan_attrs(account: Any) -> tuple[int, str, float, float]:

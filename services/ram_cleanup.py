@@ -34,6 +34,7 @@ import time
 from ctypes import wintypes
 from typing import Any
 
+from services._util import as_number as _num
 from services._util import is_admin
 
 try:
@@ -116,16 +117,6 @@ def _enable_privilege(name: str) -> bool:
             kernel32.CloseHandle(token)
     except Exception:
         return False
-
-
-def _num(value: Any, default: float) -> float:
-    """float() that only falls back on None/''/invalid — never on 0."""
-    if value is None or (isinstance(value, str) and not value.strip()):
-        return default
-    try:
-        return float(value)
-    except Exception:
-        return default
 
 
 def _interval_min(value: Any, default: int = 15) -> int:

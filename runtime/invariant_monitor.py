@@ -4,14 +4,11 @@ import time
 from collections.abc import Callable, Iterable
 from typing import Any
 
+from domain._util import account_key as _account_key
 from runtime.runtime_invariants import check_runtime_invariants, invariant_snapshot
 
 RecordEvent = Callable[..., None]
 PidValidator = Callable[[Any, int], bool]
-
-
-def _account_key(account: Any) -> str:
-    return str(getattr(account, "_config_username", "") or getattr(account, "username", "") or "")
 
 
 class RuntimeInvariantMonitor:

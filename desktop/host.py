@@ -8,6 +8,7 @@ import threading
 import time
 import urllib.request
 import webbrowser
+from functools import partial
 from typing import Any
 
 from core import LOG_FILE, flog, flog_kv
@@ -192,8 +193,7 @@ def _startup_colors_enabled() -> bool:
     return _STARTUP.colors_enabled()
 
 
-def _startup_paint(text: str, color: str) -> str:
-    return console_output.paint(text, color, enabled=_startup_colors_enabled())
+_startup_paint = partial(console_output.paint_when, enabled=_startup_colors_enabled)
 
 
 def _startup_visible_len(text: str) -> int:

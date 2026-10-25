@@ -3,6 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from domain._util import coerce_bool as _bool
+
 CONFIG_SCHEMA_VERSION = 2
 
 _INT_RANGES: dict[str, tuple[int, int]] = {
@@ -90,20 +92,6 @@ _REMOVED_CONFIG_KEYS = {
 
 def _clamp(value: float, bounds: tuple[float, float]) -> float:
     return max(bounds[0], min(bounds[1], value))
-
-
-def _bool(value: Any, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"1", "true", "yes", "on", "enabled"}:
-            return True
-        if lowered in {"0", "false", "no", "off", "disabled"}:
-            return False
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return bool(default)
 
 
 def _int(value: Any, default: int, bounds: tuple[int, int] | None = None) -> int:

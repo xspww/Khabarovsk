@@ -16,6 +16,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any
 
+from runtime.window_text import collect_window_text, make_text_collector
 from services.captcha_guard import (
     CAPTCHA_REASON,
     is_captcha_text,
@@ -37,36 +38,16 @@ def read_window_texts(pid: int | None) -> list[str]:
         texts: list[str] = []
         seen = set()
         WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_long)
-
-        def _read_text(hwnd) -> str:
-            length = user32.GetWindowTextLengthW(hwnd)
-            if length <= 0:
-                return ""
-            buf = ctypes.create_unicode_buffer(length + 1)
-            user32.GetWindowTextW(hwnd, buf, length + 1)
-            return str(buf.value or "").strip()
-
-        def _collect(hwnd) -> None:
-            text = _read_text(hwnd)
-            if not text:
-                return
-            key = text.lower()
-            if key not in seen:
-                seen.add(key)
-                texts.append(text)
-
-        def _child_callback(child_hwnd, lparam):
-            _collect(child_hwnd)
-            return True
+        child_callback = make_text_collector(user32, seen, texts)
 
         def _enum_callback(hwnd, lparam):
             win_pid = ctypes.c_ulong(0)
             user32.GetWindowThreadProcessId(hwnd, ctypes.byref(win_pid))
             if int(win_pid.value or 0) != int(pid):
                 return True
-            _collect(hwnd)
+            collect_window_text(user32, hwnd, seen, texts)
             user32.EnumChildWindows(
-                ctypes.c_void_p(hwnd), WNDENUMPROC(_child_callback), 0
+                ctypes.c_void_p(hwnd), WNDENUMPROC(child_callback), 0
             )
             return True
 

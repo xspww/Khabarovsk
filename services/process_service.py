@@ -7,6 +7,8 @@ import threading
 from typing import Any, NamedTuple
 
 from core import flog_kv
+from domain._util import identity_matches as _identity_evidence
+from domain._util import int_or_zero as _int_or_zero
 from services.browser_tracker import tracker_matches
 from services.process_account_runtime import (
     account_browser_tracker_id as _account_browser_tracker_id,
@@ -50,19 +52,8 @@ def _lower_path(value: Any) -> str:
     return os.path.normcase(os.path.abspath(str(value or ""))) if value else ""
 
 
-def _int_or_zero(value: Any) -> int:
-    try:
-        return int(value or 0)
-    except Exception:
-        return 0
-
-
 def _tracker_evidence(expected_browser_tracker_id: str, observed_tracker: str) -> bool:
     return bool(tracker_matches(expected_browser_tracker_id, observed_tracker))
-
-
-def _identity_evidence(expected_identity: str, identity: str) -> bool:
-    return bool(expected_identity and identity and identity == str(expected_identity))
 
 
 def _owner_evidence(owner_key: str, owner: str) -> bool:

@@ -37,6 +37,9 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from domain._util import clean_text as _text
+from domain._util import coerce_bool as _bool
+
 DEFAULT_GAME_ID = "game-1"
 LEGACY_PLACE_KEY = "game_place_id"
 LEGACY_VIP_KEY = "game_private_server_url"
@@ -45,24 +48,6 @@ LEGACY_AUTO_FREE_KEY = "auto_create_private_server_free_only"
 
 GAME_MODE_SHARED = "shared"
 GAME_MODE_PER_ACCOUNT = "per_account"
-
-
-def _text(value: Any) -> str:
-    return str(value or "").strip()
-
-
-def _bool(value: Any, default: bool = False) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"1", "true", "yes", "on", "enabled"}:
-            return True
-        if lowered in {"0", "false", "no", "off", "disabled"}:
-            return False
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return bool(default)
 
 
 def normalize_game(raw: Any, index: int = 0) -> dict[str, Any]:

@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from services._util import _lower
+from services.hold_clear import clear_runtime_failure as _clear_runtime_error_fields
 
 BANNED_REASON = "banned"
 BANNED_LABEL = "Banned"
@@ -306,15 +307,6 @@ def _clear_recovery_writer(account: Any, runtime_writer: Any) -> None:
             runtime_writer.set_recovery(account, reason="manual_unban", inflight=False)
         if hasattr(runtime_writer, "set_cooldown"):
             runtime_writer.set_cooldown(account, 0.0, reason="manual_unban")
-    except Exception:
-        "intentional: ignore exception"
-
-
-def _clear_runtime_error_fields(account: Any) -> None:
-    try:
-        account.runtime.last_error = ""
-        account.runtime.recovery_reason = ""
-        account.runtime.recovery_active = False
     except Exception:
         "intentional: ignore exception"
 

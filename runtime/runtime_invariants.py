@@ -4,14 +4,11 @@ import time
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
+from domain._util import account_key as _account_id
 from domain.states import AccountState, RuntimeState, runtime_state_for_public
 from services.process_proof_policy import PROOF_STRONG, is_at_least_process_proof
 
 PidValidator = Callable[[Any, int], bool]
-
-
-def _account_id(acc: Any) -> str:
-    return str(getattr(acc, "_config_username", "") or getattr(acc, "username", "") or "")
 
 
 def _public_state(acc: Any) -> str:

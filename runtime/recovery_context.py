@@ -5,6 +5,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
+from domain._util import account_key as _account_id
+
 NETWORK_DISCONNECT = "NETWORK_DISCONNECT"
 SESSION_CONFLICT = "SESSION_CONFLICT"
 AUTH_FAILURE = "AUTH_FAILURE"
@@ -144,14 +146,6 @@ def _payload_numeric(
         payload.get("retry_count") or getattr(account, "retry_count", 0) or 0
     )
     return confidence, retry_count
-
-
-def _account_id(account: Any) -> str:
-    return str(
-        getattr(account, "_config_username", "")
-        or getattr(account, "username", "")
-        or ""
-    )
 
 
 def _context_category(

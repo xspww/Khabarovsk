@@ -5,6 +5,7 @@ import time
 from typing import Any, NamedTuple
 
 from core import AccountState, flog_kv
+from domain._util import mapping_text as _event_text
 from domain.states import RuntimeSignal
 from runtime.lua_event_guard import validate_lua_event_payload
 from runtime.lua_identity import lua_event_requires_pid_guard, resolve_lua_account
@@ -208,10 +209,6 @@ def _validate_and_resolve(
 def _lua_reason(payload: dict[str, Any], event_name: str) -> str:
     default = f"lua_{event_name}"
     return str(payload.get("reason_key") or default).strip() or default
-
-
-def _event_text(payload: dict[str, Any], key: str, default: str = "") -> str:
-    return str(payload.get(key) or default)
 
 
 def _lua_event_payload(

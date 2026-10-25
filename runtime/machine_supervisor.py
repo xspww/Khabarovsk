@@ -7,35 +7,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core import flog_kv
+from domain._util import config_bool as _cfg_bool
+from domain._util import config_float as _cfg_float
+from domain._util import config_int as _cfg_int
+from domain._util import state_name as _state_name
 
 ResourceProbe = Callable[[], dict[str, float]]
 GuardProbe = Callable[[], dict[str, Any]]
 ProcessProbe = Callable[[], list[dict[str, Any]]]
-
-
-def _state_name(value: Any) -> str:
-    return str(getattr(value, "name", value) or "").upper()
-
-
-def _cfg_bool(cfg: dict[str, Any], key: str, default: bool) -> bool:
-    value = cfg.get(key, default)
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
-    return bool(value)
-
-
-def _cfg_float(cfg: dict[str, Any], key: str, default: float) -> float:
-    try:
-        return float(cfg.get(key, default))
-    except Exception:
-        return float(default)
-
-
-def _cfg_int(cfg: dict[str, Any], key: str, default: int) -> int:
-    try:
-        return int(float(cfg.get(key, default)))
-    except Exception:
-        return int(default)
 
 
 @dataclass(frozen=True)

@@ -8,6 +8,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from core import AccountState
+from domain._util import config_bool as _bool
+from domain._util import config_float as _float
+from domain._util import config_int as _int
 
 RECOVERY_STORM_STATES = {
     AccountState.CRASH,
@@ -17,27 +20,6 @@ RECOVERY_STORM_STATES = {
     AccountState.LAUNCHING,
     AccountState.VERIFY,
 }
-
-
-def _bool(cfg: dict[str, Any], key: str, default: bool) -> bool:
-    value = cfg.get(key, default)
-    if isinstance(value, str):
-        return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
-    return bool(value)
-
-
-def _float(cfg: dict[str, Any], key: str, default: float) -> float:
-    try:
-        return float(cfg.get(key, default))
-    except Exception:
-        return float(default)
-
-
-def _int(cfg: dict[str, Any], key: str, default: int) -> int:
-    try:
-        return int(float(cfg.get(key, default)))
-    except Exception:
-        return int(default)
 
 
 def _stable_jitter(account_key: str, reason: str, window: float) -> float:

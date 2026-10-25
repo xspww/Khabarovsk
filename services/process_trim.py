@@ -23,6 +23,11 @@ from collections.abc import Iterable
 from ctypes import wintypes
 from typing import Any
 
+from domain._util import account_display as _account_display
+from domain._util import account_key as _account_username
+from domain._util import account_pid as _account_pid
+from services._util import as_number as _num
+
 try:
     import psutil
 except Exception:  # pragma: no cover
@@ -47,15 +52,6 @@ _PROCESS_SET_QUOTA = 0x0100
 _PROCESS_QUERY_INFORMATION = 0x0400
 
 
-def _num(value: Any, default: float) -> float:
-    if value is None or (isinstance(value, str) and not value.strip()):
-        return default
-    try:
-        return float(value)
-    except Exception:
-        return default
-
-
 def normalize_process_trim_settings(source: dict[str, Any]) -> dict[str, Any]:
     threshold = _num(
         source.get("process_trim_threshold_mb", source.get("threshold_mb", TRIM_THRESHOLD_MB_DEFAULT)),
@@ -75,21 +71,6 @@ def normalize_process_trim_settings(source: dict[str, Any]) -> dict[str, Any]:
         "cooldown_sec": int(max(TRIM_COOLDOWN_SEC_MIN, min(TRIM_COOLDOWN_SEC_MAX, cooldown))),
         "max_per_cycle": int(max(TRIM_MAX_PER_CYCLE_MIN, min(TRIM_MAX_PER_CYCLE_MAX, max_per_cycle))),
     }
-
-
-def _account_username(account: Any) -> str:
-    return str(getattr(account, "_config_username", "") or getattr(account, "username", "") or "")
-
-
-def _account_display(account: Any) -> str:
-    return str(getattr(account, "display_name", "") or getattr(account, "display", "") or _account_username(account))
-
-
-def _account_pid(account: Any) -> int:
-    try:
-        return int(getattr(account, "pid", 0) or 0)
-    except Exception:
-        return 0
 
 
 def get_pid_rss_mb(pid: int) -> float:

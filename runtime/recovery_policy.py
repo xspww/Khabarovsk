@@ -5,6 +5,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from domain._util import contains_any as _has_any_token
 from runtime.recovery_context import (
     SESSION_CONFLICT,
     RecoveryAttemptContext,
@@ -107,10 +108,6 @@ def display_recovery_reason(reason_key: str, canonical: str, reason_msg: str = "
 def duplicate_signal_key(account_key: str, signal_name: str, reason_key: str, recovery_generation: int) -> tuple[str, str, str, int]:
     """Single owner for router dedupe-key construction (canonicalized)."""
     return (str(account_key or ""), str(signal_name or ""), canonical_reason(reason_key), int(recovery_generation or 0))
-
-
-def _has_any_token(text: str, tokens: tuple[str, ...]) -> bool:
-    return any(token in text for token in tokens)
 
 
 def _is_non_game_down_detail(lowered: str) -> bool:

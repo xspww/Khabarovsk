@@ -10,6 +10,7 @@ from typing import Any, NamedTuple
 
 from runtime.popup_detector.popup_classifier import PopupClassification, classify_popup_observation
 from runtime.recovery_context import VISUAL_DISCONNECT
+from runtime.window_text import collect_window_text, make_text_collector
 from services.captcha_guard import CAPTCHA_REASON
 
 
@@ -176,30 +177,10 @@ class PopupWindowSampler:
             texts: list[str] = []
             seen = set()
             WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_long)
+            child_callback = make_text_collector(user32, seen, texts)
 
-            def _read_text(win_hwnd) -> str:
-                length = user32.GetWindowTextLengthW(win_hwnd)
-                if length <= 0:
-                    return ""
-                buf = ctypes.create_unicode_buffer(length + 1)
-                user32.GetWindowTextW(win_hwnd, buf, length + 1)
-                return str(buf.value or "").strip()
-
-            def _collect(win_hwnd) -> None:
-                text = _read_text(win_hwnd)
-                if not text:
-                    return
-                key = text.lower()
-                if key not in seen:
-                    seen.add(key)
-                    texts.append(text)
-
-            def _child_callback(child_hwnd, lparam):
-                _collect(child_hwnd)
-                return True
-
-            _collect(hwnd)
-            user32.EnumChildWindows(ctypes.c_void_p(hwnd), WNDENUMPROC(_child_callback), 0)
+            collect_window_text(user32, hwnd, seen, texts)
+            user32.EnumChildWindows(ctypes.c_void_p(hwnd), WNDENUMPROC(child_callback), 0)
             return texts
         except Exception:
             return []

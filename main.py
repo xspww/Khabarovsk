@@ -5,6 +5,7 @@ import re
 import sys
 import threading
 import time
+from functools import partial
 from importlib import metadata as importlib_metadata
 from importlib import util as importlib_util
 
@@ -14,6 +15,7 @@ if BASE_DIR not in sys.path:
 
 from desktop import console_output
 from infra.app_paths import APP_NAME, IS_COMPILED, resource_path
+from version import parse_version_tuple as _startup_version_tuple
 
 REQUIREMENTS_FILE = os.path.join(BASE_DIR, "requirements.txt")
 _COLOR_GREEN = "\x1b[92m"
@@ -53,8 +55,7 @@ def _startup_colors_enabled() -> bool:
     return _STARTUP_COLORS.enabled()
 
 
-def _startup_paint(text: str, color: str) -> str:
-    return console_output.paint(text, color, enabled=_startup_colors_enabled())
+_startup_paint = partial(console_output.paint_when, enabled=_startup_colors_enabled)
 
 
 def _startup_tick_line(package: str, version: str) -> str:
@@ -100,11 +101,6 @@ def _startup_requirement_rows(requirements_file: str = REQUIREMENTS_FILE) -> lis
         import_name = _REQUIREMENT_IMPORT_NAMES.get(package.lower(), package.replace("-", "_"))
         rows.append((package, import_name, minimum))
     return rows
-
-
-def _startup_version_tuple(value: str) -> tuple[int, ...]:
-    parts = [int(item) for item in re.findall(r"\d+", str(value or ""))[:4]]
-    return tuple(parts or [0])
 
 
 def _startup_version_ok(installed: str, minimum: str) -> bool:

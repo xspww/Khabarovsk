@@ -5,6 +5,9 @@ from collections import Counter
 from collections.abc import Iterable
 from typing import Any
 
+from domain._util import contains_any as _has_marker
+from domain._util import event_type as _event_type
+
 RUNTIME_HEALTH_EVENT_WINDOW_SECONDS = 600.0
 FARM_HEALTH_STUCK_STATE_SECONDS = 180.0
 CONTROL_PLANE_RESTART_THRESHOLD_SECONDS = 180.0
@@ -41,10 +44,6 @@ _WATCHDOG_ISSUE_FLAGS = (
     "high_retry_count",
     "high_fail_count",
 )
-
-
-def _event_type(event: dict[str, Any]) -> str:
-    return str(event.get("event_type") or event.get("kind") or "").lower()
 
 
 def _safe_float(value: Any, default: float = 0.0) -> float:
@@ -123,10 +122,6 @@ def _is_recent_event(event: dict[str, Any], now: float, window_seconds: float = 
     if ts <= 0.0:
         return True
     return 0.0 <= (now - ts) <= max(1.0, float(window_seconds or RUNTIME_HEALTH_EVENT_WINDOW_SECONDS))
-
-
-def _has_marker(text: str, markers: Iterable[str]) -> bool:
-    return any(marker in text for marker in markers)
 
 
 def _is_relaunch_pressure_event(event: dict[str, Any]) -> bool:

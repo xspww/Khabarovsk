@@ -7,6 +7,7 @@ import urllib.parse
 from typing import Any
 
 from core import Account, ServerType, account_launch_block_reason, flog, flog_kv
+from domain._util import as_int as _window_int
 from domain.roblox_private_servers import shared_direct_vip_link, vip_links_for_place
 from services.browser_tracker import tracker_label
 from services.roblox_http import open_roblox_uri
@@ -212,10 +213,6 @@ def _shared_place(
         or record.get("place_id")
         or ""
     ).strip()
-
-
-def _window_int(settings: dict[str, Any], key: str, default: int) -> int:
-    return int(settings.get(key) or default)
 
 
 def _window_layout_enabled(

@@ -181,10 +181,7 @@ class SystemMaintenance(
         self._enforce_window_resize()
 
     def _run_auto_minimize(self, job: RuntimeScheduledJob) -> None:
-        try:
-            self._enforce_auto_minimize()
-        except Exception:
-            "intentional: ignore exception"
+        self._safe_enforce_auto_minimize()
 
     def _run_reconcile(self, job: RuntimeScheduledJob) -> None:
         self._runtime_reconcile_all(trigger=job.reason or "periodic_reconcile", force_restart=False)

@@ -15,6 +15,7 @@ from services.process_service import ProcessManager
 
 from .auth import require_api_token
 from .context import ApiContext
+from .request_names import bulk_usernames as _bulk_names
 from .settings_state import _apply_game_defaults
 
 
@@ -779,18 +780,6 @@ async def _bulk_body(request: Request) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise HTTPException(400, "Expected object")
     return body
-
-
-def _bulk_names(body: dict[str, Any]) -> list[str]:
-    raw_names = body.get("usernames", [])
-    if isinstance(raw_names, str):
-        raw_names = [raw_names]
-    if not isinstance(raw_names, list):
-        raise HTTPException(400, "usernames must be a list")
-    names = [str(n or "").strip() for n in raw_names if str(n or "").strip()]
-    if not names:
-        raise HTTPException(400, "usernames required")
-    return names
 
 
 def _bulk_message(

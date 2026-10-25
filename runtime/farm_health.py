@@ -249,8 +249,7 @@ def _recovery_storm(farm: Any) -> dict[str, Any]:
 
 
 def _status_revision(farm: Any) -> int:
-    with farm._status_lock:
-        return int(farm._status_revision)
+    return farm.get_status_revision()
 
 
 def _event_ages(events: list[Any], now: float) -> list[float]:

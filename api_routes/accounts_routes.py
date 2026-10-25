@@ -14,6 +14,7 @@ from typing import Any
 from fastapi import HTTPException, Request
 
 from core import banned_block_reason, cookie_identity_block_reason, cookie_invalid_block_reason, suspended_block_reason
+from domain._util import first_text as _first_text
 from domain.roblox_private_servers import resolve_vip_access_code
 from infra import net_tls
 from services.account_hybrid import ACCOUNT_STORE, audit_event
@@ -52,6 +53,7 @@ from services.verify_guard import (
 from . import account_records
 from .context import ApiContext
 from .idempotency import begin_idempotent_request, begin_idempotent_request_sync, finish_idempotent_request
+from .request_names import bulk_usernames as _account_usernames
 from .settings_state import _normalize_window_size_settings
 
 APP_USER_AGENT = "CronusLauncher/RT"
@@ -1134,13 +1136,6 @@ def _api_game_place(place_id: str) -> dict[str, Any]:
     return _lookup_roblox_place(place_id)
 
 
-def _first_text(*values: Any) -> str:
-    for value in values:
-        if value:
-            return str(value)
-    return ""
-
-
 def _cookie_identity(
     cookie: str, ok: bool, username: str, meta: dict[str, Any]
 ) -> tuple[str, str]:
@@ -1285,18 +1280,6 @@ def _api_vip_tracker(ctx: ApiContext, username: str) -> dict[str, Any]:
     if not acc._vip_tracker:
         return {"ok": False, "msg": "No VipTracker (no VIP links)"}
     return {"ok": True, "links": acc._vip_tracker.status()}
-
-
-def _account_usernames(body: dict[str, Any]) -> list[str]:
-    raw_names = body.get("usernames", [])
-    if isinstance(raw_names, str):
-        raw_names = [raw_names]
-    if not isinstance(raw_names, list):
-        raise HTTPException(400, "usernames must be a list")
-    names = [str(n or "").strip() for n in raw_names if str(n or "").strip()]
-    if not names:
-        raise HTTPException(400, "usernames required")
-    return names
 
 
 def _finished_updates(username: str, finished: bool) -> dict[str, Any]:

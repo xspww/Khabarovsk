@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from core import flog_kv
+from domain._util import start_thread_once
 from runtime.runtime_scheduler_dispatch import SchedulerDispatchPool
 
 ScheduleCallback = Callable[["RuntimeScheduledJob"], Any]
@@ -65,8 +66,7 @@ class RuntimeScheduler:
             self._thread.start()
 
     def start(self) -> None:
-        if not self._thread.is_alive():
-            self._thread.start()
+        start_thread_once(self._thread)
 
     def stop(self, timeout: float = 2.0) -> None:
         self.cancel_all(reason="scheduler_stop")

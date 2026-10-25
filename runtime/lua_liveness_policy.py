@@ -4,6 +4,7 @@ import time
 from typing import Any
 
 from core import AccountState
+from domain._util import attr_text as _str_attr
 
 LUA_WAITING_STATUS = "waiting_for_lua"
 LUA_WAITING_REASON = "lua_required"
@@ -62,10 +63,6 @@ def mark_waiting_for_lua(acc: Any, runtime_state: Any, state_mgr: Any, reason: s
 
 def _float_attr(acc: Any, name: str) -> float:
     return float(getattr(acc, name, 0.0) or 0.0)
-
-
-def _str_attr(acc: Any, name: str) -> str:
-    return str(getattr(acc, name, "") or "")
 
 
 def _event_fresh(in_game_at: float, last_event_at: float, current: float, timeout: float) -> bool:

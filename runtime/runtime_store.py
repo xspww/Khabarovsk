@@ -7,17 +7,9 @@ import threading
 import time
 from typing import Any
 
-
-def _snap_str(snapshot: dict[str, Any], key: str, default: str = "") -> str:
-    return str(snapshot.get(key) or default)
-
-
-def _snap_int(snapshot: dict[str, Any], key: str) -> int:
-    return int(snapshot.get(key) or 0)
-
-
-def _snap_float(snapshot: dict[str, Any], key: str, fallback: float) -> float:
-    return float(snapshot.get(key) or fallback)
+from domain._util import as_float as _snap_float
+from domain._util import as_int as _snap_int
+from domain._util import mapping_text as _snap_str
 
 
 def _event_alias(event: dict[str, Any], primary: str, secondary: str) -> str:

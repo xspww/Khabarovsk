@@ -93,19 +93,21 @@ function descCellHtml(account, desc, isEditing, esc) {
   return `<button type="button" class="desc-add-btn" data-action="edit-desc" data-user="${esc(account.username)}"><span class="desc-add-plus">+</span> Add description</button>`;
 }
 
+function resolveAlias(displayNameFor, realName) {
+  if (typeof displayNameFor !== "function") return "";
+  try {
+    const alias = displayNameFor(realName);
+    return typeof alias === "string" ? alias : "";
+  } catch (_) {
+    return "";
+  }
+}
+
 function resolveRowName(account, privacyBlur, displayNameFor) {
   const realName = String(account.username ?? "");
-  let shownName = realName;
-  let isFake = false;
-  try {
-    if (typeof displayNameFor === "function") {
-      const alias = displayNameFor(realName);
-      if (typeof alias === "string" && alias) {
-        shownName = alias;
-        isFake = alias.toLowerCase() !== realName.toLowerCase();
-      }
-    }
-  } catch (_) {}
+  const alias = resolveAlias(displayNameFor, realName);
+  const shownName = alias || realName;
+  const isFake = !!alias && alias.toLowerCase() !== realName.toLowerCase();
   const hideReal = !!privacyBlur || isFake;
   const nameCls =
     "user-name" +

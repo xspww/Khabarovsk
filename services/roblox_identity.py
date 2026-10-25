@@ -6,6 +6,7 @@ import re
 import time
 from typing import Any
 
+from domain.block_reasons import LOCKED_BLOCK_REASON
 from services.account_hybrid import ACCOUNT_STORE
 from services.roblox_http import USERS_BASE, RobloxHTTP
 from services.roblox_moderation import fetch_ban_status_by_username
@@ -155,14 +156,6 @@ def _uid_text(uid: Any) -> str:
     return str(uid or "")
 
 
-def _locked_block_reason() -> str:
-    try:
-        from services.verify_guard import LOCKED_BLOCK_REASON as message
-    except Exception:
-        message = "Account locked - face/ID verification required. Verify manually, then click Resume."
-    return message
-
-
 def resolve_moderated_dead_cookie(
     cookie: str, username_hint: str = "", timeout: float = 8.0
 ) -> tuple[str | None, str, str, str]:
@@ -183,7 +176,7 @@ def resolve_moderated_dead_cookie(
     if banned is True:
         return "banned", (ban_detail or "Account banned (Roblox isBanned=true)"), name, _uid_text(uid)
     if banned is False:
-        return "locked", _locked_block_reason(), name, _uid_text(uid)
+        return "locked", LOCKED_BLOCK_REASON, name, _uid_text(uid)
     return None, "", name, _uid_text(uid)
 
 

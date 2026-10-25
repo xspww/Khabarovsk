@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
 from typing import Any
 
 from core import flog_kv
+from domain._util import account_key
 from runtime.runtime_state_manager import RuntimeStateManager
+from services.hold_clear import run_under_account_lock as _with_account_lock
 from services.process_proof_policy import (
     PROOF_STRONG,
     PROOF_UNTRUSTED,
@@ -38,15 +39,6 @@ def _sync_runtime_quietly(account: Any, reason: str) -> None:
         account.sync_runtime(reason)
     except Exception:
         "intentional: ignore exception"
-
-
-def _with_account_lock(account: Any, write: Callable[[], None]) -> None:
-    lock = getattr(account, "_lock", None)
-    if lock:
-        with lock:
-            write()
-    else:
-        write()
 
 
 def _write_process_diagnostics(
@@ -110,10 +102,6 @@ def _write_process_proof(account: Any, proof: str, confidence: float | None, sta
         account.binding_decision = "verified"
         account.process_reject_reason = ""
     _sync_runtime_quietly(account, _fallback_text(reason, "process_proof"))
-
-
-def account_key(acc: Any) -> str:
-    return str(getattr(acc, "_config_username", "") or getattr(acc, "username", "") or "")
 
 
 def account_name(acc: Any) -> str:

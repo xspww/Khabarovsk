@@ -56,6 +56,23 @@ def run_under_account_lock(account: Any, action: Any) -> None:
         action()
 
 
+def apply_runtime_clear(
+    account: Any, runtime_writer: Any = None, reason: str = "manual_resume"
+) -> None:
+    if runtime_writer:
+        if hasattr(runtime_writer, "clear_recovery"):
+            runtime_writer.clear_recovery(account, reason=reason, inflight=False)
+        elif hasattr(runtime_writer, "set_recovery"):
+            runtime_writer.set_recovery(account, reason=reason, inflight=False)
+        if hasattr(runtime_writer, "set_cooldown"):
+            runtime_writer.set_cooldown(account, 0.0, reason=reason)
+        return
+    try:
+        account.sync_runtime(reason)
+    except Exception:
+        "intentional: ignore exception"
+
+
 def clear_hold_fields(account: Any, status_predicate: Any, reason: str) -> None:
     clear_status_field(account, "manual_status", status_predicate)
     clear_status_field(account, "last_error", status_predicate)
@@ -72,7 +89,6 @@ def clear_account_hold(
     persist: Any,
     status_predicate: Any,
     reason: str,
-    apply_runtime_clear: Any,
     runtime_reason: str,
     extra_clear: Any = None,
 ) -> bool:

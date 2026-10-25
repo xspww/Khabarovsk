@@ -6,6 +6,7 @@ import time
 from typing import Any, NamedTuple
 
 from core import Account, AccountState, EventBus, SmartQueue, StateManager, flog_kv
+from domain._util import clamped_float, config_bool
 from runtime.recovery_evaluator import RecoveryEvaluator
 from runtime.recovery_owner import RecoveryOwnerRegistry
 from runtime.recovery_policy import (
@@ -264,18 +265,11 @@ class RecoveryCoreMixin:
 
 
     def _cfg_bool(self, key: str, default: bool) -> bool:
-        value = self._cfg.get(key, default)
-        if isinstance(value, str):
-            return value.strip().lower() in {"1", "true", "yes", "on", "enabled"}
-        return bool(value)
+        return config_bool(self._cfg, key, default)
 
 
     def _cfg_float(self, key: str, default: float, minimum: float = 0.0, maximum: float = 3600.0) -> float:
-        try:
-            value = float(self._cfg.get(key, default) or default)
-        except Exception:
-            value = default
-        return max(minimum, min(maximum, value))
+        return clamped_float(self._cfg, key, default, minimum, maximum)
 
 
     def handle_runtime_signal(

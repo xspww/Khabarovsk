@@ -4,6 +4,7 @@ from functools import partial
 from typing import Any, NamedTuple
 
 from core import AccountState
+from domain._util import contains_any as _contains_any
 from services.network_monitor import NET_ONLINE
 
 RECOVERY_MARKERS = (
@@ -27,10 +28,6 @@ class _RecoveryContext(NamedTuple):
     state_name: str
     has_current_recovery_marker: bool
     network_state: str
-
-
-def _contains_any(text: str, tokens: tuple[str, ...]) -> bool:
-    return any(token in text for token in tokens)
 
 
 def _build_context(

@@ -8,23 +8,16 @@ import time
 from typing import TYPE_CHECKING, Any
 
 from config.validation import CONFIG_SCHEMA_VERSION, validate_config_payload
+from domain._util import as_float as _saved_float
+from domain._util import as_int as _saved_int
+from domain._util import mapping_text as _saved_str
 from domain.states import RuntimeState
 from infra.app_paths import APP_DATA_DIR
+from infra.core_logging import flog as _flog
+from infra.core_logging import flog_kv as _flog_kv
 
 if TYPE_CHECKING:
     from domain.account_model import Account
-
-
-def _flog(message: str, level: str = "info") -> None:
-    from core import flog
-
-    flog(message, level)
-
-
-def _flog_kv(scope: str, name: str, level: str = "info", **fields: Any) -> None:
-    from core import flog_kv
-
-    flog_kv(scope, name, level, **fields)
 
 
 CONFIG_FILE = os.path.join(APP_DATA_DIR, "cronus_rt1_config.json")
@@ -210,20 +203,8 @@ def _restore_vip_scores(account: Account, saved: dict[str, Any]) -> None:
         "intentional: ignore exception"
 
 
-def _saved_int(saved: dict[str, Any], key: str) -> int:
-    return int(saved.get(key) or 0)
-
-
-def _saved_float(saved: dict[str, Any], key: str) -> float:
-    return float(saved.get(key) or 0.0)
-
-
 def _saved_max_float(saved: dict[str, Any], key: str) -> float:
     return max(0.0, _saved_float(saved, key))
-
-
-def _saved_str(saved: dict[str, Any], key: str, default: str = "") -> str:
-    return str(saved.get(key) or default)
 
 
 def _restore_retry_counters(account: Any, saved: dict[str, Any], now: float) -> None:
@@ -592,7 +573,7 @@ class ConfigManager:
             except Exception:
                 "intentional: ignore exception"
     def get_accounts(self) -> list[Account]:
-        from core import Account
+        from domain.account_model import Account
 
         raw = self._read_text_json(ACCOUNTS_TEXT_FILE, None)
         if raw is None:

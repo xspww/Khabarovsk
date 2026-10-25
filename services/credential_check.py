@@ -146,7 +146,7 @@ def _log_unknown_login(username: str, status: int, challenge_type: str, body_hea
     # HTTP status, challenge type, header names and Roblox's message only.
     # Never any credential.
     try:
-        from core import flog_kv as _flog
+        from infra.core_logging import flog_kv as _flog
 
         _flog(
             "ACCOUNT_DATA",

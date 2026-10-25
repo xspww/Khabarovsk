@@ -8,6 +8,9 @@ from dataclasses import dataclass, field
 from typing import Any, NamedTuple
 
 from domain._util import _safe_hash
+from domain._util import attr_text as _account_text
+from domain._util import first_text as _first_text
+from domain._util import mapping_text as _mapping_text
 from services.browser_tracker import tracker_label
 
 
@@ -189,25 +192,10 @@ class _LaunchIntentParts(NamedTuple):
     vip_intent: str
 
 
-def _account_text(account: Any, attr: str) -> str:
-    return str(getattr(account, attr, "") or "")
-
-
 def _account_server_type(account: Any) -> str:
     raw = getattr(account, "server_type", None)
     fallback = str(getattr(account, "server_type", "") or "")
     return str(getattr(raw, "value", fallback) or "")
-
-
-def _mapping_text(mapping: dict[str, Any], key: str) -> str:
-    return str(mapping.get(key, "") or "")
-
-
-def _first_text(*values: Any) -> str:
-    for value in values:
-        if value:
-            return str(value)
-    return ""
 
 
 def _parsed_link_hashes(parsed_links: list[dict[str, Any]]) -> tuple[list[str], list[str]]:

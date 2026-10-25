@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 import re
 import sys
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from typing import Any
 
 COLOR_RESET = "\x1b[0m"
@@ -31,6 +31,8 @@ def color_requested() -> bool:
     return requested in {"1", "true", "yes", "on"}
 def paint(text: str, color: str, *, enabled: bool) -> str:
     return f"{color}{text}{COLOR_RESET}" if color and enabled else text
+def paint_when(text: str, color: str, enabled: Callable[[], bool]) -> str:
+    return paint(text, color, enabled=bool(enabled()))
 def visible_len(text: str) -> int:
     return len(ANSI_RE.sub("", str(text)))
 def _ascii_safe(message: Any, replacements: dict[str, str] | None = None) -> str:

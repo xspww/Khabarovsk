@@ -38,8 +38,7 @@ def _disconnect_checks_enabled(worker: Any, runtime_seconds: float) -> bool:
 
 
 def _wait_brief(worker: Any, timeout: float) -> None:
-    worker._wake.wait(timeout=timeout)
-    worker._wake.clear()
+    worker._idle(timeout)
 
 
 def _account_runtime_ids(acc: Account) -> _RuntimeIds:

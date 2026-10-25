@@ -2,7 +2,6 @@
 
 import base64
 import ctypes
-import hashlib
 import json
 import os
 import re
@@ -12,6 +11,8 @@ from collections.abc import Iterable
 from ctypes import wintypes
 from typing import Any, NamedTuple
 
+from domain._util import _safe_hash as _short_hash
+from domain._util import record_text as _record_text_field
 from infra.app_paths import APP_DATA_DIR, LOG_DIR, move_app_data_file
 
 ACCOUNT_DATA_FILE = os.path.join(APP_DATA_DIR, "AccountData.json")
@@ -126,13 +127,6 @@ def redact_secret(value: Any) -> Any:
     text = COOKIE_RE.sub("[ROBLOX_COOKIE_REDACTED]", text)
     text = LINK_CODE_RE.sub(r"\1[REDACTED]", text)
     return text
-
-
-def _short_hash(value: Any) -> str:
-    text = str(value or "").strip()
-    if not text:
-        return ""
-    return hashlib.sha256(text.encode("utf-8", errors="ignore")).hexdigest()[:16]
 
 
 def _coerce_private_server_list(value: Any) -> list[Any]:
@@ -594,10 +588,6 @@ def _record_priority(item: dict[str, Any]) -> int:
     return int(float(item.get("priority") or item.get("Priority") or 50))
 
 
-def _record_text_field(item: dict[str, Any], key: str) -> str:
-    return str(item.get(key) or "").strip()
-
-
 def _existing_by_username(records: Iterable[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {
         str(record.get("username") or "").strip().lower(): record
@@ -882,7 +872,7 @@ def _credential_probe(username: str, password: str) -> dict[str, Any] | None:
 
 def _log_credential_outcome(username: str, outcome: str) -> None:
     try:
-        from core import flog_kv as _flog_cc
+        from infra.core_logging import flog_kv as _flog_cc
 
         _flog_cc("ACCOUNT_DATA", "credential_check", account=username, outcome=outcome)
     except Exception:

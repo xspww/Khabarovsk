@@ -1240,15 +1240,16 @@ function visibleAccountFilters(e = counts()) {
     ...CONDITIONAL_ACCOUNT_FILTERS.filter((t) => (e[t] || 0) > 0),
   ];
 }
+function ignoreRequestError() {
+  /* intentional: no-op */
+}
 function resetColWidths() {
   _colWidths = {};
   try {
     localStorage.setItem(_colWidthsKey, "{}");
   } catch (e) {}
   try {
-    api("/config", "POST", { ui_col_widths: {} }).catch(() => {
-      /* intentional: no-op */
-    });
+    api("/config", "POST", { ui_col_widths: {} }).catch(ignoreRequestError);
   } catch (e) {}
   const table = document.querySelector(".accounts-table-card table");
   if (table) {
@@ -1559,9 +1560,9 @@ function persistColWidths() {
   } catch {}
   _colWidthsSaveTimer = setTimeout(() => {
     try {
-      api("/config", "POST", { ui_col_widths: _colWidths }).catch(() => {
-        /* intentional: no-op */
-      });
+      api("/config", "POST", { ui_col_widths: _colWidths }).catch(
+        ignoreRequestError,
+      );
     } catch {}
   }, 400);
 }
@@ -1580,9 +1581,9 @@ function storeLocalColWidths() {
 }
 function pushColWidthsToServer() {
   try {
-    api("/config", "POST", { ui_col_widths: _colWidths }).catch(() => {
-      /* intentional: no-op */
-    });
+    api("/config", "POST", { ui_col_widths: _colWidths }).catch(
+      ignoreRequestError,
+    );
   } catch {}
 }
 function applyServerColWidths(clean) {

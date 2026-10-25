@@ -12,6 +12,8 @@ from core import (
     StateManager,
     flog_kv,
 )
+from domain._util import as_int as _validation_int
+from domain._util import mapping_text as _expected_text
 from runtime.launch_attempt import LaunchAttempt
 from runtime.maintenance_performance import _apply_cpu_limiter_for_bound_process
 from runtime.runtime_state_manager import RuntimeStateManager
@@ -22,14 +24,6 @@ from services.process_service import ProcessManager, ProcessService
 
 def _transaction_reason(reason: str, step: str, status: str) -> str:
     return f"transaction_update:{reason or step or status}"
-
-
-def _expected_text(expected: dict[str, Any], key: str) -> str:
-    return str(expected.get(key, "") or "")
-
-
-def _validation_int(validation: dict[str, Any], key: str) -> int:
-    return int(validation.get(key) or 0)
 
 
 def _validation_ram_mb(validation: dict[str, Any]) -> float:

@@ -8,6 +8,7 @@ import time
 from typing import Any
 
 from desktop import console_output
+from domain._util import contains_any as _matches_any
 
 
 class _LivenessState:
@@ -438,10 +439,6 @@ _CONFIG_LABEL_RULES = (
     (("lua",), ("lua_",), "Lua saved"),
     (("config",), (), "Config updated"),
 )
-
-
-def _matches_any(text: str, tokens: tuple[str, ...]) -> bool:
-    return any(token in text for token in tokens)
 
 
 def _config_keys(fields: dict[str, Any]) -> str:

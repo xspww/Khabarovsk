@@ -4,6 +4,7 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
+from domain._util import account_key
 from domain.states import RuntimeSignal
 from runtime.runtime_state_manager import RuntimeStateManager
 
@@ -46,8 +47,7 @@ class AccountRuntimeController:
         except TypeError:
             self._log("RUNTIME", event, **fields)
 
-    def _account_key(self, acc: Any) -> str:
-        return str(getattr(acc, "_config_username", "") or getattr(acc, "username", "") or "")
+    _account_key = staticmethod(account_key)
 
     def capture_owner(self, acc: Any) -> dict[str, Any]:
         lock = getattr(acc, "_lock", None)

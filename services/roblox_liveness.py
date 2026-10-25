@@ -4,6 +4,9 @@ import time
 from typing import Any, NamedTuple
 
 from core import Account, flog_kv
+from domain._util import as_float as _entry_float
+from domain._util import as_int as _entry_int
+from domain._util import first_text as _first_text
 from runtime.runtime_state_manager import RuntimeStateManager
 from services.process_proof_policy import score_resource_signals
 from services.roblox_log_evidence import CachedLogEvidenceCollector, collect_recent_log_evidence
@@ -26,13 +29,6 @@ def _text_hint_from_log_evidence(evidence: dict[str, Any]) -> list[str]:
     if code:
         texts.append(f"(Error Code: {code})")
     return texts
-
-
-def _first_text(*values: Any) -> str:
-    for value in values:
-        if value:
-            return str(value)
-    return ""
 
 
 def _merge_dialog_detail(
@@ -123,14 +119,6 @@ class _CandidateMatches(NamedTuple):
     tracker_match: bool
     owner_match: bool
     created_after_launch: bool
-
-
-def _entry_int(entry: dict[str, Any], key: str) -> int:
-    return int(entry.get(key) or 0)
-
-
-def _entry_float(entry: dict[str, Any], key: str) -> float:
-    return float(entry.get(key) or 0.0)
 
 
 def _entry_text(entry: dict[str, Any], key: str) -> str:

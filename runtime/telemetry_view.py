@@ -4,16 +4,14 @@ import time
 from collections.abc import Iterable
 from typing import Any
 
+from domain._util import event_type as _event_type
+
 
 def _num(value: Any, default: float = 0.0) -> float:
     try:
         return float(value)
     except Exception:
         return default
-
-
-def _event_type(event: dict[str, Any]) -> str:
-    return str(event.get("event_type") or event.get("kind") or "").lower()
 
 
 def _durations(events: Iterable[dict[str, Any]]) -> list[float]:

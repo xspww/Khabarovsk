@@ -8,6 +8,10 @@ from collections.abc import Iterable
 from ctypes import wintypes
 from typing import Any
 
+from domain._util import account_display as _account_display
+from domain._util import account_key as _account_username
+from domain._util import account_pid as _account_pid
+
 CPU_LIMIT_MIN = 5
 CPU_LIMIT_MAX = 95
 CPU_LIMIT_DEFAULT = 20
@@ -80,21 +84,6 @@ def normalize_cpu_limiter_settings(source: dict[str, Any]) -> dict[str, Any]:
         "apply_all": apply_all,
         "accounts": accounts,
     }
-
-
-def _account_username(account: Any) -> str:
-    return str(getattr(account, "_config_username", "") or getattr(account, "username", "") or "")
-
-
-def _account_display(account: Any) -> str:
-    return str(getattr(account, "display_name", "") or getattr(account, "display", "") or _account_username(account))
-
-
-def _account_pid(account: Any) -> int:
-    try:
-        return int(getattr(account, "pid", 0) or 0)
-    except Exception:
-        return 0
 
 
 def _same_create_time(record: Any, create_time: Any) -> bool:

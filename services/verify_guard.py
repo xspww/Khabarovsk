@@ -3,13 +3,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from domain.block_reasons import LOCKED_BLOCK_REASON
 from services._util import _lower
+from services._util import is_cookie_auth_status_text as _is_cookie_auth_status_text
 from services.hold_clear import clear_account_hold
 
 # ── Locked: face / ID verification ─────────────────────────────────────
 LOCKED_REASON = "identity_locked"
 LOCKED_LABEL = "Locked"
-LOCKED_BLOCK_REASON = "Account locked - face/ID verification required. Verify manually, then click Resume."
 
 LOCKED_KEYWORDS = (
     "verify your identity",
@@ -179,15 +180,6 @@ RECOVERY_UI_KEYWORDS = (
 )
 
 
-def _is_cookie_auth_status_text(text: str) -> bool:
-    return (
-        "cookie identity mismatch" in text
-        or "cookie belongs to" in text
-        or ".roblosecurity" in text
-        or "cookie invalid" in text
-    )
-
-
 # ── Locked helpers ─────────────────────────────────────────────────────
 
 def is_locked_text(*values: Any, headers: Mapping[str, Any] | None = None) -> bool:
@@ -291,21 +283,6 @@ def _apply_runtime_hold(account: Any, runtime_writer: Any, reason: str) -> None:
         "intentional: ignore exception"
 
 
-def _apply_runtime_clear(account: Any, runtime_writer: Any, reason: str = "manual_resume") -> None:
-    if runtime_writer:
-        if hasattr(runtime_writer, "clear_recovery"):
-            runtime_writer.clear_recovery(account, reason=reason, inflight=False)
-        elif hasattr(runtime_writer, "set_recovery"):
-            runtime_writer.set_recovery(account, reason=reason, inflight=False)
-        if hasattr(runtime_writer, "set_cooldown"):
-            runtime_writer.set_cooldown(account, 0.0, reason=reason)
-        return
-    try:
-        account.sync_runtime(reason)
-    except Exception:
-        "intentional: ignore exception"
-
-
 def set_account_locked_hold(account: Any, detail: str = "", source: str = "", runtime_writer: Any = None) -> None:
     reason = LOCKED_BLOCK_REASON
     lock = getattr(account, "_lock", None)
@@ -339,7 +316,6 @@ def clear_account_locked_hold(account: Any, runtime_writer: Any = None) -> bool:
         persist_account_locked_status,
         is_locked_status_text,
         LOCKED_REASON,
-        _apply_runtime_clear,
         "manual_resume",
     )
 
@@ -467,6 +443,5 @@ def clear_account_recovery_hold(account: Any, runtime_writer: Any = None) -> boo
         persist_account_recovery_status,
         is_recovery_status_text,
         RECOVERY_REASON,
-        _apply_runtime_clear,
         "manual_resume",
     )

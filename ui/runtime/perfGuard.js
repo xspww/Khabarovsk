@@ -132,7 +132,7 @@
   function guardFetch(origFetch, url, opt) {
     try {
       let s = fetchUrl(url);
-      // Converge the 6 per-file api() copies: same-origin /api/* calls that
+      // Converge the 6 per-file api() copies: same-origin /api/... calls that
       // forgot X-Cronus-Token get it here. Never overrides an explicit one.
       if (s.indexOf("/api/") >= 0) opt = sameOriginApi(s, opt);
       let pid = s.indexOf("/game/place/") >= 0 ? placeKey(s) : "";

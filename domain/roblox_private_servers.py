@@ -536,6 +536,76 @@ def _private_server_record(
     }
 
 
+_ERROR_FALLBACK_KEYS = ("private_server_id", "link", "join_code", "access_code", "source", "name")
+
+
+def _fill_missing_server_fields(combined: dict[str, Any], old: dict[str, Any]) -> None:
+    """Keep old values when an errored refresh blanks a field."""
+    for key in _ERROR_FALLBACK_KEYS:
+        if combined.get(key) in (None, "") and old.get(key) not in (None, ""):
+            combined[key] = old.get(key)
+
+
+def _owned_server_identity(server: dict[str, Any]) -> tuple[str, tuple[str, str, str]]:
+    return (
+        str(server.get("private_server_id") or "").strip(),
+        (
+            str(server.get("owner_user_id") or ""),
+            str(server.get("place_id") or ""),
+            str(server.get("universe_id") or ""),
+        ),
+    )
+
+
+def _same_owned_server(
+    old: dict[str, Any],
+    incoming_id: str,
+    incoming_key: tuple[str, str, str],
+) -> bool:
+    old_id, old_key = _owned_server_identity(old)
+    return bool(
+        (incoming_id and old_id == incoming_id)
+        or (incoming_key[0] and old_key == incoming_key)
+    )
+
+
+def _merge_owned_server_record(
+    old: dict[str, Any],
+    server: dict[str, Any],
+) -> dict[str, Any]:
+    combined = dict(old)
+    combined.update(dict(server))
+    if str(server.get("status") or "").lower() == "error":
+        _fill_missing_server_fields(combined, old)
+    return combined
+
+
+def merge_owned_private_server(
+    records: list[dict[str, Any]],
+    server: dict[str, Any],
+) -> list[dict[str, Any]]:
+    """Merge a server record into an ``owned_private_servers`` list.
+
+    A record is the same server when the private-server id matches, or when
+    the owner/place/universe identity matches. Error refreshes keep the old
+    join fields so a transient failure cannot erase a working link.
+    """
+    incoming_id, incoming_key = _owned_server_identity(server)
+    merged: list[dict[str, Any]] = []
+    replaced = False
+    for old in records or []:
+        if not isinstance(old, dict):
+            continue
+        if _same_owned_server(old, incoming_id, incoming_key):
+            merged.append(_merge_owned_server_record(old, server))
+            replaced = True
+        else:
+            merged.append(dict(old))
+    if not replaced:
+        merged.append(dict(server))
+    return merged
+
+
 def _private_server_identity_key(server: dict[str, Any], owner_user_id: str, place_id: str, universe_id: str) -> tuple[str, str, str]:
     return (
         _server_owner_id(server) or str(owner_user_id or ""),

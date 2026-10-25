@@ -23,6 +23,7 @@ calls and WebView2 windows stay out of scope.
 | `test_process_backend_wiring.py` | Binder seam: every bound name resolves (AST + import). | `services/process_backend.py`. |
 | `test_recovery_seam.py` | Recovery seam narrowness (router works through 7 actions). | `runtime/recovery_seam.py`, `runtime/recovery_signal_router.py`. |
 | `test_vip_links.py` | VIP link helpers (per-place filter, shared-direct). | `domain/roblox_private_servers.py`. |
+| `test_private_server_preflight.py` | Auto-created links never enter config; the created server is stored on its owner so launch can reuse the join data. | `services/private_server_preflight.py`. |
 | `test_game_switch.py` | Live game switching: target diffing + rejoin/stop on assignment/config/game edits. | `services/game_switch.py`, `api_routes/games_routes.py`, `api_routes/config_routes.py`. |
 | `test_farm_runtime_reset.py` | Farm stop/Finished runtime reset ordering (kill → reset → bump revision). | `runtime/farm.py`. |
 | `test_console_activity.py` | Console identity keys, counters, visible start failures, log redaction. | `infra/console_activity.py`, `infra/core_logging.py`. |

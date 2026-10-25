@@ -2253,7 +2253,7 @@ function toastPreflightFailure(failure) {
 }
 function toastPreflightCreated(entry) {
   const name = entry.game_name || entry.place_id || "game";
-  toast(`Private server ready for ${name} - link saved`, "success");
+  toast(`Private server available for ${name}`, "success");
 }
 function privateServerPreflightToasts(e) {
   const preflight = e?.private_server_preflight || {},

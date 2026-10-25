@@ -5,8 +5,12 @@ first real launch attempt would fail (game has VIP disabled, or VIP
 costs Robux while free-only is on). Instead of failing mid-run, START
 tries the creation once up front per distinct place:
 
-- free game  -> a link comes back; it is saved onto the game (or the
-  legacy global VIP key) so the launches reuse it silently.
+- free game  -> a link comes back and the server record is saved on the
+  owner account, so the launch path can reuse its link/join code. The
+  link is deliberately NOT written into any config link field: the
+  Shared "Private Server URL" and per-game link fields are the user's
+  explicit "join this room together" switches. With a field empty each
+  account creates/owns its own private server instead of sharing one.
 - VIP disabled / paid / error -> the failure is reported so START can
   skip those accounts and toast (bottom-right notification) instead.
 
@@ -16,6 +20,7 @@ or the Shared one) are never touched and never notified.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from typing import Any, NamedTuple
 
@@ -71,7 +76,12 @@ def run_private_server_preflight(
     game_mode: str = "shared",
     cfg_mgr: Any = None,
 ) -> dict[str, Any]:
-    """Attempt auto-create once per place. Never raises (fail-open)."""
+    """Attempt auto-create once per place. Never raises (fail-open).
+
+    ``cfg_mgr`` is accepted for API compatibility. Auto-created links are
+    never persisted to config; the created server is saved on the owner
+    account's record instead.
+    """
     outcome: dict[str, Any] = {
         "created": [],
         "failures": [],
@@ -79,7 +89,7 @@ def run_private_server_preflight(
         "public_fallback": [],
     }
     try:
-        return _run(cfg, accounts, games, game_mode, cfg_mgr, outcome)
+        return _run(cfg, accounts, games, game_mode, outcome)
     except Exception as exc:
         try:
             from core import flog_kv
@@ -90,41 +100,33 @@ def run_private_server_preflight(
         return outcome
 
 
-def _find_owner_cookie(slot_accounts, by_name) -> tuple[Any, str]:
-    """Return (owner_record, cookie) for the first account that has a cookie."""
-    owner_record = None
+def _find_owner_cookie(
+    slot_accounts: list[Any],
+    by_name: dict[str, Any],
+) -> tuple[Any, str, str]:
+    """Return (owner_record, cookie, username) for the first account with a cookie."""
     for acc in slot_accounts:
+        try:
+            username = str(getattr(acc, "username", "") or "").strip()
+        except Exception:
+            username = ""
+        record = by_name.get(username.lower()) if username else None
+        record = record if isinstance(record, dict) else {}
         try:
             raw_cookie = getattr(acc, "cookie", "")
             cookie = str(raw_cookie).strip() if raw_cookie else ""
-            record = None
         except Exception:
             cookie = ""
-            record = None
         if not cookie:
-            try:
-                raw_name = getattr(acc, "username", "")
-                name_key = str(raw_name).strip().lower() if raw_name else ""
-                record = by_name.get(name_key)
-                if record is None:
-                    record = {}
-                raw_cookie = record.get("cookie")
-                cookie = str(raw_cookie).strip() if raw_cookie else ""
-            except Exception:
-                cookie = ""
-                record = None
+            cookie = str(record.get("cookie") or "").strip()
         if not cookie:
             continue
-        if owner_record is None:
-            owner_record = record
-        if owner_record is None:
-            try:
-                raw_name = getattr(acc, "username", "")
-                owner_record = by_name.get(str(raw_name).strip().lower())
-            except Exception:
-                owner_record = None
-        return owner_record, cookie
-    return owner_record, ""
+        return (
+            record or None,
+            cookie,
+            str(record.get("username") or username).strip(),
+        )
+    return None, "", ""
 
 
 def _normalize_inputs(
@@ -371,13 +373,13 @@ def _owner_identity(
     slot_accounts: list[Any],
     by_name: dict[str, Any],
     deps: _PreflightDeps,
-) -> tuple[Any, str, dict[str, Any] | None]:
-    owner_record, owner_cookie = _find_owner_cookie(
+) -> tuple[Any, str, dict[str, Any] | None, str]:
+    owner_record, owner_cookie, owner_username = _find_owner_cookie(
         slot_accounts,
         by_name,
     )
     if not owner_cookie:
-        return owner_record, "", None
+        return owner_record, "", None, owner_username
     try:
         identity = deps.validate_record_cookie_identity(
             owner_record or {},
@@ -386,7 +388,7 @@ def _owner_identity(
         )
     except Exception as exc:
         identity = {"ok": False, "msg": str(exc)}
-    return owner_record, owner_cookie, identity
+    return owner_record, owner_cookie, identity, owner_username
 
 
 def _create_result(
@@ -411,24 +413,117 @@ def _create_result(
         return {"ok": False, "msg": str(exc)}
 
 
-def _success_patch(
-    game: Any,
-    legacy_vip: str,
+_OWNED_SERVER_FIELDS = (
+    "private_server_id",
+    "owner_user_id",
+    "place_id",
+    "universe_id",
+    "name",
+    "active",
+    "link",
+    "join_code",
+    "access_code",
+    "source",
+    "status",
+    "error",
+    "synced_at",
+)
+
+
+def _owned_server_record(
     result: dict[str, Any],
-) -> tuple[dict[str, str] | None, str | None]:
-    link = str(result.get("link") or "").strip()
-    if not link:
-        return None, None
-    if (
-        game is not None
-        and not str(
-            (game or {}).get("private_server_url") or ""
-        ).strip()
+    place: str,
+    owner_user_id: str,
+) -> dict[str, Any] | None:
+    record = {
+        key: result.get(key)
+        for key in _OWNED_SERVER_FIELDS
+        if result.get(key) not in (None, "")
+    }
+    record.setdefault("owner_user_id", owner_user_id)
+    record.setdefault("place_id", place)
+    record.setdefault("status", "ok")
+    record.setdefault("synced_at", time.time())
+    if not any(
+        record.get(key)
+        for key in ("private_server_id", "link", "join_code", "access_code")
     ):
-        return {str(game.get("id") or ""): link}, None
-    if game is None and not legacy_vip:
-        return None, link
-    return None, None
+        return None
+    return record
+
+
+def _owned_servers_for(
+    store: Any,
+    username: str,
+) -> list[dict[str, Any]] | None:
+    key = str(username or "").strip().lower()
+    if not key:
+        return []
+    try:
+        records = store.read_records(include_cookies=False)
+    except Exception as exc:
+        _log_persist_failure(username, exc)
+        return None
+    for record in records or []:
+        if str(record.get("username") or "").strip().lower() != key:
+            continue
+        value = record.get("owned_private_servers")
+        return [
+            dict(item)
+            for item in value or []
+            if isinstance(item, dict)
+        ]
+    return []
+
+
+def _persist_created_server(
+    owner_username: str,
+    place: str,
+    owner_user_id: str,
+    result: dict[str, Any],
+) -> None:
+    """Save the created server on its owner so launch can reuse the join data.
+
+    Config link fields stay untouched: they are the user's explicit sharing
+    switch. Storage failures are logged and ignored so START still works.
+    """
+    username = str(owner_username or "").strip()
+    server = _owned_server_record(result, place, owner_user_id)
+    if not username or server is None:
+        return
+    try:
+        from domain.roblox_private_servers import merge_owned_private_server
+        from services.account_hybrid import ACCOUNT_STORE
+
+        existing = _owned_servers_for(ACCOUNT_STORE, username)
+        if existing is None:
+            return
+        ACCOUNT_STORE.update_record(
+            username,
+            {
+                "owned_private_servers": merge_owned_private_server(
+                    existing,
+                    server,
+                )
+            },
+        )
+    except Exception as exc:
+        _log_persist_failure(username, exc)
+
+
+def _log_persist_failure(username: str, exc: Exception) -> None:
+    try:
+        from core import flog_kv
+
+        flog_kv(
+            "PREFLIGHT",
+            "private_server_owner_record_failed",
+            "warning",
+            account=username,
+            error=exc,
+        )
+    except Exception:
+        "intentional: ignore exception"
 
 
 def _created_entry(
@@ -525,13 +620,12 @@ def _process_slot(
     place: str,
     slot: dict[str, Any],
     by_name: dict[str, Any],
-    config: _PreflightConfig,
     deps: _PreflightDeps,
     outcome: dict[str, Any],
     vip_unavailable_permanently: Callable[..., bool],
-) -> tuple[dict[str, str] | None, str | None]:
+) -> None:
     info = _slot_info(slot)
-    _owner_record, owner_cookie, identity = _owner_identity(
+    _owner_record, owner_cookie, identity, owner_username = _owner_identity(
         slot["accounts"],
         by_name,
         deps,
@@ -544,7 +638,7 @@ def _process_slot(
             info.usernames,
             "No cookie available to create a private server",
         )
-        return None, None
+        return
     if not identity.get("ok"):
         _record_no_cookie(
             outcome,
@@ -556,7 +650,7 @@ def _process_slot(
                 or "Cookie identity check failed"
             ),
         )
-        return None, None
+        return
     result = _create_result(
         owner_cookie,
         identity,
@@ -565,9 +659,10 @@ def _process_slot(
         deps,
     )
     if result.get("ok"):
-        game_patch, legacy_patch = _success_patch(
-            info.game,
-            config.legacy_vip,
+        _persist_created_server(
+            owner_username,
+            place,
+            str(identity.get("cookie_user_id") or ""),
             result,
         )
         outcome["created"].append(
@@ -578,7 +673,7 @@ def _process_slot(
                 info.usernames,
             )
         )
-        return game_patch, legacy_patch
+        return
     reason = str(
         result.get("msg") or "Private server setup failed"
     )
@@ -600,92 +695,26 @@ def _process_slot(
             entry,
             info.usernames,
         )
-        return None, None
+        return
     _record_skipped(outcome, entry, info.usernames)
-    return None, None
 
 
 def _process_needed(
     needed: dict[str, dict[str, Any]],
     by_name: dict[str, Any],
-    config: _PreflightConfig,
     deps: _PreflightDeps,
     outcome: dict[str, Any],
     vip_unavailable_permanently: Callable[..., bool],
-) -> tuple[dict[str, str], str | None]:
-    games_patch: dict[str, str] = {}
-    legacy_patch: str | None = None
+) -> None:
     for place, slot in needed.items():
-        game_patch, legacy_link = _process_slot(
+        _process_slot(
             place,
             slot,
             by_name,
-            config,
             deps,
             outcome,
             vip_unavailable_permanently,
         )
-        if game_patch:
-            games_patch.update(game_patch)
-        if legacy_link is not None:
-            legacy_patch = legacy_link
-    return games_patch, legacy_patch
-
-
-def _patched_games(
-    games: list[dict[str, Any]],
-    games_patch: dict[str, str],
-) -> list[dict[str, Any]]:
-    fresh = []
-    for entry in games:
-        row = dict(entry)
-        link = games_patch.get(str(row.get("id") or ""))
-        if link and not str(
-            row.get("private_server_url") or ""
-        ).strip():
-            row["private_server_url"] = link
-        fresh.append(row)
-    return fresh
-
-
-def _log_save_failure(exc: Exception) -> None:
-    try:
-        from core import flog_kv
-
-        flog_kv(
-            "PREFLIGHT",
-            "private_server_link_save_failed",
-            "warning",
-            error=exc,
-        )
-    except Exception:
-        "intentional: ignore exception"
-
-
-def _save_links(
-    cfg_mgr: Any,
-    games: list[dict[str, Any]],
-    games_patch: dict[str, str],
-    legacy_patch: str | None,
-) -> None:
-    if not (
-        (games_patch or legacy_patch)
-        and cfg_mgr is not None
-    ):
-        return
-    try:
-        updates: dict[str, Any] = {}
-        if games_patch and games:
-            updates["games"] = _patched_games(
-                games,
-                games_patch,
-            )
-        if legacy_patch:
-            updates["game_private_server_url"] = legacy_patch
-        cfg_mgr.update(updates)
-        cfg_mgr.save()
-    except Exception as exc:
-        _log_save_failure(exc)
 
 
 def _log_done(outcome: dict[str, Any]) -> None:
@@ -703,7 +732,7 @@ def _log_done(outcome: dict[str, Any]) -> None:
         "intentional: ignore exception"
 
 
-def _run(cfg, accounts, games, game_mode, cfg_mgr, outcome):
+def _run(cfg, accounts, games, game_mode, outcome):
     from domain.games import (
         effective_auto_flags,
         effective_place,
@@ -731,19 +760,12 @@ def _run(cfg, accounts, games, game_mode, cfg_mgr, outcome):
         _record_import_failure(outcome, needed, exc)
         return outcome
 
-    games_patch, legacy_patch = _process_needed(
+    _process_needed(
         needed,
         by_name,
-        config,
         deps,
         outcome,
         vip_unavailable_permanently,
-    )
-    _save_links(
-        cfg_mgr,
-        config.games,
-        games_patch,
-        legacy_patch,
     )
     _log_done(outcome)
     return outcome

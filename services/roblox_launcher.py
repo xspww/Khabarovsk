@@ -16,6 +16,7 @@ from domain.roblox_private_servers import (
     game_name_for_universe,
     list_my_private_servers,
     list_private_servers_for_place,
+    merge_owned_private_server,
     parse_vip_components,
     parse_vip_link,
     private_servers_enabled_for_universe,
@@ -59,16 +60,6 @@ def ensure_owned_private_server(
     )
 
 
-_ERROR_FALLBACK_KEYS = ("private_server_id", "link", "join_code", "access_code", "source", "name")
-
-
-def _fill_missing_fields(combined: dict[str, Any], old: dict[str, Any]) -> None:
-    """Keep old values when an errored refresh blanks a field."""
-    for key in _ERROR_FALLBACK_KEYS:
-        if combined.get(key) in (None, "") and old.get(key) not in (None, ""):
-            combined[key] = old.get(key)
-
-
 def _log_private_public_fallback(
     username: str, place_id: str, reason: str, *, joined_existing_vip: bool | None = None
 ) -> None:
@@ -96,45 +87,6 @@ def _pick_fallback_link(link_candidates: list[str], place_id: str) -> str:
             continue
         return candidate
     return ""
-
-
-def _private_server_identity(server: dict[str, Any]) -> tuple[str, tuple[str, str, str]]:
-    return (
-        str(server.get("private_server_id") or "").strip(),
-        (
-            str(server.get("owner_user_id") or ""),
-            str(server.get("place_id") or ""),
-            str(server.get("universe_id") or ""),
-        ),
-    )
-
-
-def _is_same_private_server(old: dict[str, Any], incoming_id: str, incoming_key: tuple[str, str, str]) -> bool:
-    old_id, old_key = _private_server_identity(old)
-    return (incoming_id and old_id == incoming_id) or (incoming_key[0] and old_key == incoming_key)
-
-
-def _merge_private_server_record(old: dict[str, Any], server: dict[str, Any]) -> dict[str, Any]:
-    combined = dict(old)
-    combined.update(dict(server))
-    if str(server.get("status") or "").lower() == "error":
-        _fill_missing_fields(combined, old)
-    return combined
-
-
-def _merge_owned_private_server(records: list[dict[str, Any]], server: dict[str, Any]) -> list[dict[str, Any]]:
-    incoming_id, incoming_key = _private_server_identity(server)
-    merged: list[dict[str, Any]] = []
-    replaced = False
-    for old in records or []:
-        if _is_same_private_server(old, incoming_id, incoming_key):
-            merged.append(_merge_private_server_record(old, server))
-            replaced = True
-        else:
-            merged.append(dict(old))
-    if not replaced:
-        merged.append(dict(server))
-    return merged
 
 
 def _stored_account_record(username: str) -> dict[str, Any] | None:
@@ -441,7 +393,7 @@ class HybridLauncher:
         ACCOUNT_STORE.update_record(
             username,
             {
-                "owned_private_servers": _merge_owned_private_server(
+                "owned_private_servers": merge_owned_private_server(
                     list(data.get("owned_private_servers") or []),
                     {
                         "owner_user_id": owner_id,
@@ -795,7 +747,7 @@ def _vip_link_has_code(link: str) -> bool:
 
 
 def _store_private_success(data: dict[str, Any], username: str, plan: _LaunchPlan) -> None:
-    owned_servers = _merge_owned_private_server(
+    owned_servers = merge_owned_private_server(
         list(data.get("owned_private_servers") or []), plan.private_server_meta
     )
     updated_vip_links = list(data.get("vip_links") or [])

@@ -30,7 +30,7 @@ REASON_ALIASES = {
     "recovery": "account_recovery",
     "account_recovery": "account_recovery",
     "multi_roblox_guard_failed": "multi_roblox_guard_failed",
-    "launch_verify_timeout": "watchdog_timeout",
+    "launch_verify_timeout": "launch_fail",
     "process_memory_pressure": "watchdog_timeout",
     "lua_wait_timeout": "loading_freeze",
 }
@@ -184,6 +184,11 @@ def canonical_launch_failure_reason(detail: str) -> str:
     The launch reporter used to run this chain inline; every launch-failure
     decision now leverages this one. Order matters: captcha first, then
     game-down (whose "unauthorized" contains "auth"), then the rest.
+
+    A verify timeout (``PID not detected`` / ``verify_timeout``) means the
+    process never bound, so it must stay a launch failure. Reporting it as
+    ``watchdog_timeout`` claimed an in-game freeze that never existed and
+    pushed the retry into the crash bucket.
     """
     from services.captcha_guard import is_captcha_status_text
 
@@ -196,8 +201,6 @@ def canonical_launch_failure_reason(detail: str) -> str:
         return "server_full"
     if _has_any_token(reason_l, ("cookie", "auth", "login")):
         return "auth_failure"
-    if _has_any_token(reason_l, ("verify_timeout", "pid not detected")):
-        return "watchdog_timeout"
     return "launch_fail"
 
 

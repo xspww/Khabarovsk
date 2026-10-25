@@ -305,15 +305,27 @@ class TestLaunchFailureClassification(unittest.TestCase):
             "auth_failure",
         )
 
-    def test_watchdog_timeout(self):
+    def test_launch_verify_timeout_is_launch_fail(self):
+        # A process that never bound is a launch failure, not an in-game
+        # watchdog freeze (the mislabel also pushed the retry into the
+        # crash bucket, so a launch bug looked like repeated crashes).
         self.assertEqual(
             canonical_launch_failure_reason("verify_timeout waiting for pid"),
-            "watchdog_timeout",
+            "launch_fail",
         )
         self.assertEqual(
             canonical_launch_failure_reason("pid not detected after launch"),
-            "watchdog_timeout",
+            "launch_fail",
         )
+        self.assertEqual(
+            canonical_reason("launch_verify_timeout"),
+            "launch_fail",
+        )
+        self.assertEqual(policy_for("launch_verify_timeout")["bucket"], "launch")
+
+    def test_real_watchdog_stays_in_crash_bucket(self):
+        self.assertEqual(canonical_reason("not_responding"), "watchdog_timeout")
+        self.assertEqual(policy_for("not_responding")["bucket"], "crash")
 
     def test_fallback_launch_fail(self):
         self.assertEqual(

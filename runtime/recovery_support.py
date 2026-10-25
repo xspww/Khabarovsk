@@ -13,7 +13,7 @@ RECOVERY_REASON_MESSAGES = {
     "pid_dead": "Disconnected - Roblox process disappeared (crashed or closed)",
     "not_responding": "Disconnected - Roblox is not responding",
     "network_drop": "Disconnected - network dropped",
-    "launch_fail": "Disconnected - launch failed",
+    "launch_fail": "Launch failed - Roblox client did not start",
     "game_unavailable": "Game temporarily unavailable (update/shutdown) - retrying",
     "cookie_invalid": "Stopped - cookie invalid or expired",
     "cookie_missing": "Stopped - missing Roblox cookie",

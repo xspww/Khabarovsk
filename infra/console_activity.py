@@ -659,6 +659,20 @@ def _disconnect_line(account: str, reason: str = "") -> str | None:
     return _line(_ICON_WARN, f"{status}{suffix}", stamp_color=_COLOR_DISCONNECT_STAMP)
 
 
+_LAUNCH_FAILED_REASON = "launch_fail"
+
+
+def _is_launch_failure_reason(reason: str) -> bool:
+    return _reason_text(reason) == _LAUNCH_FAILED_REASON
+
+
+def _launch_failed_line(account: str, reason: str = "") -> str:
+    """Launch failure: the account never joined, so never say 'disconnected'."""
+    suffix = f" ({reason})" if reason else ""
+    status = _paint(f"({_text(account, 'Account')}) launch failed", _COLOR_DISCONNECTED)
+    return _line(_ICON_WARN, f"{status}{suffix}", stamp_color=_COLOR_DISCONNECT_STAMP)
+
+
 def _captcha_line(account: str, pid: str = "") -> str | None:
     now = time.monotonic()
     key = _account_key(account)
@@ -961,6 +975,8 @@ def _format_recovery(name: str, fields: dict[str, Any]) -> str | None:
         return _disconnect_line(account, _disconnect_reason(fields, "network_lost"))
     if name == "cooldown":
         display_reason = _disconnect_reason(fields, reason)
+        if _is_launch_failure_reason(display_reason):
+            return _launch_failed_line(account, display_reason)
         return _disconnect_line(account, display_reason)
     return None
 

@@ -102,6 +102,37 @@ class ConsoleActivityTest(unittest.TestCase):
         self.assertIn("Start blocked — no launchable accounts", out)
         self.assertIn("Farm failed to start — port busy", out)
 
+    def test_launch_failure_is_not_labeled_disconnected(self):
+        ca = self.ca
+        ca.emit_structured(
+            "RECOVERY",
+            "cooldown",
+            account="NeverJoined",
+            reason="launch_fail",
+            display_reason="launch_fail",
+            delay="4.0",
+        )
+
+        out = self._output()
+        self.assertIn("launch failed", out)
+        self.assertIn("(launch_fail)", out)
+        self.assertNotIn("disconnected", out)
+
+    def test_watchdog_timeout_still_reads_disconnected(self):
+        ca = self.ca
+        ca.emit_structured(
+            "RECOVERY",
+            "cooldown",
+            account="CrashedInGame",
+            reason="watchdog_timeout",
+            display_reason="watchdog_timeout",
+            delay="4.0",
+        )
+
+        out = self._output()
+        self.assertIn("disconnected", out)
+        self.assertIn("(watchdog_timeout)", out)
+
 
 class LoggingRedactionTest(unittest.TestCase):
     def test_console_receives_redacted_fields(self):

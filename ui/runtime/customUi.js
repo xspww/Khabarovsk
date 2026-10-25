@@ -1,7 +1,61 @@
 /* Custom UI enhancements - extracted from ui_dashboard.py for cache/perf.
    Optimized: reduced polling intervals, use MutationObserver where possible */
-(() => {
+"use strict";
+{
   // NOTE: nav/guard icons are inline SVG (icons.js + currentColor) — no image files.
+
+  // ── Window grid picker ────────────────────────────────────────────
+  const applyGridSelection = (cells, columns, rows) => {
+    cells.forEach((cell) => {
+      const active =
+        Number(cell.dataset.column) <= columns &&
+        Number(cell.dataset.row) <= rows;
+      cell.classList.toggle("is-selected", active);
+    });
+  };
+
+  const readGridSize = (select) => {
+    const [columns, rows] = String(select.value || "6x4")
+      .split("x")
+      .map(Number);
+    return {
+      columns: Math.max(1, Math.min(12, columns || 6)),
+      rows: Math.max(1, Math.min(12, rows || 4)),
+    };
+  };
+
+  const syncGridPicker = (select, cells, summary) => {
+    const { columns, rows } = readGridSize(select);
+    applyGridSelection(cells, columns, rows);
+    summary.textContent = `${columns} x ${rows} (${columns * rows} windows)`;
+  };
+
+  const ensureGridOption = (select, value, label) => {
+    const existing = Array.from(select.options).find(
+      (item) => item.value === value,
+    );
+    if (existing) return;
+    select.add(new Option(label, value));
+  };
+
+  const createGridCell = (select, cells, summary, column, row) => {
+    const cell = document.createElement("button");
+    cell.type = "button";
+    cell.className = "window-grid-cell";
+    cell.dataset.column = String(column);
+    cell.dataset.row = String(row);
+    cell.setAttribute("role", "gridcell");
+    cell.setAttribute("aria-label", `${column} columns by ${row} rows`);
+    cell.addEventListener("click", () => {
+      const value = `${column}x${row}`;
+      ensureGridOption(select, value, `${column} x ${row} (${column * row})`);
+      select.value = value;
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      syncGridPicker(select, cells, summary);
+    });
+    return cell;
+  };
+
   const initGridPicker = () => {
     const select = document.getElementById("window-grid-preset");
     if (!select) return;
@@ -20,48 +74,18 @@
     const cells = [];
     for (let row = 1; row <= 12; row += 1) {
       for (let column = 1; column <= 12; column += 1) {
-        const cell = document.createElement("button");
-        cell.type = "button";
-        cell.className = "window-grid-cell";
-        cell.dataset.column = String(column);
-        cell.dataset.row = String(row);
-        cell.setAttribute("role", "gridcell");
-        cell.setAttribute("aria-label", `${column} columns by ${row} rows`);
-        cell.addEventListener("click", () => {
-          const value = `${column}x${row}`;
-          let option = Array.from(select.options).find(
-            (item) => item.value === value,
-          );
-          if (!option) {
-            option = new Option(`${column} x ${row} (${column * row})`, value);
-            select.add(option);
-          }
-          select.value = value;
-          select.dispatchEvent(new Event("change", { bubbles: true }));
-          syncGridPicker();
-        });
+        const cell = createGridCell(select, cells, summary, column, row);
         picker.appendChild(cell);
         cells.push(cell);
       }
     }
     host.append(picker, summary);
-    const syncGridPicker = () => {
-      const [columns, rows] = String(select.value || "6x4")
-        .split("x")
-        .map(Number);
-      const safeColumns = Math.max(1, Math.min(12, columns || 6));
-      const safeRows = Math.max(1, Math.min(12, rows || 4));
-      cells.forEach((cell) => {
-        const active =
-          Number(cell.dataset.column) <= safeColumns &&
-          Number(cell.dataset.row) <= safeRows;
-        cell.classList.toggle("is-selected", active);
-      });
-      summary.textContent = `${safeColumns} x ${safeRows} (${safeColumns * safeRows} windows)`;
-    };
-    select.addEventListener("change", syncGridPicker);
-    syncGridPicker();
+    select.addEventListener("change", () =>
+      syncGridPicker(select, cells, summary),
+    );
+    syncGridPicker(select, cells, summary);
   };
+
   if (!document.getElementById("window-grid-picker-style")) {
     const style = document.createElement("style");
     style.id = "window-grid-picker-style";
@@ -99,21 +123,28 @@
     setTimeout(_ensureGridPicker, 1500);
   }
 
+  // ── Range fill ────────────────────────────────────────────────────
+  const rangeFillPercent = (el) => {
+    const min = Number(el.min),
+      max = Number(el.max),
+      value = Number(el.value);
+    if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min)
+      return null;
+    return Math.max(
+      0,
+      Math.min(
+        100,
+        (((Number.isFinite(value) ? value : min) - min) / (max - min)) * 100,
+      ),
+    );
+  };
+
   window.__paintRange = (el) => {
     try {
       if (!el || el.type !== "range") return;
-      const min = Number(el.min),
-        max = Number(el.max),
-        val = Number(el.value);
-      if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) return;
-      const pct = Math.max(
-        0,
-        Math.min(
-          100,
-          (((Number.isFinite(val) ? val : min) - min) / (max - min)) * 100,
-        ),
-      );
-      el.style.setProperty("--fill", pct.toFixed(1) + "%");
+      const percent = rangeFillPercent(el);
+      if (percent === null) return;
+      el.style.setProperty("--fill", percent.toFixed(1) + "%");
     } catch (_) {}
   };
   document.addEventListener(
@@ -127,6 +158,8 @@
     },
     true,
   );
+
+  // ── Toasts ────────────────────────────────────────────────────────
   const apiHeaders = () => {
     const token =
       document.querySelector('meta[name="cronus-api-token"]')?.content || "";
@@ -142,37 +175,37 @@
     error:
       '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#ef4444"/><path d="M15 9l-6 6M9 9l6 6" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>',
   };
+  const RESULT_WARNING_PHRASES = ["unsaved", "save changes"];
+  const RESULT_ERROR_PHRASES = [
+    "error",
+    "failed",
+    "invalid",
+    "cannot",
+    "denied",
+    "missing",
+    "not found",
+    "required",
+  ];
+  const FARM_START_WARNINGS = ["blocked", "skipped", "unavailable"];
+
+  const includesAny = (text, needles) =>
+    needles.some((needle) => text.includes(needle));
+
+  const isBlockedLaunchable = (text) =>
+    text.includes("blocked") && text.includes("launchable");
+
+  const farmStartedType = (text) =>
+    includesAny(text, FARM_START_WARNINGS) ? "warning" : "success";
+
   const pickResultType = (message) => {
-    const lower = String(message || "").toLowerCase();
-    if (lower.includes("farm started")) {
-      if (
-        lower.includes("blocked") ||
-        lower.includes("skipped") ||
-        lower.includes("unavailable")
-      )
-        return "warning";
-      return "success";
-    }
-    if (lower.includes("unsaved") || lower.includes("save changes"))
-      return "warning";
-    if (
-      lower.includes("error") ||
-      lower.includes("failed") ||
-      lower.includes("invalid") ||
-      lower.includes("cannot") ||
-      lower.includes("denied") ||
-      lower.includes("missing") ||
-      lower.includes("not found") ||
-      lower.includes("required")
-    ) {
-      if (lower.includes("blocked") && lower.includes("launchable"))
-        return "warning";
-      return "error";
-    }
-    if (lower.includes("blocked") && lower.includes("launchable"))
-      return "warning";
-    return "success";
+    const text = String(message || "").toLowerCase();
+    if (text.includes("farm started")) return farmStartedType(text);
+    if (includesAny(text, RESULT_WARNING_PHRASES)) return "warning";
+    if (includesAny(text, RESULT_ERROR_PHRASES))
+      return isBlockedLaunchable(text) ? "warning" : "error";
+    return isBlockedLaunchable(text) ? "warning" : "success";
   };
+
   const flipToastShift = (h, s) => {
     try {
       const kids = [...h.children].filter((n) => n !== s);
@@ -199,36 +232,34 @@
       };
     }
   };
-  const showResultToast = (message) => {
-    const host = document.getElementById("toast");
-    if (!host) return;
-    const text = String(message || "");
-    const type = pickResultType(text);
+
+  const trimToastStack = (host) => {
     while (host.children.length >= 4) {
       const old = host.firstElementChild;
       try {
         old && clearTimeout(old._timer);
       } catch (_) {}
-      if (old) {
-        const play = flipToastShift(host, old);
-        old.remove();
-        play();
-      }
+      if (!old) return;
+      const play = flipToastShift(host, old);
+      old.remove();
+      play();
     }
-    const icons = TOAST_ICONS_SHARED;
+  };
+
+  const buildToastItem = (text, type) => {
     const item = document.createElement("div");
     item.className = `toast-item toast-${type}`;
     const icon = document.createElement("span");
     icon.className = "toast-icon";
-    icon.innerHTML = icons[type] || icons.success;
+    icon.innerHTML = TOAST_ICONS_SHARED[type] || TOAST_ICONS_SHARED.success;
     const label = document.createElement("span");
     label.className = "toast-text";
     label.textContent = text;
     item.append(icon, label);
-    const play = flipToastShift(host);
-    host.appendChild(item);
-    play();
-    requestAnimationFrame(() => item.classList.add("show"));
+    return item;
+  };
+
+  const scheduleToastDismiss = (host, item) => {
     item._timer = setTimeout(() => {
       item.classList.remove("show");
       item.classList.add("hide");
@@ -240,6 +271,21 @@
     }, 3200);
   };
 
+  const showResultToast = (message) => {
+    const host = document.getElementById("toast");
+    if (!host) return;
+    const text = String(message || "");
+    const type = pickResultType(text);
+    trimToastStack(host);
+    const item = buildToastItem(text, type);
+    const play = flipToastShift(host);
+    host.appendChild(item);
+    play();
+    requestAnimationFrame(() => item.classList.add("show"));
+    scheduleToastDismiss(host, item);
+  };
+
+  // ── Window controls + visibility card ─────────────────────────────
   const moveWindowControlsTop = () => {
     const rows = document.querySelector("#window-settings-card .queue-rows");
     if (!rows) return;
@@ -255,6 +301,42 @@
   };
   moveWindowControlsTop();
 
+  const markWindowSizeDirty = () => {
+    try {
+      if (window.__cronusMarkDirty) window.__cronusMarkDirty("window-size");
+    } catch (_) {}
+  };
+
+  const hideEnabledFrom = (data) => {
+    if (typeof data.hide_enabled === "boolean") return !!data.hide_enabled;
+    const hidden = Number(data.hidden_windows || 0);
+    const visible = Number(data.visible_windows || 0);
+    return hidden > 0 && visible === 0;
+  };
+
+  const syncVisibilityToggle = async (toggle) => {
+    if (!toggle || toggle.disabled) return;
+    try {
+      const res = await fetch("/api/performance/window-size", {
+        headers: { ...apiHeaders() },
+      });
+      const data = await res.json().catch(() => ({}));
+      toggle.checked = hideEnabledFrom(data);
+    } catch (_) {}
+  };
+
+  const wireVisibilityToggle = (card) => {
+    const toggle = card.querySelector("#window-hide-enabled");
+    toggle?.addEventListener("change", () => {
+      // Staged only: the shared Windows savebar (Save/Reset) applies it.
+      markWindowSizeDirty();
+    });
+    syncVisibilityToggle(toggle);
+  };
+
+  const VISIBILITY_CARD_HTML =
+    '<div class="queue-card-head"><div class="queue-card-title">Visibility<div class="hint">Show or hide game windows</div></div></div><div class="queue-rows"><div class="queue-row"><div class="queue-row-copy"><strong>Hide Roblox windows</strong><div class="hint">Hidden from screen and taskbar, still listed as Roblox in Task Manager.</div></div><div class="queue-row-input"><div class="toggle-row"><input id="window-hide-enabled" type="checkbox"><span hidden></span></div></div></div></div>';
+
   const ensureVisibilityCard = () => {
     try {
       document.getElementById("window-hide-row")?.remove();
@@ -265,42 +347,16 @@
     const card = document.createElement("section");
     card.className = "queue-card";
     card.id = "window-visibility-card";
-    card.innerHTML =
-      '<div class="queue-card-head"><div class="queue-card-title">Visibility<div class="hint">Show or hide game windows</div></div></div><div class="queue-rows"><div class="queue-row"><div class="queue-row-copy"><strong>Hide Roblox windows</strong><div class="hint">Hidden from screen and taskbar, still listed as Roblox in Task Manager.</div></div><div class="queue-row-input"><div class="toggle-row"><input id="window-hide-enabled" type="checkbox"><span hidden></span></div></div></div></div>';
+    card.innerHTML = VISIBILITY_CARD_HTML;
     anchor.after(card);
-    const toggle = card.querySelector("#window-hide-enabled");
-    const markWindowSizeDirty = () => {
-      try {
-        if (window.__cronusMarkDirty) window.__cronusMarkDirty("window-size");
-      } catch (_) {}
-    };
-    const syncToggle = async () => {
-      if (!toggle || toggle.disabled) return;
-      try {
-        const res = await fetch("/api/performance/window-size", {
-          headers: { ...apiHeaders() },
-        });
-        const data = await res.json().catch(() => ({}));
-        if (typeof data.hide_enabled === "boolean") {
-          toggle.checked = !!data.hide_enabled;
-        } else {
-          const hidden = Number(data.hidden_windows || 0);
-          const visible = Number(data.visible_windows || 0);
-          toggle.checked = hidden > 0 && visible === 0;
-        }
-      } catch (_) {}
-    };
-    toggle?.addEventListener("change", () => {
-      // Staged only: the shared Windows savebar (Save/Reset) applies it.
-      markWindowSizeDirty();
-    });
-    syncToggle();
+    wireVisibilityToggle(card);
   };
   ensureVisibilityCard();
   new MutationObserver(() => {
     if (!document.hidden) ensureVisibilityCard();
   }).observe(document.body, { childList: true, subtree: true });
 
+  // ── Troubleshoot labels ───────────────────────────────────────────
   document
     .querySelector('#nav button[data-view="troubleshoot"] .nav-text')
     ?.replaceChildren("Exploits Manager");
@@ -323,12 +379,162 @@
   const favicon = document.querySelector('link[rel="icon"]');
   if (favicon) favicon.href = "/assets/cronus_icon.png";
 
-  const closeButton = document.getElementById("close-all-roblox-btn");
+  // ── Close-selected modal ──────────────────────────────────────────
   const escPick = (value) => {
     const node = document.createElement("span");
     node.textContent = String(value || "");
     return node.innerHTML;
   };
+
+  const CLOSE_STATE_KEYS = {
+    IN_GAME: "online",
+    QUEUED: "queued",
+    LAUNCHING: "launching",
+    COOLDOWN: "cooldown",
+  };
+
+  const stateKeyOf = (state) =>
+    CLOSE_STATE_KEYS[String(state || "").toUpperCase()] || "unknown";
+
+  const stateLabelOf = (state) => {
+    const s = String(state || "").trim();
+    if (!s) return "";
+    return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase().replace(/_/g, " ");
+  };
+
+  const closeClientName = (client, pid) =>
+    String(client.display || client.account || "").trim() || `PID ${pid}`;
+
+  const closeClientState = (client) => {
+    if (!client.account) return { key: "unknown", label: "Unmanaged" };
+    return {
+      key: stateKeyOf(client.state),
+      label: stateLabelOf(client.state) || "Running",
+    };
+  };
+
+  const closeClientRow = (client) => {
+    const pid = Number(client.pid) || 0;
+    const name = closeClientName(client, pid);
+    const bound = Boolean(client.account);
+    const state = closeClientState(client);
+    const sub =
+      bound || !client.rss_mb ? "" : ` · ${Math.round(client.rss_mb)} MB`;
+    return `<label class="close-pick is-checked"><input type="checkbox" data-close-pid="${pid}" checked><span class="close-check" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="close-name">${escPick(name)}${bound ? "" : ` <span class="hint">PID ${pid}</span>`}</span><span class="close-st st-${state.key}">${escPick(state.label)}${escPick(sub)}</span></label>`;
+  };
+
+  const renderCloseList = (clients) => {
+    if (!clients.length)
+      return '<div class="v-empty">No running Roblox clients.</div>';
+    return clients.map(closeClientRow).join("");
+  };
+
+  const setClosePicks = (body, checked) => {
+    body.querySelectorAll("[data-close-pid]").forEach((input) => {
+      input.checked = checked;
+    });
+  };
+
+  const syncClosePicks = (body, confirmBtn) => {
+    const boxes = Array.from(body.querySelectorAll("[data-close-pid]"));
+    const n = boxes.filter((input) => input.checked).length;
+    boxes.forEach((input) =>
+      input
+        .closest(".close-pick")
+        ?.classList.toggle("is-checked", input.checked),
+    );
+    if (!confirmBtn) return;
+    confirmBtn.textContent = n ? `Close Selected (${n})` : "Close Selected";
+    confirmBtn.disabled = !n;
+  };
+
+  const wireCloseList = (body, confirmBtn) => {
+    body
+      .querySelector(".selected-close-list")
+      ?.addEventListener("change", () => syncClosePicks(body, confirmBtn));
+    document
+      .getElementById("close-select-all")
+      ?.addEventListener("click", () => {
+        setClosePicks(body, true);
+        syncClosePicks(body, confirmBtn);
+      });
+    document
+      .getElementById("close-clear")
+      ?.addEventListener("click", () => {
+        setClosePicks(body, false);
+        syncClosePicks(body, confirmBtn);
+      });
+  };
+
+  const renderCloseClients = (body, confirmBtn, clients) => {
+    const list = body.querySelector(".selected-close-list");
+    if (list) list.innerHTML = renderCloseList(clients);
+    syncClosePicks(body, confirmBtn);
+  };
+
+  const loadCloseClients = (body, confirmBtn) => {
+    fetch("/api/roblox/running-clients", {
+      cache: "no-store",
+      headers: { ...apiHeaders() },
+    })
+      .then((response) => response.json())
+      .then((result) => {
+        const clients = Array.isArray(result?.clients)
+          ? result.clients
+          : [];
+        renderCloseClients(body, confirmBtn, clients);
+      })
+      .catch(() => {
+        const list = body.querySelector(".selected-close-list");
+        if (list)
+          list.innerHTML =
+            '<div class="v-empty">Could not load running clients.</div>';
+        syncClosePicks(body, confirmBtn);
+      });
+  };
+
+  const selectedClosePids = (body) =>
+    Array.from(body.querySelectorAll("[data-close-pid]:checked"))
+      .map((input) => Number(input.dataset.closePid) || 0)
+      .filter(Boolean);
+
+  const confirmCloseSelected = async (body, backdrop) => {
+    const pids = selectedClosePids(body);
+    if (!pids.length) return;
+    const response = await fetch("/api/roblox/close-pids", {
+      method: "POST",
+      headers: { ...apiHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({ pids }),
+    });
+    const result = await response.json();
+    backdrop.hidden = true;
+    showResultToast(result.msg || "Roblox closed");
+  };
+
+  const openCloseSelectedModal = () => {
+    const backdrop = document.getElementById("modal-backdrop");
+    const title = document.getElementById("modal-title");
+    const body = document.getElementById("modal-body");
+    const foot = document.getElementById("modal-foot");
+    if (!backdrop || !title || !body || !foot) return;
+    // List only Roblox clients actually running on this machine
+    // (verified live PIDs). Show the bound account name when known.
+    title.textContent = "Close Roblox";
+    body.innerHTML =
+      '<div class="v-sub">Select the running Roblox clients to close.</div><div class="selected-close-list"><div class="v-empty">Loading running clients…</div></div>';
+    foot.innerHTML =
+      '<div class="close-pick-foot"><div class="close-pick-tools"><button class="btn ghost" id="close-select-all">Select All</button><button class="btn ghost" id="close-clear">Clear</button></div><button class="btn danger" id="close-selected-confirm">Close Selected</button></div>';
+    backdrop.hidden = false;
+    const confirmBtn = document.getElementById("close-selected-confirm");
+    wireCloseList(body, confirmBtn);
+    syncClosePicks(body, confirmBtn);
+    loadCloseClients(body, confirmBtn);
+    document
+      .getElementById("close-selected-confirm")
+      ?.addEventListener("click", () => confirmCloseSelected(body, backdrop));
+  };
+
+  const closeButton = document.getElementById("close-all-roblox-btn");
   if (closeButton && closeButton.dataset.selectedCloseReady !== "1") {
     closeButton.dataset.selectedCloseReady = "1";
     closeButton.addEventListener(
@@ -336,131 +542,7 @@
       (event) => {
         event.preventDefault();
         event.stopImmediatePropagation();
-        const backdrop = document.getElementById("modal-backdrop");
-        const title = document.getElementById("modal-title");
-        const body = document.getElementById("modal-body");
-        const foot = document.getElementById("modal-foot");
-        if (!backdrop || !title || !body || !foot) return;
-        // List only Roblox clients actually running on this machine
-        // (verified live PIDs). Show the bound account name when known.
-        const stateKeyOf = (state) => {
-          const map = {
-            IN_GAME: "online",
-            QUEUED: "queued",
-            LAUNCHING: "launching",
-            COOLDOWN: "cooldown",
-          };
-          return map[String(state || "").toUpperCase()] || "unknown";
-        };
-        const stateLabelOf = (state) => {
-          const s = String(state || "").trim();
-          if (!s) return "";
-          return (
-            s.charAt(0).toUpperCase() +
-            s.slice(1).toLowerCase().replace(/_/g, " ")
-          );
-        };
-        const renderCloseList = (clients) => {
-          if (!clients.length)
-            return '<div class="v-empty">No running Roblox clients.</div>';
-          return clients
-            .map((client) => {
-              const pid = Number(client.pid) || 0;
-              const name =
-                String(client.display || client.account || "").trim() ||
-                `PID ${pid}`;
-              const bound = Boolean(client.account);
-              const key = bound ? stateKeyOf(client.state) : "unknown";
-              const label = bound
-                ? stateLabelOf(client.state) || "Running"
-                : "Unmanaged";
-              const sub =
-                !bound && client.rss_mb
-                  ? ` · ${Math.round(client.rss_mb)} MB`
-                  : "";
-              return `<label class="close-pick is-checked"><input type="checkbox" data-close-pid="${pid}" checked><span class="close-check" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none"><path d="M5 12.5l4.5 4.5L19 7.5" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg></span><span class="close-name">${escPick(name)}${bound ? "" : ` <span class="hint">PID ${pid}</span>`}</span><span class="close-st st-${key}">${escPick(label)}${escPick(sub)}</span></label>`;
-            })
-            .join("");
-        };
-        title.textContent = "Close Roblox";
-        body.innerHTML = `<div class="v-sub">Select the running Roblox clients to close.</div><div class="selected-close-list"><div class="v-empty">Loading running clients…</div></div>`;
-        foot.innerHTML =
-          '<div class="close-pick-foot"><div class="close-pick-tools"><button class="btn ghost" id="close-select-all">Select All</button><button class="btn ghost" id="close-clear">Clear</button></div><button class="btn danger" id="close-selected-confirm">Close Selected</button></div>';
-        backdrop.hidden = false;
-        const confirmBtn = document.getElementById("close-selected-confirm");
-        const syncPick = () => {
-          const boxes = Array.from(body.querySelectorAll("[data-close-pid]"));
-          const n = boxes.filter((input) => input.checked).length;
-          boxes.forEach((input) =>
-            input
-              .closest(".close-pick")
-              ?.classList.toggle("is-checked", input.checked),
-          );
-          if (confirmBtn) {
-            confirmBtn.textContent = n
-              ? `Close Selected (${n})`
-              : "Close Selected";
-            confirmBtn.disabled = !n;
-          }
-        };
-        body
-          .querySelector(".selected-close-list")
-          ?.addEventListener("change", syncPick);
-        document
-          .getElementById("close-select-all")
-          ?.addEventListener("click", () => {
-            body.querySelectorAll("[data-close-pid]").forEach((input) => {
-              input.checked = true;
-            });
-            syncPick();
-          });
-        document
-          .getElementById("close-clear")
-          ?.addEventListener("click", () => {
-            body.querySelectorAll("[data-close-pid]").forEach((input) => {
-              input.checked = false;
-            });
-            syncPick();
-          });
-        syncPick();
-        fetch("/api/roblox/running-clients", {
-          cache: "no-store",
-          headers: { ...apiHeaders() },
-        })
-          .then((response) => response.json())
-          .then((result) => {
-            const clients = Array.isArray(result?.clients)
-              ? result.clients
-              : [];
-            const list = body.querySelector(".selected-close-list");
-            if (list) list.innerHTML = renderCloseList(clients);
-            syncPick();
-          })
-          .catch(() => {
-            const list = body.querySelector(".selected-close-list");
-            if (list)
-              list.innerHTML =
-                '<div class="v-empty">Could not load running clients.</div>';
-            syncPick();
-          });
-        document
-          .getElementById("close-selected-confirm")
-          ?.addEventListener("click", async () => {
-            const pids = Array.from(
-              body.querySelectorAll("[data-close-pid]:checked"),
-            )
-              .map((input) => Number(input.dataset.closePid) || 0)
-              .filter(Boolean);
-            if (!pids.length) return;
-            const response = await fetch("/api/roblox/close-pids", {
-              method: "POST",
-              headers: { ...apiHeaders(), "Content-Type": "application/json" },
-              body: JSON.stringify({ pids }),
-            });
-            const result = await response.json();
-            backdrop.hidden = true;
-            showResultToast(result.msg || "Roblox closed");
-          });
+        openCloseSelectedModal();
       },
       true,
     );
@@ -478,6 +560,7 @@
   // game picker flash "2 Roblox rows then 1 disappears". The version list is
   // already deduplicated by the backend and rendered once by dashboard.js.
 
+  // ── Unified limiter savebar ───────────────────────────────────────
   const syncLimiterActions = () => {
     const limiterSave = document.getElementById("limiter-save");
     const limiterReset = document.getElementById("limiter-reset");
@@ -539,9 +622,10 @@
     attributeFilter: ["class", "hidden"],
   });
 
-  // Floating description editor: the dashboard renders the editor inline in
-  // the row and handles save/cancel/toolbar itself. We only lift the editor
-  // node visually (position:fixed) so it looks like a popup menu.
+  // ── Floating description editor ───────────────────────────────────
+  // The dashboard renders the editor inline in the row and handles
+  // save/cancel/toolbar itself. We only lift the editor node visually
+  // (position:fixed) so it looks like a popup menu.
   // Dashboard handlers stopPropagation on the table, so listen in capture.
   const FLOAT_W = 360;
   const FLOAT_H = 320;
@@ -550,6 +634,7 @@
   let floatingDescPos = { x: 0, y: 0 };
   let restoringDesc = false;
   const descKey = (user) => String(user || "").toLowerCase();
+
   const placeDescEditor = (editor, x, y) => {
     const left = Math.max(
       8,
@@ -563,6 +648,7 @@
     if (editor.style.left !== wantLeft) editor.style.left = wantLeft;
     if (editor.style.top !== wantTop) editor.style.top = wantTop;
   };
+
   const floatDescEditor = (x, y) => {
     const editor = document.querySelector("#accounts-table .desc-editor");
     if (!editor) return;
@@ -574,6 +660,15 @@
     editor.classList.add("desc-floating");
     placeDescEditor(editor, floatingDescPos.x, floatingDescPos.y);
   };
+
+  const restoreDescDraft = (editor, ta, user) => {
+    const stash = descDrafts[descKey(user)];
+    if (!ta || stash === undefined || ta.value === stash) return;
+    ta.value = stash;
+    const count = editor.querySelector(".desc-char-count");
+    if (count) count.textContent = String(stash.length);
+  };
+
   // A table re-render (row select, filter, live refresh while unfocused)
   // recreates the editor inline. Float it again and restore typed text.
   const refloatDescEditor = () => {
@@ -592,16 +687,12 @@
     try {
       editor.classList.add("desc-floating");
       placeDescEditor(editor, floatingDescPos.x, floatingDescPos.y);
-      const stash = descDrafts[descKey(user)];
-      if (ta && stash !== undefined && ta.value !== stash) {
-        ta.value = stash;
-        const count = editor.querySelector(".desc-char-count");
-        if (count) count.textContent = String(stash.length);
-      }
+      restoreDescDraft(editor, ta, user);
     } finally {
       restoringDesc = false;
     }
   };
+
   document.addEventListener(
     "input",
     (event) => {
@@ -618,6 +709,7 @@
     },
     true,
   );
+
   let _refloatQueued = false;
   new MutationObserver(() => {
     if (_refloatQueued || document.hidden) return;
@@ -629,6 +721,7 @@
       } catch (_) {}
     });
   }).observe(document.body, { childList: true, subtree: true });
+
   const refocusDescTextarea = () => {
     const ta = document.querySelector(
       "#accounts-table .desc-editor.desc-floating .desc-textarea",
@@ -641,6 +734,7 @@
       }
     }
   };
+
   document.addEventListener(
     "click",
     (event) => {
@@ -663,6 +757,7 @@
     },
     true,
   );
+
   document.addEventListener("click", (event) => {
     // Neutral clicks outside the floating editor cancel it via its own button.
     if (!(event.target instanceof Element)) return;
@@ -674,4 +769,4 @@
     const cancel = floating.querySelector('[data-action="cancel-desc"]');
     cancel?.click();
   });
-})();
+}

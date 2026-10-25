@@ -96,9 +96,7 @@ function moveSelection(select, state, direction) {
   chooseValue(select, options[next].value);
 }
 
-function enhanceSelect(select) {
-  if (!select || enhanced.has(select)) return;
-
+function createSelectShell(select) {
   const root = document.createElement("div");
   root.className = "custom-select";
   root.dataset.nativeSelect = select.id || "";
@@ -126,40 +124,53 @@ function enhanceSelect(select) {
   select.classList.add("native-select-hidden");
   select.setAttribute("aria-hidden", "true");
   select.tabIndex = -1;
+  return { root, button, label, caret, menu, options: [] };
+}
 
-  const state = { root, button, label, caret, menu, options: [] };
+function toggleMenu(select, state) {
+  const open = state.root.classList.contains("is-open");
+  closeOthers(state);
+  state.root.classList.toggle("is-open", !open);
+  state.button.setAttribute("aria-expanded", String(!open));
+  syncSelect(select);
+  syncCardMenuClass();
+}
+
+function handleButtonClick(select, state, event) {
+  event.stopPropagation();
+  toggleMenu(select, state);
+}
+
+function handleSelectKeydown(select, state, event) {
+  if (event.key === "Escape") {
+    closeSelect(state);
+    return;
+  }
+  if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+    event.preventDefault();
+    moveSelection(select, state, event.key === "ArrowDown" ? 1 : -1);
+    state.root.classList.add("is-open");
+    state.button.setAttribute("aria-expanded", "true");
+    syncCardMenuClass();
+  }
+  if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    state.button.click();
+  }
+}
+
+function enhanceSelect(select) {
+  if (!select || enhanced.has(select)) return;
+  const state = createSelectShell(select);
   enhanced.set(select, state);
   buildOptions(select, state);
   syncSelect(select);
-
-  button.addEventListener("click", (event) => {
-    event.stopPropagation();
-    const open = root.classList.contains("is-open");
-    closeOthers(state);
-    root.classList.toggle("is-open", !open);
-    button.setAttribute("aria-expanded", String(!open));
-    syncSelect(select);
-    syncCardMenuClass();
+  state.button.addEventListener("click", (event) => {
+    handleButtonClick(select, state, event);
   });
-
-  button.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
-      closeSelect(state);
-      return;
-    }
-    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-      event.preventDefault();
-      moveSelection(select, state, event.key === "ArrowDown" ? 1 : -1);
-      root.classList.add("is-open");
-      button.setAttribute("aria-expanded", "true");
-      syncCardMenuClass();
-    }
-    if (event.key === "Enter" || event.key === " ") {
-      event.preventDefault();
-      button.click();
-    }
+  state.button.addEventListener("keydown", (event) => {
+    handleSelectKeydown(select, state, event);
   });
-
   select.addEventListener("change", () => syncSelect(select));
 }
 

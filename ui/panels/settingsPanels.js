@@ -61,6 +61,12 @@ export function setReveal(e, a) {
 export function setDim(e, a) {
   e && e.classList.toggle("gated-off", !a);
 }
+function setChecked(node, value) {
+  if (node) node.checked = value;
+}
+function setValue(node, value) {
+  if (node) node.value = value;
+}
 function normalizeRamLimit(e) {
   const a = Number(e);
   return Number.isFinite(a)
@@ -74,361 +80,431 @@ function readRamLimit(e) {
   );
 }
 const GRID_PICKER_MAX = 12;
-function renderGridPicker(e) {
-  const a = e("window-grid-picker");
-  if (!a) return;
-  const t = Math.max(1, Number(e("window-grid-cols")?.value) || 6),
-    n = Math.max(1, Number(e("window-grid-rows")?.value) || 4),
-    r = Number(e("window-size-width")?.value) || 200,
-    o = Number(e("window-size-height")?.value) || 150,
-    l = (window.screen && screen.availWidth) || 1920,
-    i = (window.screen && screen.availHeight) || 1080,
-    c = Math.max(1, Math.min(GRID_PICKER_MAX, Math.floor(l / r))),
-    s = Math.max(1, Math.min(GRID_PICKER_MAX, Math.floor(i / o)));
-  let d = '<div class="wgrid">';
-  for (let u = 1; u <= GRID_PICKER_MAX; u++) {
-    d += '<div class="wgrid-row">';
-    for (let g = 1; g <= GRID_PICKER_MAX; g++) {
-      const m = g <= t && u <= n,
-        w = g <= c && u <= s;
-      d += `<button type="button" class="wgrid-cell${m ? " is-sel" : ""}${w ? "" : " is-off"}" data-col="${g}" data-row="${u}"${w ? "" : " disabled"} title="${g} × ${u}${w ? "" : " — screen fits " + c + " × " + s}"></button>`;
+function numberOr(value, fallback) {
+  return Number(value) || fallback;
+}
+function screenSize(axis, fallback) {
+  return (window.screen && screen[axis]) || fallback;
+}
+function gridMetrics(e) {
+  const cols = Math.max(1, numberOr(e("window-grid-cols")?.value, 6)),
+    rows = Math.max(1, numberOr(e("window-grid-rows")?.value, 4)),
+    width = numberOr(e("window-size-width")?.value, 200),
+    height = numberOr(e("window-size-height")?.value, 150),
+    fitCols = Math.floor(screenSize("availWidth", 1920) / width),
+    fitRows = Math.floor(screenSize("availHeight", 1080) / height);
+  return {
+    cols,
+    rows,
+    maxCols: Math.max(1, Math.min(GRID_PICKER_MAX, fitCols)),
+    maxRows: Math.max(1, Math.min(GRID_PICKER_MAX, fitRows)),
+  };
+}
+function gridCellHtml(col, row, selected, fits, fitCols, fitRows) {
+  const selectedClass = selected ? " is-sel" : "",
+    offClass = fits ? "" : " is-off",
+    disabled = fits ? "" : " disabled",
+    title = fits
+      ? `${col} × ${row}`
+      : `${col} × ${row} — screen fits ${fitCols} × ${fitRows}`;
+  return `<button type="button" class="wgrid-cell${selectedClass}${offClass}" data-col="${col}" data-row="${row}"${disabled} title="${title}"></button>`;
+}
+function gridRowsHtml(metrics) {
+  let html = "";
+  for (let row = 1; row <= GRID_PICKER_MAX; row++) {
+    html += '<div class="wgrid-row">';
+    for (let col = 1; col <= GRID_PICKER_MAX; col++) {
+      const selected = col <= metrics.cols && row <= metrics.rows,
+        fits = col <= metrics.maxCols && row <= metrics.maxRows;
+      html += gridCellHtml(
+        col,
+        row,
+        selected,
+        fits,
+        metrics.maxCols,
+        metrics.maxRows,
+      );
     }
-    d += "</div>";
+    html += "</div>";
   }
-  ((d += "</div>"), (a.innerHTML = d));
-  const p = e("window-grid-label"),
-    _ = e("window-grid-count");
-  (p && (p.textContent = `${t} × ${n}`),
-    _ && (_.textContent = `${t * n} windows`));
+  return html;
+}
+function renderGridPicker(e) {
+  const picker = e("window-grid-picker");
+  if (!picker) return;
+  const metrics = gridMetrics(e);
+  picker.innerHTML = `<div class="wgrid">${gridRowsHtml(metrics)}</div>`;
+  const label = e("window-grid-label"),
+    count = e("window-grid-count");
+  if (label) label.textContent = `${metrics.cols} × ${metrics.rows}`;
+  if (count) count.textContent = `${metrics.cols * metrics.rows} windows`;
+}
+const GAME_FIELDS = [
+  "game-private",
+  "game-place",
+  "game-auto-private-enabled",
+  "game-multi-roblox",
+  "game-block-same-server",
+];
+const QUEUE_FIELDS = [
+  "queue-max",
+  "queue-delay",
+  "queue-autoclose-enabled",
+  "queue-autoclose-minutes",
+  "popup-disconnected-enabled",
+  "popup-scan-interval",
+  "popup-scan-max-parallel",
+];
+function fillGameFields(e, config) {
+  e("game-private").value = config.game_private_server_url || "";
+  e("game-place").value = config.game_place_id || "";
+  e("game-auto-private-enabled").checked =
+    !!config.auto_create_private_server_enabled;
+  e("game-multi-roblox").checked = !1 !== config.multi_roblox_enabled;
+  setChecked(e("game-block-same-server"), !!config.block_same_server_enabled);
+}
+function syncGameModeToggle(toggle, config, dirty) {
+  if (!toggle || dirty("game") || toggle.contains(document.activeElement)) return;
+  const mode =
+    "per_account" === String(config.game_mode || "").trim()
+      ? "per_account"
+      : "shared";
+  toggle.dataset.savedValue = mode;
+  toggle.dataset.value = mode;
+  toggle
+    .querySelectorAll("button")
+    .forEach((button) => button.classList.toggle("active", button.dataset.mode === mode));
+}
+function renderGameSection(e, config, dirty) {
+  const active = document.activeElement?.id || "";
+  if (!dirty("game") && !GAME_FIELDS.includes(active)) fillGameFields(e, config);
+  syncGameModeToggle(e("game-mode-toggle"), config, dirty);
+}
+function fillQueueFields(e, config) {
+  e("queue-max").value = config.max_concurrent_accounts ?? 40;
+  e("queue-delay").value =
+    config.queue_delay_seconds ?? config.launch_rate_interval ?? 15;
+  e("queue-autoclose-enabled").checked = !!config.auto_close_enabled;
+  e("queue-autoclose-minutes").value = config.auto_close_minutes ?? 0;
+}
+function fillPopupFields(e, config) {
+  e("popup-disconnected-enabled").checked =
+    !1 !== config.popup_disconnected_enabled;
+  e("popup-scan-interval").value = config.popup_scan_interval_seconds ?? 30;
+  e("popup-scan-max-parallel").value = config.popup_scan_max_parallel ?? 2;
+}
+function renderQueueSection(e, config, dirty) {
+  const active = document.activeElement?.id || "";
+  if (dirty("queue") || QUEUE_FIELDS.includes(active)) return;
+  fillQueueFields(e, config);
+  fillPopupFields(e, config);
+}
+function syncQueueCardCollapse() {
+  document.querySelectorAll(".queue-card").forEach((card) => {
+    const key = "rg_collapsed_" + (card.id || "card");
+    const collapsed = "1" === localStorage.getItem(key);
+    card.classList.toggle("collapsed", collapsed);
+    const body = card.querySelector(".queue-rows,.queue-card-body");
+    if (body) body.hidden = collapsed;
+    const button = card.querySelector(".queue-collapse-btn");
+    if (button) button.setAttribute("aria-expanded", String(!collapsed));
+  });
 }
 export function renderSettingsPanel(e) {
-  const { $: a, CONFIG: t, dirty: n, updateSaveState: r } = e;
-  if (!t) return;
-  const i = document.activeElement?.id || "";
-  (n("game") ||
-    [
-      "game-private",
-      "game-place",
-      "game-auto-private-enabled",
-      "game-multi-roblox",
-      "game-block-same-server",
-    ].includes(i) ||
-    ((a("game-private").value = t.game_private_server_url || ""),
-    (a("game-place").value = t.game_place_id || ""),
-    (a("game-auto-private-enabled").checked =
-      !!t.auto_create_private_server_enabled),
-    (a("game-multi-roblox").checked = !1 !== t.multi_roblox_enabled),
-    a("game-block-same-server") &&
-      (a("game-block-same-server").checked = !!t.block_same_server_enabled)),
-    (() => {
-      const m = a("game-mode-toggle");
-      if (m && !n("game") && !m.contains(document.activeElement)) {
-        const v =
-          "per_account" === String(t.game_mode || "").trim()
-            ? "per_account"
-            : "shared";
-        ((m.dataset.savedValue = v),
-          (m.dataset.value = v),
-          m
-            .querySelectorAll("button")
-            .forEach((b) =>
-              b.classList.toggle("active", b.dataset.mode === v),
-            ));
-      }
-    })(),
-    n("queue") ||
-      [
-        "queue-max",
-        "queue-delay",
-        "queue-autoclose-enabled",
-        "queue-autoclose-minutes",
-        "popup-disconnected-enabled",
-        "popup-scan-interval",
-        "popup-scan-max-parallel",
-      ].includes(i) ||
-      ((a("queue-max").value = t.max_concurrent_accounts ?? 40),
-      (a("queue-delay").value =
-        t.queue_delay_seconds ?? t.launch_rate_interval ?? 15),
-      (a("queue-autoclose-enabled").checked = !!t.auto_close_enabled),
-      (a("queue-autoclose-minutes").value = t.auto_close_minutes ?? 0),
-      (a("popup-disconnected-enabled").checked =
-        !1 !== t.popup_disconnected_enabled),
-      (a("popup-scan-interval").value = t.popup_scan_interval_seconds ?? 30),
-      (a("popup-scan-max-parallel").value = t.popup_scan_max_parallel ?? 2)));
-  const o = !!a("popup-disconnected-enabled").checked;
-  (setReveal(a("autoclose-controls"), !!a("queue-autoclose-enabled").checked),
-    setReveal(a("popup-disconnected-controls"), o));
-  document.querySelectorAll(".queue-card").forEach((c) => {
-    const key = "rg_collapsed_" + (c.id || "card");
-    const qcCollapsed = "1" === localStorage.getItem(key);
-    c.classList.toggle("collapsed", qcCollapsed);
-    const qb = c.querySelector(".queue-rows,.queue-card-body");
-    qb && (qb.hidden = qcCollapsed);
-    const qbtn = c.querySelector(".queue-collapse-btn");
-    qbtn && qbtn.setAttribute("aria-expanded", String(!qcCollapsed));
-  });
-  (r("game"), r("queue"));
+  const { $, CONFIG, dirty, updateSaveState } = e;
+  if (!CONFIG) return;
+  renderGameSection($, CONFIG, dirty);
+  renderQueueSection($, CONFIG, dirty);
+  setReveal($("autoclose-controls"), !!$("queue-autoclose-enabled").checked);
+  setReveal(
+    $("popup-disconnected-controls"),
+    !!$("popup-disconnected-enabled").checked,
+  );
+  syncQueueCardCollapse();
+  updateSaveState("game");
+  updateSaveState("queue");
+}
+const PERF_FIELDS = ["fps-enabled", "fps-limit"];
+function fillFpsFields(e, perf, dirty) {
+  const active = document.activeElement?.id || "";
+  if (dirty("performance") || PERF_FIELDS.includes(active)) return;
+  e("fps-enabled").checked = !!perf.enabled;
+  e("fps-limit").value = perf.fps_limit ?? perf.framerate_cap ?? 240;
+}
+function perfNoticeMessage(perf) {
+  const message = perf.warning || perf.msg || "";
+  if (!message || "ok" === message) return "";
+  return perf.required_action || message;
 }
 export function renderPerformancePanel(e) {
-  const { $: a, PERF: t, dirty: n, updateSaveState: r } = e;
-  if (!a("fps-enabled")) return;
-  const i = document.activeElement?.id || "";
-  (n("performance") ||
-    ["fps-enabled", "fps-limit"].includes(i) ||
-    ((a("fps-enabled").checked = !!t.enabled),
-    (a("fps-limit").value = t.fps_limit ?? t.framerate_cap ?? 240)),
-    setReveal(a("fps-limit-field"), !!a("fps-enabled").checked));
-  const o = a("fps-notice"),
-    l = t.warning || t.msg || "",
-    w = t.warning_title || "",
-    c = t.required_action || "";
-  o.classList.remove(
-    "notice-error",
-    "notice-success",
-    "notice-info",
-    "notice-warning",
+  const { $, PERF, dirty, updateSaveState } = e;
+  const fpsEnabled = $("fps-enabled");
+  if (!fpsEnabled) return;
+  fillFpsFields($, PERF, dirty);
+  setReveal($("fps-limit-field"), !!fpsEnabled.checked);
+  setPanelNotice(
+    $("fps-notice"),
+    perfNoticeMessage(PERF),
+    PERF.warning_title || "",
   );
-  if (l && "ok" !== l) {
-    if (t.warning) {
-      o.innerHTML = "";
-      const n = document.createElement("span");
-      n.className = "notice-icon";
-      n.innerHTML =
-        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>';
-      o.prepend(n);
-      const s = document.createElement("span");
-      s.className = "notice-copy";
-      if (w) {
-        const d = document.createElement("span");
-        d.className = "notice-title";
-        d.textContent = w;
-        s.append(d);
-      }
-      const p = document.createElement("span");
-      p.className = "notice-desc";
-      p.textContent = c || l;
-      s.append(p);
-      o.append(s);
-      o.classList.add("show", "notice-warning");
-    } else {
-      setPanelNotice(o, l, w);
-    }
-  } else {
-    setPanelNotice(o, "");
+  updateSaveState("performance");
+}
+const RAM_FIELDS = ["ram-enabled", "ram-limit-preset", "ram-limit-custom"];
+function fillRamFields(e, config, dirty, preset, custom) {
+  const active = document.activeElement?.id || "";
+  if (dirty("ram") || RAM_FIELDS.includes(active)) return;
+  e("ram-enabled").checked = !1 !== config.roblox_memory_guard_enabled;
+  const limit = normalizeRamLimit(config.roblox_memory_guard_mb ?? 8192);
+  if (RAM_LIMIT_PRESETS.includes(limit)) {
+    preset.value = String(limit);
+    custom.value = String(limit);
+    return;
   }
-  r("performance");
+  preset.value = "custom";
+  custom.value = String(limit);
 }
 export function renderRamPanel(e) {
-  const { $: a, CONFIG: t, dirty: n, updateSaveState: r } = e;
-  if (!a("ram-enabled")) return;
-  const i = document.activeElement?.id || "",
-    o = a("ram-limit-preset"),
-    l = a("ram-limit-custom"),
-    s = a("ram-current-field"),
-    c = a("ram-limit-custom-field");
-  if (!(o && l && s && c)) return r("ram");
-  if (
-    !n("ram") &&
-    !["ram-enabled", "ram-limit-preset", "ram-limit-custom"].includes(i)
-  ) {
-    a("ram-enabled").checked = !1 !== t.roblox_memory_guard_enabled;
-    const e = normalizeRamLimit(t.roblox_memory_guard_mb ?? 8192);
-    RAM_LIMIT_PRESETS.includes(e)
-      ? ((o.value = String(e)), (l.value = String(e)))
-      : ((o.value = "custom"), (l.value = String(e)));
-  }
-  const u = !!a("ram-enabled").checked;
-  (setReveal(s, u), setHidden(c, u && "custom" === o.value));
-  const d = a("ram-notice");
-  (setPanelNotice(d, ""), r("ram"));
+  const { $, CONFIG, dirty, updateSaveState } = e;
+  if (!$("ram-enabled")) return;
+  const preset = $("ram-limit-preset"),
+    custom = $("ram-limit-custom"),
+    currentField = $("ram-current-field"),
+    customField = $("ram-limit-custom-field");
+  if (!(preset && custom && currentField && customField))
+    return updateSaveState("ram");
+  fillRamFields($, CONFIG, dirty, preset, custom);
+  const enabled = !!$("ram-enabled").checked;
+  setReveal(currentField, enabled);
+  setHidden(customField, enabled && "custom" === preset.value);
+  setPanelNotice($("ram-notice"), "");
+  updateSaveState("ram");
+}
+const GRAPHICS_FIELDS = [
+  "graphics-auto-enabled",
+  "graphics-quality",
+  "graphics-quality-range",
+  "priority-enabled",
+  "process-priority",
+  "volume-muted",
+  "volume-level",
+  "volume-level-range",
+];
+function syncQualityRange(e) {
+  const range = e("graphics-quality-range");
+  if (!range) return;
+  range.value = e("graphics-quality").value;
+  if (window.__paintRange) window.__paintRange(range);
+}
+function fillGraphicsFields(e, graphics, dirty) {
+  const active = document.activeElement?.id || "";
+  if (dirty("graphics") || GRAPHICS_FIELDS.includes(active)) return;
+  e("graphics-auto-enabled").checked =
+    !!(graphics.graphics_low_enabled ?? graphics.graphics_auto_enabled);
+  e("graphics-quality").value =
+    graphics.graphics_quality_level ??
+    graphics.graphics_quality_level_current ??
+    1;
+  syncQualityRange(e);
+  e("priority-enabled").checked = !!graphics.auto_process_priority_enabled;
+  e("process-priority").value = graphics.process_priority || "low";
+  renderVolumeFields(e, graphics);
 }
 export function renderGraphicsPanel(e) {
-  const { $: a, GRAPHICS: t, dirty: n, updateSaveState: r } = e;
-  if (!a("graphics-auto-enabled")) return;
-  const i = document.activeElement?.id || "",
-    o = !!(t.graphics_low_enabled ?? t.graphics_auto_enabled);
-  (n("graphics") ||
-    [
-      "graphics-auto-enabled",
-      "graphics-quality",
-      "graphics-quality-range",
-      "priority-enabled",
-      "process-priority",
-      "volume-muted",
-      "volume-level",
-      "volume-level-range",
-    ].includes(i) ||
-    ((a("graphics-auto-enabled").checked = o),
-    (a("graphics-quality").value =
-      t.graphics_quality_level ?? t.graphics_quality_level_current ?? 1),
-    a("graphics-quality-range") &&
-      ((a("graphics-quality-range").value = a("graphics-quality").value),
-      window.__paintRange && window.__paintRange(a("graphics-quality-range"))),
-    (a("priority-enabled").checked = !!t.auto_process_priority_enabled),
-    (a("process-priority").value = t.process_priority || "low"),
-    renderVolumeFields(a, t)),
-    setReveal(
-      a("graphics-quality-controls"),
-      !!a("graphics-auto-enabled").checked,
-    ),
-    setReveal(a("priority-controls"), !!a("priority-enabled").checked),
-    syncVolumeDisabled(a));
-  const l = a("graphics-notice"),
-    s = t.warning || t.msg || "",
-    w = t.warning_title || "",
-    c = t.required_action || "";
-  setPanelNotice(l, c || s, w);
-  const _vn = a("volume-notice");
-  if (_vn) {
-    const _vm = t.volume_level_current;
-    let _msg = "";
-    if (typeof _vm === "number" && !n("graphics")) {
-      _msg = `File now: ${Math.round(_vm)} (${t.master_volume ?? "?"})`;
-    }
-    setPanelNotice(_vn, "", "");
-    if (_msg && !t.warning) {
-      _vn.classList.remove(
-        "notice-error",
-        "notice-success",
-        "notice-info",
-        "notice-warning",
-      );
-      _vn.textContent = "";
-      _vn.classList.remove("show");
-    }
-  }
-  r("graphics");
+  const { $, GRAPHICS, dirty, updateSaveState } = e;
+  if (!$("graphics-auto-enabled")) return;
+  fillGraphicsFields($, GRAPHICS, dirty);
+  setReveal(
+    $("graphics-quality-controls"),
+    !!$("graphics-auto-enabled").checked,
+  );
+  setReveal($("priority-controls"), !!$("priority-enabled").checked);
+  syncVolumeDisabled($);
+  setPanelNotice(
+    $("graphics-notice"),
+    GRAPHICS.required_action || GRAPHICS.warning || GRAPHICS.msg || "",
+    GRAPHICS.warning_title || "",
+  );
+  setPanelNotice($("volume-notice"), "");
+  updateSaveState("graphics");
 }
 function clampVolumeLevel(e) {
   const a = Number(e);
   return Number.isFinite(a) ? Math.max(0, Math.min(10, Math.round(a))) : 10;
 }
-function renderVolumeFields(a, t) {
+function volumeLevelOf(config) {
+  return clampVolumeLevel(
+    config.roblox_volume_level ?? config.volume_level_current ?? 10,
+  );
+}
+function setVolumeInput(input, value) {
+  if (!input || document.activeElement === input) return;
+  input.value = value;
+}
+function renderVolumeFields(e, config) {
   try {
-    const m = a("volume-muted"),
-      v = a("volume-level"),
-      r = a("volume-level-range");
-    if (m) m.checked = !!t.roblox_volume_muted;
-    const lvl = t.roblox_volume_level ?? t.volume_level_current ?? 10;
-    if (v && document.activeElement !== v) v.value = clampVolumeLevel(lvl);
-    if (r && document.activeElement !== r)
-      r.value = String(clampVolumeLevel(lvl));
-    if (r) window.__paintRange && window.__paintRange(r);
+    const muted = e("volume-muted");
+    if (muted) muted.checked = !!config.roblox_volume_muted;
+    const level = volumeLevelOf(config),
+      range = e("volume-level-range");
+    setVolumeInput(e("volume-level"), level);
+    setVolumeInput(range, String(level));
+    if (range && window.__paintRange) window.__paintRange(range);
   } catch (_) {}
 }
-function syncVolumeDisabled(a) {
+function syncVolumeDisabled(e) {
   try {
-    const m = a("volume-muted"),
-      v = a("volume-level"),
-      r = a("volume-level-range");
-    const dis = !!m?.checked;
-    if (v) v.disabled = dis;
-    if (r) r.disabled = dis;
+    const muted = e("volume-muted"),
+      level = e("volume-level"),
+      range = e("volume-level-range");
+    const disabled = !!muted?.checked;
+    if (level) level.disabled = disabled;
+    if (range) range.disabled = disabled;
   } catch (_) {}
+}
+const WINDOW_SIZE_FIELDS = [
+  "window-unlock-enabled",
+  "window-arrange-enabled",
+  "window-size-enabled",
+  "window-grid-cols",
+  "window-grid-rows",
+  "window-size-preset",
+  "window-size-width",
+  "window-size-height",
+  "window-auto-minimize-enabled",
+  "window-auto-minimize-seconds",
+  "window-hide-enabled",
+];
+function fillWindowSizeLayout(e, size) {
+  setChecked(e("window-unlock-enabled"), !1 !== size.unlock_size_enabled);
+  setChecked(e("window-arrange-enabled"), !!size.arrange_enabled);
+  setChecked(e("window-size-enabled"), !!size.enabled);
+  setValue(e("window-grid-cols"), size.arrange_columns ?? 6);
+  setValue(e("window-grid-rows"), size.arrange_rows ?? 4);
+  setValue(e("window-size-preset"), size.preset || "200x150");
+  setValue(e("window-size-width"), size.width ?? 200);
+  setValue(e("window-size-height"), size.height ?? 150);
+}
+function fillWindowSizeExtras(e, size) {
+  setChecked(e("window-auto-minimize-enabled"), !!size.auto_minimize_enabled);
+  setValue(e("window-auto-minimize-seconds"), size.auto_minimize_seconds ?? 10);
+  setChecked(e("window-hide-enabled"), !!size.hide_enabled);
+}
+function fillWindowSizeFields(e, size, dirty, active) {
+  if (dirty("window-size") || WINDOW_SIZE_FIELDS.includes(active)) return;
+  fillWindowSizeLayout(e, size);
+  fillWindowSizeExtras(e, size);
+}
+function applyWindowPreset(e, presets, active) {
+  const preset = e("window-size-preset").value;
+  setHidden(e("window-size-custom"), "custom" === preset);
+  if ("custom" === preset || !presets[preset]) return;
+  if (["window-size-width", "window-size-height"].includes(active)) return;
+  const [width, height] = presets[preset];
+  e("window-size-width").value = width;
+  e("window-size-height").value = height;
 }
 export function renderWindowSizePanel(e) {
-  const {
-    $: a,
-    WINDOW_SIZE: t,
-    WINDOW_SIZE_PRESETS: n,
-    dirty: r,
-    updateSaveState: i,
-  } = e;
-  if (!a("window-size-enabled")) return;
-  const o = document.activeElement?.id || "",
-    l = [
-      "window-unlock-enabled",
-      "window-arrange-enabled",
-      "window-size-enabled",
-      "window-grid-cols",
-      "window-grid-rows",
-      "window-size-preset",
-      "window-size-width",
-      "window-size-height",
-      "window-auto-minimize-enabled",
-      "window-auto-minimize-seconds",
-      "window-hide-enabled",
-    ];
-  r("window-size") ||
-    l.includes(o) ||
-    ((a("window-unlock-enabled").checked = !1 !== t.unlock_size_enabled),
-    (a("window-arrange-enabled").checked = !!t.arrange_enabled),
-    (a("window-size-enabled").checked = !!t.enabled),
-    (a("window-grid-cols").value = t.arrange_columns ?? 6),
-    (a("window-grid-rows").value = t.arrange_rows ?? 4),
-    (a("window-size-preset").value = t.preset || "200x150"),
-    (a("window-size-width").value = t.width ?? 200),
-    (a("window-size-height").value = t.height ?? 150),
-    a("window-auto-minimize-enabled") &&
-      (a("window-auto-minimize-enabled").checked = !!t.auto_minimize_enabled),
-    a("window-auto-minimize-seconds") &&
-      (a("window-auto-minimize-seconds").value = t.auto_minimize_seconds ?? 10),
-    a("window-hide-enabled") &&
-      (a("window-hide-enabled").checked = !!t.hide_enabled));
-  try {
-    const _am = !!a("window-auto-minimize-enabled")?.checked;
-    const _amf = a("window-auto-minimize-seconds-field");
-    if (_amf) setReveal(_amf, _am);
-  } catch (_) {}
-  const s = a("window-size-preset").value;
+  const { $, WINDOW_SIZE, WINDOW_SIZE_PRESETS, dirty, updateSaveState } = e;
+  if (!$("window-size-enabled")) return;
+  const active = document.activeElement?.id || "";
+  fillWindowSizeFields($, WINDOW_SIZE, dirty, active);
+  setReveal(
+    $("window-auto-minimize-seconds-field"),
+    !!$("window-auto-minimize-enabled")?.checked,
+  );
+  applyWindowPreset($, WINDOW_SIZE_PRESETS, active);
+  renderGridPicker($);
+  setPanelNotice($("window-size-notice"), WINDOW_SIZE.msg || "");
+  updateSaveState("window-size");
+}
+const CPU_FIELDS = [
+  "cpu-enabled",
+  "cpu-mode",
+  "cpu-default-limit",
+  "cpu-apply-all",
+];
+const CPU_EMPTY_ROW =
+  '<tr><td colspan="5" style="height:90px;text-align:center;color:var(--muted)">No accounts</td></tr>';
+function fillCpuFields(e, limiter, dirty) {
+  const active = document.activeElement?.id || "";
   if (
-    (setHidden(a("window-size-custom"), "custom" === s),
-    "custom" !== s &&
-      n[s] &&
-      !["window-size-width", "window-size-height"].includes(o))
-  ) {
-    const e = n[s];
-    ((a("window-size-width").value = e[0]),
-      (a("window-size-height").value = e[1]));
-  }
-  renderGridPicker(a);
-  const c = a("window-size-notice"),
-    u = t.msg || "";
-  (setPanelNotice(c, u), i("window-size"));
+    dirty("cpu-limiter") ||
+    CPU_FIELDS.includes(active) ||
+    active.startsWith("cpu-row-")
+  )
+    return;
+  e("cpu-enabled").checked = !!limiter.enabled;
+  e("cpu-mode").value = limiter.mode || "hard";
+  e("cpu-default-limit").value = limiter.default_limit_percent ?? 20;
+  e("cpu-apply-all").checked = !1 !== limiter.apply_all;
+}
+function cpuPanelState(e, limiter) {
+  const enabled = !!e("cpu-enabled").checked,
+    applyAll = !!e("cpu-apply-all").checked;
+  const configured =
+    Number(e("cpu-default-limit").value) ||
+    Number(limiter.default_limit_percent);
+  return {
+    enabled,
+    applyAll,
+    defaultLimit: configured || 20,
+    rows: Array.isArray(limiter.rows) ? limiter.rows : [],
+  };
+}
+function cpuRowContext(row, ctx) {
+  const username = String(row.username || "");
+  const disabled = !ctx.enabled || ctx.applyAll;
+  const limit = ctx.applyAll
+    ? ctx.defaultLimit
+    : (row.limit_percent ?? ctx.defaultLimit);
+  return {
+    username,
+    disabled: disabled ? "disabled" : "",
+    checked: ctx.applyAll || !!row.enabled ? "checked" : "",
+    limit: Number(limit).toFixed(2),
+  };
+}
+function cpuRowHtml(row, ctx) {
+  const esc = ctx.esc,
+    cells = cpuRowContext(row, ctx),
+    user = esc(cells.username);
+  return [
+    `<tr><td><div class="name">${esc(row.display || cells.username)}</div><div class="handle">${user}</div></td>`,
+    `<td>${esc(row.pid || "-")}</td>`,
+    `<td><input id="cpu-row-enabled-${user}" class="cpu-row-enabled" data-user="${user}" type="checkbox" ${cells.checked} ${cells.disabled}></td>`,
+    `<td><input id="cpu-row-limit-${user}" class="input cpu-row-limit" data-user="${user}" type="number" min="5" max="95" step="0.01" value="${esc(cells.limit)}" ${cells.disabled}></td>`,
+    `<td><strong>${esc(row.status || "Pending")}</strong><div class="handle">${esc(row.message || "")}</div></td></tr>`,
+  ].join("");
+}
+function cpuNoticeMessage(limiter, rows) {
+  const failed = rows.filter((row) => "Failed" === row.status).length,
+    fallback = rows.filter((row) => "Fallback" === row.status).length;
+  return (
+    limiter.msg || (failed ? `${failed} failed` : fallback ? `${fallback} fallback` : "")
+  );
+}
+function renderCpuRowControls(e, enabled) {
+  setHidden(e("cpu-controls"), enabled);
+  setReveal(e("cpu-default-limit").closest(".queue-row"), enabled);
+  setReveal(e("cpu-apply-all").closest(".queue-row"), enabled);
+  setDim(e("cpu-account-rows").closest(".queue-row"), enabled);
 }
 export function renderCpuLimiterPanel(e) {
-  const { $: a, CPU_LIMITER: t, dirty: n, updateSaveState: r, esc: i } = e;
-  if (!a("cpu-enabled")) return;
-  const o = document.activeElement?.id || "";
-  n("cpu-limiter") ||
-    ["cpu-enabled", "cpu-mode", "cpu-default-limit", "cpu-apply-all"].includes(
-      o,
-    ) ||
-    o.startsWith("cpu-row-") ||
-    ((a("cpu-enabled").checked = !!t.enabled),
-    (a("cpu-mode").value = t.mode || "hard"),
-    (a("cpu-default-limit").value = t.default_limit_percent ?? 20),
-    (a("cpu-apply-all").checked = !1 !== t.apply_all));
-  const l = !!a("cpu-enabled").checked,
-    s = !!a("cpu-apply-all").checked,
-    c =
-      Number(a("cpu-default-limit").value) ||
-      Number(t.default_limit_percent) ||
-      20,
-    u = Array.isArray(t.rows) ? t.rows : [];
-  ((a("cpu-account-rows").innerHTML =
-    u
-      .map((e) => {
-        const a = e.username || "",
-          t = !l || s,
-          n = e.pid || "-",
-          r = e.status || "Pending",
-          o = e.message || "",
-          u = s || !!e.enabled,
-          d = s ? c : (e.limit_percent ?? c);
-        return `<tr><td><div class="name">${i(e.display || a)}</div><div class="handle">${i(a)}</div></td><td>${i(n)}</td><td><input id="cpu-row-enabled-${i(a)}" class="cpu-row-enabled" data-user="${i(a)}" type="checkbox" ${u ? "checked" : ""} ${t ? "disabled" : ""}></td><td><input id="cpu-row-limit-${i(a)}" class="input cpu-row-limit" data-user="${i(a)}" type="number" min="5" max="95" step="0.01" value="${i(Number(d).toFixed(2))}" ${t ? "disabled" : ""}></td><td><strong>${i(r)}</strong><div class="handle">${i(o)}</div></td></tr>`;
-      })
-      .join("") ||
-    '<tr><td colspan="5" style="height:90px;text-align:center;color:var(--muted)">No accounts</td></tr>'),
-    setHidden(a("cpu-controls"), l),
-    setReveal(a("cpu-default-limit").closest(".queue-row"), l),
-    setReveal(a("cpu-apply-all").closest(".queue-row"), l),
-    setDim(a("cpu-account-rows").closest(".queue-row"), l));
-  const d = a("cpu-notice"),
-    p = u.filter((e) => "Failed" === e.status).length,
-    m = u.filter((e) => "Fallback" === e.status).length,
-    g = t.msg || (p ? `${p} failed` : m ? `${m} fallback` : "");
-  (setPanelNotice(d, g), r("cpu-limiter"));
+  const { $, CPU_LIMITER, dirty, updateSaveState, esc } = e;
+  if (!$("cpu-enabled")) return;
+  fillCpuFields($, CPU_LIMITER, dirty);
+  const state = cpuPanelState($, CPU_LIMITER);
+  const ctx = {
+    enabled: state.enabled,
+    applyAll: state.applyAll,
+    defaultLimit: state.defaultLimit,
+    esc,
+  };
+  const html = state.rows.map((row) => cpuRowHtml(row, ctx)).join("");
+  $("cpu-account-rows").innerHTML = html || CPU_EMPTY_ROW;
+  renderCpuRowControls($, state.enabled);
+  setPanelNotice($("cpu-notice"), cpuNoticeMessage(CPU_LIMITER, state.rows));
+  updateSaveState("cpu-limiter");
 }
 function robloxVersionPresentation(installed, latestVersion, isUpToDate) {
   if (!installed)
@@ -455,44 +531,43 @@ function robloxVersionPresentation(installed, latestVersion, isUpToDate) {
         label: installed.version || "Installed",
       };
 }
+function blockerTitle(status, isRunning) {
+  const blockers = status.blockers;
+  if (!isRunning || !Array.isArray(blockers) || !blockers.length) return "";
+  return blockers
+    .map((blocker) => `${blocker.name || "Process"} (PID ${blocker.pid})`)
+    .join(", ");
+}
 function renderTroubleshootNotice(element, status, job, isRunning) {
   const message = isRunning
     ? status.block_msg || "Stop Cronus and close Roblox first"
     : status.msg || job.error || job.msg || "";
   setPanelNotice(element, message, isRunning ? "Roblox is running" : "");
-  if (element)
-    element.title =
-      isRunning && Array.isArray(status.blockers) && status.blockers.length
-        ? status.blockers
-            .map(
-              (blocker) => `${blocker.name || "Process"} (PID ${blocker.pid})`,
-            )
-            .join(", ")
-        : "";
+  if (element) element.title = blockerTitle(status, isRunning);
 }
 export function renderTroubleshootPanel(e) {
-  const { $: a, TROUBLESHOOT: t } = e;
-  const versionNode = a("roblox-installed-version");
+  const { $, TROUBLESHOOT } = e;
+  const versionNode = $("roblox-installed-version");
   if (!versionNode) return;
-  const installed = t.installed || {};
-  const job = t.job || {};
-  const isRunning = !!t.running_blocked;
+  const installed = TROUBLESHOOT.installed || {};
+  const job = TROUBLESHOOT.job || {};
+  const isRunning = !!TROUBLESHOOT.running_blocked;
   const presentation = robloxVersionPresentation(
     installed,
-    t.latest_version,
-    !!t.installed_up_to_date,
+    TROUBLESHOOT.latest_version,
+    !!TROUBLESHOOT.installed_up_to_date,
   );
   versionNode.textContent = presentation.label;
-  const dot = a("roblox-version-dot");
+  const dot = $("roblox-version-dot");
   if (dot) {
     dot.className = `install-version-dot ${presentation.className}`;
     dot.title = presentation.title;
   }
-  a("roblox-install-state").textContent = job.state || "Ready";
-  a("roblox-install-progress").textContent = job.progress || job.msg || "-";
-  renderTroubleshootNotice(a("roblox-install-notice"), t, job, isRunning);
+  $("roblox-install-state").textContent = job.state || "Ready";
+  $("roblox-install-progress").textContent = job.progress || job.msg || "-";
+  renderTroubleshootNotice($("roblox-install-notice"), TROUBLESHOOT, job, isRunning);
   ["roblox-uninstall", "roblox-latest"].forEach((id) => {
-    const control = a(id);
+    const control = $(id);
     if (control) control.disabled = isRunning || !!job.active;
   });
 }
@@ -526,45 +601,50 @@ export function resetWindowSizePanel(e) {
 export function resetCpuLimiterPanel(e) {
   (e.clearDirty("cpu-limiter"), renderCpuLimiterPanel(e));
 }
+function gamePayload(e, config) {
+  const toggle = e("game-mode-toggle"),
+    blockSame = e("game-block-same-server");
+  return {
+    game_private_server_url: e("game-private").value.trim(),
+    game_place_id: e("game-place").value.trim(),
+    game_mode:
+      toggle?.querySelector("button.active")?.dataset.mode ||
+      toggle?.dataset.value ||
+      "shared",
+    auto_create_private_server_enabled: e("game-auto-private-enabled").checked,
+    auto_create_private_server_free_only: !0,
+    multi_roblox_enabled: e("game-multi-roblox").checked,
+    block_same_server_enabled: blockSame
+      ? !!blockSame.checked
+      : !!config?.block_same_server_enabled,
+  };
+}
+function pluralAccounts(count) {
+  return `${count} account${count === 1 ? "" : "s"}`;
+}
+function gameSavedMessage(result) {
+  const rejoined = Array.isArray(result.game_rejoined)
+      ? result.game_rejoined.length
+      : 0,
+    stopped = Array.isArray(result.game_stopped)
+      ? result.game_stopped.length
+      : 0,
+    defaulted = result.game_defaults_applied
+      ? ` (${result.game_defaults_applied} defaulted)`
+      : "",
+    stoppedText = stopped ? ` - stopped ${pluralAccounts(stopped)}` : "",
+    rejoinedText = rejoined ? ` - switching ${pluralAccounts(rejoined)}` : "";
+  return `Game saved${defaulted}${stoppedText}${rejoinedText}`;
+}
 export async function saveGamePanel(e) {
-  const {
-      $: a,
-      api: t,
-      clearDirty: n,
-      toast: r,
-      loadConfig: i,
-      manualSnapshot: o,
-    } = e,
-    l = {
-      game_private_server_url: a("game-private").value.trim(),
-      game_place_id: a("game-place").value.trim(),
-      game_mode:
-        a("game-mode-toggle")?.querySelector("button.active")?.dataset.mode ||
-        a("game-mode-toggle")?.dataset.value ||
-        "shared",
-      auto_create_private_server_enabled: a("game-auto-private-enabled")
-        .checked,
-      auto_create_private_server_free_only: !0,
-      multi_roblox_enabled: a("game-multi-roblox").checked,
-      block_same_server_enabled: a("game-block-same-server")
-        ? !!a("game-block-same-server").checked
-        : !!e.CONFIG?.block_same_server_enabled,
-    },
-    s = await t("/config", "POST", l),
-    j = Array.isArray(s.game_rejoined) ? s.game_rejoined.length : 0,
-    q = Array.isArray(s.game_stopped) ? s.game_stopped.length : 0;
-  (n("game"),
-    r(
-      "Game saved" +
-        (s.game_defaults_applied
-          ? ` (${s.game_defaults_applied} defaulted)`
-          : "") +
-        (q ? ` - stopped ${q} account${q === 1 ? "" : "s"}` : "") +
-        (j ? ` - switching ${j} account${j === 1 ? "" : "s"}` : ""),
-    ),
-    await i(),
-    await o(),
-    dispatchGameMode(l.game_mode));
+  const { $, api, clearDirty, toast, loadConfig, manualSnapshot } = e;
+  const payload = gamePayload($, e.CONFIG);
+  const result = await api("/config", "POST", payload);
+  clearDirty("game");
+  toast(gameSavedMessage(result));
+  await loadConfig();
+  await manualSnapshot();
+  dispatchGameMode(payload.game_mode);
 }
 export async function saveQueuePanel(e) {
   const {
@@ -643,136 +723,111 @@ export async function saveRamPanel(e) {
     return (setPanelNotice(a("ram-notice"), t.message), r(t.message), e.CONFIG);
   }
 }
-export async function saveGraphicsPanel(e) {
-  const {
-      $: a,
-      api: t,
-      clearDirty: n,
-      toast: r,
-      loadConfig: i,
-      renderGraphics: o,
-    } = e,
-    l = a("graphics-auto-enabled").checked;
-  const _vr = a("volume-level-range"),
-    _vn = a("volume-level");
-  let _lvl = Number(_vn?.value);
-  if (!Number.isFinite(_lvl)) _lvl = Number(_vr?.value);
-  if (!Number.isFinite(_lvl)) _lvl = 10;
-  _lvl = Math.max(0, Math.min(10, Math.round(_lvl)));
-  const s = {
-    graphics_low_enabled: l,
-    graphics_auto_enabled: l,
-    graphics_quality_level: (() => {
-      const _qn = Number(a("graphics-quality")?.value);
-      if (Number.isFinite(_qn) && _qn >= 1 && _qn <= 10) return Math.round(_qn);
-      const _qr = Number(a("graphics-quality-range")?.value);
-      return Number.isFinite(_qr)
-        ? Math.max(1, Math.min(10, Math.round(_qr)))
-        : 1;
-    })(),
-    auto_process_priority_enabled: a("priority-enabled").checked,
-    process_priority: a("process-priority").value,
-    roblox_volume_muted: !!a("volume-muted")?.checked,
-    roblox_volume_level: _lvl,
+function graphicsQualityLevel(e) {
+  const quality = Number(e("graphics-quality")?.value);
+  if (Number.isFinite(quality) && quality >= 1 && quality <= 10)
+    return Math.round(quality);
+  const range = Number(e("graphics-quality-range")?.value);
+  return Number.isFinite(range)
+    ? Math.max(1, Math.min(10, Math.round(range)))
+    : 1;
+}
+function graphicsVolumeLevel(e) {
+  const range = e("volume-level-range");
+  let level = Number(e("volume-level")?.value);
+  if (!Number.isFinite(level)) level = Number(range?.value);
+  return clampVolumeLevel(level);
+}
+function graphicsPayload(e) {
+  const lowEnabled = e("graphics-auto-enabled").checked;
+  return {
+    graphics_low_enabled: lowEnabled,
+    graphics_auto_enabled: lowEnabled,
+    graphics_quality_level: graphicsQualityLevel(e),
+    auto_process_priority_enabled: e("priority-enabled").checked,
+    process_priority: e("process-priority").value,
+    roblox_volume_muted: !!e("volume-muted")?.checked,
+    roblox_volume_level: graphicsVolumeLevel(e),
   };
+}
+export async function saveGraphicsPanel(e) {
+  const { $, api, clearDirty, toast, loadConfig, renderGraphics } = e;
   try {
-    const l = await t("/performance/graphics", "POST", s);
-    return (
-      (e.GRAPHICS = l),
-      n("graphics"),
-      o(l),
-      r(l.warning || "Graphics saved"),
-      await i(),
-      l
-    );
-  } catch (t) {
-    return (
-      setPanelNotice(a("graphics-notice"), t.message),
-      setPanelNotice(a("volume-notice"), t.message),
-      r(t.message),
-      e.GRAPHICS
-    );
+    const result = await api("/performance/graphics", "POST", graphicsPayload($));
+    e.GRAPHICS = result;
+    clearDirty("graphics");
+    renderGraphics(result);
+    toast(result.warning || "Graphics saved");
+    await loadConfig();
+    return result;
+  } catch (error) {
+    setPanelNotice($("graphics-notice"), error.message);
+    setPanelNotice($("volume-notice"), error.message);
+    toast(error.message);
+    return e.GRAPHICS;
   }
 }
+function windowSizeExtras(e, state, includeHide) {
+  const minimize = e("window-auto-minimize-enabled");
+  const extras = {
+    auto_minimize_enabled: minimize
+      ? !!minimize.checked
+      : !!state?.auto_minimize_enabled,
+    auto_minimize_seconds:
+      Number(e("window-auto-minimize-seconds")?.value) ||
+      Number(state?.auto_minimize_seconds) ||
+      10,
+  };
+  if (includeHide) {
+    const hide = e("window-hide-enabled");
+    extras.hide_enabled = hide ? !!hide.checked : !!state?.hide_enabled;
+  }
+  return extras;
+}
+function windowSizePayload(e, state, includeHide) {
+  return {
+    unlock_size_enabled: e("window-unlock-enabled").checked,
+    enabled: e("window-size-enabled").checked,
+    preset: e("window-size-preset").value,
+    width: Number(e("window-size-width").value) || 200,
+    height: Number(e("window-size-height").value) || 150,
+    arrange_enabled: e("window-arrange-enabled").checked,
+    arrange_columns: Number(e("window-grid-cols")?.value) || 6,
+    arrange_rows: Number(e("window-grid-rows")?.value) || 4,
+    arrange_gap: 0,
+    ...windowSizeExtras(e, state, includeHide),
+  };
+}
 export async function saveWindowSizePanel(e) {
-  const {
-      $: a,
-      api: t,
-      clearDirty: n,
-      toast: r,
-      loadConfig: i,
-      renderWindowSize: o,
-    } = e,
-    l = a("window-size-preset").value,
-    s = {
-      unlock_size_enabled: a("window-unlock-enabled").checked,
-      enabled: a("window-size-enabled").checked,
-      preset: l,
-      width: Number(a("window-size-width").value) || 200,
-      height: Number(a("window-size-height").value) || 150,
-      arrange_enabled: a("window-arrange-enabled").checked,
-      arrange_columns: Number(a("window-grid-cols")?.value) || 6,
-      arrange_rows: Number(a("window-grid-rows")?.value) || 4,
-      arrange_gap: 0,
-      auto_minimize_enabled: a("window-auto-minimize-enabled")
-        ? !!a("window-auto-minimize-enabled").checked
-        : !!e.WINDOW_SIZE?.auto_minimize_enabled,
-      auto_minimize_seconds:
-        Number(a("window-auto-minimize-seconds")?.value) ||
-        Number(e.WINDOW_SIZE?.auto_minimize_seconds) ||
-        10,
-      hide_enabled: a("window-hide-enabled")
-        ? !!a("window-hide-enabled").checked
-        : !!e.WINDOW_SIZE?.hide_enabled,
-    };
+  const { $, api, clearDirty, toast, loadConfig, renderWindowSize } = e;
+  const payload = windowSizePayload($, e.WINDOW_SIZE, true);
   try {
-    const a = await t("/performance/window-size", "POST", s);
-    return (
-      (e.WINDOW_SIZE = a),
-      n("window-size"),
-      await i(),
-      o(a),
-      r(a.msg || "Windows saved"),
-      a
-    );
-  } catch (t) {
-    return (
-      setPanelNotice(a("window-size-notice"), t.message),
-      r(t.message),
-      e.WINDOW_SIZE
-    );
+    const result = await api("/performance/window-size", "POST", payload);
+    e.WINDOW_SIZE = result;
+    clearDirty("window-size");
+    await loadConfig();
+    renderWindowSize(result);
+    toast(result.msg || "Windows saved");
+    return result;
+  } catch (error) {
+    setPanelNotice($("window-size-notice"), error.message);
+    toast(error.message);
+    return e.WINDOW_SIZE;
   }
 }
 export async function rearrangeWindowSizePanel(e) {
-  const { $: a, api: t, toast: n, renderWindowSize: r } = e,
-    i = a("window-size-preset").value,
-    o = {
-      unlock_size_enabled: a("window-unlock-enabled").checked,
-      enabled: a("window-size-enabled").checked,
-      preset: i,
-      width: Number(a("window-size-width").value) || 200,
-      height: Number(a("window-size-height").value) || 150,
-      arrange_enabled: a("window-arrange-enabled").checked,
-      arrange_columns: Number(a("window-grid-cols")?.value) || 6,
-      arrange_rows: Number(a("window-grid-rows")?.value) || 4,
-      arrange_gap: 0,
-      auto_minimize_enabled: a("window-auto-minimize-enabled")
-        ? !!a("window-auto-minimize-enabled").checked
-        : !!e.WINDOW_SIZE?.auto_minimize_enabled,
-      auto_minimize_seconds:
-        Number(a("window-auto-minimize-seconds")?.value) ||
-        Number(e.WINDOW_SIZE?.auto_minimize_seconds) ||
-        10,
-    };
+  const { $, api, toast, renderWindowSize } = e;
+  const payload = windowSizePayload($, e.WINDOW_SIZE, false);
   try {
-    const a = await t("/performance/window-size/rearrange", "POST", o);
-    return ((e.WINDOW_SIZE = a), r(a), n(a.msg || "Windows re-arranged"), a);
-  } catch (t) {
-    return (
-      setPanelNotice(a("window-size-notice"), t.message),
-      n(t.message),
-      e.WINDOW_SIZE
-    );
+    const result = await api("/performance/window-size/rearrange", "POST", payload);
+    e.WINDOW_SIZE = result;
+    renderWindowSize(result);
+    toast(result.msg || "Windows re-arranged");
+    return result;
+  } catch (error) {
+    setPanelNotice($("window-size-notice"), error.message);
+    toast(error.message);
+    return e.WINDOW_SIZE;
   }
 }
 function collectCpuRowsPanel(e) {
@@ -780,15 +835,15 @@ function collectCpuRowsPanel(e) {
   return a("cpu-apply-all").checked
     ? []
     : Array.from(document.querySelectorAll("#cpu-account-rows tr"))
-        .map((e) => {
-          const a = e.querySelector(".cpu-row-enabled"),
-            t = e.querySelector(".cpu-row-limit"),
-            n = a?.dataset.user || t?.dataset.user || "";
-          return n
+        .map((row) => {
+          const enabled = row.querySelector(".cpu-row-enabled"),
+            limit = row.querySelector(".cpu-row-limit"),
+            username = enabled?.dataset.user || limit?.dataset.user || "";
+          return username
             ? {
-                username: n,
-                enabled: !!a?.checked,
-                limit_percent: Number(t?.value) || 20,
+                username,
+                enabled: !!enabled?.checked,
+                limit_percent: Number(limit?.value) || 20,
               }
             : null;
         })

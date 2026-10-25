@@ -6,9 +6,8 @@
  * the app instead of unexpectedly navigating the user to GitHub.
  * Failures are quiet except on the button itself - never annoy the user.
  */
-(function () {
-  "use strict";
-
+"use strict";
+{
   let POLL_MS = 15 * 60 * 1000;
   let STATUS_POLL_MS = 1000;
   let timer = 0;
@@ -183,75 +182,100 @@
     } catch (e) {}
   }
 
+  function pollFailed(job) {
+    setLabel("Update failed - retry", job.error || job.msg, false);
+    try { button().classList.add("is-failed"); } catch (e) {}
+    working = false;
+    schedule();
+  }
+
+  function pollDone() {
+    setLabel("Updated", "", true);
+    working = false;
+  }
+
+  function pollInactive(job) {
+    if (job.state === "failed") { pollFailed(job); return; }
+    if (job.state === "done") { pollDone(); return; }
+    working = false;
+    schedule();
+  }
+
+  function pollActive(job) {
+    let label = job.progress || job.state || "updating";
+    setLabel(label.charAt(0).toUpperCase() + label.slice(1) + "…", job.msg || "", true);
+    setProgress(progressPct(job));
+    // Hidden tab: 5s cadence is enough for a progress bar nobody sees.
+    statusTimer = setTimeout(pollStatus, document.hidden ? 5000 : STATUS_POLL_MS);
+  }
+
+  function handleStatus(snap) {
+    let job = (snap && snap.job) || {};
+    if (job.state === "restarting") showUpdatingOverlay(job.version);
+    if (!job.active) { pollInactive(job); return; }
+    pollActive(job);
+  }
+
+  function handleStatusError() {
+    // Server gone mid-poll: either restarting into the new version (good)
+    // or something died. Assume reboot, show the loader, stop polling.
+    showUpdatingOverlay("");
+    setLabel("Restarting…", "The app is restarting into the new version", true);
+    working = false;
+  }
+
   function pollStatus() {
     if (statusTimer) clearTimeout(statusTimer);
     statusTimer = 0;
-    get("/api/update/status").then(function (snap) {
-      let job = (snap && snap.job) || {};
-      if (job.state === "restarting") showUpdatingOverlay(job.version);
-      if (!job.active) {
-        if (job.state === "failed") {
-          setLabel("Update failed - retry", job.error || job.msg, false);
-          try { button().classList.add("is-failed"); } catch (e) {}
-          working = false;
-          schedule();
-          return;
-        }
-        if (job.state === "done") {
-          setLabel("Updated", "", true);
-          working = false;
-          return;
-        }
-        working = false;
-        schedule();
-        return;
-      }
-      let label = job.progress || job.state || "updating";
-      setLabel(label.charAt(0).toUpperCase() + label.slice(1) + "…", job.msg || "", true);
-      setProgress(progressPct(job));
-      // Hidden tab: 5s cadence is enough for a progress bar nobody sees.
-      statusTimer = setTimeout(pollStatus, document.hidden ? 5000 : STATUS_POLL_MS);
-    }).catch(function () {
-      // Server gone mid-poll: either restarting into the new version (good)
-      // or something died. Assume reboot, show the loader, stop polling.
-      showUpdatingOverlay("");
-      setLabel("Restarting…", "The app is restarting into the new version", true);
-      working = false;
-    });
+    get("/api/update/status").then(handleStatus).catch(handleStatusError);
+  }
+
+  function applyNeedConfirm(version, latestUrl) {
+    working = false;
+    confirmModal(version, function () { applyUpdate(version, latestUrl, true); });
+    renderLatest();
+  }
+
+  function applySourceRun() {
+    working = false;
+    setLabel("Install update manually once", "Self-update is available after installing the packaged app. This copy is running from source.", false);
+    renderLatest();
+  }
+
+  function applyRejected(res) {
+    working = false;
+    if (/source run/i.test(res.msg || "")) { applySourceRun(); return; }
+    setLabel("Update failed - retry", res.msg || "", false);
+    try { button().classList.add("is-failed"); } catch (e) {}
+    schedule();
+  }
+
+  function applyAccepted(version) {
+    try { button().classList.remove("is-failed"); } catch (e) {}
+    showUpdatingOverlay(version);
+    pollStatus();
+  }
+
+  function applyResponse(res, version, latestUrl) {
+    res = res || {};
+    if (res.need_confirm_stop) { applyNeedConfirm(version, latestUrl); return; }
+    if (!res.ok || !res.accepted) { applyRejected(res); return; }
+    applyAccepted(version);
+  }
+
+  function applyFailed() {
+    working = false;
+    setLabel("Update failed - retry", "", false);
+    schedule();
   }
 
   function applyUpdate(version, latestUrl, confirmStop) {
     if (working) return;
     working = true;
     setLabel("Starting…", "", true);
-    post("/api/update/apply", { confirm_stop_farm: !!confirmStop }).then(function (res) {
-      res = res || {};
-      if (res.need_confirm_stop) {
-        working = false;
-        confirmModal(version, function () { applyUpdate(version, latestUrl, true); });
-        renderLatest();
-        return;
-      }
-      if (!res.ok || !res.accepted) {
-        working = false;
-        if (/source run/i.test(res.msg || "")) {
-          setLabel("Install update manually once", "Self-update is available after installing the packaged app. This copy is running from source.", false);
-          renderLatest();
-          return;
-        }
-        setLabel("Update failed - retry", res.msg || "", false);
-        try { button().classList.add("is-failed"); } catch (e) {}
-        schedule();
-        return;
-      }
-      try { button().classList.remove("is-failed"); } catch (e) {}
-      showUpdatingOverlay(version);
-      pollStatus();
-    }).catch(function () {
-      working = false;
-      setLabel("Update failed - retry", "", false);
-      schedule();
-    });
+    post("/api/update/apply", { confirm_stop_farm: !!confirmStop })
+      .then(function (res) { applyResponse(res, version, latestUrl); })
+      .catch(applyFailed);
   }
 
   let latestSnap = null;
@@ -277,7 +301,6 @@
     if (!snap || snap.compiled === false || !snap.update_available || !snap.latest_version) {
       removeButton();
       if (snap && snap.check_error) {
-        try { console.warn("[update] check_error:", snap.check_error); } catch (e) {}
         let retry = ensureButton();
         retry.disabled = false;
         retry.classList.remove("is-available", "is-downloading", "is-failed");
@@ -360,4 +383,4 @@
       }
     } catch (e) {}
   });
-})();
+}

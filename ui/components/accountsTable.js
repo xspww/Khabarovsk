@@ -43,37 +43,15 @@ export function formatDescriptionHtml(raw, esc) {
   return safe;
 }
 
-export function renderAccountRows({
-  rows: t,
-  selectedUser: e,
-  editingDescUser: editingUser,
-  cfgFor: a,
-  bucket: s,
-  isCaptcha: n,
-  rowStatusLabel: r,
-  avatarHtml: u,
-  esc: d,
-  gameHtmlFor: g,
-  privacyBlur = false,
-  displayNameFor = null
-}) {
-  if (!t.length) {
-    return '<tr><td colspan="5" style="height:100px;text-align:center;color:var(--muted)">No accounts match the current filter</td></tr>';
-  }
+function rowStatusTick(statusLabel, bucket) {
+  if (statusLabel === "Waiting For Lua") return `${bucket} lua`;
+  if (statusLabel === "Launching") return `${bucket} launching`;
+  return bucket;
+}
 
-  return t.map((t, i) => {
-    const l = a(t.username),
-      m = s(t),
-      p = t.description ?? l.description ?? "",
-      v = r(t, m),
-      h = "Waiting For Lua" === v ? `${m} lua` : "Launching" === v ? `${m} launching` : m;
-
-    const isEditing = editingUser && editingUser.toLowerCase() === String(t.username).toLowerCase();
-
-    let descCell = "";
-    if (isEditing) {
-      descCell = `
-        <div class="desc-editor" data-user="${d(t.username)}">
+function descEditorHtml(account, desc, esc) {
+  return `
+        <div class="desc-editor" data-user="${esc(account.username)}">
           <div class="desc-toolbar">
             <div class="desc-formats">
               <button type="button" class="desc-tool-btn" data-tool="bold" title="Bold">B</button>
@@ -97,41 +75,104 @@ export function renderAccountRows({
               <button type="button" class="desc-color-dot" data-color="pink" style="--c:#f472b6" title="Pink"></button>
             </div>
             <div class="desc-editor-actions">
-              <span class="desc-char-count">${String(p).length}</span>
-              <button type="button" class="desc-action-btn save" data-action="save-desc" data-user="${d(t.username)}" title="Save">&#x2713;</button>
-              <button type="button" class="desc-action-btn cancel" data-action="cancel-desc" data-user="${d(t.username)}" title="Cancel">&times;</button>
+              <span class="desc-char-count">${String(desc).length}</span>
+              <button type="button" class="desc-action-btn save" data-action="save-desc" data-user="${esc(account.username)}" title="Save">&#x2713;</button>
+              <button type="button" class="desc-action-btn cancel" data-action="cancel-desc" data-user="${esc(account.username)}" title="Cancel">&times;</button>
             </div>
           </div>
-          <textarea class="desc-textarea" data-user="${d(t.username)}" placeholder="Description... &lt;color:red&gt;flagged&lt;&gt;">${d(p)}</textarea>
+          <textarea class="desc-textarea" data-user="${esc(account.username)}" placeholder="Description... &lt;color:red&gt;flagged&lt;&gt;">${esc(desc)}</textarea>
         </div>
       `;
-    } else if (p && String(p).trim()) {
-      descCell = `<div class="desc-preview" data-action="edit-desc" data-user="${d(t.username)}" title="Click to edit">${formatDescriptionHtml(p, d)}</div>`;
-    } else {
-      descCell = `<button type="button" class="desc-add-btn" data-action="edit-desc" data-user="${d(t.username)}"><span class="desc-add-plus">+</span> Add description</button>`;
-    }
+}
 
-    const gameCell = g ? g(t, l) : '<span class="game-empty">—</span>';
+function descCellHtml(account, desc, isEditing, esc) {
+  if (isEditing) return descEditorHtml(account, desc, esc);
+  if (desc && String(desc).trim()) {
+    return `<div class="desc-preview" data-action="edit-desc" data-user="${esc(account.username)}" title="Click to edit">${formatDescriptionHtml(desc, esc)}</div>`;
+  }
+  return `<button type="button" class="desc-add-btn" data-action="edit-desc" data-user="${esc(account.username)}"><span class="desc-add-plus">+</span> Add description</button>`;
+}
 
-    const isSelected=e instanceof Set?e.has(t.username):t.username===e;const selClass=isSelected?"selected":"";
-    const realName = String(t.username ?? "");
-    let shownName = realName;
-    let isFake = false;
-    try {
-      if (typeof displayNameFor === "function") {
-        const v = displayNameFor(realName);
-        if (typeof v === "string" && v) { shownName = v; isFake = v.toLowerCase() !== realName.toLowerCase(); }
+function resolveRowName(account, privacyBlur, displayNameFor) {
+  const realName = String(account.username ?? "");
+  let shownName = realName;
+  let isFake = false;
+  try {
+    if (typeof displayNameFor === "function") {
+      const alias = displayNameFor(realName);
+      if (typeof alias === "string" && alias) {
+        shownName = alias;
+        isFake = alias.toLowerCase() !== realName.toLowerCase();
       }
-    } catch (_) {}
-    const hideReal = !!privacyBlur || isFake;
-    const nameCls = "user-name" + (privacyBlur ? " is-blurred" : "") + (isFake ? " is-fake" : "");
-    const nameTitle = hideReal ? "Hidden for privacy" : realName;
-    return `<tr class="${selClass}${isEditing ? " editing-desc" : ""}" data-user="${d(t.username)}">
-      <td class="num">${i + 1}</td>
-      <td><span class="status ${d(h)}">${d(v)}</span></td>
-      <td><div class="user-simple"><span class="${nameCls}" title="${d(nameTitle)}">${d(shownName)}</span></div></td>
+    }
+  } catch (_) {}
+  const hideReal = !!privacyBlur || isFake;
+  const nameCls =
+    "user-name" +
+    (privacyBlur ? " is-blurred" : "") +
+    (isFake ? " is-fake" : "");
+  const nameTitle = hideReal ? "Hidden for privacy" : realName;
+  return { shownName, nameCls, nameTitle };
+}
+
+function accountRowHtml(account, index, ctx) {
+  const cfg = ctx.cfgFor(account.username);
+  const bucket = ctx.bucket(account);
+  const desc = account.description ?? cfg.description ?? "";
+  const statusLabel = ctx.rowStatusLabel(account, bucket);
+  const tick = rowStatusTick(statusLabel, bucket);
+  const isEditing =
+    ctx.editingUser &&
+    ctx.editingUser.toLowerCase() === String(account.username).toLowerCase();
+  const descCell = descCellHtml(account, desc, isEditing, ctx.esc);
+  const gameCell = ctx.gameHtmlFor
+    ? ctx.gameHtmlFor(account, cfg)
+    : '<span class="game-empty">—</span>';
+  const selected =
+    ctx.selectedUser instanceof Set
+      ? ctx.selectedUser.has(account.username)
+      : account.username === ctx.selectedUser;
+  const name = resolveRowName(account, ctx.privacyBlur, ctx.displayNameFor);
+  return `<tr class="${selected ? "selected" : ""}${isEditing ? " editing-desc" : ""}" data-user="${ctx.esc(account.username)}">
+      <td class="num">${index + 1}</td>
+      <td><span class="status ${ctx.esc(tick)}">${ctx.esc(statusLabel)}</span></td>
+      <td><div class="user-simple"><span class="${name.nameCls}" title="${ctx.esc(name.nameTitle)}">${ctx.esc(name.shownName)}</span></div></td>
       <td class="game-cell">${gameCell}</td>
       <td class="desc-cell">${descCell}</td>
     </tr>`;
-  }).join("");
+}
+
+export function renderAccountRows({
+  rows,
+  selectedUser,
+  editingDescUser: editingUser,
+  cfgFor,
+  bucket,
+  isCaptcha,
+  rowStatusLabel,
+  avatarHtml,
+  esc,
+  gameHtmlFor,
+  privacyBlur = false,
+  displayNameFor = null
+}) {
+  if (!rows.length) {
+    return '<tr><td colspan="5" style="height:100px;text-align:center;color:var(--muted)">No accounts match the current filter</td></tr>';
+  }
+
+  return rows
+    .map((account, index) =>
+      accountRowHtml(account, index, {
+        selectedUser,
+        editingUser,
+        cfgFor,
+        bucket,
+        rowStatusLabel,
+        esc,
+        gameHtmlFor,
+        privacyBlur,
+        displayNameFor
+      })
+    )
+    .join("");
 }

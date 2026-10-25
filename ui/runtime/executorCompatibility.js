@@ -1,5 +1,5 @@
-(function () {
-  "use strict";
+"use strict";
+{
   const $ = (id) => document.getElementById(id);
   const headers = (json) => {
     const h = {};
@@ -22,47 +22,67 @@
     success:
       '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#22c55e"/><path d="M8.2 12.2l2.6 2.6 4.5-5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   };
-  const show = (message, error = false) => {
-    const node = $("executor-monitor-notice");
-    if (!node) return;
-    if (!message) {
-      if (node.dataset.showKey === "clear") return;
-      node.innerHTML = "";
-      node.className = "notice";
-      node.dataset.showKey = "clear";
-      return;
-    }
+
+  // ── Notice banner ─────────────────────────────────────────────────
+  const mentionsAny = (text, needles) =>
+    needles.some((needle) => text.includes(needle));
+
+  const noticeKind = (message, error) => {
+    if (error) return "error";
     const lower = String(message || "").toLowerCase();
-    let kind = error ? "error" : "warning";
-    if (!error && (lower.includes("saved") || lower.includes("complete")))
-      kind = "success";
+    if (lower.includes("saved") || lower.includes("complete")) return "success";
+    return "warning";
+  };
+
+  const noticeTitle = (kind, lower) => {
     let title =
       kind === "error"
         ? "Action needed"
         : kind === "success"
           ? "Saved"
           : "Heads up";
-    if (
-      lower.includes("close roblox") ||
-      lower.includes("stop auto rejoin") ||
-      lower.includes("stop guard")
-    )
+    if (mentionsAny(lower, ["close roblox", "stop auto rejoin", "stop guard"]))
       title = "Roblox is running";
-    if (lower.includes("browse") || lower.includes("relaunch"))
-      title = kind === "error" ? "Executor setup needed" : title;
+    if (kind === "error" && mentionsAny(lower, ["browse", "relaunch"]))
+      title = "Executor setup needed";
+    return title;
+  };
+
+  const noticeClassName = (kind) => {
+    if (kind === "error") return "notice show notice-error";
+    if (kind === "success") return "notice show notice-success";
+    return "notice show";
+  };
+
+  const noticeHtml = (kind, title, message) => {
     const icon = NOTICE_ICONS[kind] || NOTICE_ICONS.warning;
+    return `<span class="notice-icon">${icon}</span><span class="notice-copy"><span class="notice-title">${esc(title)}</span><span class="notice-desc">${esc(message)}</span></span>`;
+  };
+
+  const clearNotice = (node) => {
+    if (node.dataset.showKey === "clear") return;
+    node.innerHTML = "";
+    node.className = "notice";
+    node.dataset.showKey = "clear";
+  };
+
+  const show = (message, error = false) => {
+    const node = $("executor-monitor-notice");
+    if (!node) return;
+    if (!message) {
+      clearNotice(node);
+      return;
+    }
+    const kind = noticeKind(message, error);
+    const title = noticeTitle(kind, String(message || "").toLowerCase());
     const key = kind + "|" + title + "|" + String(message || "");
     if (node.dataset.showKey === key) return;
     node.dataset.showKey = key;
-    node.innerHTML = `<span class="notice-icon">${icon}</span><span class="notice-copy"><span class="notice-title">${esc(title)}</span><span class="notice-desc">${esc(message)}</span></span>`;
-    node.className =
-      "notice show" +
-      (kind === "error"
-        ? " notice-error"
-        : kind === "success"
-          ? " notice-success"
-          : "");
+    node.innerHTML = noticeHtml(kind, title, message);
+    node.className = noticeClassName(kind);
   };
+
+  // ── API ───────────────────────────────────────────────────────────
   async function api(path, method = "GET", body) {
     const response = await fetch(`/api${path}`, {
       method,
@@ -75,15 +95,52 @@
       throw new Error(payload.detail || payload.msg || response.statusText);
     return payload;
   }
+
+  // ── Lua gate ──────────────────────────────────────────────────────
   const LUA_DISABLED_MSG = "Enable Use Lua to use Roblox Executor";
+  const DEFAULT_EXECUTORS = ["Volt", "Potassium", "Real", "Madium"];
   let luaEnabledCache = true;
   let lastGateState = null;
+
   function isLuaEnabled(config) {
     if (config && typeof config === "object" && "lua_enabled" in config)
       return !!config.lua_enabled;
     if (typeof config === "boolean") return config;
     return true;
   }
+
+  const setGateControls = (card, disabled) => {
+    card.querySelectorAll("input,select,textarea,button").forEach((el) => {
+      if (el.classList && el.classList.contains("queue-collapse-btn")) return;
+      el.disabled = disabled;
+    });
+  };
+
+  const disableToggleLabels = () => {
+    try {
+      document
+        .querySelectorAll("#executor-compatibility-card .toggle-row span")
+        .forEach((label) => {
+          label.textContent = "Disabled";
+          label.classList.toggle("enabled", false);
+          label.classList.toggle("disabled", true);
+        });
+    } catch (_) {}
+  };
+
+  const resetGatedFields = () => {
+    const state = $("executor-compatibility-state");
+    if (state) state.textContent = "Disabled";
+    const latest = $("executor-latest-version");
+    if (latest) latest.textContent = "-";
+    const relaunchState = $("executor-relaunch-state");
+    if (relaunchState) relaunchState.textContent = "idle";
+    const retry = $("executor-retry");
+    if (retry) retry.hidden = true;
+    show(LUA_DISABLED_MSG, true);
+    disableToggleLabels();
+  };
+
   function applyLuaGate(config) {
     luaEnabledCache = isLuaEnabled(config);
     const card = $("executor-compatibility-card");
@@ -98,32 +155,12 @@
     lastGateState = enabled;
     card.dataset.luaGate = String(enabled);
     card.classList.toggle("gated-off", !enabled);
-    card.querySelectorAll("input,select,textarea,button").forEach((el) => {
-      if (el.classList && el.classList.contains("queue-collapse-btn")) return;
-      el.disabled = !enabled;
-    });
-    if (!enabled) {
-      const state = $("executor-compatibility-state");
-      if (state) state.textContent = "Disabled";
-      const latest = $("executor-latest-version");
-      if (latest) latest.textContent = "-";
-      const relaunchState = $("executor-relaunch-state");
-      if (relaunchState) relaunchState.textContent = "idle";
-      const retry = $("executor-retry");
-      if (retry) retry.hidden = true;
-      show(LUA_DISABLED_MSG, true);
-      try {
-        document
-          .querySelectorAll("#executor-compatibility-card .toggle-row span")
-          .forEach((label) => {
-            label.textContent = "Disabled";
-            label.classList.toggle("enabled", false);
-            label.classList.toggle("disabled", true);
-          });
-      } catch (_) {}
-    }
+    setGateControls(card, !enabled);
+    if (!enabled) resetGatedFields();
     return luaEnabledCache;
   }
+
+  // ── Card scaffolding ──────────────────────────────────────────────
   function buildCard() {
     const view = $("view-troubleshoot");
     if (!view || $("executor-compatibility-card")) return;
@@ -137,45 +174,50 @@
     else view.appendChild(card);
     bindCard();
   }
-  function renderStatus(status) {
+
+  // ── Status rendering ──────────────────────────────────────────────
+  const statusRows = (status) => {
+    if (Array.isArray(status?.executors) && status.executors.length)
+      return status.executors;
+    if (status?.state === "disabled")
+      return DEFAULT_EXECUTORS.map((name) => ({ name, version: "" }));
+    return [];
+  };
+
+  const executorOptionsHtml = (rows) =>
+    rows
+      .map(
+        (row) =>
+          `<option value="${esc(row.name)}">${esc(row.name)}${row.version ? ` · ${esc(row.version)}` : ""}</option>`,
+      )
+      .join("");
+
+  const renderExecutorOptions = (status) => {
     const select = $("executor-selected");
-    const rows =
-      Array.isArray(status?.executors) && status.executors.length
-        ? status.executors
-        : status?.state === "disabled"
-          ? ["Volt", "Potassium", "Real", "Madium"].map((name) => ({
-              name,
-              version: "",
-            }))
-          : [];
-    if (select) {
-      const current = select.value;
-      select.innerHTML =
-        '<option value="">Select Executor</option>' +
-        rows
-          .map(
-            (row) =>
-              `<option value="${esc(row.name)}">${esc(row.name)}${row.version ? ` · ${esc(row.version)}` : ""}</option>`,
-          )
-          .join("");
-      select.value = status.selected || current || "";
-    }
+    if (!select) return;
+    const current = select.value;
+    select.innerHTML =
+      '<option value="">Select Executor</option>' +
+      executorOptionsHtml(statusRows(status));
+    select.value = status.selected || current || "";
+  };
+
+  const STATE_LABELS = {
+    compatible: "Compatible",
+    incompatible: "Not compatible",
+    api_error: "Version check unavailable",
+    unknown: "Unknown",
+  };
+
+  function renderStatus(status) {
+    renderExecutorOptions(status);
     const latest = $("executor-latest-version");
     const state = $("executor-compatibility-state");
     if (latest) latest.textContent = status.latest_version || "-";
-    if (state)
-      state.textContent =
-        status.state === "compatible"
-          ? "Compatible"
-          : status.state === "incompatible"
-            ? "Not compatible"
-            : status.state === "api_error"
-              ? "Version check unavailable"
-              : status.state === "unknown"
-                ? "Unknown"
-                : "Disabled";
+    if (state) state.textContent = STATE_LABELS[status.state] || "Disabled";
     if (status.error) show(`${status.error}`, true);
   }
+
   function selectedExecutorPath(status, config) {
     const selected = String(config.executor_selected || "")
       .trim()
@@ -187,18 +229,22 @@
       ""
     );
   }
+
+  const relaunchTitle = (status, luaEnabled, supported) => {
+    if (!luaEnabled) return LUA_DISABLED_MSG;
+    if (supported) return "Auto Relaunch is available";
+    return (
+      status?.relaunch_support_reason || "Selected Executor is not supported"
+    );
+  };
+
   function renderRelaunchToggle(status, config, luaEnabled) {
     const relaunch = $("executor-relaunch-enabled");
     const supported = luaEnabled && status?.relaunch_supported === true;
     if (!relaunch) return supported;
     relaunch.disabled = !supported || !luaEnabled;
     if (!supported) relaunch.checked = false;
-    relaunch.title = !luaEnabled
-      ? LUA_DISABLED_MSG
-      : supported
-        ? "Auto Relaunch is available"
-        : status?.relaunch_support_reason ||
-          "Selected Executor is not supported";
+    relaunch.title = relaunchTitle(status, luaEnabled, supported);
     const label = relaunch.parentElement?.querySelector("span");
     if (label) {
       label.textContent = relaunch.checked ? "Enabled" : "Disabled";
@@ -212,25 +258,30 @@
       );
     return supported;
   }
+
+  const localVersionText = (local, version, running) => {
+    const name = String(local.name || "").trim();
+    if (!version && !running) {
+      if (name) return "Not running";
+      return "-";
+    }
+    return (
+      (running ? "" : "Stopped ") +
+        [name, version ? "v" + version : ""].filter(Boolean).join(" ").trim() ||
+      "-"
+    );
+  };
+
   function renderLocalExecutor(status) {
     const local = status?.local || {};
     const node = $("executor-local-version");
     if (!node) return;
     const version = String(status?.local_version || local.version || "").trim();
     const running = Boolean(status?.local_running ?? local.running);
-    const name = String(local.name || "").trim();
-    node.textContent =
-      !version && !running
-        ? name
-          ? "Not running"
-          : "-"
-        : (running ? "" : "Stopped ") +
-            [name, version ? "v" + version : ""]
-              .filter(Boolean)
-              .join(" ")
-              .trim() || "-";
+    node.textContent = localVersionText(local, version, running);
     node.title = String(status?.local_exe || local.exe || "");
   }
+
   function renderRelaunch(status, config) {
     const luaEnabled = isLuaEnabled(config) && luaEnabledCache !== false;
     const path = selectedExecutorPath(status, config);
@@ -244,52 +295,64 @@
     if (retry) retry.hidden = status?.state !== "failed";
     renderLocalExecutor(status);
   }
+
+  // ── Load / save ───────────────────────────────────────────────────
+  const applyConfigToControls = (config, luaEnabled) => {
+    const enabled = $("executor-monitor-enabled");
+    const update = $("roblox-auto-update-enabled");
+    const relaunch = $("executor-relaunch-enabled");
+    if (enabled) {
+      enabled.checked = !!config.executor_monitor_enabled;
+      enabled.disabled = !luaEnabled;
+    }
+    if (update) {
+      update.checked = !!config.roblox_auto_update_enabled;
+      update.disabled = !luaEnabled;
+    }
+    if (relaunch) relaunch.checked = !!config.executor_relaunch_enabled;
+  };
+
+  const refreshExecutorStatus = async (config) => {
+    const status = await api("/troubleshoot/executor");
+    renderStatus(status);
+    renderRelaunch(await api("/troubleshoot/executor/relaunch"), config);
+    return status;
+  };
+
+  const executorAvailable = (status, selected) => {
+    const rows =
+      status.state === "disabled"
+        ? DEFAULT_EXECUTORS.map((name) => ({ name }))
+        : status.executors || [];
+    return rows.some(
+      (row) => String(row.name || "").toLowerCase() === selected.toLowerCase(),
+    );
+  };
+
+  const clearUnavailableExecutor = async (status, config) => {
+    const selected = String(config.executor_selected || "").trim();
+    if (!selected || executorAvailable(status, selected)) return;
+    await api("/config", "POST", { executor_selected: "" });
+    if ($("executor-selected")) $("executor-selected").value = "";
+    show(
+      `Executor ${selected} was not found in supported list and has been cleared`,
+      true,
+    );
+  };
+
   async function load() {
     try {
       const config = await api("/config");
       const luaEnabled = applyLuaGate(config);
-      const enabled = $("executor-monitor-enabled");
-      const update = $("roblox-auto-update-enabled");
-      if (enabled) {
-        enabled.checked = !!config.executor_monitor_enabled;
-        enabled.disabled = !luaEnabled;
-      }
-      if (update) {
-        update.checked = !!config.roblox_auto_update_enabled;
-        update.disabled = !luaEnabled;
-      }
-      const relaunch = $("executor-relaunch-enabled");
-      if (relaunch) relaunch.checked = !!config.executor_relaunch_enabled;
-      if (!luaEnabled) {
-        const status = await api("/troubleshoot/executor");
-        renderStatus(status);
-        renderRelaunch(await api("/troubleshoot/executor/relaunch"), config);
-        return;
-      }
-      const status = await api("/troubleshoot/executor");
-      renderStatus(status);
-      renderRelaunch(await api("/troubleshoot/executor/relaunch"), config);
-      const selected = String(config.executor_selected || "").trim();
-      const availableRows =
-        status.state === "disabled"
-          ? ["Volt", "Potassium", "Real", "Madium"].map((name) => ({ name }))
-          : status.executors || [];
-      const available = availableRows.some(
-        (row) =>
-          String(row.name || "").toLowerCase() === selected.toLowerCase(),
-      );
-      if (selected && !available) {
-        await api("/config", "POST", { executor_selected: "" });
-        if ($("executor-selected")) $("executor-selected").value = "";
-        show(
-          `Executor ${selected} was not found in supported list and has been cleared`,
-          true,
-        );
-      }
+      applyConfigToControls(config, luaEnabled);
+      const status = await refreshExecutorStatus(config);
+      if (!luaEnabled) return;
+      await clearUnavailableExecutor(status, config);
     } catch (error) {
       show(error.message, true);
     }
   }
+
   async function save(patch) {
     if (!luaEnabledCache) {
       show(LUA_DISABLED_MSG, true);
@@ -308,6 +371,54 @@
       show(error.message, true);
     }
   }
+
+  // ── Card event wiring ─────────────────────────────────────────────
+  const pickExecutorPath = async () => {
+    try {
+      if (!luaEnabledCache) {
+        show(LUA_DISABLED_MSG, true);
+        return;
+      }
+      const picked = await api("/troubleshoot/executor/browse", "POST", {});
+      if (picked.path) {
+        const name = $("executor-selected")?.value || "";
+        const input = $("executor-path");
+        if (input) input.value = picked.path;
+        await save({ [`executor_path_${name.toLowerCase()}`]: picked.path });
+      }
+    } catch (error) {
+      show(error.message, true);
+    }
+  };
+
+  const retryRelaunch = async () => {
+    try {
+      if (!luaEnabledCache) {
+        show(LUA_DISABLED_MSG, true);
+        return;
+      }
+      renderRelaunch(
+        await api("/troubleshoot/executor/relaunch", "POST", {}),
+        await api("/config"),
+      );
+    } catch (error) {
+      show(error.message, true);
+    }
+  };
+
+  const checkExecutorNow = async () => {
+    try {
+      if (!luaEnabledCache) {
+        show(LUA_DISABLED_MSG, true);
+        return;
+      }
+      renderStatus(await api("/troubleshoot/executor/check", "POST", {}));
+      show("Compatibility check complete");
+    } catch (error) {
+      show(error.message, true);
+    }
+  };
+
   function bindCard() {
     $("executor-monitor-enabled")?.addEventListener("change", (event) =>
       save({ executor_monitor_enabled: !!event.target.checked }),
@@ -321,50 +432,12 @@
     $("executor-selected")?.addEventListener("change", (event) =>
       save({ executor_selected: event.target.value }),
     );
-    $("executor-browse")?.addEventListener("click", async () => {
-      try {
-        if (!luaEnabledCache) {
-          show(LUA_DISABLED_MSG, true);
-          return;
-        }
-        const picked = await api("/troubleshoot/executor/browse", "POST", {});
-        if (picked.path) {
-          const name = $("executor-selected")?.value || "";
-          const input = $("executor-path");
-          if (input) input.value = picked.path;
-          await save({ [`executor_path_${name.toLowerCase()}`]: picked.path });
-        }
-      } catch (error) {
-        show(error.message, true);
-      }
-    });
-    $("executor-retry")?.addEventListener("click", async () => {
-      try {
-        if (!luaEnabledCache) {
-          show(LUA_DISABLED_MSG, true);
-          return;
-        }
-        renderRelaunch(
-          await api("/troubleshoot/executor/relaunch", "POST", {}),
-          await api("/config"),
-        );
-      } catch (error) {
-        show(error.message, true);
-      }
-    });
-    $("executor-check-now")?.addEventListener("click", async () => {
-      try {
-        if (!luaEnabledCache) {
-          show(LUA_DISABLED_MSG, true);
-          return;
-        }
-        renderStatus(await api("/troubleshoot/executor/check", "POST", {}));
-        show("Compatibility check complete");
-      } catch (error) {
-        show(error.message, true);
-      }
-    });
+    $("executor-browse")?.addEventListener("click", pickExecutorPath);
+    $("executor-retry")?.addEventListener("click", retryRelaunch);
+    $("executor-check-now")?.addEventListener("click", checkExecutorNow);
   }
+
+  // ── Global wiring + bootstrap ─────────────────────────────────────
   document.addEventListener("change", (event) => {
     try {
       if (event.target && event.target.id === "dev-lua-enabled") {
@@ -409,4 +482,4 @@
     )
       load();
   }, 30000);
-})();
+}

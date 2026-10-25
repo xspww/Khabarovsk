@@ -8,6 +8,26 @@ const TOAST_ICONS = {
     '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#ef4444"/><path d="M15 9l-6 6M9 9l6 6" stroke="white" stroke-width="2" stroke-linecap="round"/></svg>',
   info: '<svg viewBox="0 0 24 24" fill="none"><circle cx="12" cy="12" r="9" fill="#3b82f6"/><path d="M12 11v5" stroke="white" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="8" r="1.2" fill="white"/></svg>',
 };
+const FARM_BLOCKED_MARKERS = ["blocked", "skipped", "unavailable"];
+const TOAST_WARNING_MARKERS = ["unsaved", "save changes"];
+const TOAST_ERROR_MARKERS = [
+  "error",
+  "failed",
+  "invalid",
+  "cannot",
+  "denied",
+  "missing",
+  "not found",
+  "required",
+  "0 valid",
+];
+const TOAST_SUCCESS_MARKERS = [
+  "reloaded",
+  "imported",
+  "saved",
+  "deleted",
+  "success",
+];
 function normalizeToastInput(msg, _type, _opts) {
   let explicit = null;
   let opts = {};
@@ -19,44 +39,32 @@ function normalizeToastInput(msg, _type, _opts) {
   if (opts.type && typeof opts.type === "string") explicit = opts.type;
   return { explicit, opts };
 }
+function textHasAny(text, markers) {
+  return markers.some((marker) => text.includes(marker));
+}
+function farmStartToastType(text) {
+  return textHasAny(text, FARM_BLOCKED_MARKERS) ? "warning" : "success";
+}
+function errorToastType(text) {
+  const launchBlocked = text.includes("blocked") && text.includes("launchable");
+  return launchBlocked ? "warning" : "error";
+}
+function saysSuccess(text) {
+  if (textHasAny(text, TOAST_SUCCESS_MARKERS)) return true;
+  return text.includes("valid") && !text.includes("0 valid");
+}
+function keywordToastType(text) {
+  if (textHasAny(text, TOAST_WARNING_MARKERS)) return "warning";
+  if (textHasAny(text, TOAST_ERROR_MARKERS)) return errorToastType(text);
+  if (saysSuccess(text)) return "success";
+  if (text.includes("valid")) return "info";
+  return "success";
+}
 function pickToastType(msg, explicit) {
   if (typeof explicit === "string" && explicit) return explicit;
-  const s = String(msg || "").toLowerCase();
-  if (s.includes("farm started")) {
-    if (
-      s.includes("blocked") ||
-      s.includes("skipped") ||
-      s.includes("unavailable")
-    )
-      return "warning";
-    return "success";
-  }
-  if (s.includes("unsaved") || s.includes("save changes")) return "warning";
-  if (
-    s.includes("error") ||
-    s.includes("failed") ||
-    s.includes("invalid") ||
-    s.includes("cannot") ||
-    s.includes("denied") ||
-    s.includes("missing") ||
-    s.includes("not found") ||
-    s.includes("required") ||
-    s.includes("0 valid")
-  ) {
-    if (s.includes("blocked") && s.includes("launchable")) return "warning";
-    return "error";
-  }
-  if (
-    s.includes("reloaded") ||
-    s.includes("imported") ||
-    s.includes("saved") ||
-    s.includes("deleted") ||
-    s.includes("success") ||
-    (s.includes("valid") && !s.includes("0 valid"))
-  )
-    return "success";
-  if (s.includes("valid")) return "info";
-  return "success";
+  const text = String(msg || "").toLowerCase();
+  if (text.includes("farm started")) return farmStartToastType(text);
+  return keywordToastType(text);
 }
 function flipToastShift(h, s) {
   try {
@@ -82,57 +90,69 @@ function flipToastShift(h, s) {
     };
   }
 }
+function dropOldestToast(container) {
+  while (container.children.length >= 4) {
+    const oldest = container.firstElementChild;
+    try {
+      oldest && clearTimeout(oldest._timer);
+    } catch (e) {}
+    if (oldest) {
+      const shift = flipToastShift(container, oldest);
+      oldest.remove();
+      shift();
+    }
+  }
+}
+function makeToastClickable(node, opts) {
+  node.style.cursor = "pointer";
+  node.title = opts.title || "Click to review";
+  node.addEventListener("click", () => {
+    try {
+      opts.onClick();
+    } catch (_) {}
+  });
+}
+function scheduleToastDismiss(container, node, duration) {
+  return setTimeout(() => {
+    node.classList.remove("show");
+    node.classList.add("hide");
+    setTimeout(() => {
+      const shift = flipToastShift(container, node);
+      node.remove();
+      shift();
+    }, 200);
+  }, duration);
+}
+function toastDuration(opts) {
+  return Number(opts.duration) || (opts.onClick ? 6500 : 3200);
+}
+function buildToast(container, esc, msg, _type, _opts) {
+  const norm = normalizeToastInput(msg, _type, _opts);
+  let kind = pickToastType(msg, norm.explicit);
+  if (!TOAST_ICONS[kind]) kind = "success";
+  const opts = norm.opts || {};
+  dropOldestToast(container);
+  const node = document.createElement("div");
+  node.className = "toast-item toast-" + kind;
+  if (opts.onClick) node.classList.add("toast-clickable");
+  const duration = toastDuration(opts);
+  node.innerHTML = `<span class="toast-icon">${TOAST_ICONS[kind]}</span><span class="toast-text">${esc(msg)}</span>`;
+  if (opts.onClick) makeToastClickable(node, opts);
+  const shift = flipToastShift(container);
+  container.appendChild(node);
+  shift();
+  requestAnimationFrame(() => {
+    node.classList.add("show");
+  });
+  node._timer = scheduleToastDismiss(container, node, duration);
+  return node;
+}
 export function createFeedback({ $: o, esc: t }) {
   return {
-    toast: function (e, _type, _opts) {
-      const c = o("toast");
-      if (!c) return;
-      const norm = normalizeToastInput(e, _type, _opts);
-      let k = pickToastType(e, norm.explicit);
-      if (!TOAST_ICONS[k]) k = "success";
-      let opts = norm.opts || {};
-      while (c.children.length >= 4) {
-        const _o = c.firstElementChild;
-        try {
-          _o && clearTimeout(_o._timer);
-        } catch (e) {}
-        if (_o) {
-          const _p = flipToastShift(c, _o);
-          _o.remove();
-          _p();
-        }
-      }
-      const n = document.createElement("div");
-      n.className = "toast-item toast-" + k;
-      if (opts.onClick) n.classList.add("toast-clickable");
-      const dur = Number(opts.duration) || (opts.onClick ? 6500 : 3200);
-      n.innerHTML = `<span class="toast-icon">${TOAST_ICONS[k]}</span><span class="toast-text">${t(e)}</span>`;
-      if (opts.onClick) {
-        n.style.cursor = "pointer";
-        n.title = opts.title || "Click to review";
-        n.addEventListener("click", () => {
-          try {
-            opts.onClick();
-          } catch (_) {}
-        });
-      }
-      const _p = flipToastShift(c);
-      c.appendChild(n);
-      _p();
-      requestAnimationFrame(() => {
-        n.classList.add("show");
-      });
-      const r = setTimeout(() => {
-        n.classList.remove("show");
-        n.classList.add("hide");
-        setTimeout(() => {
-          const _q = flipToastShift(c, n);
-          n.remove();
-          _q();
-        }, 200);
-      }, dur);
-      n._timer = r;
-      return n;
+    toast: function (msg, type, opts) {
+      const container = o("toast");
+      if (!container) return;
+      return buildToast(container, t, msg, type, opts);
     },
     modal: function (t, s, e) {
       ((o("modal-title").textContent = t),

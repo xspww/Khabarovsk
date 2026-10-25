@@ -1,5 +1,5 @@
 ﻿import { api } from "../runtime/api.js?v=grid-5";
-import { createStatusRuntime } from "../runtime/status.js?v=grid-5";
+import { createStatusRuntime } from "../runtime/status.js?v=grid-6";
 import {
   bucket,
   isAccountRecovery,
@@ -13,13 +13,13 @@ import {
   label as bucketLabel,
   rowStatusLabel,
 } from "../runtime/accountStatus.js?v=js-verify2";
-import { renderAccountRows } from "../components/accountsTable.js?v=js-verify2";
-import { createFeedback } from "../components/feedback.js?v=grid-10";
+import { renderAccountRows } from "../components/accountsTable.js?v=js-verify3";
+import { createFeedback } from "../components/feedback.js?v=grid-11";
 import {
   applySolarStaticIcons,
   solarIcon,
 } from "../components/icons.js?v=grid-6";
-import { bindDashboardEvents } from "../events/bindings.js?v=grid-16";
+import { bindDashboardEvents } from "../events/bindings.js?v=grid-17";
 import {
   renderSettingsPanel,
   renderPerformancePanel,
@@ -204,21 +204,42 @@ function renderRunningClock() {
     : 0;
   ((e.textContent = `Running: ${shortDuration(t)}`), (e.title = e.textContent));
 }
-function acceptStatus(e, t = 0) {
-  const a = Number(e?.status_revision ?? -1),
-    n = Number(e?.status_updated_at ?? 0);
-  if (t && t < STATUS_APPLIED_SEQ) return !1;
-  if (a >= 0 && LAST_STATUS_REVISION > a) {
-    if (!(n && n > LAST_STATUS_UPDATED_AT)) return !1;
-    LAST_STATUS_REVISION = -1;
-  }
+function statusRevisionRegressed(revision) {
+  return revision >= 0 && LAST_STATUS_REVISION > revision;
+}
+function statusTimestampNewer(updatedAt) {
+  return !!updatedAt && updatedAt > LAST_STATUS_UPDATED_AT;
+}
+function statusSequenceBehind(seq) {
+  return !!seq && seq < STATUS_APPLIED_SEQ;
+}
+function statusMetaSuperseded(revision, updatedAt) {
   return (
-    t && (STATUS_APPLIED_SEQ = t),
-    a >= 0 && (LAST_STATUS_REVISION = a),
-    n && (LAST_STATUS_UPDATED_AT = n),
-    (STATUS = e || {}),
-    !0
+    statusRevisionRegressed(revision) && !statusTimestampNewer(updatedAt)
   );
+}
+function statusMeta(e) {
+  return {
+    revision: Number(e?.status_revision ?? -1),
+    updatedAt: Number(e?.status_updated_at ?? 0),
+  };
+}
+function rememberStatusMeta(revision, updatedAt, seq) {
+  seq && (STATUS_APPLIED_SEQ = seq);
+  revision >= 0 && (LAST_STATUS_REVISION = revision);
+  updatedAt && (LAST_STATUS_UPDATED_AT = updatedAt);
+}
+function acceptStatus(e, t = 0) {
+  const { revision: a, updatedAt: n } = statusMeta(e);
+  if (statusSequenceBehind(t)) return !1;
+  if (statusRevisionRegressed(a) && statusTimestampNewer(n)) {
+    LAST_STATUS_REVISION = -1;
+  } else if (statusMetaSuperseded(a, n)) {
+    return !1;
+  }
+  rememberStatusMeta(a, n, t);
+  STATUS = e || {};
+  return !0;
 }
 function dirty(e) {
   return !!SETTINGS_DIRTY[e];
@@ -303,56 +324,77 @@ function sameCpuRows(e, t) {
   );
 }
 function gameSettingsChanged() {
-  return Boolean(
+  return (
     valueOf("game-private") !== String(CONFIG.game_private_server_url || "") ||
     valueOf("game-place") !== String(CONFIG.game_place_id || "") ||
-    gameModeValue() !==
-      ("per_account" === String(CONFIG.game_mode || "")
-        ? "per_account"
-        : "shared") ||
+    gameModeValue() !== savedGameMode() ||
+    gameFlagSettingsChanged()
+  );
+}
+function savedGameMode() {
+  return "per_account" === String(CONFIG.game_mode || "")
+    ? "per_account"
+    : "shared";
+}
+function gameFlagSettingsChanged() {
+  return (
     checked("game-auto-private-enabled") !==
       !!CONFIG.auto_create_private_server_enabled ||
     checked("game-multi-roblox") !== (!1 !== CONFIG.multi_roblox_enabled) ||
-    ($("game-block-same-server") &&
-      checked("game-block-same-server") !== !!CONFIG.block_same_server_enabled),
+    (!!$("game-block-same-server") &&
+      checked("game-block-same-server") !==
+        !!CONFIG.block_same_server_enabled)
   );
 }
-function queueSettingsChanged() {
-  return !(
-    sameNum(
+function queueLimitsChanged() {
+  return (
+    !sameNum(
       saveNumValue("queue-max", 1),
       savedNum(CONFIG.max_concurrent_accounts ?? 40, 40),
-    ) &&
-    sameNum(
+    ) ||
+    !sameNum(
       saveNumValue("queue-delay", 0),
       savedNum(
         CONFIG.queue_delay_seconds ?? CONFIG.launch_rate_interval ?? 15,
         15,
       ),
-    ) &&
-    checked("queue-autoclose-enabled") === !!CONFIG.auto_close_enabled &&
-    sameNum(
+    ) ||
+    checked("queue-autoclose-enabled") !== !!CONFIG.auto_close_enabled ||
+    !sameNum(
       saveNumValue("queue-autoclose-minutes", 0),
       savedNum(CONFIG.auto_close_minutes ?? 0, 0),
-    ) &&
-    checked("popup-disconnected-enabled") ===
-      (!1 !== CONFIG.popup_disconnected_enabled) &&
-    sameNum(
+    )
+  );
+}
+function queuePopupChanged() {
+  return (
+    checked("popup-disconnected-enabled") !==
+      (!1 !== CONFIG.popup_disconnected_enabled) ||
+    !sameNum(
       saveNumValue("popup-scan-interval", 30),
       savedNum(CONFIG.popup_scan_interval_seconds ?? 30, 30),
-    ) &&
-    sameNum(
+    ) ||
+    !sameNum(
       saveNumValue("popup-scan-max-parallel", 2),
       savedNum(CONFIG.popup_scan_max_parallel ?? 2, 2),
     )
   );
 }
-function graphicsSettingsChanged() {
+function queueSettingsChanged() {
+  return queueLimitsChanged() || queuePopupChanged();
+}
+function graphicsToggleChanged() {
   const enabled = !!(
     GRAPHICS.graphics_low_enabled ?? GRAPHICS.graphics_auto_enabled
   );
   return (
     checked("graphics-auto-enabled") !== enabled ||
+    checked("priority-enabled") !== !!GRAPHICS.auto_process_priority_enabled ||
+    checked("volume-muted") !== !!GRAPHICS.roblox_volume_muted
+  );
+}
+function graphicsValueChanged() {
+  return (
     !sameNum(
       saveNumValue("graphics-quality", 1),
       savedNum(
@@ -362,10 +404,8 @@ function graphicsSettingsChanged() {
         1,
       ),
     ) ||
-    checked("priority-enabled") !== !!GRAPHICS.auto_process_priority_enabled ||
     valueOf("process-priority") !==
       String(GRAPHICS.process_priority || "low") ||
-    checked("volume-muted") !== !!GRAPHICS.roblox_volume_muted ||
     !sameNum(
       saveNumValue("volume-level", 10),
       savedNum(
@@ -375,45 +415,66 @@ function graphicsSettingsChanged() {
     )
   );
 }
-function windowSizeSettingsChanged() {
-  return !(
-    checked("window-unlock-enabled") ===
-      (!1 !== WINDOW_SIZE.unlock_size_enabled) &&
-    checked("window-arrange-enabled") === !!WINDOW_SIZE.arrange_enabled &&
-    checked("window-size-enabled") === !!WINDOW_SIZE.enabled &&
-    valueOf("window-size-preset") === String(WINDOW_SIZE.preset || "200x150") &&
-    sameNum(
+function graphicsSettingsChanged() {
+  return graphicsToggleChanged() || graphicsValueChanged();
+}
+function windowToggleSettingsChanged() {
+  return (
+    checked("window-unlock-enabled") !==
+      (!1 !== WINDOW_SIZE.unlock_size_enabled) ||
+    checked("window-arrange-enabled") !== !!WINDOW_SIZE.arrange_enabled ||
+    checked("window-size-enabled") !== !!WINDOW_SIZE.enabled ||
+    checked("window-auto-minimize-enabled") !==
+      !!WINDOW_SIZE.auto_minimize_enabled ||
+    checked("window-hide-enabled") !== !!WINDOW_SIZE.hide_enabled
+  );
+}
+function windowSizeValueSettingsChanged() {
+  return (
+    valueOf("window-size-preset") !==
+      String(WINDOW_SIZE.preset || "200x150") ||
+    !sameNum(
       saveNumValue("window-size-width", 200),
       savedNum(WINDOW_SIZE.width ?? 200, 200),
-    ) &&
-    sameNum(
+    ) ||
+    !sameNum(
       saveNumValue("window-size-height", 150),
       savedNum(WINDOW_SIZE.height ?? 150, 150),
-    ) &&
-    sameNum(
+    )
+  );
+}
+function windowGridSettingsChanged() {
+  return (
+    !sameNum(
       Number(valueOf("window-grid-cols")) || 6,
       savedNum(WINDOW_SIZE.arrange_columns ?? 6, 6),
-    ) &&
-    sameNum(
+    ) ||
+    !sameNum(
       Number(valueOf("window-grid-rows")) || 4,
       savedNum(WINDOW_SIZE.arrange_rows ?? 4, 4),
-    ) &&
-    checked("window-auto-minimize-enabled") ===
-      !!WINDOW_SIZE.auto_minimize_enabled &&
-    sameNum(
+    ) ||
+    !sameNum(
       Number(valueOf("window-auto-minimize-seconds")) || 10,
       savedNum(WINDOW_SIZE.auto_minimize_seconds ?? 10, 10),
-    ) &&
-    checked("window-hide-enabled") === !!WINDOW_SIZE.hide_enabled
+    )
+  );
+}
+function windowSizeSettingsChanged() {
+  return (
+    windowToggleSettingsChanged() ||
+    windowSizeValueSettingsChanged() ||
+    windowGridSettingsChanged()
+  );
+}
+function cronusFieldsAvailable() {
+  return !!(
+    $("cronus-start-on-boot") &&
+    $("cronus-start-farming-on-boot") &&
+    $("cronus-auto-update-on-boot")
   );
 }
 function cronusSettingsChanged() {
-  if (
-    !$("cronus-start-on-boot") ||
-    !$("cronus-start-farming-on-boot") ||
-    !$("cronus-auto-update-on-boot")
-  )
-    return dirty("cronus");
+  if (!cronusFieldsAvailable()) return dirty("cronus");
   return (
     checked("cronus-start-on-boot") !== !!CONFIG.start_on_boot ||
     checked("cronus-start-farming-on-boot") !==
@@ -427,75 +488,93 @@ function cronusSettingsChanged() {
     checked("cronus-discord-show-game") !== (CONFIG.discord_show_game !== !1)
   );
 }
+function performanceSettingsChanged() {
+  return (
+    checked("fps-enabled") !== !!PERF.enabled ||
+    !sameNum(
+      valueOf("fps-limit") === "" ? 240 : Number(valueOf("fps-limit")),
+      savedNum(PERF.fps_limit ?? PERF.framerate_cap ?? 240, 240),
+    )
+  );
+}
+function ramSettingsChanged() {
+  return (
+    checked("ram-enabled") !== (!1 !== CONFIG.roblox_memory_guard_enabled) ||
+    !sameNum(
+      currentRamLimit(),
+      normalizeRamLimitValue(CONFIG.roblox_memory_guard_mb ?? 8192),
+    )
+  );
+}
+function ramCleanupSettingsChanged() {
+  return (
+    checked("ram-cleanup-enabled") !==
+      ("enabled" in RAM_CLEANUP
+        ? !!RAM_CLEANUP.enabled
+        : !!CONFIG.ram_cleanup_enabled) ||
+    !sameNum(
+      saveNumValue("ram-cleanup-threshold", 85),
+      savedNum(
+        RAM_CLEANUP.threshold_pct ?? CONFIG.ram_cleanup_threshold_pct ?? 85,
+        85,
+      ),
+    ) ||
+    !sameNum(
+      saveNumValue("ram-cleanup-interval", 15),
+      savedNum(
+        RAM_CLEANUP.interval_min ?? CONFIG.ram_cleanup_interval_min ?? 15,
+        15,
+      ),
+    )
+  );
+}
+function virtualMemorySettingsChanged() {
+  return !sameNum(
+    saveNumValue("vm-size", 16),
+    savedNum(
+      VIRTUAL_MEMORY.configured_size_gb ?? CONFIG.virtual_memory_size_gb ?? 16,
+      16,
+    ),
+  );
+}
+function cpuLimiterSettingsChanged() {
+  return (
+    checked("cpu-enabled") !== !!CPU_LIMITER.enabled ||
+    valueOf("cpu-mode") !== String(CPU_LIMITER.mode || "hard") ||
+    !sameNum(
+      saveNumValue("cpu-default-limit", 20),
+      savedNum(CPU_LIMITER.default_limit_percent ?? 20, 20),
+    ) ||
+    checked("cpu-apply-all") !== (!1 !== CPU_LIMITER.apply_all) ||
+    (!checked("cpu-apply-all") &&
+      !sameCpuRows(cpuRowsFromDom(), cpuRowsFromState()))
+  );
+}
+function developerSettingsChanged() {
+  return !$("dev-lua-enabled") || !$("dev-lua-timeout")
+    ? dirty("developer")
+    : checked("dev-lua-enabled") !== (!1 !== CONFIG.lua_enabled) ||
+        !sameNum(
+          Number(valueOf("dev-lua-timeout")) || 60,
+          savedNum(CONFIG.lua_timeout_seconds ?? 60, 60),
+        );
+}
+const SETTINGS_CHECKS = {
+  game: gameSettingsChanged,
+  queue: queueSettingsChanged,
+  performance: performanceSettingsChanged,
+  ram: ramSettingsChanged,
+  "ram-cleanup": ramCleanupSettingsChanged,
+  "virtual-memory": virtualMemorySettingsChanged,
+  graphics: graphicsSettingsChanged,
+  "window-size": windowSizeSettingsChanged,
+  "cpu-limiter": cpuLimiterSettingsChanged,
+  cronus: cronusSettingsChanged,
+  developer: developerSettingsChanged,
+};
 function settingsChanged(section) {
-  const checks = {
-    game: gameSettingsChanged,
-    queue: queueSettingsChanged,
-    performance: () =>
-      checked("fps-enabled") !== !!PERF.enabled ||
-      !sameNum(
-        valueOf("fps-limit") === "" ? 240 : Number(valueOf("fps-limit")),
-        savedNum(PERF.fps_limit ?? PERF.framerate_cap ?? 240, 240),
-      ),
-    ram: () =>
-      checked("ram-enabled") !== (!1 !== CONFIG.roblox_memory_guard_enabled) ||
-      !sameNum(
-        currentRamLimit(),
-        normalizeRamLimitValue(CONFIG.roblox_memory_guard_mb ?? 8192),
-      ),
-    "ram-cleanup": () =>
-      checked("ram-cleanup-enabled") !==
-        ("enabled" in RAM_CLEANUP
-          ? !!RAM_CLEANUP.enabled
-          : !!CONFIG.ram_cleanup_enabled) ||
-      !sameNum(
-        saveNumValue("ram-cleanup-threshold", 85),
-        savedNum(
-          RAM_CLEANUP.threshold_pct ?? CONFIG.ram_cleanup_threshold_pct ?? 85,
-          85,
-        ),
-      ) ||
-      !sameNum(
-        saveNumValue("ram-cleanup-interval", 15),
-        savedNum(
-          RAM_CLEANUP.interval_min ?? CONFIG.ram_cleanup_interval_min ?? 15,
-          15,
-        ),
-      ),
-    "virtual-memory": () =>
-      !sameNum(
-        saveNumValue("vm-size", 16),
-        savedNum(
-          VIRTUAL_MEMORY.configured_size_gb ??
-            CONFIG.virtual_memory_size_gb ??
-            16,
-          16,
-        ),
-      ),
-    graphics: graphicsSettingsChanged,
-    "window-size": windowSizeSettingsChanged,
-    "cpu-limiter": () =>
-      checked("cpu-enabled") !== !!CPU_LIMITER.enabled ||
-      valueOf("cpu-mode") !== String(CPU_LIMITER.mode || "hard") ||
-      !sameNum(
-        saveNumValue("cpu-default-limit", 20),
-        savedNum(CPU_LIMITER.default_limit_percent ?? 20, 20),
-      ) ||
-      checked("cpu-apply-all") !== (!1 !== CPU_LIMITER.apply_all) ||
-      (!checked("cpu-apply-all") &&
-        !sameCpuRows(cpuRowsFromDom(), cpuRowsFromState())),
-    cronus: cronusSettingsChanged,
-    developer: () =>
-      !$("dev-lua-enabled") || !$("dev-lua-timeout")
-        ? dirty("developer")
-        : checked("dev-lua-enabled") !== (!1 !== CONFIG.lua_enabled) ||
-          !sameNum(
-            Number(valueOf("dev-lua-timeout")) || 60,
-            savedNum(CONFIG.lua_timeout_seconds ?? 60, 60),
-          ),
-  };
   try {
-    const check = checks[section];
+    const check = SETTINGS_CHECKS[section];
     return check ? check() : dirty(section);
   } catch (_) {
     return dirty(section);
@@ -697,21 +776,33 @@ async function loadAvatars() {
   (a && a.avatars && (AVATARS = { ...AVATARS, ...a.avatars }),
     renderAccountsTable());
 }
+const CRONUS_BOOT_TOGGLES = [
+  ["cronus-start-on-boot", "start_on_boot"],
+  ["cronus-start-farming-on-boot", "start_farming_on_boot"],
+  ["cronus-auto-update-on-boot", "auto_update_on_boot"],
+  ["cronus-privacy-blur", "privacy_blur_usernames"],
+  ["cronus-privacy-random", "privacy_randomize_usernames"],
+];
+function applyCronusBootToggles() {
+  try {
+    for (const [id, key] of CRONUS_BOOT_TOGGLES) {
+      const el = $(id);
+      if (el) el.checked = !!CONFIG[key];
+    }
+  } catch {}
+}
+function loadConfiguredGamePlace() {
+  const place =
+    CONFIG.game_place_id ||
+    placeFromPrivate(CONFIG.game_private_server_url || "");
+  if (place)
+    loadGamePlace(place, !0).catch(() => {
+      /* intentional: no-op */
+    });
+}
 async function loadConfig() {
   CONFIG = await api("/config");
-  try {
-    if ($("cronus-start-on-boot"))
-      $("cronus-start-on-boot").checked = !!CONFIG.start_on_boot;
-    if ($("cronus-start-farming-on-boot"))
-      $("cronus-start-farming-on-boot").checked =
-        !!CONFIG.start_farming_on_boot;
-    if ($("cronus-auto-update-on-boot"))
-      $("cronus-auto-update-on-boot").checked = !!CONFIG.auto_update_on_boot;
-    if ($("cronus-privacy-blur"))
-      $("cronus-privacy-blur").checked = !!CONFIG.privacy_blur_usernames;
-    if ($("cronus-privacy-random"))
-      $("cronus-privacy-random").checked = !!CONFIG.privacy_randomize_usernames;
-  } catch {}
+  applyCronusBootToggles();
   try {
     pullColWidthsFromConfig();
   } catch {}
@@ -723,16 +814,8 @@ async function loadConfig() {
     renderRamCleanup(),
     renderVirtualMemory(),
     renderWindowSize());
-  const e =
-    CONFIG.game_place_id ||
-    placeFromPrivate(CONFIG.game_private_server_url || "");
-  return (
-    e &&
-      loadGamePlace(e, !0).catch(() => {
-        /* intentional: no-op */
-      }),
-    CONFIG
-  );
+  loadConfiguredGamePlace();
+  return CONFIG;
 }
 async function loadPerformance() {
   try {
@@ -1212,26 +1295,54 @@ function accountTableTextSelectionActive() {
     e.contains(t.anchorNode)
   );
 }
-function gameHtmlFor(acc, cfg) {
-  const sharedPid = String(
+function accountSharedPlaceId() {
+  return String(
     CONFIG.game_place_id ||
       placeFromPrivate(CONFIG.game_private_server_url || "") ||
       "",
   ).trim();
-  const cfgPid = String(
-    (cfg && cfg.effective_place_id) ||
-      (cfg && cfg.place_id) ||
-      (acc && acc.place_id) ||
-      "",
-  ).trim();
-  const livePid = String((acc && acc.observed_place_id) || "").trim();
-  const perAccount =
+}
+function accountConfiguredPlaceId(acc, cfg) {
+  const fromCfg = cfg ? cfg.effective_place_id || cfg.place_id : "";
+  const fromAcc = acc ? acc.place_id : "";
+  return String(fromCfg || fromAcc || "").trim();
+}
+function observedPlaceId(acc) {
+  return String((acc && acc.observed_place_id) || "").trim();
+}
+function gameModePerAccount() {
+  return (
     "per_account" ===
     String(CONFIG.game_mode || "")
       .trim()
       .toLowerCase()
-      .replace("-", "_");
-  const pid = String(perAccount ? cfgPid : sharedPid || livePid).trim();
+      .replace("-", "_")
+  );
+}
+function accountGamePlaceId(acc, cfg) {
+  const shared = accountSharedPlaceId();
+  const configured = accountConfiguredPlaceId(acc, cfg);
+  const live = observedPlaceId(acc);
+  return String(gameModePerAccount() ? configured : shared || live).trim();
+}
+function gameCellImageMarkup(info) {
+  return info.image_url
+    ? `<img class="game-thumb" src="${esc(info.image_url)}" alt="" onerror="this.style.display='none'">`
+    : '<span class="game-thumb game-thumb-empty">?</span>';
+}
+function gamePlaceCleanName(info, pid) {
+  const rawName = String(info.name || "Place " + pid);
+  return rawName.replace(
+    /^\[([^\]]{1,12})\]\s*/,
+    function (match, inner) {
+      return /[A-Za-z0-9]/.test(inner) && !/[?\uFFFD]/.test(inner)
+        ? match
+        : "";
+    },
+  );
+}
+function gameHtmlFor(acc, cfg) {
+  const pid = accountGamePlaceId(acc, cfg);
   if (!pid) return '<span class="game-empty">\u2014</span>';
   const info = GAME_PLACE_CACHE[pid];
   if (!info) {
@@ -1240,17 +1351,8 @@ function gameHtmlFor(acc, cfg) {
     });
     return '<span class="game-empty">\u2014</span>';
   }
-  const img = info.image_url
-    ? `<img class="game-thumb" src="${esc(info.image_url)}" alt="" onerror="this.style.display=\'none\'">`
-    : '<span class="game-thumb game-thumb-empty">?</span>';
-  const rawName = String(info.name || "Place " + pid);
-  const cleanName = rawName.replace(
-    /^\[([^\]]{1,12})\]\s*/,
-    function (m, inner) {
-      return /[A-Za-z0-9]/.test(inner) && !/[?\uFFFD]/.test(inner) ? m : "";
-    },
-  );
-  const name = esc(cleanName);
+  const img = gameCellImageMarkup(info);
+  const name = esc(gamePlaceCleanName(info, pid));
   return `<div class="game-cell-inner">${img}<span class="game-name" title="${name}">${name}</span></div>`;
 }
 function saveSelectedUsers() {
@@ -1291,22 +1393,32 @@ function updateFinishedBtn() {
     b.childNodes[0].textContent = f ? "Unfinish (" : "Finished (";
   } catch {}
 }
-function isBannedUser(u) {
-  const a = ACCOUNTS.find(
+const BANNED_IMPORT_STATUSES = ["banned", "suspended"];
+const BANNED_REASON_MARKERS = [
+  "account banned",
+  "suspended by roblox",
+  "account suspended",
+];
+function accountByUsername(u) {
+  return ACCOUNTS.find(
     (a) => String(a.username).toLowerCase() === String(u).toLowerCase(),
   );
-  if (!a) return !1;
+}
+function accountFlagBanned(a) {
   try {
-    if (!!a.banned || !!a.suspended) return !0;
-  } catch {}
+    return !!a.banned || !!a.suspended;
+  } catch {
+    return !1;
+  }
+}
+function isBannedUser(u) {
+  const a = accountByUsername(u);
+  if (!a) return !1;
+  if (accountFlagBanned(a)) return !0;
   const b = String(a.import_status || "").toLowerCase();
-  if ("banned" === b || "suspended" === b) return !0;
+  if (BANNED_IMPORT_STATUSES.includes(b)) return !0;
   const s = String(a.blocked_reason || a.manual_status || "").toLowerCase();
-  return (
-    s.includes("account banned") ||
-    s.includes("suspended by roblox") ||
-    s.includes("account suspended")
-  );
+  return BANNED_REASON_MARKERS.some((marker) => s.includes(marker));
 }
 function updateUnbanBtn() {
   const b = $("unban-toggle-btn"),
@@ -1326,9 +1438,6 @@ function isCaptchaUser(u) {
   } catch {
     return !1;
   }
-}
-function isVerifyUser(u) {
-  return isCaptchaUser(u);
 }
 function updateResumeBtn() {
   const b = $("resume-selected-btn"),
@@ -1456,23 +1565,38 @@ function persistColWidths() {
     } catch {}
   }, 400);
 }
+function savedServerColWidths() {
+  try {
+    if (!CONFIG || !CONFIG.ui_col_widths) return {};
+    return sanitizeColWidths(CONFIG.ui_col_widths);
+  } catch (_) {
+    return {};
+  }
+}
+function storeLocalColWidths() {
+  try {
+    localStorage.setItem(_colWidthsKey, JSON.stringify(_colWidths));
+  } catch {}
+}
+function pushColWidthsToServer() {
+  try {
+    api("/config", "POST", { ui_col_widths: _colWidths }).catch(() => {
+      /* intentional: no-op */
+    });
+  } catch {}
+}
+function applyServerColWidths(clean) {
+  _colWidths = clean;
+  storeLocalColWidths();
+}
 function pullColWidthsFromConfig() {
   try {
-    if (typeof _isResizing !== "undefined" && _isResizing) return;
-    const srv =
-      (typeof CONFIG !== "undefined" && CONFIG && CONFIG.ui_col_widths) || {};
-    const clean = sanitizeColWidths(srv);
+    if (_isResizing) return;
+    const clean = savedServerColWidths();
     if (Object.keys(clean).length) {
-      _colWidths = clean;
-      try {
-        localStorage.setItem(_colWidthsKey, JSON.stringify(_colWidths));
-      } catch {}
+      applyServerColWidths(clean);
     } else if (Object.keys(_colWidths).length) {
-      try {
-        api("/config", "POST", { ui_col_widths: _colWidths }).catch(() => {
-          /* intentional: no-op */
-        });
-      } catch {}
+      pushColWidthsToServer();
     }
   } catch {}
 }
@@ -1494,6 +1618,59 @@ function applyColWidths() {
       th.style.width = Math.max(_MINCOLW[i] || 80, Math.min(520, v)) + "px";
   });
 }
+function applyColumnWidth(table, th, key, width) {
+  th.style.width = width + "px";
+  table.style.tableLayout = "fixed";
+  _colWidths[key] = width;
+}
+function beginColumnResize(table, th, i, handle, event) {
+  event.preventDefault();
+  _isResizing = !0;
+  const key = "col" + i;
+  const startX = event.clientX;
+  const startW = th.offsetWidth;
+  const onMove = (moveEvent) => {
+    const width = Math.max(
+      _MINCOLW[i] || 80,
+      Math.min(520, startW + (moveEvent.clientX - startX)),
+    );
+    applyColumnWidth(table, th, key, width);
+  };
+  const onUp = () => {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+    handle.classList.remove("dragging");
+    _isResizing = !1;
+    persistColWidths();
+    applyColWidths();
+    renderAccountFilters();
+  };
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+  handle.classList.add("dragging");
+}
+function resetColumnWidth(table, th, i) {
+  delete _colWidths["col" + i];
+  th.style.width = "";
+  if (!Object.keys(_colWidths).length) table.style.tableLayout = "";
+  persistColWidths();
+  renderAccountFilters();
+}
+function wireColumnResizer(table, th, i) {
+  th.style.position = "relative";
+  const handle = document.createElement("div");
+  handle.className = "col-resizer";
+  handle.dataset.col = String(i);
+  handle.addEventListener("mousedown", (event) =>
+    beginColumnResize(table, th, i, handle, event),
+  );
+  th.appendChild(handle);
+  handle.addEventListener("dblclick", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resetColumnWidth(table, th, i);
+  });
+}
 function initColumnResizers() {
   const table = document.querySelector(".accounts-table-card table");
   if (!table) return;
@@ -1502,48 +1679,7 @@ function initColumnResizers() {
   ths.forEach((th, i) => {
     if (i === ths.length - 1 || i === 0) return;
     if (th.querySelector(".col-resizer")) return;
-    th.style.position = "relative";
-    const h = document.createElement("div");
-    h.className = "col-resizer";
-    h.dataset.col = String(i);
-    h.addEventListener("mousedown", (e) => {
-      e.preventDefault();
-      _isResizing = true;
-      const k = "col" + i;
-      const startX = e.clientX;
-      const startW = th.offsetWidth;
-      const onMove = (ev) => {
-        let w = Math.max(
-          _MINCOLW[i] || 80,
-          Math.min(520, startW + (ev.clientX - startX)),
-        );
-        th.style.width = w + "px";
-        table.style.tableLayout = "fixed";
-        _colWidths[k] = w;
-      };
-      const onUp = () => {
-        document.removeEventListener("mousemove", onMove);
-        document.removeEventListener("mouseup", onUp);
-        h.classList.remove("dragging");
-        _isResizing = false;
-        persistColWidths();
-        applyColWidths();
-        renderAccountFilters();
-      };
-      document.addEventListener("mousemove", onMove);
-      document.addEventListener("mouseup", onUp);
-      h.classList.add("dragging");
-    });
-    th.appendChild(h);
-    h.addEventListener("dblclick", (ev) => {
-      ev.preventDefault();
-      ev.stopPropagation();
-      delete _colWidths["col" + i];
-      th.style.width = "";
-      if (!Object.keys(_colWidths).length) table.style.tableLayout = "";
-      persistColWidths();
-      renderAccountFilters();
-    });
+    wireColumnResizer(table, th, i);
   });
 }
 function privacyBlurOn() {
@@ -1569,72 +1705,85 @@ function privacyHash(s) {
   }
   return h >>> 0;
 }
-function privacyFakeName(username) {
-  const real = String(username || "").trim() || "Player";
-  const A = [
-    "Shadow",
-    "Silent",
-    "Rapid",
-    "Cosmic",
-    "Neon",
-    "Frost",
-    "Blaze",
-    "Ghost",
-    "Turbo",
-    "Pixel",
-    "Storm",
-    "Echo",
-    "Nova",
-    "Drift",
-    "Onyx",
-    "Vivid",
-    "Crimson",
-    "Azure",
-    "Lunar",
-    "Solar",
-  ];
-  const B = [
-    "Fox",
-    "Wolf",
-    "Tiger",
-    "Panda",
-    "Falcon",
-    "Viper",
-    "Raven",
-    "Bear",
-    "Hawk",
-    "Lion",
-    "Otter",
-    "Cobra",
-    "Eagle",
-    "Shark",
-    "Ant",
-    "Byte",
-    "Cloud",
-    "Dash",
-    "Flux",
-    "Zap",
-  ];
-  const h1 = privacyHash(real.toLowerCase()),
-    h2 = privacyHash("#2:" + real.toLowerCase());
-  let name = A[h1 % A.length] + B[h2 % B.length] + "_" + (1000 + (h1 % 9000));
-  if (name.toLowerCase() === real.toLowerCase())
-    name =
-      "Mystery" + B[(h2 + 7) % B.length] + "_" + (1000 + ((h1 + 13) % 9000));
+const PRIVACY_NAME_A = [
+  "Shadow",
+  "Silent",
+  "Rapid",
+  "Cosmic",
+  "Neon",
+  "Frost",
+  "Blaze",
+  "Ghost",
+  "Turbo",
+  "Pixel",
+  "Storm",
+  "Echo",
+  "Nova",
+  "Drift",
+  "Onyx",
+  "Vivid",
+  "Crimson",
+  "Azure",
+  "Lunar",
+  "Solar",
+];
+const PRIVACY_NAME_B = [
+  "Fox",
+  "Wolf",
+  "Tiger",
+  "Panda",
+  "Falcon",
+  "Viper",
+  "Raven",
+  "Bear",
+  "Hawk",
+  "Lion",
+  "Otter",
+  "Cobra",
+  "Eagle",
+  "Shark",
+  "Ant",
+  "Byte",
+  "Cloud",
+  "Dash",
+  "Flux",
+  "Zap",
+];
+function fakeNameCandidate(h1, h2, offset) {
+  return (
+    PRIVACY_NAME_A[(h1 + offset) % PRIVACY_NAME_A.length] +
+    PRIVACY_NAME_B[(h2 + offset * 3) % PRIVACY_NAME_B.length] +
+    "_" +
+    (1000 + ((h1 + offset * 137) % 9000))
+  );
+}
+function privacyTakenNames() {
   try {
-    const taken = new Set(
+    return new Set(
       (ACCOUNTS || []).map((a) => String(a.username || "").toLowerCase()),
     );
-    let guard = 0;
-    while (taken.has(name.toLowerCase()) && guard < 9) {
-      guard++;
-      name =
-        A[(h1 + guard) % A.length] +
-        B[(h2 + guard * 3) % B.length] +
-        "_" +
-        (1000 + ((h1 + guard * 137) % 9000));
-    }
-  } catch (_) {}
+  } catch (_) {
+    return null;
+  }
+}
+function privacyFakeName(username) {
+  const real = String(username || "").trim() || "Player";
+  const h1 = privacyHash(real.toLowerCase()),
+    h2 = privacyHash("#2:" + real.toLowerCase());
+  let name = fakeNameCandidate(h1, h2, 0);
+  if (name.toLowerCase() === real.toLowerCase())
+    name =
+      "Mystery" +
+      PRIVACY_NAME_B[(h2 + 7) % PRIVACY_NAME_B.length] +
+      "_" +
+      (1000 + ((h1 + 13) % 9000));
+  const taken = privacyTakenNames();
+  if (!taken) return name;
+  let guard = 0;
+  while (taken.has(name.toLowerCase()) && guard < 9) {
+    guard++;
+    name = fakeNameCandidate(h1, h2, guard);
+  }
   return name;
 }
 function privacyDisplayName(username) {
@@ -1681,59 +1830,72 @@ function placeFromPrivate(e) {
   const t = String(e || "").match(/roblox\.com\/games\/(\d+)/i);
   return t ? t[1] : "";
 }
-function renderGameMap(e = "", t = null, a = "") {
-  const n = $("game-map-card");
-  if (!n) return;
-  const r = String(e || "").trim(),
-    o = t || GAME_PLACE_CACHE[r];
-  if (o) {
-    const fmt = (n) => {
-      n = Number(n);
-      if (!Number.isFinite(n) || n < 0) return "";
-      if (n >= 1e6) {
-        const v = (n / 1e6).toFixed(n >= 1e7 ? 1 : 2).replace(/\.0$/, "");
-        return v.replace(/\.?0+$/, "") + "M";
-      }
-      if (n >= 1e3) {
-        const v = (n / 1e3).toFixed(n >= 1e5 ? 0 : 1).replace(/\.0$/, "");
-        return v.replace(/\.?0+$/, "") + "K";
-      }
-      return String(n);
-    };
-    const genre = String(o.genre || "").trim(),
-      by = String(o.builder || "").trim(),
-      playing = o.playing,
-      visits = o.visits,
-      fav = o.favorited_count,
-      maxP = o.max_players,
-      stats = [];
-    if (Number.isFinite(Number(playing)) && Number(playing) >= 0)
-      stats.push(
-        `<span class="map-stat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>${esc(fmt(playing))} playing</span>`,
-      );
-    if (Number.isFinite(Number(visits)) && Number(visits) >= 0)
-      stats.push(
-        `<span class="map-stat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>${esc(fmt(visits))} visits</span>`,
-      );
-    if (Number.isFinite(Number(fav)) && Number(fav) >= 0)
-      stats.push(
-        `<span class="map-stat"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>${esc(fmt(fav))}</span>`,
-      );
-    if (Number.isFinite(Number(maxP)) && Number(maxP) > 0)
-      stats.push(
-        `<span class="map-stat">${esc(String(maxP))} per server</span>`,
-      );
-    const genreHtml = genre
-      ? `<span class="map-genre">${esc(genre)}</span>`
-      : "";
-    const byline = by ? `by ${esc(by)}` : "Roblox experience";
-    return (
-      (n.className = "map-card has-stats"),
-      void (n.innerHTML = `<img class="map-thumb" src="${esc(o.image_url || "")}" alt="" onerror="this.style.visibility='hidden'"><div class="map-copy"><div class="map-name">${esc(o.name || "Place " + r)}</div><div class="map-byline"><span>${byline}</span>${genreHtml}</div>${stats.length ? `<div class="map-stats">${stats.join("")}</div>` : ""}</div>`)
-    );
+function compactCount(value) {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 0) return "";
+  if (n >= 1e6) {
+    const v = (n / 1e6).toFixed(n >= 1e7 ? 1 : 2).replace(/\.0$/, "");
+    return v.replace(/\.?0+$/, "") + "M";
   }
-  ((n.className = "map-card empty"),
-    (n.innerHTML = `<div>${esc(a || (r ? "Loading Roblox map details" : "Enter Place ID"))}</div>`));
+  if (n >= 1e3) {
+    const v = (n / 1e3).toFixed(n >= 1e5 ? 0 : 1).replace(/\.0$/, "");
+    return v.replace(/\.?0+$/, "") + "K";
+  }
+  return String(n);
+}
+const MAP_STAT_ICONS = {
+  playing:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>',
+  visits:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>',
+  favorite:
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>',
+};
+function appendMapStat(list, value, label, icon) {
+  if (!Number.isFinite(Number(value)) || Number(value) < 0) return;
+  list.push(
+    `<span class="map-stat">${icon}${esc(compactCount(value))} ${label}</span>`,
+  );
+}
+function appendMapFavoriteStat(list, value) {
+  if (!Number.isFinite(Number(value)) || Number(value) < 0) return;
+  list.push(
+    `<span class="map-stat">${MAP_STAT_ICONS.favorite}${esc(compactCount(value))}</span>`,
+  );
+}
+function appendMapMaxPlayersStat(list, value) {
+  if (!Number.isFinite(Number(value)) || Number(value) <= 0) return;
+  list.push(`<span class="map-stat">${esc(String(value))} per server</span>`);
+}
+function mapStatsHtml(info) {
+  const stats = [];
+  appendMapStat(stats, info.playing, "playing", MAP_STAT_ICONS.playing);
+  appendMapStat(stats, info.visits, "visits", MAP_STAT_ICONS.visits);
+  appendMapFavoriteStat(stats, info.favorited_count);
+  appendMapMaxPlayersStat(stats, info.max_players);
+  return stats.length ? `<div class="map-stats">${stats.join("")}</div>` : "";
+}
+function mapCardMarkup(placeId, info) {
+  const genre = String(info.genre || "").trim(),
+    by = String(info.builder || "").trim();
+  const genreHtml = genre
+    ? `<span class="map-genre">${esc(genre)}</span>`
+    : "";
+  const byline = by ? `by ${esc(by)}` : "Roblox experience";
+  return `<img class="map-thumb" src="${esc(info.image_url || "")}" alt="" onerror="this.style.visibility=\'hidden\'"><div class="map-copy"><div class="map-name">${esc(info.name || "Place " + placeId)}</div><div class="map-byline"><span>${byline}</span>${genreHtml}</div>${mapStatsHtml(info)}</div>`;
+}
+function renderGameMap(e = "", t = null, a = "") {
+  const card = $("game-map-card");
+  if (!card) return;
+  const placeId = String(e || "").trim(),
+    info = t || GAME_PLACE_CACHE[placeId];
+  if (info) {
+    (card.className = "map-card has-stats"),
+      (card.innerHTML = mapCardMarkup(placeId, info));
+    return;
+  }
+  ((card.className = "map-card empty"),
+    (card.innerHTML = `<div>${esc(a || (placeId ? "Loading Roblox map details" : "Enter Place ID"))}</div>`));
 }
 async function loadGamePlace(e, t = !1) {
   const a = String(e || "").trim();
@@ -1758,73 +1920,84 @@ async function gamePlaceInfo(e) {
     return null;
   }
 }
+let _statusHoverPop = null;
+let _statusHoverTimer = 0;
+function statusHoverHide() {
+  _statusHoverTimer = 0;
+  if (_statusHoverPop) {
+    _statusHoverPop.remove();
+    _statusHoverPop = null;
+  }
+}
+function onlinePopoverMarkup(acc, place, info) {
+  const user = esc(privacyDisplayName(acc.display || acc.username)),
+    name = info?.name
+      ? esc(info.name)
+      : place
+        ? `Place ${esc(place)}`
+        : "Unknown game",
+    by = info?.builder ? esc(info.builder) : "",
+    playSeconds = uptimeSeconds(acc.uptime),
+    playTime =
+      playSeconds > 0
+        ? `<div class="ogame-time">Playing ${esc(shortDuration(playSeconds))}</div>`
+        : "",
+    img = info?.image_url
+      ? `<img class="ogame-thumb" src="${esc(info.image_url)}" alt="" loading="lazy" onerror="this.hidden=true">`
+      : "",
+    thumbs =
+      img ||
+      `<span class="ogame-thumb ogame-thumb-empty" aria-hidden="true">${esc(initials(user))}</span>`;
+  return `<div class="ogame-card">${thumbs}<div class="ogame-copy"><div class="ogame-user">${user}</div><div class="ogame-name">${name}</div>${by ? `<div class="ogame-by">by ${by}</div>` : ""}${playTime}</div></div>`;
+}
+function positionStatusPopover(pop, table, username, span) {
+  const q = 'tr[data-user="' + CSS.escape(String(username)) + '"] .status',
+    anchor = table.querySelector(q) || span,
+    rect = anchor?.getBoundingClientRect?.(),
+    pw = Math.min(pop.offsetWidth || 320, 360);
+  let left = (rect?.right ?? 0) + 8;
+  left + pw > window.innerWidth - 8 &&
+    (left = Math.max(8, window.innerWidth - pw - 8));
+  const top = Math.min(
+    rect?.top ?? 0,
+    window.innerHeight - pop.offsetHeight - 8,
+  );
+  ((pop.style.left = left + "px"),
+    (pop.style.top = Math.max(8, top) + "px"),
+    pop.addEventListener("mouseenter", () => clearTimeout(_statusHoverTimer)),
+    pop.addEventListener("mouseleave", statusHoverHide));
+}
+async function statusHoverShow(username, span, table) {
+  if (!username) return statusHoverHide();
+  const acc = ACCOUNTS.find((a) => String(a.username) === String(username));
+  if (!acc || bucket(acc) !== "online") return statusHoverHide();
+  const place = String(
+      acc.observed_place_id || cfgFor(username).place_id || "",
+    ).trim(),
+    info = place ? await gamePlaceInfo(place) : null;
+  if (_statusHoverPop) {
+    if (_statusHoverPop.dataset.user === username) return;
+    statusHoverHide();
+  }
+  _statusHoverPop = document.createElement("div");
+  _statusHoverPop.className = "online-popover";
+  _statusHoverPop.dataset.user = username;
+  _statusHoverPop.innerHTML = onlinePopoverMarkup(acc, place, info);
+  document.body.appendChild(_statusHoverPop);
+  positionStatusPopover(_statusHoverPop, table, username, span);
+}
 function initStatusHover() {
   const table = $("accounts-table");
   if (!table) return;
-  let pop = null,
-    hideTimer = 0;
-  const hide = () => {
-    ((hideTimer = 0), pop && (pop.remove(), (pop = null)));
-  };
-  const show = async (username, span) => {
-    if (!username) return hide();
-    const acc = ACCOUNTS.find((a) => String(a.username) === String(username));
-    if (!acc || bucket(acc) !== "online") return hide();
-    const place = String(
-        acc.observed_place_id || cfgFor(username).place_id || "",
-      ).trim(),
-      info = place ? await gamePlaceInfo(place) : null;
-    if (pop) {
-      if (pop.dataset.user === username) return;
-      hide();
-    }
-    const user = esc(privacyDisplayName(acc.display || acc.username)),
-      name = info?.name
-        ? esc(info.name)
-        : place
-          ? `Place ${esc(place)}`
-          : "Unknown game",
-      by = info?.builder ? esc(info.builder) : "",
-      playSeconds = uptimeSeconds(acc.uptime),
-      playTime =
-        playSeconds > 0
-          ? `<div class="ogame-time">Playing ${esc(shortDuration(playSeconds))}</div>`
-          : "",
-      img = info?.image_url
-        ? `<img class="ogame-thumb" src="${esc(info.image_url)}" alt="" loading="lazy" onerror="this.hidden=true">`
-        : "",
-      thumbs =
-        img ||
-        `<span class="ogame-thumb ogame-thumb-empty" aria-hidden="true">${esc(initials(user))}</span>`;
-    ((pop = document.createElement("div")),
-      (pop.className = "online-popover"),
-      (pop.dataset.user = username),
-      (pop.innerHTML = `<div class="ogame-card">${thumbs}<div class="ogame-copy"><div class="ogame-user">${user}</div><div class="ogame-name">${name}</div>${by ? `<div class="ogame-by">by ${by}</div>` : ""}${playTime}</div></div>`),
-      document.body.appendChild(pop));
-    const q = 'tr[data-user="' + CSS.escape(String(username)) + '"] .status',
-      anchor = table.querySelector(q) || span,
-      rect = anchor?.getBoundingClientRect?.(),
-      pw = Math.min(pop.offsetWidth || 320, 360);
-    let left = (rect?.right ?? 0) + 8;
-    left + pw > window.innerWidth - 8 &&
-      (left = Math.max(8, window.innerWidth - pw - 8));
-    let top = Math.min(
-      rect?.top ?? 0,
-      window.innerHeight - pop.offsetHeight - 8,
-    );
-    ((pop.style.left = left + "px"),
-      (pop.style.top = Math.max(8, top) + "px"),
-      pop.addEventListener("mouseenter", () => clearTimeout(hideTimer)),
-      pop.addEventListener("mouseleave", hide));
-  };
   table.addEventListener("mouseover", (e) => {
     const span = e.target.closest(".status");
     if (!span) return;
     const tr = span.closest("tr[data-user]");
-    tr && show(tr.dataset.user, span);
+    tr && statusHoverShow(tr.dataset.user, span, table);
   });
   table.addEventListener("mouseleave", () => {
-    (clearTimeout(hideTimer), (hideTimer = setTimeout(hide, 140)));
+    (clearTimeout(_statusHoverTimer),
+      (_statusHoverTimer = setTimeout(statusHoverHide, 140)));
   });
 }
 function panelCtx() {
@@ -1930,45 +2103,48 @@ function highlightLua(src) {
   }
   return out + esc(src.slice(last));
 }
+function developerLuaMarkup() {
+  if (DEVELOPER_LUA_SOURCE) return highlightLua(DEVELOPER_LUA_SOURCE);
+  return DEVELOPER_LUA_LOADING
+    ? '<span class="tok-com">Loading Lua...</span>'
+    : "";
+}
+function renderDeveloperCopyButton(btn) {
+  btn.disabled = !1;
+  const ok = Date.now() - (+btn.dataset.copiedAt || 0) < 1600;
+  btn.classList.toggle("is-ok", !!ok);
+  btn.innerHTML = `${solarIcon("copy", "btn-icon")}<span>${DEVELOPER_LUA_LOADING && !DEVELOPER_LUA_SOURCE ? "Loading" : ok ? "Copied" : "Copy Loader"}</span>`;
+}
+function renderDeveloperGateFields() {
+  const enabled = $("dev-lua-enabled"),
+    timeout = $("dev-lua-timeout"),
+    field = $("dev-lua-timeout-field");
+  if (!enabled || !timeout || !field) return;
+  const active = document.activeElement?.id;
+  if (!dirty("developer") && "dev-lua-enabled" !== active)
+    enabled.checked = !1 !== CONFIG.lua_enabled;
+  if (!dirty("developer") && "dev-lua-timeout" !== active)
+    timeout.value = String(CONFIG.lua_timeout_seconds ?? 60);
+  setReveal(field, enabled.checked);
+}
 function renderDeveloper() {
-  const e = $("developer-lua-source"),
-    t = $("developer-lua-notice"),
-    a = $("developer-copy-lua"),
-    c = $("developer-lua-code");
-  (c &&
-    (c.innerHTML = DEVELOPER_LUA_SOURCE
-      ? highlightLua(DEVELOPER_LUA_SOURCE)
-      : DEVELOPER_LUA_LOADING
-        ? '<span class="tok-com">Loading Lua...</span>'
-        : ""),
-    t &&
-      ((t.textContent = DEVELOPER_LUA_ERROR),
-      (t.hidden = !DEVELOPER_LUA_ERROR)),
-    a &&
-      ((a.disabled = !1),
-      (() => {
-        const ok = Date.now() - (+a.dataset.copiedAt || 0) < 1600;
-        a.classList.toggle("is-ok", !!ok);
-        a.innerHTML = `${solarIcon("copy", "btn-icon")}<span>${DEVELOPER_LUA_LOADING && !DEVELOPER_LUA_SOURCE ? "Loading" : ok ? "Copied" : "Copy Loader"}</span>`;
-      })()));
-  const s = $("developer-copy-lua-snippet");
-  s &&
-    ((s.querySelector("code").textContent = DEVELOPER_LUA_COPY_SNIPPET),
-    (s.onclick = () => {
-      copyDeveloperLua();
-    }));
-  const g = $("dev-lua-enabled"),
-    h = $("dev-lua-timeout"),
-    f = $("dev-lua-timeout-field");
-  if (g && h && f) {
-    const i = document.activeElement?.id;
-    (dirty("developer") ||
-      ("dev-lua-enabled" !== i && (g.checked = !1 !== CONFIG.lua_enabled)),
-      dirty("developer") ||
-        ("dev-lua-timeout" !== i &&
-          (h.value = String(CONFIG.lua_timeout_seconds ?? 60))),
-      setReveal(f, g.checked));
+  const code = $("developer-lua-code"),
+    notice = $("developer-lua-notice");
+  if (code) code.innerHTML = developerLuaMarkup();
+  if (notice) {
+    notice.textContent = DEVELOPER_LUA_ERROR;
+    notice.hidden = !DEVELOPER_LUA_ERROR;
   }
+  const copyBtn = $("developer-copy-lua");
+  if (copyBtn) renderDeveloperCopyButton(copyBtn);
+  const snippet = $("developer-copy-lua-snippet");
+  if (snippet) {
+    snippet.querySelector("code").textContent = DEVELOPER_LUA_COPY_SNIPPET;
+    snippet.onclick = () => {
+      copyDeveloperLua();
+    };
+  }
+  renderDeveloperGateFields();
   syncToggleLabels();
 }
 let DEV_LUA_SAVE_TIMER = 0;
@@ -2058,28 +2234,33 @@ const statusRuntime = createStatusRuntime({
 async function manualSnapshot() {
   return statusRuntime.manualSnapshot();
 }
-function privateServerPreflightToasts(e) {
-  const t = e?.private_server_preflight || {},
-    a = Array.isArray(t.failures) ? t.failures : [],
-    n = Array.isArray(t.created) ? t.created : [];
-  (a.forEach((e) => {
-    const t = e.game_name || "",
-      a = e.place_id || "",
-      n = e.reason || "Private server unavailable";
-    if (e.fallback_public)
-      return void toast(
-        `No VIP for ${t || "game"}${a ? ` (${a})` : ""} - joining public server`,
-        "warning",
-      );
+const PREFLIGHT_DEFAULT_REASON = "Private server unavailable";
+function toastPreflightFailure(failure) {
+  const name = failure.game_name || "",
+    place = failure.place_id || "",
+    reason = failure.reason || PREFLIGHT_DEFAULT_REASON;
+  if (failure.fallback_public) {
     toast(
-      `Auto Create failed${t ? ": " + t : ""}${a ? ` (${a})` : ""} - ${n}`,
-      "error",
+      `No VIP for ${name || "game"}${place ? ` (${place})` : ""} - joining public server`,
+      "warning",
     );
-  }),
-    n.forEach((e) => {
-      const t = e.game_name || e.place_id || "game";
-      toast(`Private server ready for ${t} - link saved`, "success");
-    }));
+    return;
+  }
+  toast(
+    `Auto Create failed${name ? ": " + name : ""}${place ? ` (${place})` : ""} - ${reason}`,
+    "error",
+  );
+}
+function toastPreflightCreated(entry) {
+  const name = entry.game_name || entry.place_id || "game";
+  toast(`Private server ready for ${name} - link saved`, "success");
+}
+function privateServerPreflightToasts(e) {
+  const preflight = e?.private_server_preflight || {},
+    failures = Array.isArray(preflight.failures) ? preflight.failures : [],
+    created = Array.isArray(preflight.created) ? preflight.created : [];
+  failures.forEach(toastPreflightFailure);
+  created.forEach(toastPreflightCreated);
 }
 async function toggleGuard() {
   if (!commandBusy && (STATUS.running || requireSavedSettings())) {
@@ -2122,9 +2303,7 @@ async function openVersionManager() {
   }
   renderVersionChoices(d);
 }
-function renderVersionChoices(d) {
-  const body = $("modal-body");
-  if (!body) return;
+function collectRobloxVersions(d) {
   const raw = Array.isArray(d?.versions) ? d.versions : [],
     seen = new Set(),
     vs = [];
@@ -2141,47 +2320,49 @@ function renderVersionChoices(d) {
     seen.add(key);
     vs.push(v);
   }
+  return vs;
+}
+function versionChoiceHtml(v) {
+  const ver = esc(String(v.version || "").trim()),
+    launchVer = String(v.version || "").trim(),
+    launchEsc = esc(launchVer),
+    badge = v.is_latest
+      ? '<span class="vbadge last">Last</span>'
+      : '<span class="vbadge old">Old</span>';
+  return `<div class="vchoice" data-source="roblox" data-version="${ver}"><div class="vchoice-copy"><div class="vchoice-name">Roblox ${badge}</div><div class="vchoice-version">${ver}</div></div><button type="button" class="vplay" data-source="roblox" data-version="${launchEsc}" title="Join with this version" aria-label="Join with ${ver}">${solarIcon("play", "")}</button><button type="button" class="vfolder" data-version="${launchEsc}" title="Open install folder" aria-label="Open folder for ${ver}">${solarIcon("folder", "")}</button></div>`;
+}
+function addStartAnywayButton(hasVersions) {
+  const foot = $("modal-foot");
+  if (hasVersions || !foot || $("vstart-btn")) return;
+  const button = document.createElement("button");
+  button.id = "vstart-btn";
+  button.className = "btn good";
+  button.textContent = "Start Anyway";
+  button.onclick = () => startWithVersion("");
+  foot.appendChild(button);
+}
+function renderVersionChoices(d) {
+  const body = $("modal-body");
+  if (!body) return;
+  const vs = collectRobloxVersions(d);
   const html = [
     '<div class="v-sub">Select a Roblox version to join with</div><div class="vchoices">',
   ];
-  vs.length
-    ? vs.forEach((v) => {
-        const ver = esc(String(v.version || "").trim()),
-          src = "roblox",
-          name = "Roblox",
-          launchVer = String(v.version || "").trim(),
-          launchEsc = esc(launchVer),
-          badge = v.is_latest
-            ? '<span class="vbadge last">Last</span>'
-            : '<span class="vbadge old">Old</span>';
-        html.push(
-          `<div class="vchoice" data-source="${esc(src)}" data-version="${ver}"><div class="vchoice-copy"><div class="vchoice-name">${name} ${badge}</div><div class="vchoice-version">${ver}</div></div><button type="button" class="vplay" data-source="${src}" data-version="${launchEsc}" title="Join with this version" aria-label="Join with ${ver}">${solarIcon("play", "")}</button><button type="button" class="vfolder" data-version="${launchEsc}" title="Open install folder" aria-label="Open folder for ${ver}">${solarIcon("folder", "")}</button></div>`,
-        );
-      })
-    : html.push(
-        '<div class="v-empty">No Roblox versions detected on this PC.</div>',
-      );
-  (html.push("</div>"),
-    vs.length ||
-      html.push(
-        '<div class="v-hint">No versions found ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â use Manage to repair or reinstall Roblox.</div>',
-      ),
-    (body.innerHTML = html.join("")),
-    body.querySelectorAll(".vplay").forEach((btn) => {
-      btn.onclick = () => startWithVersion(btn.dataset.version || "");
-    }),
-    body.querySelectorAll(".vfolder").forEach((btn) => {
-      btn.onclick = () => openVersionFolder(btn.dataset.version || "");
-    }));
-  const foot = $("modal-foot");
-  if (!vs.length && foot && !$("vstart-btn")) {
-    const s = document.createElement("button");
-    ((s.id = "vstart-btn"),
-      (s.className = "btn good"),
-      (s.textContent = "Start Anyway"),
-      (s.onclick = () => startWithVersion("")),
-      foot.appendChild(s));
-  }
+  if (vs.length) html.push(...vs.map(versionChoiceHtml));
+  else
+    html.push(
+      '<div class="v-empty">No Roblox versions detected on this PC.</div>',
+    );
+  html.push("</div>");
+  if (!vs.length) html.push('<div class="v-hint">No versions found ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â use Manage to repair or reinstall Roblox.</div>');
+  body.innerHTML = html.join("");
+  body.querySelectorAll(".vplay").forEach((btn) => {
+    btn.onclick = () => startWithVersion(btn.dataset.version || "");
+  });
+  body.querySelectorAll(".vfolder").forEach((btn) => {
+    btn.onclick = () => openVersionFolder(btn.dataset.version || "");
+  });
+  addStartAnywayButton(vs.length);
 }
 async function openVersionFolder(version) {
   try {
@@ -2315,8 +2496,7 @@ async function confirmDeleteAccount(e) {
     }
   }
 }
-function launchBlockedReason(account) {
-  if (!account) return "";
+function launchBlockedAccountMessage(account) {
   if (isSuspended(account))
     return (
       account.blocked_reason ||
@@ -2337,6 +2517,12 @@ function launchBlockedReason(account) {
       account.blocked_reason ||
       "Account recovery - complete passkey/2FA manually, then click Resume"
     );
+  return "";
+}
+function launchBlockedReason(account) {
+  if (!account) return "";
+  const message = launchBlockedAccountMessage(account);
+  if (message) return message;
   if (isCaptcha(account))
     return "Solve CAPTCHA manually, then Resume or Reload Cookies";
   if (isBlocked(account))
@@ -2585,23 +2771,80 @@ function stopManualPoll() {
     manualPollTimer = 0;
   }
 }
+function manualProgressRow(entry) {
+  const detail = entry.detail
+    ? `<div class="manual-progress-detail">${esc(entry.detail)}</div>`
+    : "";
+  return `<div class="manual-progress-row"><span class="manual-progress-user">${esc(entry.username || "Waiting...")}</span><span class="manual-pill manual-${esc(entry.status)}">${esc(entry.status)}</span></div>${detail}`;
+}
+function renderManualProgressCount(s) {
+  const label = $("manual-progress-count");
+  if (!label) return;
+  label.textContent =
+    `${s.done || 0} done / ${s.failed || 0} failed / ${s.total || 0} total` +
+    (s.note ? " - " + s.note : "");
+}
 function renderManualProgress(s) {
   const list = $("manual-progress-list");
   if (!list) return;
   const items = s.entries || [];
   list.innerHTML = items.length
-    ? items
-        .map(
-          (e) =>
-            `<div class="manual-progress-row"><span class="manual-progress-user">${esc(e.username || "Waiting...")}</span><span class="manual-pill manual-${esc(e.status)}">${esc(e.status)}</span></div>${e.detail ? `<div class="manual-progress-detail">${esc(e.detail)}</div>` : ""}`,
-        )
-        .join("")
+    ? items.map(manualProgressRow).join("")
     : '<div class="cookie-detected-empty">Opening popup browser...</div>';
-  const c = $("manual-progress-count");
-  c &&
-    (c.textContent =
-      `${s.done || 0} done / ${s.failed || 0} failed / ${s.total || 0} total` +
-      (s.note ? " - " + s.note : ""));
+  renderManualProgressCount(s);
+}
+const MANUAL_FINISHED_STATES = ["done", "cancelled", "error"];
+async function closeManualProgress(sid) {
+  try {
+    await api(
+      "/manual-login/" + encodeURIComponent(sid) + "/cancel",
+      "POST",
+      {},
+    );
+  } catch (_) {}
+  stopManualPoll();
+  closeModal();
+}
+async function skipManualProgress(sid) {
+  try {
+    await api(
+      "/manual-login/" + encodeURIComponent(sid) + "/skip",
+      "POST",
+      {},
+    );
+    toast("Skipped to next account");
+  } catch (e) {
+    toast(e.message || "Skip failed");
+  }
+}
+async function finishManualProgress(s) {
+  stopManualPoll();
+  const closeBtn = $("manual-progress-close");
+  if (closeBtn) closeBtn.textContent = "Close";
+  try {
+    await loadAccountsConfig(!0);
+    await manualSnapshot();
+  } catch (_) {}
+  if (s.state === "done")
+    toast(`Manual Login finished (${s.done || 0}/${s.total || 0} imported)`);
+  else if (s.state === "error") toast(s.note || "Manual login failed");
+}
+async function pollManualProgress(sid) {
+  if (!$("manual-progress-list")) {
+    stopManualPoll();
+    return;
+  }
+  try {
+    const s = await api("/manual-login/" + encodeURIComponent(sid), "GET");
+    renderManualProgress(s);
+    if (MANUAL_FINISHED_STATES.includes(s.state)) {
+      await finishManualProgress(s);
+      return;
+    }
+    manualPollTimer = setTimeout(() => pollManualProgress(sid), 2000);
+  } catch (e) {
+    manualPollTimer = setTimeout(() => pollManualProgress(sid), 3000);
+  }
 }
 async function openManualProgress(sid) {
   stopManualPoll();
@@ -2611,62 +2854,10 @@ async function openManualProgress(sid) {
     '<div class="cookie-modal-actions"><button type="button" class="cookie-btn-back" id="manual-progress-skip">Skip</button><button type="button" class="cookie-btn-back" id="manual-progress-close">Cancel</button></div>',
   );
   const closeBtn = $("manual-progress-close");
-  closeBtn &&
-    (closeBtn.onclick = async () => {
-      try {
-        await api(
-          "/manual-login/" + encodeURIComponent(sid) + "/cancel",
-          "POST",
-          {},
-        );
-      } catch (_) {}
-      (stopManualPoll(), closeModal());
-    });
+  if (closeBtn) closeBtn.onclick = () => closeManualProgress(sid);
   const skipBtn = $("manual-progress-skip");
-  skipBtn &&
-    (skipBtn.onclick = async () => {
-      try {
-        await api(
-          "/manual-login/" + encodeURIComponent(sid) + "/skip",
-          "POST",
-          {},
-        );
-        toast("Skipped to next account");
-      } catch (e) {
-        toast(e.message || "Skip failed");
-      }
-    });
-  async function poll() {
-    if (!$("manual-progress-list")) {
-      stopManualPoll();
-      return;
-    }
-    try {
-      const s = await api("/manual-login/" + encodeURIComponent(sid), "GET");
-      renderManualProgress(s);
-      if (
-        s.state === "done" ||
-        s.state === "cancelled" ||
-        s.state === "error"
-      ) {
-        stopManualPoll();
-        const b = $("manual-progress-close");
-        b && (b.textContent = "Close");
-        try {
-          await loadAccountsConfig(!0);
-          await manualSnapshot();
-        } catch (_) {}
-        if (s.state === "done")
-          toast(
-            `Manual Login finished (${s.done || 0}/${s.total || 0} imported)`,
-          );
-        else if (s.state === "error") toast(s.note || "Manual login failed");
-      } else manualPollTimer = setTimeout(poll, 2000);
-    } catch (e) {
-      manualPollTimer = setTimeout(poll, 3000);
-    }
-  }
-  manualPollTimer = setTimeout(poll, 500);
+  if (skipBtn) skipBtn.onclick = () => skipManualProgress(sid);
+  manualPollTimer = setTimeout(() => pollManualProgress(sid), 500);
 }
 const COOKIE_RE = /_\|WARNING[^\s'"]+/;
 function extractCookie(line) {
@@ -2711,6 +2902,19 @@ function cookieImportItems(value) {
     })
     .filter(Boolean);
 }
+const COOKIE_STATE_LABELS = [
+  ["suspended", "Suspended"],
+  ["banned", "Banned"],
+  ["locked", "Locked"],
+  ["recovery", "Recovery"],
+  ["captcha", "Captcha"],
+  ["bad_password", "Wrong password"],
+  ["refreshed", "OK"],
+];
+function cookieStateLabel(result) {
+  const hit = COOKIE_STATE_LABELS.find(([key]) => result[key]);
+  return hit ? hit[1] : "";
+}
 function cookiePreviewLabel(result, hint) {
   const username =
     result.username ||
@@ -2718,22 +2922,76 @@ function cookiePreviewLabel(result, hint) {
     (result.banned || result.suspended
       ? "Unknown"
       : "Unknown — add username: prefix");
-  const state = result.suspended
-    ? "Suspended"
-    : result.banned
-      ? "Banned"
-      : result.locked
-        ? "Locked"
-        : result.recovery
-          ? "Recovery"
-          : result.captcha
-            ? "Captcha"
-            : result.bad_password
-              ? "Wrong password"
-              : result.refreshed
-                ? "OK"
-                : "";
+  const state = cookieStateLabel(result);
   return state ? `${username} (${state})` : username;
+}
+let _cookieSeq = 0;
+function syncCookieDetectedChrome(countLabel, addBtn, count) {
+  if (countLabel)
+    countLabel.textContent = `${count} account${count === 1 ? "" : "s"} detected`;
+  if (addBtn) {
+    addBtn.disabled = count === 0;
+    addBtn.classList.toggle("active", count > 0);
+  }
+}
+function cookieDetectedRowHtml(item) {
+  return `<div class="cookie-detected-item"><span class="cookie-detected-user">${esc(item.hint || "Checking...")}</span><span class="cookie-detected-id">...</span></div>`;
+}
+function cookieRowNodes(listEl, index) {
+  const row = listEl.children[index];
+  if (!row) return null;
+  return {
+    user: row.querySelector(".cookie-detected-user"),
+    id: row.querySelector(".cookie-detected-id"),
+  };
+}
+function showCookieCheckedRow(listEl, index, result, item) {
+  const row = cookieRowNodes(listEl, index);
+  if (!row) return;
+  if (row.user) row.user.textContent = cookiePreviewLabel(result, item.hint);
+  if (row.id) row.id.textContent = result.user_id || "";
+}
+function showCookieInvalidRow(listEl, index, item) {
+  const row = cookieRowNodes(listEl, index);
+  if (!row) return;
+  if (row.user) row.user.textContent = item.hint || "Invalid";
+  if (row.id) row.id.textContent = "\u2014";
+}
+async function checkCookieItems(items, listEl, seq) {
+  for (let i = 0; i < items.length; i++) {
+    if (seq !== _cookieSeq) return;
+    const item = items[i];
+    try {
+      const result = await api("/test-cookie", "POST", {
+        cookie: item.cookie,
+        username: item.hint || "",
+        password: item.pass || "",
+      });
+      if (seq !== _cookieSeq) return;
+      showCookieCheckedRow(listEl, i, result, item);
+    } catch (e) {
+      if (seq !== _cookieSeq) return;
+      showCookieInvalidRow(listEl, i, item);
+    }
+  }
+}
+async function refreshCookieDetection() {
+  const ta = $("cookie-lines");
+  if (!ta) return;
+  const items = cookieImportItems(ta.value);
+  const countLabel = $("cookie-detected-count");
+  const listEl = $("cookie-detected-list");
+  const addBtn = $("cookie-add");
+  syncCookieDetectedChrome(countLabel, addBtn, items.length);
+  if (!listEl) return;
+  if (!items.length) {
+    listEl.innerHTML =
+      '<div class="cookie-detected-empty">No accounts detected yet</div>';
+    return;
+  }
+  const seq = ++_cookieSeq;
+  listEl.innerHTML = items.map(cookieDetectedRowHtml).join("");
+  await checkCookieItems(items, listEl, seq);
 }
 function openCookie() {
   const p =
@@ -2743,65 +3001,14 @@ function openCookie() {
     `<div class="cookie-import-container"><div class="cookie-hint-banner">Accepts <strong>user:pass:cookie</strong> or <strong>cookie only</strong> (one per line). Cookie-only works, but a dead cookie cannot be matched to a username — prefix with <strong>username:</strong> so the ban check can run. A dead cookie pasted as <strong>user:pass:cookie</strong> also runs a live login check (Locked / Recovery / Captcha / Wrong password).</div><div class="cookie-textarea-wrap"><textarea id="cookie-lines" class="cookie-textarea" placeholder="${esc(p)}"></textarea></div><div class="cookie-detected-section"><div class="cookie-detected-label">DETECTED</div><div id="cookie-detected-list" class="cookie-detected-list"><div class="cookie-detected-empty">No accounts detected yet</div></div></div><div class="cookie-meta-row"><span id="cookie-detected-count" class="cookie-detected-count">0 accounts detected</span></div></div>`,
     '<div class="cookie-modal-actions"><button type="button" class="cookie-btn-back" id="cookie-cancel">Back</button><button type="button" class="cookie-btn-submit" id="cookie-add" disabled>Add Accounts</button></div>',
   );
-  const ta = $("cookie-lines"),
-    countLabel = $("cookie-detected-count"),
-    listEl = $("cookie-detected-list"),
-    addBtn = $("cookie-add");
-  let _seq = 0;
-  async function updateCount() {
-    if (!ta) return;
-    const items = cookieImportItems(ta.value);
-    const c = items.length;
-    countLabel &&
-      (countLabel.textContent = `${c} account${c === 1 ? "" : "s"} detected`);
-    if (addBtn) {
-      addBtn.disabled = c === 0;
-      addBtn.classList.toggle("active", c > 0);
-    }
-    if (!listEl) return;
-    if (!c) {
-      listEl.innerHTML =
-        '<div class="cookie-detected-empty">No accounts detected yet</div>';
-      return;
-    }
-    const seq = ++_seq;
-    listEl.innerHTML = items
-      .map(
-        (x) =>
-          `<div class="cookie-detected-item"><span class="cookie-detected-user">${esc(x.hint || "Checking...")}</span><span class="cookie-detected-id">...</span></div>`,
-      )
-      .join("");
-    for (let i = 0; i < items.length; i++) {
-      if (seq !== _seq) return;
-      const x = items[i];
-      try {
-        const r = await api("/test-cookie", "POST", {
-          cookie: x.cookie,
-          username: x.hint || "",
-          password: x.pass || "",
-        });
-        if (seq !== _seq) return;
-        const row = listEl.children[i];
-        if (!row) continue;
-        const u = row.querySelector(".cookie-detected-user");
-        const idEl = row.querySelector(".cookie-detected-id");
-        if (u) u.textContent = cookiePreviewLabel(r, x.hint);
-        if (idEl) idEl.textContent = r.user_id || "";
-      } catch (e) {
-        if (seq !== _seq) return;
-        const row = listEl.children[i];
-        if (!row) continue;
-        const u = row.querySelector(".cookie-detected-user");
-        const idEl = row.querySelector(".cookie-detected-id");
-        if (u) u.textContent = x.hint || "Invalid";
-        if (idEl) idEl.textContent = "\u2014";
-      }
-    }
+  const ta = $("cookie-lines");
+  if (ta) {
+    ta.oninput = refreshCookieDetection;
+    ta.focus();
   }
-  (ta && ((ta.oninput = updateCount), ta.focus()),
-    ($("cookie-cancel").onclick = openAddChoice),
-    ($("cookie-add").onclick = submitCookies));
-  updateCount();
+  $("cookie-cancel").onclick = openAddChoice;
+  $("cookie-add").onclick = submitCookies;
+  refreshCookieDetection();
 }
 async function submitCookies() {
   const ta = $("cookie-lines");

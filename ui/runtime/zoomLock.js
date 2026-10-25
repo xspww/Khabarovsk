@@ -2,74 +2,101 @@
  * Disables Ctrl+scroll / Ctrl +/-/0 / pinch zoom in WebView2 + browser fallback.
  * Normal scroll, Ctrl+C/V/A/X/Z and inputs are untouched.
  */
-(function () {
-  "use strict";
+"use strict";
+const zoomLock = {};
 
-  function isZoomKey(e) {
-    let k = e.key;
-    if (k === "+" || k === "-" || k === "=" || k === "_" || k === "0") return true;
-    // Numpad Add/Sub/0 + legacy keyCodes (107/109/96, 187/189/48)
-    let c = e.keyCode || e.which || 0;
-    if (c === 107 || c === 109 || c === 96 || c === 187 || c === 189 || c === 48) return true;
-    let code = e.code || "";
-    if (code === "NumpadAdd" || code === "NumpadSubtract" || code === "Numpad0" ||
-        code === "Equal" || code === "Minus" || code === "Digit0") return true;
-    return false;
-  }
+// Key names, Numpad Add/Sub/0, and legacy keyCodes (107/109/96, 187/189/48).
+zoomLock.KEY_NAMES = ["+", "-", "=", "_", "0"];
+zoomLock.KEY_CODES = [107, 109, 96, 187, 189, 48];
+zoomLock.KEY_IDS = [
+  "NumpadAdd",
+  "NumpadSubtract",
+  "Numpad0",
+  "Equal",
+  "Minus",
+  "Digit0",
+];
 
-  // 1. Ctrl/Cmd + wheel (mouse scroll zoom) — the reported case.
-  document.addEventListener("wheel", function (e) {
-    try {
-      if (e.ctrlKey || e.metaKey) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-    } catch (err) {}
-  }, { passive: false, capture: true });
+zoomLock.isZoomKey = function (e) {
+  if (zoomLock.KEY_NAMES.includes(e.key)) return true;
+  const code = e.keyCode || e.which || 0;
+  if (zoomLock.KEY_CODES.includes(code)) return true;
+  return zoomLock.KEY_IDS.includes(e.code || "");
+};
 
-  // Legacy IE-style wheel event (some WebView2 builds still fire it).
-  document.addEventListener("mousewheel", function (e) {
-    try {
-      if (e.ctrlKey || e.metaKey) e.preventDefault();
-    } catch (err) {}
-  }, { passive: false, capture: true });
+// 1. Ctrl/Cmd + wheel (mouse scroll zoom) — the reported case.
+zoomLock.onWheel = function (e) {
+  try {
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  } catch (err) {}
+};
 
-  // 2. Ctrl/Cmd + (+/-/0) keyboard zoom.
-  document.addEventListener("keydown", function (e) {
-    try {
-      if (!(e.ctrlKey || e.metaKey)) return;
-      // Never break plain shortcuts: only swallow actual zoom keys.
-      if (isZoomKey(e)) {
-        e.preventDefault();
-        e.stopPropagation();
-      }
-    } catch (err) {}
-  }, true);
+// Legacy IE-style wheel event (some WebView2 builds still fire it).
+zoomLock.onMouseWheel = function (e) {
+  try {
+    if (e.ctrlKey || e.metaKey) e.preventDefault();
+  } catch (err) {}
+};
 
-  // 3. Trackpad pinch (Safari/WebKit gesture events).
-  ["gesturestart", "gesturechange", "gestureend"].forEach(function (t) {
-    document.addEventListener(t, function (e) {
-      try { e.preventDefault(); } catch (err) {}
-    }, { passive: false, capture: true });
+// 2. Ctrl/Cmd + (+/-/0) keyboard zoom.
+zoomLock.onKeyDown = function (e) {
+  try {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    // Never break plain shortcuts: only swallow actual zoom keys.
+    if (zoomLock.isZoomKey(e)) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  } catch (err) {}
+};
+
+// 3. Trackpad pinch (Safari/WebKit gesture events).
+zoomLock.blockGestures = function () {
+  ["gesturestart", "gesturechange", "gestureend"].forEach(function (type) {
+    document.addEventListener(
+      type,
+      function (e) {
+        try {
+          e.preventDefault();
+        } catch (err) {}
+      },
+      { passive: false, capture: true },
+    );
   });
+};
 
-  // 4. Touch pinch (two-finger): block scale, keep single-finger scroll.
-  document.addEventListener("touchmove", function (e) {
-    try {
-      if (e.touches && e.touches.length > 1) e.preventDefault();
-    } catch (err) {}
-  }, { passive: false, capture: true });
+// 4. Touch pinch (two-finger): block scale, keep single-finger scroll.
+zoomLock.onTouchMove = function (e) {
+  try {
+    if (e.touches && e.touches.length > 1) e.preventDefault();
+  } catch (err) {}
+};
 
-  // 5. Safety: if zoom slipped through (browser fallback Ctrl+0 race),
-  // reset page zoom factor where the API exists.
-  function resetZoom() {
-    try {
-      if (document.body && document.body.style && document.body.style.zoom !== undefined) {
-        if (document.body.style.zoom !== "" && document.body.style.zoom !== "1") {
-          document.body.style.zoom = "1";
-        }
-      }
-    } catch (err) {}
-  }
-  window.addEventListener("resize", resetZoom, { passive: true });
-})();
+// 5. Safety: if zoom slipped through (browser fallback Ctrl+0 race),
+// reset page zoom factor where the API exists.
+zoomLock.resetZoom = function () {
+  try {
+    const style = document.body && document.body.style;
+    if (!style || style.zoom === undefined) return;
+    if (style.zoom !== "" && style.zoom !== "1") style.zoom = "1";
+  } catch (err) {}
+};
+
+document.addEventListener("wheel", zoomLock.onWheel, {
+  passive: false,
+  capture: true,
+});
+document.addEventListener("mousewheel", zoomLock.onMouseWheel, {
+  passive: false,
+  capture: true,
+});
+document.addEventListener("keydown", zoomLock.onKeyDown, true);
+zoomLock.blockGestures();
+document.addEventListener("touchmove", zoomLock.onTouchMove, {
+  passive: false,
+  capture: true,
+});
+window.addEventListener("resize", zoomLock.resetZoom, { passive: true });
